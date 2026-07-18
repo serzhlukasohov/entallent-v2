@@ -8,8 +8,7 @@ WORKDIR /app
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/ packages/
 COPY apps/worker/ apps/worker/
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @entalent/worker... build
 
 FROM base AS runner
@@ -17,8 +16,7 @@ WORKDIR /app
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/ packages/
 COPY apps/worker/ apps/worker/
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod
+RUN pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/packages/*/dist packages/
 COPY --from=builder /app/apps/worker/dist apps/worker/dist/
 

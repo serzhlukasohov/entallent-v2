@@ -8,8 +8,7 @@ WORKDIR /app
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/typescript-config/ packages/typescript-config/
 COPY apps/dashboard/ apps/dashboard/
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter @entalent/dashboard...
+RUN pnpm install --frozen-lockfile --filter @entalent/dashboard...
 RUN pnpm --filter @entalent/dashboard build
 
 FROM base AS runner
