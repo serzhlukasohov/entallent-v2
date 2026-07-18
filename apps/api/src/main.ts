@@ -3,11 +3,15 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { NestLogger } from '@entalent/observability';
 import { validateEnv } from '@entalent/config';
+import { runMigrations } from '@entalent/database';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
   const env = validateEnv();
   const logger = new NestLogger('API');
+
+  await runMigrations();
+  logger.log('Database migrations applied', 'Bootstrap');
 
   const adapter = new FastifyAdapter({ logger: false });
 

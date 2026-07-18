@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import path from 'path';
 
-async function runMigrations(): Promise<void> {
+export async function runMigrations(): Promise<void> {
   const databaseUrl = process.env['DATABASE_URL'];
   if (!databaseUrl) {
     throw new Error('DATABASE_URL environment variable is required');
@@ -23,7 +23,10 @@ async function runMigrations(): Promise<void> {
   await sql.end();
 }
 
-runMigrations().catch((error: unknown) => {
-  console.error('Migration failed:', error);
-  process.exit(1);
-});
+// Allow running directly: tsx src/migrate.ts
+if (require.main === module) {
+  runMigrations().catch((error: unknown) => {
+    console.error('Migration failed:', error);
+    process.exit(1);
+  });
+}
