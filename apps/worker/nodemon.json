@@ -1,0 +1,7 @@
+{
+  "watch": ["src", "../../packages/application/dist", "../../packages/database/dist", "../../packages/config/dist", "../../packages/ai-openai/dist", "../../packages/contracts/dist", "../../packages/channel-slack/dist", "../../packages/crypto-utils/dist", "../../packages/observability/dist"],
+  "ext": "ts,js,json",
+  "ignore": ["**/*.test.ts"],
+  "delay": 800,
+  "exec": "node --require @swc-node/register src/main.ts"
+}

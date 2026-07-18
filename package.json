@@ -1,0 +1,38 @@
+{
+  "name": "entalent",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "db:generate": "pnpm --filter @entalent/database db:generate",
+    "db:migrate": "dotenv -e .env -- pnpm --filter @entalent/database db:migrate",
+    "db:seed": "dotenv -e .env -- pnpm exec tsx packages/database/src/seed.ts",
+    "chat": "dotenv -e .env -- pnpm exec tsx scripts/chat.ts",
+    "db:studio": "pnpm --filter @entalent/database db:studio",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "@entalent/eslint-config": "workspace:*",
+    "@entalent/typescript-config": "workspace:*",
+    "@swc-node/register": "^1.10.9",
+    "@swc/core": "^1.10.7",
+    "dotenv-cli": "^7.4.4",
+    "nodemon": "^3.1.9",
+    "tsx": "^4.19.0",
+    "prettier": "^3.3.3",
+    "turbo": "^2.3.3",
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "pnpm@9.12.0"
+}

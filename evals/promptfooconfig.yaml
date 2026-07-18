@@ -1,0 +1,26 @@
+description: enTalent AI regression tests
+
+# Provider configuration — override via OPENAI_API_KEY env or use mock mode
+providers:
+  - id: openai:gpt-4o-mini
+    label: gpt-4o-mini (analysis)
+  - id: openai:gpt-4o
+    label: gpt-4o (generation)
+
+# Default assertion timeout
+defaultTest:
+  options:
+    timeout: 30000
+
+# Test suites are split by concern. Run all with:
+#   npx promptfoo eval --config evals/promptfooconfig.yaml
+#
+# Run a single suite:
+#   npx promptfoo eval --config evals/datasets/empathy.yaml
+
+tests:
+  - $ref: ./datasets/empathy.yaml
+  - $ref: ./datasets/memory.yaml
+  - $ref: ./datasets/proactivity.yaml
+  - $ref: ./datasets/safety.yaml
+  - $ref: ./datasets/injection.yaml

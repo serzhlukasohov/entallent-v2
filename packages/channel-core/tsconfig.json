@@ -1,0 +1,7 @@
+{
+  "extends": "@entalent/typescript-config/base.json",
+  "compilerOptions": {
+    "module": "CommonJS"
+  },
+  "include": ["src/**/*.ts"]
+}

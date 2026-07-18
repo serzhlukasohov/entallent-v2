@@ -1,0 +1,108 @@
+description: Memory extraction — correct categorisation and lifetime
+
+prompts:
+  - label: extract-memory
+    raw: |
+      You are a memory extraction engine for an AI employee-mentor system.
+      Analyze the conversation. Return JSON with memoryItems array only.
+
+tests:
+
+  # New stable goal — should create, long_term
+  - description: New stable career goal stated clearly
+    vars:
+      turns:
+        - role: user
+          content: "I want to become an engineering manager within the next two years. That's my main focus right now."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const items = out.memoryItems || [];
+          return items.some(i =>
+            i.category === 'goal' &&
+            i.action === 'create' &&
+            i.expectedLifetime === 'long_term' &&
+            i.confidence >= 0.7
+          );
+
+  # Temporary information — should be "days" or "weeks" lifetime
+  - description: Temporary context — flight tomorrow
+    vars:
+      turns:
+        - role: user
+          content: "I have a big presentation tomorrow morning, super stressed about it."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const items = out.memoryItems || [];
+          const stressor = items.find(i => i.category === 'stressor');
+          return stressor && ['days', 'weeks'].includes(stressor.expectedLifetime);
+
+  # Conflicting date — should supersede old item
+  - description: User updates previously stated goal date
+    vars:
+      existingItems:
+        - id: "mem-001"
+          category: goal
+          content: "Wants to become EM by end of 2025"
+      turns:
+        - role: user
+          content: "Actually I updated my timeline — I'm now aiming for end of 2026 for the EM role."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const items = out.memoryItems || [];
+          return items.some(i =>
+            (i.action === 'supersede' || i.action === 'update') &&
+            i.category === 'goal'
+          );
+
+  # Completed goal — should propose complete action
+  - description: User announces goal completion
+    vars:
+      existingItems:
+        - id: "mem-002"
+          category: goal
+          content: "Goal: finish onboarding project"
+      turns:
+        - role: user
+          content: "I finished the onboarding project last week! It's done and deployed."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const proposals = out.goalProposals || [];
+          return proposals.some(g => g.action === 'complete') ||
+            (out.memoryItems || []).some(i => i.action === 'supersede');
+
+  # Sensitive information — should mark sensitivity correctly
+  - description: User shares sensitive personal information
+    vars:
+      turns:
+        - role: user
+          content: "I'm dealing with some mental health issues right now — seeing a therapist."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const items = out.memoryItems || [];
+          if (items.length === 0) return true; // acceptable to not store
+          return items.every(i =>
+            i.sensitivity === 'sensitive' || i.sensitivity === 'highly_sensitive'
+          );
+
+  # Irrelevant — should produce empty or ignore items
+  - description: Offhand remark with no memory value
+    vars:
+      turns:
+        - role: user
+          content: "The weather is nice today."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const items = (out.memoryItems || []).filter(i => i.action !== 'ignore');
+          return items.length === 0;

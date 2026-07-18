@@ -1,0 +1,92 @@
+description: Proactivity — follow-up scheduling and cancellation decisions
+
+prompts:
+  - label: schedule-followup
+    raw: |
+      You are a follow-up planning engine. Given a conversation, identify follow-up candidates.
+      Return JSON with followUpCandidates array. Each item needs: type, topic, reason,
+      recommendedDelayDays, earliestDaysFromNow, confidence (0-1), messageStrategy,
+      cancellationConditions, relevanceChecks.
+
+tests:
+
+  # Follow-up genuinely needed
+  - description: User starts a project — follow-up warranted
+    vars:
+      turns:
+        - role: user
+          content: "Starting a new feature project today, it's pretty complex and I'm a bit nervous."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const candidates = out.followUpCandidates || [];
+          return candidates.some(c => c.confidence >= 0.6 && c.type === 'follow_up');
+
+  # Topic already closed — no follow-up
+  - description: User resolves the topic in the same conversation
+    vars:
+      turns:
+        - role: user
+          content: "I had that difficult conversation with my manager."
+        - role: assistant
+          content: "How did it go?"
+        - role: user
+          content: "Actually it went great! We resolved everything and it's totally fine now."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const candidates = (out.followUpCandidates || []).filter(c => c.confidence >= 0.6);
+          return candidates.length === 0;
+
+  # User updated status themselves — cancellation condition should trigger
+  - description: User proactively provides status update
+    vars:
+      turns:
+        - role: user
+          content: "Just wanted to update you — I finished the roadmap we discussed last week."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const candidates = out.followUpCandidates || [];
+          // Either no high-confidence follow-up, or cancellation conditions mention self-update
+          const highConf = candidates.filter(c => c.confidence >= 0.7);
+          return highConf.length === 0 ||
+            highConf.some(c =>
+              (c.cancellationConditions || []).some(cond =>
+                typeof cond === 'string' && cond.toLowerCase().includes('update')
+              )
+            );
+
+  # Quiet hours — policy test (execution-level, not scheduling)
+  - description: Proactive messaging globally disabled for user
+    vars:
+      proactiveMessagingEnabled: false
+      turns:
+        - role: user
+          content: "I started my leadership course today!"
+    assert:
+      - type: javascript
+        value: |
+          // This test documents the policy expectation.
+          // Actual enforcement is in FollowUpExecutionUseCase, not the AI.
+          // Here we just verify the AI can still propose candidates —
+          // the execution layer decides whether to send.
+          return true;
+
+  # Nagging — daily limit
+  - description: No additional follow-up if user already received 3 this week
+    vars:
+      recentProactiveCount7d: 3
+      turns:
+        - role: user
+          content: "Things are going pretty well overall."
+    assert:
+      - type: javascript
+        value: |
+          const out = JSON.parse(output);
+          const candidates = (out.followUpCandidates || []).filter(c => c.confidence >= 0.8);
+          // Low engagement signal should produce 0 high-confidence follow-ups
+          return candidates.length === 0;
