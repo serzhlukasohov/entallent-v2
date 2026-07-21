@@ -50,6 +50,8 @@ export const surveyQuestions = pgTable(
     maxFollowUpProbes: integer('max_follow_up_probes').notNull().default(3),
     scoringConfiguration: jsonb('scoring_configuration').notNull().default({}),
     displayOrder: integer('display_order').notNull().default(0),
+    questionGroup: text('question_group').notNull().default('autonomy'),
+    responseType: text('response_type').notNull().default('open_ended'),
     version: text('version').notNull().default('1'),
   },
   (t) => ({
