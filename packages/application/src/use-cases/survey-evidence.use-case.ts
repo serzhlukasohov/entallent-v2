@@ -155,13 +155,39 @@ export class SurveyEvidenceExtractionUseCase {
 
     if (!allComplete) return;
 
-    // Create group state and trigger confirmation
+    // Generate AI summary before saving group state so the processor finds it populated
+    const evidenceSummaries: Array<{
+      questionId: string;
+      stableKey: string;
+      evidenceSummary: string;
+      polarity: string;
+    }> = [];
+    for (const q of groupQuestions) {
+      const evidence = await this.surveyRepo.findEvidenceForQuestion(input.userId, q.id, windowId);
+      const latest = [...evidence].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+      if (latest) {
+        evidenceSummaries.push({
+          questionId: q.id,
+          stableKey: q.stableKey,
+          evidenceSummary: latest.evidenceSummary,
+          polarity: latest.polarity,
+        });
+      }
+    }
+
+    let aiSummary: string | undefined;
+    if (evidenceSummaries.length > 0) {
+      const groupSummaryResult = await this.ai.generateGroupSummary(evidenceSummaries, questionGroup);
+      aiSummary = groupSummaryResult.summary;
+    }
+
     await this.surveyRepo.upsertGroupState({
       surveyWindowId: windowId,
       userId: input.userId,
       tenantId: input.tenantId,
       questionGroup,
       status: 'pending_confirmation',
+      aiSummary,
     });
 
     if (this.outbox) {
