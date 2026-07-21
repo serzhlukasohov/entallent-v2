@@ -12,7 +12,7 @@
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { createCipheriv, randomBytes } from 'crypto';
-import { isNull, eq } from 'drizzle-orm';
+import { isNull, and, eq } from 'drizzle-orm';
 import { tenants, workspaceConnections, surveyDefinitions, surveyQuestions, featureFlags } from './schema';
 
 function encryptField(plaintext: string, hexKey: string): string {
@@ -116,13 +116,14 @@ async function seed(): Promise<void> {
       })
       .returning({ id: surveyDefinitions.id });
 
-    await db.insert(surveyQuestions).values([
+    const initialQuestions = [
       {
-        surveyDefinitionId: surveyDef.id,
         stableKey: 'role_clarity',
         title: 'Role Clarity',
         canonicalMeaning: 'Does the employee clearly understand what is expected of them in their role?',
         dimension: 'engagement',
+        questionGroup: 'growth',
+        responseType: 'open_ended',
         positiveIndicators: [
           'knows what their goals are',
           'understands their responsibilities',
@@ -149,11 +150,12 @@ async function seed(): Promise<void> {
         version: '1',
       },
       {
-        surveyDefinitionId: surveyDef.id,
         stableKey: 'wellbeing_at_work',
         title: 'Wellbeing at Work',
         canonicalMeaning: 'How is the employee\'s overall wellbeing — energy, stress, and sense of balance at work?',
         dimension: 'wellbeing',
+        questionGroup: 'belonging',
+        responseType: 'open_ended',
         positiveIndicators: [
           'feeling energised',
           'manageable workload',
@@ -182,11 +184,12 @@ async function seed(): Promise<void> {
         version: '1',
       },
       {
-        surveyDefinitionId: surveyDef.id,
         stableKey: 'professional_growth',
         title: 'Professional Growth',
         canonicalMeaning: 'Does the employee feel they are learning and growing professionally in their current role?',
         dimension: 'development',
+        questionGroup: 'growth',
+        responseType: 'open_ended',
         positiveIndicators: [
           'learning new skills',
           'taking on new challenges',
@@ -214,7 +217,19 @@ async function seed(): Promise<void> {
         displayOrder: 2,
         version: '1',
       },
-    ]);
+    ];
+    for (const q of initialQuestions) {
+      await db
+        .insert(surveyQuestions)
+        .values({ surveyDefinitionId: surveyDef.id, ...q })
+        .onConflictDoUpdate({
+          target: [surveyQuestions.surveyDefinitionId, surveyQuestions.stableKey],
+          set: {
+            questionGroup: q.questionGroup,
+            responseType: q.responseType,
+          },
+        });
+    }
 
     console.log('✓ Created global survey definition with 3 questions (role_clarity, wellbeing_at_work, professional_growth)');
   } else {
@@ -230,12 +245,34 @@ async function seed(): Promise<void> {
 
   if (defRow[0]) {
     const defId = defRow[0].id;
+
+    // Upsert initial 3 questions (idempotent — also fixes group/type if they were inserted before migration)
+    const initialGroupUpdates = [
+      { stableKey: 'role_clarity',        questionGroup: 'growth',    responseType: 'open_ended' },
+      { stableKey: 'wellbeing_at_work',   questionGroup: 'belonging', responseType: 'open_ended' },
+      { stableKey: 'professional_growth', questionGroup: 'growth',    responseType: 'open_ended' },
+    ];
+    for (const { stableKey, questionGroup, responseType } of initialGroupUpdates) {
+      await db
+        .update(surveyQuestions)
+        .set({ questionGroup, responseType })
+        .where(
+          and(
+            eq(surveyQuestions.surveyDefinitionId, defId),
+            eq(surveyQuestions.stableKey, stableKey),
+          )
+        );
+    }
+    console.log('✓ Updated question_group/response_type for initial 3 questions');
+
     const q12Questions = [
       {
         stableKey: 'q12_expectations',
         title: 'Clear Expectations',
         canonicalMeaning: 'Does the employee know what is expected of them at work?',
         dimension: 'engagement',
+        questionGroup: 'autonomy',
+        responseType: 'open_ended',
         positiveIndicators: [
           'knows what their goals and KPIs are',
           'understands what success looks like in their role',
@@ -268,6 +305,8 @@ async function seed(): Promise<void> {
         title: 'Opportunity to Do Best Work',
         canonicalMeaning: 'Does the employee have the opportunity to do what they do best every day?',
         dimension: 'engagement',
+        questionGroup: 'autonomy',
+        responseType: 'open_ended',
         positiveIndicators: [
           'feels energised by their tasks',
           'work plays to their strengths',
@@ -300,6 +339,8 @@ async function seed(): Promise<void> {
         title: 'Recent Recognition',
         canonicalMeaning: 'Has the employee received recognition or praise for good work in the last seven days?',
         dimension: 'engagement',
+        questionGroup: 'purpose',
+        responseType: 'open_ended',
         positiveIndicators: [
           'received praise or thanks recently',
           'manager or colleague acknowledged their work',
@@ -332,6 +373,8 @@ async function seed(): Promise<void> {
         title: 'Supervisor Cares',
         canonicalMeaning: 'Does the employee feel that their supervisor, or someone at work, genuinely cares about them as a person — not just as a resource?',
         dimension: 'relationship',
+        questionGroup: 'belonging',
+        responseType: 'open_ended',
         positiveIndicators: [
           'feels their manager genuinely listens to them',
           'manager checks in on how they are doing, not just on tasks',
@@ -364,6 +407,8 @@ async function seed(): Promise<void> {
         title: 'Opinions Count',
         canonicalMeaning: 'Does the employee feel that their opinions and input actually matter at work — that they are heard and taken seriously?',
         dimension: 'engagement',
+        questionGroup: 'autonomy',
+        responseType: 'open_ended',
         positiveIndicators: [
           'feels their ideas are taken seriously',
           'input led to visible change or decision',
@@ -396,6 +441,8 @@ async function seed(): Promise<void> {
         title: 'Progress Discussion',
         canonicalMeaning: 'In the last six months, has someone at work talked to the employee about their progress — career development, growth, or how they\'re doing beyond immediate tasks?',
         dimension: 'development',
+        questionGroup: 'growth',
+        responseType: 'open_ended',
         positiveIndicators: [
           'had a meaningful 1:1 about growth or career direction recently',
           'manager gave feedback on how they are progressing',
@@ -426,17 +473,125 @@ async function seed(): Promise<void> {
     ];
 
     for (const q of q12Questions) {
-      const existing = await db
-        .select({ id: surveyQuestions.id })
-        .from(surveyQuestions)
-        .where(eq(surveyQuestions.stableKey, q.stableKey))
-        .limit(1);
-      if (!existing[0]) {
-        await db.insert(surveyQuestions).values({ surveyDefinitionId: defId, ...q });
-        console.log(`✓ Added Q12 question: ${q.stableKey}`);
-      } else {
-        console.log(`  Q12 question already exists: ${q.stableKey}`);
-      }
+      await db
+        .insert(surveyQuestions)
+        .values({ surveyDefinitionId: defId, ...q })
+        .onConflictDoUpdate({
+          target: [surveyQuestions.surveyDefinitionId, surveyQuestions.stableKey],
+          set: {
+            questionGroup: q.questionGroup,
+            responseType: q.responseType,
+          },
+        });
+      console.log(`✓ Upserted Q12 question: ${q.stableKey}`);
+    }
+
+    // New pulse-check questions
+    const newQuestions = [
+      {
+        stableKey: 'purpose_meaning',
+        title: 'Work Meaningfulness',
+        canonicalMeaning: 'Does the employee find their work meaningful?',
+        dimension: 'purpose',
+        questionGroup: 'purpose',
+        responseType: 'open_ended',
+        displayOrder: 20,
+        positiveIndicators: ['finds work fulfilling', 'feels their work matters', 'energised by their tasks', 'connected to mission'],
+        negativeIndicators: ['feels work is pointless', 'going through the motions', 'no passion left', 'disconnected'],
+        probeStrategies: ['Ask what part of their work they find most meaningful', 'Explore what impact their work has had recently'],
+        contraindications: ['active crisis', 'resignation announced'],
+        confidenceThreshold: '0.70',
+        completenessThreshold: '0.65',
+      },
+      {
+        stableKey: 'purpose_contribution',
+        title: 'Contribution Clarity',
+        canonicalMeaning: 'Does the employee clearly see how their work contributes to something that matters?',
+        dimension: 'purpose',
+        questionGroup: 'purpose',
+        responseType: 'open_ended',
+        displayOrder: 21,
+        positiveIndicators: ['can articulate impact', 'sees the bigger picture', 'understands how work fits the mission', 'feels relevant'],
+        negativeIndicators: ['unsure why they do what they do', 'feels invisible', 'work feels siloed', 'no visibility into outcomes'],
+        probeStrategies: ['Ask how their recent project connects to team goals', 'Explore whether they see the outcome of their work'],
+        contraindications: ['active crisis'],
+        confidenceThreshold: '0.70',
+        completenessThreshold: '0.65',
+      },
+      {
+        stableKey: 'belonging_psychological_safety',
+        title: 'Psychological Safety',
+        canonicalMeaning: 'Does the employee feel safe speaking up with concerns, ideas, or admitting mistakes?',
+        dimension: 'relationship',
+        questionGroup: 'belonging',
+        responseType: 'open_ended',
+        displayOrder: 22,
+        positiveIndicators: ['comfortable raising concerns', 'feels heard when speaking up', 'can admit mistakes', 'team is non-judgmental'],
+        negativeIndicators: ['afraid to speak up', 'fears retaliation', 'hides mistakes', 'silence in meetings'],
+        probeStrategies: ['Ask about the last time they raised a concern or idea', 'Explore whether they feel safe disagreeing with their manager'],
+        contraindications: ['active harassment signal', 'fear of termination'],
+        confidenceThreshold: '0.75',
+        completenessThreshold: '0.65',
+      },
+      {
+        stableKey: 'engagement_nps',
+        title: 'eNPS',
+        canonicalMeaning: 'How likely is the employee to recommend this company as a place to work? (0–10)',
+        dimension: 'engagement',
+        questionGroup: 'engagement',
+        responseType: 'numeric_0_10',
+        displayOrder: 30,
+        positiveIndicators: ['would definitely recommend', 'proud to work here', 'company is great employer'],
+        negativeIndicators: ['would not recommend', 'embarrassed to mention employer', 'actively discouraging others'],
+        probeStrategies: ['Ask how likely they are to recommend the company to a friend on a scale of 0 to 10'],
+        contraindications: ['active crisis'],
+        confidenceThreshold: '0.80',
+        completenessThreshold: '0.80',
+      },
+      {
+        stableKey: 'engagement_motivation',
+        title: 'Motivation Frequency',
+        canonicalMeaning: 'How often does the employee feel motivated to give their best effort at work? (0–10)',
+        dimension: 'engagement',
+        questionGroup: 'engagement',
+        responseType: 'numeric_0_10',
+        displayOrder: 31,
+        positiveIndicators: ['almost always motivated', 'brings best self every day', 'driven to do excellent work'],
+        negativeIndicators: ['rarely motivated', 'just doing the minimum', 'phone it in', 'disengaged'],
+        probeStrategies: ['Ask how often they feel motivated to give their best, from 0 (never) to 10 (always)'],
+        contraindications: [],
+        confidenceThreshold: '0.80',
+        completenessThreshold: '0.80',
+      },
+      {
+        stableKey: 'engagement_current',
+        title: 'Current Engagement',
+        canonicalMeaning: 'How engaged does the employee feel with their work right now? (0–10)',
+        dimension: 'engagement',
+        questionGroup: 'engagement',
+        responseType: 'numeric_0_10',
+        displayOrder: 32,
+        positiveIndicators: ['fully absorbed', 'time flies at work', 'invested in outcomes', 'energised'],
+        negativeIndicators: ['checked out', 'watching the clock', 'present but absent', 'going through motions'],
+        probeStrategies: ['Ask how engaged they feel with their current work on a scale of 0 to 10'],
+        contraindications: [],
+        confidenceThreshold: '0.80',
+        completenessThreshold: '0.80',
+      },
+    ];
+
+    for (const q of newQuestions) {
+      await db
+        .insert(surveyQuestions)
+        .values({ surveyDefinitionId: defId, ...q })
+        .onConflictDoUpdate({
+          target: [surveyQuestions.surveyDefinitionId, surveyQuestions.stableKey],
+          set: {
+            questionGroup: q.questionGroup,
+            responseType: q.responseType,
+          },
+        });
+      console.log(`✓ Upserted new question: ${q.stableKey}`);
     }
   }
 
