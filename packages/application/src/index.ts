@@ -36,7 +36,7 @@ export type { SurveyEvidenceExtractionInput } from './use-cases/survey-evidence.
 export { DataDeletionUseCase } from './use-cases/data-deletion.use-case';
 export type { DataDeletionInput } from './use-cases/data-deletion.use-case';
 export type { DataDeletionResult } from './ports/data-deletion.repository.port';
-// export { GroupConfirmationUseCase } from './use-cases/group-confirmation.use-case';
-// export type { GroupConfirmationInput } from './use-cases/group-confirmation.use-case';
-// export { GroupReportUseCase } from './use-cases/group-report.use-case';
-// export type { GroupReportInput } from './use-cases/group-report.use-case';
+export { GroupConfirmationUseCase } from './use-cases/group-confirmation.use-case';
+export type { GroupConfirmationInput } from './use-cases/group-confirmation.use-case';
+export { GroupReportUseCase } from './use-cases/group-report.use-case';
+export type { GroupReportInput, GroupReportResult } from './use-cases/group-report.use-case';
