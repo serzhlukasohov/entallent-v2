@@ -21,7 +21,7 @@ export const surveyGroupStates = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    uniqueWindowUserGroup: unique().on(t.surveyWindowId, t.userId, t.questionGroup),
+    uniqueWindowUserGroup: unique('survey_group_states_window_user_group_key').on(t.surveyWindowId, t.userId, t.questionGroup),
     userGroupIdx: index('survey_group_states_user_idx').on(t.userId, t.questionGroup),
   }),
 );
