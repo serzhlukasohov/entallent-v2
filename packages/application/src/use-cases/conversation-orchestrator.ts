@@ -14,7 +14,8 @@ import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
 import { FEATURE_FLAGS } from '../ports/feature-flag.port';
-import type { SurveyQuestionRecord } from '../types/records';
+import type { SurveyQuestionRecord, SurveyGroupStateRecord } from '../types/records';
+import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 
 export interface OrchestrateInput {
   messageId: string;
@@ -65,6 +66,15 @@ export class ConversationOrchestrator {
     const userName = conversation.userDisplayName ?? 'there';
     const userTimezone = conversation.userTimezone ?? 'UTC';
     const flagCtx = { tenantId, userId };
+
+    // Check for pending group confirmations before classification.
+    // If the employee is responding to a confirmation request, intercept and process it.
+    const pendingConfirmation = this.surveyRepo
+      ? await this.surveyRepo.findPendingConfirmationGroups(input.userId)
+      : [];
+    if (pendingConfirmation.length > 0) {
+      await this.handleGroupConfirmation(pendingConfirmation[0], turns, input);
+    }
 
     // Classify, feature flags, and memory load are all independent — run them together.
     // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
@@ -244,6 +254,84 @@ export class ConversationOrchestrator {
       classification,
       risk,
     };
+  }
+
+  private async handleGroupConfirmation(
+    groupState: SurveyGroupStateRecord,
+    turns: ConversationTurn[],
+    input: OrchestrateInput,
+  ): Promise<boolean> {
+    if (!this.aiProvider || !this.surveyRepo || !this.outbox) return false;
+
+    const lastUserTurn = [...turns].reverse().find((t) => t.role === 'user');
+    if (!lastUserTurn) return false;
+
+    // Simple heuristic: look for confirmation keywords in the employee's last message.
+    const text = lastUserTurn.content.toLowerCase();
+    const CONFIRM_KEYWORDS = ['да', 'yes', 'верно', 'правильно', 'согласен', 'именно', 'точно', 'ок', 'ok', 'correct', 'right', 'sounds good'];
+    const isConfirmed = CONFIRM_KEYWORDS.some((kw) => text.includes(kw));
+
+    if (isConfirmed) {
+      // Compute employee_score before confirming
+      let employeeScore: number | undefined;
+      if (groupState.questionGroup === 'engagement') {
+        const evidenceItems = await this.surveyRepo.findQuestionsForWindow(groupState.surveyWindowId)
+          .then(async (questions) => {
+            const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
+            const evidenceList = await Promise.all(
+              groupQs.map((q) => this.surveyRepo!.findEvidenceForQuestion(input.userId, q.id, groupState.surveyWindowId)),
+            );
+            return evidenceList.flat();
+          });
+        const numericValues = evidenceItems
+          .filter((e) => e.polarity === 'positive' || e.polarity === 'neutral' || e.polarity === 'negative')
+          .slice(0, 3)
+          .map((e) => ({ positive: 10, neutral: 5, negative: 0, mixed: 5 }[e.polarity] ?? 5));
+        if (numericValues.length === 3) {
+          employeeScore = computeEngagementIndex(numericValues[0], numericValues[1], numericValues[2]);
+        }
+      } else {
+        const questions = await this.surveyRepo.findQuestionsForWindow(groupState.surveyWindowId);
+        const groupQs = questions.filter((q) => q.questionGroup === groupState.questionGroup);
+        const questionScores: number[] = [];
+        for (const q of groupQs) {
+          const evidence = await this.surveyRepo.findEvidenceForQuestion(input.userId, q.id, groupState.surveyWindowId);
+          const latest = [...evidence].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+          if (latest) {
+            const sentimentScore = await this.aiProvider.scoreSentiment(latest.evidenceSummary);
+            questionScores.push(computeOpenEndedQuestionScore(latest.polarity, sentimentScore));
+          }
+        }
+        if (questionScores.length > 0) {
+          employeeScore = computeGroupIndex(questionScores);
+        }
+      }
+
+      await this.surveyRepo.upsertGroupState({
+        surveyWindowId: groupState.surveyWindowId,
+        userId: groupState.userId,
+        tenantId: groupState.tenantId,
+        questionGroup: groupState.questionGroup,
+        status: 'confirmed',
+        aiSummary: groupState.aiSummary ?? undefined,
+        employeeScore,
+        confirmedAt: new Date(),
+      });
+
+      // Trigger report generation
+      const team = await this.surveyRepo.findTeamByMemberId(input.userId);
+      if (team) {
+        await this.outbox.enqueueGroupReport({
+          teamId: team.teamId,
+          questionGroup: groupState.questionGroup,
+          traceId: `group-report-${groupState.surveyWindowId}-${groupState.questionGroup}`,
+        });
+      }
+    }
+    // If needs_correction: GroupConfirmationUseCase will re-run on next cycle
+    // (the group state remains pending_confirmation — no change needed here)
+
+    return true; // Signal that this message was a confirmation interaction
   }
 
   private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
