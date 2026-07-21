@@ -72,9 +72,10 @@ export class ConversationOrchestrator {
     const pendingConfirmation = this.surveyRepo
       ? await this.surveyRepo.findPendingConfirmationGroups(input.userId)
       : [];
-    if (pendingConfirmation.length > 0) {
-      await this.handleGroupConfirmation(pendingConfirmation[0], turns, input);
-    }
+    const confirmationHandled =
+      pendingConfirmation.length > 0
+        ? await this.handleGroupConfirmation(pendingConfirmation[0], turns, input)
+        : false;
 
     // Classify, feature flags, and memory load are all independent — run them together.
     // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
@@ -125,7 +126,8 @@ export class ConversationOrchestrator {
       speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
     ]);
 
-    const probeQuestion = speculativeProbeAllowed && !risk.surveyMustBeBlocked ? speculativeProbe : null;
+    const probeQuestion =
+      !confirmationHandled && speculativeProbeAllowed && !risk.surveyMustBeBlocked ? speculativeProbe : null;
 
     // Persist risk signal when a real risk is detected
     if (risk.riskType && risk.severity !== 'none' && this.riskSignalRepo) {
@@ -262,6 +264,7 @@ export class ConversationOrchestrator {
     input: OrchestrateInput,
   ): Promise<boolean> {
     if (!this.aiProvider || !this.surveyRepo || !this.outbox) return false;
+    const surveyRepo = this.surveyRepo;
 
     const lastUserTurn = [...turns].reverse().find((t) => t.role === 'user');
     if (!lastUserTurn) return false;
@@ -279,7 +282,7 @@ export class ConversationOrchestrator {
           .then(async (questions) => {
             const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
             const evidenceList = await Promise.all(
-              groupQs.map((q) => this.surveyRepo!.findEvidenceForQuestion(input.userId, q.id, groupState.surveyWindowId)),
+              groupQs.map((q) => surveyRepo.findEvidenceForQuestion(input.userId, q.id, groupState.surveyWindowId)),
             );
             return evidenceList.flat();
           });
