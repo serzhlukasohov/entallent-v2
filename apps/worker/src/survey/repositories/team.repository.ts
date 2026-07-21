@@ -32,6 +32,15 @@ export class TeamRepository {
     return this.findTeamById(membership.teamId);
   }
 
+  async findTeamTenantId(teamId: string): Promise<string | null> {
+    const [row] = await this.db.client
+      .select({ tenantId: teams.tenantId })
+      .from(teams)
+      .where(eq(teams.id, teamId))
+      .limit(1);
+    return row?.tenantId ?? null;
+  }
+
   async findTeamById(teamId: string): Promise<TeamInfo | null> {
     const [team] = await this.db.client
       .select()

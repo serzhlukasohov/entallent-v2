@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { eq, and } from 'drizzle-orm';
 import type { Env } from '@entalent/config';
 import { decryptField } from '@entalent/crypto-utils';
-import { workspaceConnections } from '@entalent/database';
+import { workspaceConnections, channelAccounts } from '@entalent/database';
 import type { WorkspaceConnectionRepositoryPort, WorkspaceConnectionRecord } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
 
@@ -46,6 +46,27 @@ export class WorkspaceConnectionRepository implements WorkspaceConnectionReposit
       botToken: creds.botToken,
       signingSecret: creds.signingSecret,
     };
+  }
+
+  async findSlackAccountByUserId(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ externalWorkspaceId: string; externalUserId: string } | null> {
+    const [account] = await this.db.client
+      .select({
+        externalWorkspaceId: channelAccounts.externalWorkspaceId,
+        externalUserId: channelAccounts.externalUserId,
+      })
+      .from(channelAccounts)
+      .where(
+        and(
+          eq(channelAccounts.userId, userId),
+          eq(channelAccounts.tenantId, tenantId),
+          eq(channelAccounts.channelType, 'slack'),
+        ),
+      )
+      .limit(1);
+    return account ?? null;
   }
 
   async findByExternalWorkspace(
