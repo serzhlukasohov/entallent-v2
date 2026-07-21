@@ -3,9 +3,10 @@ import Link from 'next/link';
 const TABS = [
   { key: 'team', label: 'Команда', href: '/' },
   { key: 'trends', label: 'Тренды', href: '/trends' },
+  { key: 'pulse', label: 'Pulse Check', href: '/pulse' },
 ] as const;
 
-export function Nav({ active }: { active: 'team' | 'trends' }) {
+export function Nav({ active }: { active: 'team' | 'trends' | 'pulse' }) {
   return (
     <nav style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
       {TABS.map((t) => {

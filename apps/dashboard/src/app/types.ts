@@ -55,6 +55,33 @@ export interface QuestionSentiment {
   net: number | null;
 }
 
+export interface PulseQuestionRow {
+  stableKey: string;
+  title: string;
+  assessmentStatus: string | null;
+}
+
+export interface PulseGroupRow {
+  questionGroup: string;
+  status: string | null;
+  employeeScore: number | null;
+  confirmedAt: string | null;
+  questions: PulseQuestionRow[];
+}
+
+export interface PulseEmployeeRow {
+  userId: string;
+  displayName: string | null;
+  groups: PulseGroupRow[];
+}
+
+export interface PulseOverviewResponse {
+  tenantId: string;
+  generatedAt: string;
+  allGroups: string[];
+  employees: PulseEmployeeRow[];
+}
+
 export interface TrendsResult {
   rangeStart: string;
   rangeEnd: string;

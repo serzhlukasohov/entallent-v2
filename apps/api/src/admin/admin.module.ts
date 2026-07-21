@@ -11,6 +11,7 @@ import { AnalyticsController } from './analytics.controller';
 import { FeatureFlagsController } from './feature-flags.controller';
 import { ManagerTeamController } from './manager-team.controller';
 import { ManagerTrendsController } from './manager-trends.controller';
+import { PulseOverviewController } from './pulse-overview.controller';
 
 @Module({
   imports: [DatabaseModule, AuditModule],
@@ -24,6 +25,7 @@ import { ManagerTrendsController } from './manager-trends.controller';
     FeatureFlagsController,
     ManagerTeamController,
     ManagerTrendsController,
+    PulseOverviewController,
   ],
   providers: [ApiKeyGuard],
 })
