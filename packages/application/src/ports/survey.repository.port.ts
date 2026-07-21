@@ -45,6 +45,8 @@ export interface SurveyRepositoryPort {
   markEvidenceSuperseded(evidenceIds: string[]): Promise<void>;
   upsertAssessment(params: UpsertAssessmentParams): Promise<void>;
   findEvidenceForQuestion(userId: string, questionId: string, windowId: string): Promise<SurveyEvidenceRecord[]>;
+  // Assessment methods
+  findAssessmentsForWindow(windowId: string): Promise<Array<{ surveyQuestionId: string; status: string }>>;
   // Group state methods
   findGroupState(userId: string, windowId: string, questionGroup: string): Promise<SurveyGroupStateRecord | null>;
   findPendingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]>;

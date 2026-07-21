@@ -241,6 +241,14 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return rows.map(mapEvidence);
   }
 
+  async findAssessmentsForWindow(windowId: string): Promise<Array<{ surveyQuestionId: string; status: string }>> {
+    const rows = await this.db.client
+      .select({ surveyQuestionId: surveyAssessments.surveyQuestionId, status: surveyAssessments.status })
+      .from(surveyAssessments)
+      .where(eq(surveyAssessments.surveyWindowId, windowId));
+    return rows;
+  }
+
   // Group state methods — delegated to GroupStateRepository
   findGroupState(
     userId: string,

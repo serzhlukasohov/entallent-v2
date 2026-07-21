@@ -1,6 +1,8 @@
 import type { AiProviderPort, ConversationTurn, SurveyQuestionForEvaluation } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
+import type { OutboxPort } from '../ports/outbox.port';
+import type { SurveyQuestionRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
 
@@ -28,6 +30,7 @@ export class SurveyEvidenceExtractionUseCase {
     private readonly ai: AiProviderPort,
     private readonly conversationRepo: ConversationRepositoryPort,
     private readonly surveyRepo: SurveyRepositoryPort,
+    private readonly outbox?: OutboxPort,
   ) {}
 
   async execute(input: SurveyEvidenceExtractionInput): Promise<void> {
@@ -119,6 +122,55 @@ export class SurveyEvidenceExtractionUseCase {
         status,
         evidenceId: evidenceRecord.id,
         evaluatorVersion: 'v1',
+      });
+
+      await this.checkGroupCompletion(input, window.id, ev.questionId, questions);
+    }
+  }
+
+  private async checkGroupCompletion(
+    input: SurveyEvidenceExtractionInput,
+    windowId: string,
+    assessedQuestionId: string,
+    allQuestions: SurveyQuestionRecord[],
+  ): Promise<void> {
+    const assessedQuestion = allQuestions.find((q) => q.id === assessedQuestionId);
+    if (!assessedQuestion) return;
+
+    const questionGroup = assessedQuestion.questionGroup;
+    if (!questionGroup) return;
+
+    // Check idempotency: if group state already exists (any status), skip
+    const existingState = await this.surveyRepo.findGroupState(input.userId, windowId, questionGroup);
+    if (existingState) return;
+
+    const groupQuestions = allQuestions.filter((q) => q.questionGroup === questionGroup);
+    if (groupQuestions.length === 0) return;
+
+    const assessments = await this.surveyRepo.findAssessmentsForWindow(windowId);
+    const assessmentMap = new Map(assessments.map((a) => [a.surveyQuestionId, a.status]));
+
+    const COMPLETE_STATUSES = new Set(['partially_covered', 'scored']);
+    const allComplete = groupQuestions.every((q) => COMPLETE_STATUSES.has(assessmentMap.get(q.id) ?? ''));
+
+    if (!allComplete) return;
+
+    // Create group state and trigger confirmation
+    await this.surveyRepo.upsertGroupState({
+      surveyWindowId: windowId,
+      userId: input.userId,
+      tenantId: input.tenantId,
+      questionGroup,
+      status: 'pending_confirmation',
+    });
+
+    if (this.outbox) {
+      await this.outbox.enqueueGroupConfirmation({
+        surveyWindowId: windowId,
+        userId: input.userId,
+        tenantId: input.tenantId,
+        questionGroup,
+        traceId: `group-completion-${windowId}-${questionGroup}`,
       });
     }
   }

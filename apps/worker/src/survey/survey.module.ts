@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { getQueueToken } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { SurveyEvidenceExtractionUseCase, GroupReportUseCase } from '@entalent/application';
+import type { OutboxPort, GroupConfirmationPayload } from '@entalent/application';
 import { SurveyEvidenceProcessor } from './survey-evidence.processor';
 import { GroupConfirmationProcessor } from './group-confirmation.processor';
 import { GroupReportProcessor } from './group-report.processor';
@@ -30,10 +33,22 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     TeamRepository,
     SurveyRepository,
     {
+      provide: 'SurveyOutboxAdapter',
+      useFactory: (queue: Queue<GroupConfirmationPayload>): OutboxPort => ({
+        enqueueGroupConfirmation: async (p) => { await queue.add('confirm', p); },
+        enqueueMessageSend: async () => {},
+        enqueueMemoryExtraction: async () => {},
+        enqueueFollowUpExecution: async () => {},
+        enqueueSurveyEvidence: async () => {},
+        enqueueGroupReport: async () => {},
+      }),
+      inject: [getQueueToken(QUEUE_NAMES.GROUP_CONFIRMATION)],
+    },
+    {
       provide: SurveyEvidenceExtractionUseCase,
-      useFactory: (ai: AiService, convRepo: ConversationRepository, surveyRepo: SurveyRepository) =>
-        new SurveyEvidenceExtractionUseCase(ai, convRepo, surveyRepo),
-      inject: [AiService, ConversationRepository, SurveyRepository],
+      useFactory: (ai: AiService, convRepo: ConversationRepository, surveyRepo: SurveyRepository, outbox: OutboxPort) =>
+        new SurveyEvidenceExtractionUseCase(ai, convRepo, surveyRepo, outbox),
+      inject: [AiService, ConversationRepository, SurveyRepository, 'SurveyOutboxAdapter'],
     },
     {
       provide: GroupReportUseCase,
