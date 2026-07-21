@@ -36,9 +36,25 @@ export interface SurveyEvidencePayload {
   traceId: string;
 }
 
+export interface GroupConfirmationPayload {
+  surveyWindowId: string;
+  userId: string;
+  tenantId: string;
+  questionGroup: string;
+  traceId: string;
+}
+
+export interface GroupReportPayload {
+  teamId: string;
+  questionGroup: string;
+  traceId: string;
+}
+
 export interface OutboxPort {
   enqueueMessageSend(payload: MessageSendPayload): Promise<void>;
   enqueueMemoryExtraction(payload: MemoryExtractionPayload): Promise<void>;
   enqueueFollowUpExecution(payload: FollowUpExecutionPayload): Promise<void>;
   enqueueSurveyEvidence(payload: SurveyEvidencePayload): Promise<void>;
+  enqueueGroupConfirmation(payload: GroupConfirmationPayload): Promise<void>;
+  enqueueGroupReport(payload: GroupReportPayload): Promise<void>;
 }

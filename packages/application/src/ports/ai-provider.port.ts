@@ -5,6 +5,8 @@ import type {
   ReplyStrategy,
   GeneratedResponse,
   SurveyEvidenceEvaluation,
+  GroupSummary,
+  GroupReport,
 } from '@entalent/contracts';
 
 export interface ConversationTurn {
@@ -84,4 +86,18 @@ export interface AiProviderPort {
     strategy: ReplyStrategy,
     context: ResponseContext,
   ): Promise<GeneratedResponse>;
+
+  generateGroupSummary(
+    summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
+    questionGroup: string,
+  ): Promise<GroupSummary>;
+
+  generateGroupReport(
+    teamSummaries: string[],
+    questionGroup: string,
+    teamScore: number,
+    trend: number | null,
+  ): Promise<GroupReport>;
+
+  scoreSentiment(text: string): Promise<number>;
 }

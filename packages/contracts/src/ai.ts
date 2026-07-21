@@ -72,7 +72,7 @@ export const MemoryItemProposalSchema = z.object({
   category: MemoryCategorySchema,
   canonicalKey: z.string().optional(),
   content: z.string(),
-  structuredValue: z.record(z.unknown()).optional(),
+  structuredValue: z.record(z.unknown()).nullish(),
   confidence: z.number().min(0).max(1),
   importance: z.number().min(0).max(1),
   sensitivity: z.enum(['normal', 'sensitive', 'highly_sensitive']),
@@ -199,3 +199,27 @@ export const GeneratedResponseSchema = z.object({
   surveyProbeQuestionId: z.string().optional(),
 });
 export type GeneratedResponse = z.infer<typeof GeneratedResponseSchema>;
+
+// ── Group Confirmation Generator ────────────────────────────────────────────
+
+export const GroupSummarySchema = z.object({
+  summary: z.string(),         // The confirmation message to send to the employee
+  sentimentScores: z.record(z.string(), z.number().min(0).max(1)), // questionId → 0–1
+  extractedNumericValues: z.record(z.string(), z.number().min(0).max(10)).optional(), // stableKey → 0–10 for engagement questions
+});
+export type GroupSummary = z.infer<typeof GroupSummarySchema>;
+
+// ── Group Report Generator ───────────────────────────────────────────────────
+
+export const GroupReportSchema = z.object({
+  explanation: z.string(),     // Why is the score at this level (3-4 sentences)
+  actionItems: z.array(z.string()).length(3), // Exactly 3 action items
+});
+export type GroupReport = z.infer<typeof GroupReportSchema>;
+
+// ── Sentiment Scorer ─────────────────────────────────────────────────────────
+
+export const SentimentScoreSchema = z.object({
+  score: z.number().min(0).max(1),  // 0 = strongly negative, 1 = strongly positive
+});
+export type SentimentScore = z.infer<typeof SentimentScoreSchema>;

@@ -131,6 +131,8 @@ export interface SurveyQuestionRecord {
   maxFollowUpProbes: number;
   displayOrder: number;
   version: string;
+  questionGroup: string;  // 'autonomy' | 'growth' | 'purpose' | 'belonging' | 'engagement'
+  responseType: string;   // 'open_ended' | 'numeric_0_10'
 }
 
 export interface SurveyWindowRecord {
@@ -176,4 +178,37 @@ export interface UserGoalRecord {
   cancelledAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface SurveyGroupStateRecord {
+  id: string;
+  surveyWindowId: string;
+  userId: string;
+  tenantId: string;
+  questionGroup: string;
+  status: string;  // 'in_progress' | 'pending_confirmation' | 'confirmed' | 'report_sent'
+  aiSummary: string | null;
+  employeeScore: number | null;
+  personalRecs: unknown | null;
+  confirmedAt: Date | null;
+  reportSentAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TeamRecord {
+  id: string;
+  tenantId: string;
+  name: string;
+  managerSlackUserId: string | null;
+  createdAt: Date;
+}
+
+export interface TeamMembershipRecord {
+  id: string;
+  teamId: string;
+  userId: string;
+  role: string;
+  joinedAt: Date;
+  leftAt: Date | null;
 }
