@@ -12,15 +12,23 @@ import type {
   SurveyRepositoryPort,
   SaveSurveyEvidenceParams,
   UpsertAssessmentParams,
+  UpsertGroupStateParams,
   SurveyQuestionRecord,
   SurveyWindowRecord,
   SurveyEvidenceRecord,
+  SurveyGroupStateRecord,
 } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
+import { GroupStateRepository } from './group-state.repository';
+import { TeamRepository } from './team.repository';
 
 @Injectable()
 export class SurveyRepository implements SurveyRepositoryPort {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly groupStateRepo: GroupStateRepository,
+    private readonly teamRepo: TeamRepository,
+  ) {}
 
   async findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | null> {
     const [existing] = await this.db.client
@@ -232,6 +240,43 @@ export class SurveyRepository implements SurveyRepositoryPort {
 
     return rows.map(mapEvidence);
   }
+
+  // Group state methods — delegated to GroupStateRepository
+  findGroupState(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
+  ): Promise<SurveyGroupStateRecord | null> {
+    return this.groupStateRepo.findGroupState(userId, windowId, questionGroup);
+  }
+
+  findPendingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]> {
+    return this.groupStateRepo.findPendingConfirmationGroups(userId);
+  }
+
+  upsertGroupState(params: UpsertGroupStateParams): Promise<SurveyGroupStateRecord> {
+    return this.groupStateRepo.upsertGroupState(params);
+  }
+
+  findConfirmedGroupStates(
+    userIds: string[],
+    questionGroup: string,
+  ): Promise<SurveyGroupStateRecord[]> {
+    return this.groupStateRepo.findConfirmedGroupStates(userIds, questionGroup);
+  }
+
+  // Team methods — delegated to TeamRepository
+  findTeamByMemberId(
+    userId: string,
+  ): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null> {
+    return this.teamRepo.findTeamByMemberId(userId);
+  }
+
+  findTeamById(
+    teamId: string,
+  ): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null> {
+    return this.teamRepo.findTeamById(teamId);
+  }
 }
 
 function mapWindow(row: typeof surveyWindows.$inferSelect): SurveyWindowRecord {
@@ -265,6 +310,8 @@ function mapQuestion(row: DbSurveyQuestion): SurveyQuestionRecord {
     cooldownDays: row.cooldownDays,
     maxFollowUpProbes: row.maxFollowUpProbes,
     displayOrder: row.displayOrder,
+    questionGroup: row.questionGroup,
+    responseType: row.responseType,
     version: row.version,
   };
 }

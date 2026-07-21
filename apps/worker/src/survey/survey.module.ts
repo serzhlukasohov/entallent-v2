@@ -3,6 +3,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { SurveyEvidenceExtractionUseCase } from '@entalent/application';
 import { SurveyEvidenceProcessor } from './survey-evidence.processor';
 import { SurveyRepository } from './repositories/survey.repository';
+import { GroupStateRepository } from './repositories/group-state.repository';
+import { TeamRepository } from './repositories/team.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { AiService } from '../conversation/ai.service';
 import { DatabaseModule } from '../database/database.module';
@@ -16,6 +18,8 @@ import { QUEUE_NAMES } from '../queue/queue.module';
   providers: [
     AiService,
     ConversationRepository,
+    GroupStateRepository,
+    TeamRepository,
     SurveyRepository,
     {
       provide: SurveyEvidenceExtractionUseCase,

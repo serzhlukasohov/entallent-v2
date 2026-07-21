@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload } from '@entalent/application';
+import type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupConfirmationPayload, GroupReportPayload } from '@entalent/application';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import type { MessageSendJob } from '../message-send/message-send.processor';
 
@@ -15,6 +15,10 @@ export class OutboxService implements OutboxPort {
     private readonly followUpQueue: Queue<FollowUpExecutionPayload>,
     @InjectQueue(QUEUE_NAMES.SURVEY_EVIDENCE)
     private readonly surveyEvidenceQueue: Queue<SurveyEvidencePayload>,
+    @InjectQueue(QUEUE_NAMES.GROUP_CONFIRMATION)
+    private readonly groupConfirmationQueue: Queue<GroupConfirmationPayload>,
+    @InjectQueue(QUEUE_NAMES.GROUP_REPORT)
+    private readonly groupReportQueue: Queue<GroupReportPayload>,
   ) {}
 
   async enqueueMessageSend(payload: MessageSendPayload): Promise<void> {
@@ -41,5 +45,13 @@ export class OutboxService implements OutboxPort {
 
   async enqueueSurveyEvidence(payload: SurveyEvidencePayload): Promise<void> {
     await this.surveyEvidenceQueue.add('evaluate', payload);
+  }
+
+  async enqueueGroupConfirmation(payload: GroupConfirmationPayload): Promise<void> {
+    await this.groupConfirmationQueue.add('confirm', payload);
+  }
+
+  async enqueueGroupReport(payload: GroupReportPayload): Promise<void> {
+    await this.groupReportQueue.add('report', payload);
   }
 }
