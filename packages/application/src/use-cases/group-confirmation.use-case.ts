@@ -36,7 +36,7 @@ export class GroupConfirmationUseCase {
         q.id,
         input.surveyWindowId,
       );
-      const latest = evidence.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+      const latest = [...evidence].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
       if (latest) {
         evidenceSummaries.push({
           questionId: q.id,
