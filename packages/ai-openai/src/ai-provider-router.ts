@@ -14,6 +14,8 @@ import type {
   ReplyStrategy,
   GeneratedResponse,
   SurveyEvidenceEvaluation,
+  GroupSummary,
+  GroupReport,
 } from '@entalent/contracts';
 
 /**
@@ -56,6 +58,26 @@ export class AiProviderWithFallback implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     return this.withFallback((p) => p.generateResponse(turns, strategy, context));
+  }
+
+  async generateGroupSummary(
+    summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
+    questionGroup: string,
+  ): Promise<GroupSummary> {
+    return this.withFallback((p) => p.generateGroupSummary(summaries, questionGroup));
+  }
+
+  async generateGroupReport(
+    teamSummaries: string[],
+    questionGroup: string,
+    teamScore: number,
+    trend: number | null,
+  ): Promise<GroupReport> {
+    return this.withFallback((p) => p.generateGroupReport(teamSummaries, questionGroup, teamScore, trend));
+  }
+
+  async scoreSentiment(text: string): Promise<number> {
+    return this.withFallback((p) => p.scoreSentiment(text));
   }
 
   private async withFallback<T>(call: (provider: AiProviderPort) => Promise<T>): Promise<T> {

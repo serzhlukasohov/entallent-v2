@@ -6,12 +6,17 @@ import {
   MemoryProposalSchema,
   GeneratedResponseSchema,
   SurveyEvidenceEvaluationSchema,
+  GroupSummarySchema,
+  GroupReportSchema,
+  SentimentScoreSchema,
   type SituationClassification,
   type RiskDetection,
   type MemoryProposal,
   type ReplyStrategy,
   type GeneratedResponse,
   type SurveyEvidenceEvaluation,
+  type GroupSummary,
+  type GroupReport,
 } from '@entalent/contracts';
 import type {
   AiProviderPort,
@@ -27,6 +32,8 @@ import { buildMemorySystemPrompt, buildMemoryUserPrompt } from './prompts/memory
 import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
 import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey';
+import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
+import { buildGroupReportSystemPrompt, buildGroupReportUserPrompt } from './prompts/group-report';
 
 export interface ModelConfig {
   /** Used for classification and risk detection (structured, lower cost). Default: gpt-4o-mini */
@@ -137,6 +144,41 @@ export class OpenAiProvider implements AiProviderPort {
       this.generationModel,
     );
     return GeneratedResponseSchema.parse(JSON.parse(raw));
+  }
+
+  async generateGroupSummary(
+    summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
+    questionGroup: string,
+  ): Promise<GroupSummary> {
+    const raw = await this.complete(
+      buildGroupConfirmationSystemPrompt(questionGroup),
+      buildGroupConfirmationUserPrompt(summaries, questionGroup),
+      this.analysisModel,
+    );
+    return GroupSummarySchema.parse(JSON.parse(raw));
+  }
+
+  async generateGroupReport(
+    teamSummaries: string[],
+    questionGroup: string,
+    teamScore: number,
+    trend: number | null,
+  ): Promise<GroupReport> {
+    const raw = await this.complete(
+      buildGroupReportSystemPrompt(),
+      buildGroupReportUserPrompt(teamSummaries, questionGroup, teamScore, trend),
+      this.analysisModel,
+    );
+    return GroupReportSchema.parse(JSON.parse(raw));
+  }
+
+  async scoreSentiment(text: string): Promise<number> {
+    const raw = await this.complete(
+      `Score the sentiment of the following text from 0.0 (very negative) to 1.0 (very positive). Return JSON: {"score": 0.0}`,
+      text,
+      this.analysisModel,
+    );
+    return SentimentScoreSchema.parse(JSON.parse(raw)).score;
   }
 
   private async complete(systemPrompt: string, userPrompt: string, model: string): Promise<string> {

@@ -18,6 +18,8 @@ import type {
   ReplyStrategy,
   GeneratedResponse,
   SurveyEvidenceEvaluation,
+  GroupSummary,
+  GroupReport,
 } from '@entalent/contracts';
 
 @Injectable()
@@ -69,5 +71,25 @@ export class AiService implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     return this.provider.generateResponse(turns, strategy, context);
+  }
+
+  generateGroupSummary(
+    summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
+    questionGroup: string,
+  ): Promise<GroupSummary> {
+    return this.provider.generateGroupSummary(summaries, questionGroup);
+  }
+
+  generateGroupReport(
+    teamSummaries: string[],
+    questionGroup: string,
+    teamScore: number,
+    trend: number | null,
+  ): Promise<GroupReport> {
+    return this.provider.generateGroupReport(teamSummaries, questionGroup, teamScore, trend);
+  }
+
+  scoreSentiment(text: string): Promise<number> {
+    return this.provider.scoreSentiment(text);
   }
 }
