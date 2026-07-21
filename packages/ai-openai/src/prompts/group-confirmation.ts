@@ -1,4 +1,3 @@
-import type { ConversationTurn } from '@entalent/application';
 import { sanitizeTurnContent, INJECTION_GUARD } from './sanitize';
 
 export function buildGroupConfirmationSystemPrompt(questionGroup: string): string {
