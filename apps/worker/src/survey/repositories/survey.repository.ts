@@ -98,64 +98,6 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return rows.map(mapQuestion);
   }
 
-  async findPendingProbeQuestion(
-    userId: string,
-    _tenantId: string,
-    windowId: string,
-  ): Promise<SurveyQuestionRecord | null> {
-    const questions = await this.findQuestionsForWindow(windowId);
-    if (!questions.length) return null;
-
-    const assessments = await this.db.client
-      .select()
-      .from(surveyAssessments)
-      .where(eq(surveyAssessments.surveyWindowId, windowId));
-
-    const assessmentByQuestion = new Map(assessments.map((a) => [a.surveyQuestionId, a.status]));
-
-    const evidenceRows = await this.db.client
-      .select()
-      .from(surveyEvidence)
-      .where(
-        and(
-          eq(surveyEvidence.surveyWindowId, windowId),
-          eq(surveyEvidence.userId, userId),
-          isNull(surveyEvidence.supersededAt),
-        ),
-      );
-
-    const evidenceByQuestion = new Map<string, { count: number; latestDate: Date }>();
-    for (const ev of evidenceRows) {
-      const existing = evidenceByQuestion.get(ev.surveyQuestionId);
-      if (!existing) {
-        evidenceByQuestion.set(ev.surveyQuestionId, { count: 1, latestDate: ev.createdAt });
-      } else {
-        existing.count++;
-        if (ev.createdAt > existing.latestDate) existing.latestDate = ev.createdAt;
-      }
-    }
-
-    const now = new Date();
-
-    for (const question of [...questions].sort((a, b) => a.displayOrder - b.displayOrder)) {
-      const status = assessmentByQuestion.get(question.id);
-      if (status === 'scored' || status === 'covered') continue;
-
-      const info = evidenceByQuestion.get(question.id);
-      if (info && info.count >= question.maxFollowUpProbes) continue;
-
-      if (info) {
-        const daysSince =
-          (now.getTime() - info.latestDate.getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSince < question.cooldownDays) continue;
-      }
-
-      return question;
-    }
-
-    return null;
-  }
-
   async saveEvidence(params: SaveSurveyEvidenceParams): Promise<SurveyEvidenceRecord> {
     const [row] = await this.db.client
       .insert(surveyEvidence)

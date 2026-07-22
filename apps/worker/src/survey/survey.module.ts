@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { SurveyEvidenceExtractionUseCase, GroupReportUseCase } from '@entalent/application';
+import { SurveyEvidenceExtractionUseCase, GroupReportUseCase, PulseBacklogService } from '@entalent/application';
 import type { OutboxPort, GroupConfirmationPayload } from '@entalent/application';
 import { SurveyEvidenceProcessor } from './survey-evidence.processor';
 import { GroupConfirmationProcessor } from './group-confirmation.processor';
@@ -10,6 +10,7 @@ import { GroupReportProcessor } from './group-report.processor';
 import { SurveyRepository } from './repositories/survey.repository';
 import { GroupStateRepository } from './repositories/group-state.repository';
 import { TeamRepository } from './repositories/team.repository';
+import { PulseBacklogRepository } from './repositories/pulse-backlog.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { AiService } from '../conversation/ai.service';
@@ -32,6 +33,13 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     GroupStateRepository,
     TeamRepository,
     SurveyRepository,
+    PulseBacklogRepository,
+    {
+      provide: PulseBacklogService,
+      useFactory: (backlogRepo: PulseBacklogRepository, surveyRepo: SurveyRepository) =>
+        new PulseBacklogService(backlogRepo, surveyRepo),
+      inject: [PulseBacklogRepository, SurveyRepository],
+    },
     {
       provide: 'SurveyOutboxAdapter',
       useFactory: (queue: Queue<GroupConfirmationPayload>): OutboxPort => ({
@@ -60,6 +68,6 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     GroupConfirmationProcessor,
     GroupReportProcessor,
   ],
-  exports: [SurveyRepository],
+  exports: [SurveyRepository, PulseBacklogService],
 })
 export class SurveyModule {}

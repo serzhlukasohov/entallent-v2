@@ -16,6 +16,7 @@ import type { FeatureFlagPort } from '../ports/feature-flag.port';
 import { FEATURE_FLAGS } from '../ports/feature-flag.port';
 import type { SurveyQuestionRecord, SurveyGroupStateRecord } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
+import type { PulseBacklogService } from '../services/pulse-backlog.service';
 
 export interface OrchestrateInput {
   messageId: string;
@@ -46,6 +47,7 @@ export class ConversationOrchestrator {
     private readonly escalation?: EscalationPort,
     private readonly featureFlags?: FeatureFlagPort,
     private readonly scheduledActionRepo?: ScheduledActionRepositoryPort,
+    private readonly pulseBacklogService?: PulseBacklogService,
   ) {}
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
@@ -338,10 +340,9 @@ export class ConversationOrchestrator {
   }
 
   private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
-    if (!this.surveyRepo) return null;
-    const window = await this.surveyRepo.findOrCreateActiveWindow(userId, tenantId);
-    if (!window) return null;
-    return this.surveyRepo.findPendingProbeQuestion(userId, tenantId, window.id);
+    if (!this.pulseBacklogService) return null;
+    const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
+    return result?.question ?? null;
   }
 }
 

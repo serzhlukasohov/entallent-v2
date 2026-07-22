@@ -40,7 +40,6 @@ export interface SurveyRepositoryPort {
   /** Find active window or auto-create one from the active survey definition. Returns null if no definition exists for the tenant. */
   findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | null>;
   findQuestionsForWindow(windowId: string): Promise<SurveyQuestionRecord[]>;
-  findPendingProbeQuestion(userId: string, tenantId: string, windowId: string): Promise<SurveyQuestionRecord | null>;
   saveEvidence(params: SaveSurveyEvidenceParams): Promise<SurveyEvidenceRecord>;
   markEvidenceSuperseded(evidenceIds: string[]): Promise<void>;
   upsertAssessment(params: UpsertAssessmentParams): Promise<void>;

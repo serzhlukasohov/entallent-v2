@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { ConversationOrchestrator, ProactiveCheckInUseCase } from '@entalent/application';
+import { ConversationOrchestrator, ProactiveCheckInUseCase, PulseBacklogService } from '@entalent/application';
 import { ConversationProcessor } from './conversation.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
 import { OutboxService } from './outbox.service';
@@ -51,7 +51,8 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         escalation: EscalationStubService,
         featureFlags: FeatureFlagRepository,
         scheduledActionRepo: ScheduledActionRepository,
-      ) => new ConversationOrchestrator(repo, ai, outbox, memoryRepo, surveyRepo, riskSignalRepo, escalation, featureFlags, scheduledActionRepo),
+        pulseBacklogService: PulseBacklogService,
+      ) => new ConversationOrchestrator(repo, ai, outbox, memoryRepo, surveyRepo, riskSignalRepo, escalation, featureFlags, scheduledActionRepo, pulseBacklogService),
       inject: [
         ConversationRepository,
         AiService,
@@ -62,6 +63,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         EscalationStubService,
         FeatureFlagRepository,
         ScheduledActionRepository,
+        PulseBacklogService,
       ],
     },
     {
@@ -71,15 +73,15 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         ai: AiService,
         outbox: OutboxService,
         memoryRepo: MemoryRepository,
-        surveyRepo: SurveyRepository,
+        pulseBacklogService: PulseBacklogService,
         featureFlags: FeatureFlagRepository,
-      ) => new ProactiveCheckInUseCase(repo, ai, outbox, memoryRepo, surveyRepo, featureFlags),
+      ) => new ProactiveCheckInUseCase(repo, ai, outbox, memoryRepo, pulseBacklogService, featureFlags),
       inject: [
         ConversationRepository,
         AiService,
         OutboxService,
         MemoryRepository,
-        SurveyRepository,
+        PulseBacklogService,
         FeatureFlagRepository,
       ],
     },

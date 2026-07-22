@@ -44,7 +44,7 @@ const envSchema = z.object({
   // Proactive check-in scheduler
   PROACTIVE_SCAN_INTERVAL_MIN: z.coerce.number().int().positive().default(60), // how often the scan runs
   PROACTIVE_MIN_SILENCE_DAYS: z.coerce.number().int().positive().default(3), // silence before a check-in is considered
-  PROACTIVE_MIN_GAP_DAYS: z.coerce.number().int().positive().default(5), // min days between proactive contacts
+  PROACTIVE_MIN_GAP_DAYS: z.coerce.number().int().positive().default(3), // min days between proactive contacts
   PROACTIVE_BATCH_LIMIT: z.coerce.number().int().positive().default(50), // max users contacted per scan
 
   // Observability (optional)

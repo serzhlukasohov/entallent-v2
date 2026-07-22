@@ -15,7 +15,7 @@ export interface ProactiveScanConfig {
 
 const DEFAULT_CONFIG: ProactiveScanConfig = {
   minSilenceDays: 3,
-  minCheckInGapDays: 5,
+  minCheckInGapDays: 3,
   batchLimit: 50,
 };
 

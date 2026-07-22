@@ -101,6 +101,18 @@ describe('ProactiveSchedulerUseCase', () => {
     });
   });
 
+  it('uses minCheckInGapDays=3 as the default', async () => {
+    const repo = makeRepo([]);
+    const queue = makeQueue();
+    const useCase = new ProactiveSchedulerUseCase(repo, queue);
+
+    await useCase.scan();
+
+    expect(repo.findCheckInCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ minCheckInGapDays: 3 }),
+    );
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
