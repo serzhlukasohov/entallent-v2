@@ -10,8 +10,8 @@ import type {
   PulseBacklogRepositoryPort,
   PulseBacklogRecord,
   ResolvedIgnore,
+  SurveyQuestionRecord,
 } from '@entalent/application';
-import type { SurveyQuestionRecord } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
 
 @Injectable()
@@ -108,7 +108,7 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
           status: 'pending',
           position: nextPos,
           ignoreCount: newIgnoreCount,
-          resultedInCoverage: false,
+          resultedInCoverage: null,
           updatedAt: new Date(),
         })
         .where(eq(pulseBacklog.id, entry.id));
@@ -222,7 +222,7 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
       .from(pulseBacklog)
       .where(and(eq(pulseBacklog.userId, userId), eq(pulseBacklog.surveyWindowId, windowId)));
 
-    let nextPos = (maxPos ?? 12) + 1;
+    let nextPos = (maxPos ?? 0) + 1;
 
     const sorted = [...engagementQuestions].sort((a, b) => a.displayOrder - b.displayOrder);
     for (const q of sorted) {
