@@ -162,6 +162,21 @@ export default async function PulsePage() {
                   </div>
                 ))}
               </div>
+
+              {/* Backlog progress row */}
+              <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--surface)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 16, alignItems: 'center' }}>
+                <span>Бэклог: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> закрыто</span>
+                <span><b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> ожидает</span>
+                {emp.backlog.totalIgnoreCount > 0 && (
+                  <span style={{ color: '#f59e0b' }}>↩ {emp.backlog.totalIgnoreCount} проигнорировано</span>
+                )}
+                {emp.backlog.nextQuestion && (
+                  <span>Следующий: <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> ({emp.backlog.nextQuestion.group})</span>
+                )}
+                {!emp.backlog.nextQuestion && emp.backlog.doneCount > 0 && (
+                  <span style={{ color: '#10b981' }}>✓ Все вопросы закрыты</span>
+                )}
+              </div>
             </div>
           ))}
         </div>

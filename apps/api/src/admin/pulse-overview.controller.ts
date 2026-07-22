@@ -6,6 +6,7 @@ import {
   surveyAssessments,
   surveyQuestions,
   surveyGroupStates,
+  pulseBacklog,
 } from '@entalent/database';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
@@ -30,6 +31,12 @@ export interface PulseEmployeeRow {
   userId: string;
   displayName: string | null;
   groups: PulseGroupRow[];
+  backlog: {
+    doneCount: number;
+    pendingCount: number;
+    totalIgnoreCount: number;
+    nextQuestion: { stableKey: string; group: string } | null;
+  };
 }
 
 export interface PulseOverviewResponse {
@@ -57,7 +64,7 @@ export class PulseOverviewController {
       return { tenantId, generatedAt: new Date().toISOString(), allGroups: GROUP_ORDER, employees: [] };
     }
 
-    const [assessmentRows, groupStateRows, questionDefs] = await Promise.all([
+    const [assessmentRows, groupStateRows, questionDefs, backlogRows] = await Promise.all([
       this.db.client
         .select({
           userId: surveyWindows.userId,
@@ -91,6 +98,26 @@ export class PulseOverviewController {
           questionGroup: surveyQuestions.questionGroup,
         })
         .from(surveyQuestions),
+
+      // 4th query: backlog summary per user/window
+      this.db.client
+        .select({
+          userId: pulseBacklog.userId,
+          surveyWindowId: pulseBacklog.surveyWindowId,
+          surveyQuestionId: pulseBacklog.surveyQuestionId,
+          status: pulseBacklog.status,
+          position: pulseBacklog.position,
+          ignoreCount: pulseBacklog.ignoreCount,
+          questionGroup: surveyQuestions.questionGroup,
+          stableKey: surveyQuestions.stableKey,
+        })
+        .from(pulseBacklog)
+        .innerJoin(surveyQuestions, eq(pulseBacklog.surveyQuestionId, surveyQuestions.id))
+        .where(
+          and(
+            eq(pulseBacklog.tenantId, tenantId),
+          ),
+        ),
     ]);
 
     // Index: userId → questionGroup → assessment status
@@ -105,6 +132,34 @@ export class PulseOverviewController {
     for (const row of groupStateRows) {
       if (!stateIndex.has(row.userId)) stateIndex.set(row.userId, new Map());
       stateIndex.get(row.userId)!.set(row.questionGroup, row);
+    }
+
+    // Backlog index: userId → summary
+    const backlogIndex = new Map<string, {
+      doneCount: number;
+      pendingCount: number;
+      totalIgnoreCount: number;
+      nextQuestion: { stableKey: string; group: string } | null;
+    }>();
+
+    for (const u of teamUsers) {
+      const userRows = backlogRows.filter((r) => r.userId === u.id);
+      if (!userRows.length) {
+        backlogIndex.set(u.id, { doneCount: 0, pendingCount: 0, totalIgnoreCount: 0, nextQuestion: null });
+        continue;
+      }
+      const doneCount = userRows.filter((r) => r.status === 'done').length;
+      const pendingRows = userRows.filter((r) => r.status === 'pending');
+      const totalIgnoreCount = userRows.reduce((sum, r) => sum + r.ignoreCount, 0);
+      const nextRow = pendingRows.sort((a, b) => a.position - b.position)[0] ?? null;
+      backlogIndex.set(u.id, {
+        doneCount,
+        pendingCount: pendingRows.length,
+        totalIgnoreCount,
+        nextQuestion: nextRow
+          ? { stableKey: nextRow.stableKey, group: nextRow.questionGroup }
+          : null,
+      });
     }
 
     // Questions per group (sorted by stableKey)
@@ -137,7 +192,12 @@ export class PulseOverviewController {
         };
       });
 
-      return { userId: u.id, displayName: u.displayName, groups };
+      return {
+        userId: u.id,
+        displayName: u.displayName,
+        groups,
+        backlog: backlogIndex.get(u.id) ?? { doneCount: 0, pendingCount: 0, totalIgnoreCount: 0, nextQuestion: null },
+      };
     });
 
     // Only show employees who have at least one assessment or group state

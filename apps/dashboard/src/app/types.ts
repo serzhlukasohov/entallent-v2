@@ -73,6 +73,12 @@ export interface PulseEmployeeRow {
   userId: string;
   displayName: string | null;
   groups: PulseGroupRow[];
+  backlog: {
+    doneCount: number;
+    pendingCount: number;
+    totalIgnoreCount: number;
+    nextQuestion: { stableKey: string; group: string } | null;
+  };
 }
 
 export interface PulseOverviewResponse {
