@@ -54,9 +54,14 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     },
     {
       provide: SurveyEvidenceExtractionUseCase,
-      useFactory: (ai: AiService, convRepo: ConversationRepository, surveyRepo: SurveyRepository, outbox: OutboxPort) =>
-        new SurveyEvidenceExtractionUseCase(ai, convRepo, surveyRepo, outbox),
-      inject: [AiService, ConversationRepository, SurveyRepository, 'SurveyOutboxAdapter'],
+      useFactory: (
+        ai: AiService,
+        convRepo: ConversationRepository,
+        surveyRepo: SurveyRepository,
+        outbox: OutboxPort,
+        pulseBacklogService: PulseBacklogService,
+      ) => new SurveyEvidenceExtractionUseCase(ai, convRepo, surveyRepo, outbox, pulseBacklogService),
+      inject: [AiService, ConversationRepository, SurveyRepository, 'SurveyOutboxAdapter', PulseBacklogService],
     },
     {
       provide: GroupReportUseCase,

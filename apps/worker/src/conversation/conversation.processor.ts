@@ -1,9 +1,13 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { eq } from 'drizzle-orm';
 import { ConversationOrchestrator, ProactiveCheckInUseCase } from '@entalent/application';
+import type { ProactivePulseConfig } from '@entalent/application';
+import { tenants } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
+import { DatabaseService } from '../database/database.service';
 
 export type ConversationJob = {
   messageId: string;
@@ -17,6 +21,8 @@ export type ConversationJob = {
 
 export type CheckInJob = Omit<ConversationJob, 'messageId'>;
 
+const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { engagementUnlockDays: 14, ignoreWindowHours: 48 };
+
 @Processor(QUEUE_NAMES.CONVERSATION)
 export class ConversationProcessor extends WorkerHost implements OnApplicationShutdown {
   private readonly logger = new Logger(ConversationProcessor.name);
@@ -25,6 +31,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly orchestrator: ConversationOrchestrator,
     private readonly checkInUseCase: ProactiveCheckInUseCase,
     private readonly llmRunRepo: LlmRunRepository,
+    private readonly db: DatabaseService,
   ) {
     super();
   }
@@ -47,7 +54,26 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     });
 
     try {
-      const result = await this.checkInUseCase.execute(job.data);
+      // Load tenant policy to pass pulse cadence config to the use case
+      const [tenantRow] = await this.db.client
+        .select({ policy: tenants.proactiveMessagingPolicy })
+        .from(tenants)
+        .where(eq(tenants.id, job.data.tenantId))
+        .limit(1);
+
+      const policy = (tenantRow?.policy ?? {}) as Record<string, unknown>;
+      const pulseConfig: ProactivePulseConfig = {
+        engagementUnlockDays:
+          typeof policy['engagementUnlockDays'] === 'number'
+            ? policy['engagementUnlockDays']
+            : DEFAULT_PULSE_CONFIG.engagementUnlockDays,
+        ignoreWindowHours:
+          typeof policy['ignoreWindowHours'] === 'number'
+            ? policy['ignoreWindowHours']
+            : DEFAULT_PULSE_CONFIG.ignoreWindowHours,
+      };
+
+      const result = await this.checkInUseCase.execute({ ...job.data, pulseConfig });
       this.logger.log(
         `Check-in job ${job.id} done — probe=${result.probeQuestionId ?? 'none'} text="${result.responseText.slice(0, 60)}"`,
       );
@@ -85,15 +111,19 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       this.logger.error(`Job ${job.id} failed (attempt ${job.attemptsMade}): ${(err as Error).message}`, (err as Error).stack);
       throw err;
     } finally {
-      await this.llmRunRepo.record({
-        tenantId: job.data.tenantId,
-        userId: job.data.userId,
-        taskType: 'conversation',
-        model: 'gpt-4o',
-        latencyMs: Date.now() - start,
-        status,
-        traceId: job.data.traceId,
-      }).catch(() => { /* non-critical: don't fail the job on recording errors */ });
+      await this.llmRunRepo
+        .record({
+          tenantId: job.data.tenantId,
+          userId: job.data.userId,
+          taskType: 'conversation',
+          model: 'gpt-4o',
+          latencyMs: Date.now() - start,
+          status,
+          traceId: job.data.traceId,
+        })
+        .catch(() => {
+          /* non-critical */
+        });
     }
   }
 }
