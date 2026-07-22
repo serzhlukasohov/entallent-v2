@@ -5,6 +5,7 @@ import type { OutboxPort } from '../ports/outbox.port';
 import type { SurveyQuestionRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
+import type { PulseBacklogService } from '../services/pulse-backlog.service';
 
 /** Evidence weaker than this is noise ("said hi, fine") — not worth persisting */
 const MIN_EVIDENCE_STRENGTH = 0.35;
@@ -31,6 +32,7 @@ export class SurveyEvidenceExtractionUseCase {
     private readonly conversationRepo: ConversationRepositoryPort,
     private readonly surveyRepo: SurveyRepositoryPort,
     private readonly outbox?: OutboxPort,
+    private readonly pulseBacklogService?: PulseBacklogService,
   ) {}
 
   async execute(input: SurveyEvidenceExtractionInput): Promise<void> {
@@ -123,6 +125,21 @@ export class SurveyEvidenceExtractionUseCase {
         evidenceId: evidenceRecord.id,
         evaluatorVersion: 'v1',
       });
+
+      // Notify backlog when a question reaches coverage threshold
+      if ((status === 'scored' || status === 'covered') && this.pulseBacklogService) {
+        const allEvidence = await this.surveyRepo.findEvidenceForQuestion(
+          input.userId,
+          ev.questionId,
+          window.id,
+        );
+        await this.pulseBacklogService.markQuestionCovered(
+          input.userId,
+          window.id,
+          ev.questionId,
+          allEvidence.length,
+        );
+      }
 
       await this.checkGroupCompletion(input, window.id, ev.questionId, questions);
     }
