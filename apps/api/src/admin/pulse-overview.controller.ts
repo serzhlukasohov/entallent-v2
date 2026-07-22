@@ -99,7 +99,7 @@ export class PulseOverviewController {
         })
         .from(surveyQuestions),
 
-      // 4th query: backlog summary per user/window
+      // 4th query: backlog summary per user/window (scoped to active survey window)
       this.db.client
         .select({
           userId: pulseBacklog.userId,
@@ -113,9 +113,11 @@ export class PulseOverviewController {
         })
         .from(pulseBacklog)
         .innerJoin(surveyQuestions, eq(pulseBacklog.surveyQuestionId, surveyQuestions.id))
+        .innerJoin(surveyWindows, eq(pulseBacklog.surveyWindowId, surveyWindows.id))
         .where(
           and(
             eq(pulseBacklog.tenantId, tenantId),
+            eq(surveyWindows.status, 'active'),
           ),
         ),
     ]);

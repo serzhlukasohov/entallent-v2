@@ -179,6 +179,7 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
           eq(pulseBacklog.userId, userId),
           eq(pulseBacklog.surveyWindowId, windowId),
           eq(pulseBacklog.surveyQuestionId, questionId),
+          eq(pulseBacklog.status, 'pending'),
         ),
       );
   }

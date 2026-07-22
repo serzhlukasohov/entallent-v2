@@ -312,7 +312,7 @@ export class DevSimulateController {
             status: 'pending',
             position: (maxPos ?? 0) + 1,
             ignoreCount: activeEntry.ignoreCount + 1,
-            resultedInCoverage: false,
+            resultedInCoverage: null,
             updatedAt: new Date(),
           })
           .where(eq(pulseBacklog.id, activeEntry.id));

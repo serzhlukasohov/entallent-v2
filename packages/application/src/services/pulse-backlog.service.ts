@@ -63,7 +63,11 @@ export class PulseBacklogService {
       await this.backlogRepo.unlockEngagementIfNeeded(userId, tenantId, window.id, engagementQuestions);
     }
 
-    const entry = await this.backlogRepo.findNextPending(userId, window.id, isEndOfQuarter);
+    let entry = await this.backlogRepo.findNextPending(userId, window.id, isEndOfQuarter);
+    if (!entry && isEndOfQuarter) {
+      // Engagement questions exhausted — fall back to remaining regular questions
+      entry = await this.backlogRepo.findNextPending(userId, window.id, false);
+    }
     if (!entry) return null;
 
     const question = allQuestions.find((q) => q.id === entry.surveyQuestionId);
