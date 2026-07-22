@@ -2,10 +2,12 @@ import type { ReplyStrategy } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
-import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
 import { FEATURE_FLAGS } from '../ports/feature-flag.port';
+import type { ProactivePulseConfig } from '../ports/pulse-backlog.repository.port';
+import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
+import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import type { SurveyQuestionRecord } from '../types/records';
 
 export interface ProactiveCheckInInput {
@@ -15,6 +17,8 @@ export interface ProactiveCheckInInput {
   externalWorkspaceId: string;
   externalConversationId: string;
   traceId: string;
+  /** Tenant-specific pulse cadence config. Falls back to defaults if omitted. */
+  pulseConfig?: ProactivePulseConfig;
 }
 
 export interface ProactiveCheckInResult {
@@ -24,11 +28,10 @@ export interface ProactiveCheckInResult {
 }
 
 /**
- * Agent-initiated check-in. Unlike scheduled follow-ups (which react to past
- * conversation commitments), this opener is driven by the survey state: it picks
- * a pending pulse-check question and lets the AI open a conversation whose
- * natural territory overlaps that topic. The AI may also ignore the topic and
- * just open warmly — collecting evidence is a marathon, not a sprint.
+ * Agent-initiated check-in. Picks the next pending pulse question from the
+ * per-user backlog (via PulseBacklogService) and lets the AI steer conversation
+ * naturally toward that topic. The AI may ignore the topic and just open warmly —
+ * collecting evidence is a marathon, not a sprint.
  */
 export class ProactiveCheckInUseCase {
   constructor(
@@ -36,7 +39,7 @@ export class ProactiveCheckInUseCase {
     private readonly aiProvider: AiProviderPort,
     private readonly outbox: OutboxPort,
     private readonly memoryRepo?: MemoryRepositoryPort,
-    private readonly surveyRepo?: SurveyRepositoryPort,
+    private readonly pulseBacklogService?: PulseBacklogService,
     private readonly featureFlags?: FeatureFlagPort,
   ) {}
 
@@ -59,8 +62,12 @@ export class ProactiveCheckInUseCase {
     const flagCtx = { tenantId, userId };
 
     const [memoryEnabled, surveyEnabled] = await Promise.all([
-      this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
-      this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.CONVERSATIONAL_SURVEY, flagCtx) : Promise.resolve(true),
+      this.featureFlags
+        ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx)
+        : Promise.resolve(true),
+      this.featureFlags
+        ? this.featureFlags.isEnabled(FEATURE_FLAGS.CONVERSATIONAL_SURVEY, flagCtx)
+        : Promise.resolve(true),
     ]);
 
     const memoryItems =
@@ -71,8 +78,14 @@ export class ProactiveCheckInUseCase {
     // First contact (no history, no memory): earn trust first, never steer toward a survey topic
     const isFirstContact = turns.length === 0 && memoryItems.length === 0;
 
-    const probeQuestion =
-      surveyEnabled && !isFirstContact ? await this.findPendingProbe(userId, tenantId) : null;
+    const pulseConfig = input.pulseConfig ?? DEFAULT_PULSE_CONFIG;
+
+    const probeResult =
+      surveyEnabled && !isFirstContact && this.pulseBacklogService
+        ? await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId, pulseConfig)
+        : null;
+
+    const probeQuestion: SurveyQuestionRecord | null = probeResult?.question ?? null;
 
     const strategy: ReplyStrategy = {
       mode: 'proactive_follow_up',
@@ -129,17 +142,27 @@ export class ProactiveCheckInUseCase {
       text: generated.text,
     });
 
+    // Record that a probe was sent so ignore detection knows when to follow up
+    if (
+      generated.containsSurveyProbe &&
+      generated.surveyProbeQuestionId &&
+      probeResult &&
+      this.pulseBacklogService
+    ) {
+      await this.pulseBacklogService.recordProbeSent(
+        userId,
+        probeResult.windowId,
+        generated.surveyProbeQuestionId,
+        new Date(),
+      );
+    }
+
     return {
       outboundMessageId: outbound.id,
       responseText: generated.text,
-      probeQuestionId: generated.containsSurveyProbe ? (generated.surveyProbeQuestionId ?? null) : null,
+      probeQuestionId: generated.containsSurveyProbe
+        ? (generated.surveyProbeQuestionId ?? null)
+        : null,
     };
-  }
-
-  private async findPendingProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
-    if (!this.surveyRepo) return null;
-    const window = await this.surveyRepo.findOrCreateActiveWindow(userId, tenantId);
-    if (!window) return null;
-    return this.surveyRepo.findPendingProbeQuestion(userId, tenantId, window.id);
   }
 }
