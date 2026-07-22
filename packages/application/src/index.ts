@@ -42,3 +42,4 @@ export { GroupConfirmationUseCase } from './use-cases/group-confirmation.use-cas
 export type { GroupConfirmationInput } from './use-cases/group-confirmation.use-case';
 export { GroupReportUseCase } from './use-cases/group-report.use-case';
 export type { GroupReportInput, GroupReportResult } from './use-cases/group-report.use-case';
+export { PulseBacklogService } from './services/pulse-backlog.service';
