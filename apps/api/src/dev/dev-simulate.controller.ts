@@ -2,11 +2,11 @@ import { Controller, Post, Get, Body, Param, HttpCode, Logger, Query } from '@ne
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
-import { eq, and, desc, isNull } from 'drizzle-orm';
+import { eq, and, desc, isNull, ne, asc, max as sqlMax } from 'drizzle-orm';
 import { IngestionService } from '../channel/ingestion.service';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows } from '@entalent/database';
+import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions } from '@entalent/database';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
 
 interface SimulateMessageDto {
@@ -244,5 +244,122 @@ export class DevSimulateController {
       .orderBy(desc(surveyEvidence.createdAt));
 
     return { count: rows.length, evidence: rows };
+  }
+
+  /**
+   * Fast-forwards through the pulse backlog for a user by simulating N steps.
+   * Each step:
+   *   1. Force-marks any 'active' entry as ignored (simulates 48h timeout).
+   *   2. Finds the next 'pending' non-engagement entry and marks it 'active'.
+   * Returns the sequence of questions that would be probed.
+   * Only works in development mode.
+   */
+  @Post('simulate-proactive-cycle')
+  @HttpCode(200)
+  async simulateProactiveCycle(
+    @Body() body: { userId: string; tenantId: string; steps: number },
+  ): Promise<{
+    steps: Array<{
+      stepIndex: number;
+      questionId: string;
+      stableKey: string;
+      title: string;
+      group: string;
+      wasForceIgnored: boolean;
+    }>;
+  }> {
+    const { userId, tenantId: _tenantId, steps } = body;
+
+    // Find the active survey window for this user
+    const [window] = await this.db.client
+      .select({ id: surveyWindows.id })
+      .from(surveyWindows)
+      .where(and(eq(surveyWindows.userId, userId), eq(surveyWindows.status, 'active')))
+      .limit(1);
+
+    if (!window) {
+      return { steps: [] };
+    }
+
+    const windowId = window.id;
+    const result: Array<{
+      stepIndex: number;
+      questionId: string;
+      stableKey: string;
+      title: string;
+      group: string;
+      wasForceIgnored: boolean;
+    }> = [];
+
+    for (let i = 0; i < steps; i++) {
+      // Step 1: force-ignore any active entry
+      const [activeEntry] = await this.db.client
+        .select({ id: pulseBacklog.id, surveyQuestionId: pulseBacklog.surveyQuestionId, ignoreCount: pulseBacklog.ignoreCount })
+        .from(pulseBacklog)
+        .where(and(eq(pulseBacklog.userId, userId), eq(pulseBacklog.surveyWindowId, windowId), eq(pulseBacklog.status, 'active')))
+        .limit(1);
+
+      let wasForceIgnored = false;
+      if (activeEntry) {
+        const [{ maxPos }] = await this.db.client
+          .select({ maxPos: sqlMax(pulseBacklog.position) })
+          .from(pulseBacklog)
+          .where(and(eq(pulseBacklog.userId, userId), eq(pulseBacklog.surveyWindowId, windowId)));
+
+        await this.db.client
+          .update(pulseBacklog)
+          .set({
+            status: 'pending',
+            position: (maxPos ?? 0) + 1,
+            ignoreCount: activeEntry.ignoreCount + 1,
+            resultedInCoverage: false,
+            updatedAt: new Date(),
+          })
+          .where(eq(pulseBacklog.id, activeEntry.id));
+        wasForceIgnored = true;
+      }
+
+      // Step 2: find next pending non-engagement entry
+      const [nextEntry] = await this.db.client
+        .select({
+          id: pulseBacklog.id,
+          surveyQuestionId: pulseBacklog.surveyQuestionId,
+          stableKey: surveyQuestions.stableKey,
+          title: surveyQuestions.title,
+          questionGroup: surveyQuestions.questionGroup,
+        })
+        .from(pulseBacklog)
+        .innerJoin(surveyQuestions, eq(pulseBacklog.surveyQuestionId, surveyQuestions.id))
+        .where(
+          and(
+            eq(pulseBacklog.userId, userId),
+            eq(pulseBacklog.surveyWindowId, windowId),
+            eq(pulseBacklog.status, 'pending'),
+            ne(surveyQuestions.questionGroup, 'engagement'),
+          ),
+        )
+        .orderBy(asc(pulseBacklog.position))
+        .limit(1);
+
+      if (!nextEntry) break;
+
+      // Mark it active with sentAt = now
+      await this.db.client
+        .update(pulseBacklog)
+        .set({ status: 'active', proactiveSentAt: new Date(), updatedAt: new Date() })
+        .where(eq(pulseBacklog.id, nextEntry.id));
+
+      result.push({
+        stepIndex: i + 1,
+        questionId: nextEntry.surveyQuestionId,
+        stableKey: nextEntry.stableKey,
+        title: nextEntry.title,
+        group: nextEntry.questionGroup,
+        wasForceIgnored,
+      });
+    }
+
+    this.logger.log(`Dev: simulated ${result.length}/${steps} proactive cycle steps for user=${userId}`);
+    return { steps: result };
   }
 }
