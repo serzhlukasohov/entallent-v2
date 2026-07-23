@@ -37,6 +37,8 @@ function makeOutbox(): OutboxPort {
     enqueueMemoryExtraction: vi.fn(),
     enqueueFollowUpExecution: vi.fn().mockResolvedValue(undefined),
     enqueueSurveyEvidence: vi.fn(),
+    enqueueGroupConfirmation: vi.fn(),
+    enqueueGroupReport: vi.fn(),
   };
 }
 

@@ -87,6 +87,9 @@ function makeAi(): AiProviderPort {
     extractMemory: vi.fn(),
     evaluateSurveyEvidence: vi.fn(),
     generateResponse: vi.fn().mockResolvedValue({ text: 'Hey Alice, how is the project going?', followUpQuestion: null }),
+    generateGroupSummary: vi.fn(),
+    generateGroupReport: vi.fn(),
+    scoreSentiment: vi.fn(),
   };
 }
 
@@ -96,6 +99,8 @@ function makeOutbox(): OutboxPort {
     enqueueMemoryExtraction: vi.fn(),
     enqueueFollowUpExecution: vi.fn(),
     enqueueSurveyEvidence: vi.fn(),
+    enqueueGroupConfirmation: vi.fn(),
+    enqueueGroupReport: vi.fn(),
   };
 }
 

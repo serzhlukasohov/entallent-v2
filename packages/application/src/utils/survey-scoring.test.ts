@@ -21,6 +21,8 @@ function makeQuestion(overrides: Partial<SurveyQuestionRecord> = {}): SurveyQues
     maxFollowUpProbes: 3,
     displayOrder: 1,
     version: '1',
+    questionGroup: 'wellbeing',
+    responseType: 'open_ended',
     ...overrides,
   };
 }
