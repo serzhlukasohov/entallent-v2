@@ -6,7 +6,7 @@ import { eq, and, desc, isNull, ne, asc, max as sqlMax } from 'drizzle-orm';
 import { IngestionService } from '../channel/ingestion.service';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations } from '@entalent/database';
+import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
 
 interface SimulateMessageDto {
@@ -377,8 +377,17 @@ export class DevSimulateController {
         conversationId: conversations.id,
         channelType: conversations.channelType,
         externalConversationId: conversations.externalConversationId,
+        externalWorkspaceId: workspaceConnections.externalWorkspaceId,
       })
       .from(conversations)
+      .leftJoin(
+        workspaceConnections,
+        and(
+          eq(workspaceConnections.tenantId, conversations.tenantId),
+          eq(workspaceConnections.channelType, conversations.channelType),
+          eq(workspaceConnections.status, 'active'),
+        ),
+      )
       .where(
         and(
           eq(conversations.status, 'active'),
@@ -401,7 +410,7 @@ export class DevSimulateController {
         conversationId: c.conversationId,
         userId: c.userId,
         tenantId: c.tenantId,
-        externalWorkspaceId: 'dev-workspace',
+        externalWorkspaceId: c.externalWorkspaceId ?? 'dev-workspace',
         externalConversationId: c.externalConversationId,
         traceId: `force-checkin-${c.userId}-${Date.now()}`,
       });
