@@ -147,7 +147,7 @@ describe('PulseBacklogService', () => {
 
       await service.getNextProbeQuestion('u-1', 't-1');
 
-      const backlogRepoAny = backlogRepo as any;
+      const backlogRepoAny = backlogRepo as unknown as Record<string, { mock: { invocationCallOrder: number[] } }>;
       const ignoreOrder = backlogRepoAny.resolveIgnoredEntries.mock.invocationCallOrder[0];
       const findOrder = backlogRepoAny.findNextPending.mock.invocationCallOrder[0];
       expect(ignoreOrder).toBeLessThan(findOrder);
