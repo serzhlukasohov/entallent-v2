@@ -9,7 +9,7 @@ import { UsersModule } from './users/users.module';
 import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
 
-const isDev = process.env['NODE_ENV'] !== 'production';
+const isDev = process.env['NODE_ENV'] !== 'production' || process.env['ENABLE_DEV_ENDPOINTS'] === 'true';
 
 @Module({
   imports: [
