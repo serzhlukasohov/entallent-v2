@@ -6,7 +6,7 @@ import { eq, and, desc, isNull, ne, asc, max as sqlMax } from 'drizzle-orm';
 import { IngestionService } from '../channel/ingestion.service';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions } from '@entalent/database';
+import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations } from '@entalent/database';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
 
 interface SimulateMessageDto {
@@ -361,5 +361,53 @@ export class DevSimulateController {
 
     this.logger.log(`Dev: simulated ${result.length}/${steps} proactive cycle steps for user=${userId}`);
     return { steps: result };
+  }
+
+  /**
+   * Force-enqueues a proactive check-in for specific users (or all users in a tenant),
+   * bypassing the silence/gap scheduler filters. Useful for immediate testing.
+   */
+  @Post('force-checkin')
+  @HttpCode(202)
+  async forceCheckIn(@Body() body: { userIds?: string[]; tenantId?: string }): Promise<{ enqueued: number; users: string[] }> {
+    const rows = await this.db.client
+      .select({
+        userId: conversations.userId,
+        tenantId: conversations.tenantId,
+        conversationId: conversations.id,
+        channelType: conversations.channelType,
+        externalConversationId: conversations.externalConversationId,
+      })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.status, 'active'),
+          body.tenantId ? eq(conversations.tenantId, body.tenantId) : undefined,
+        ),
+      )
+      .orderBy(desc(conversations.createdAt));
+
+    // Pick the most recent conversation per user, optionally filtered to requested userIds
+    const seen = new Set<string>();
+    const candidates = rows.filter((r) => {
+      if (body.userIds && !body.userIds.includes(r.userId)) return false;
+      if (seen.has(r.userId)) return false;
+      seen.add(r.userId);
+      return true;
+    });
+
+    for (const c of candidates) {
+      await this.queue.add('check-in', {
+        conversationId: c.conversationId,
+        userId: c.userId,
+        tenantId: c.tenantId,
+        externalWorkspaceId: 'dev-workspace',
+        externalConversationId: c.externalConversationId,
+        traceId: `force-checkin-${c.userId}-${Date.now()}`,
+      });
+    }
+
+    this.logger.log(`Dev: force-checkin enqueued ${candidates.length} users`);
+    return { enqueued: candidates.length, users: candidates.map((c) => c.userId) };
   }
 }
