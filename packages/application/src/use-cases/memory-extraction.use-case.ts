@@ -78,7 +78,7 @@ export class MemoryExtractionUseCase {
         category: p.category,
         canonicalKey: p.canonicalKey,
         content: p.content,
-        structuredValue: p.structuredValue,
+        structuredValue: p.structuredValue == null ? undefined : p.structuredValue,
         confidence: p.confidence,
         importance: p.importance,
         sensitivity: p.sensitivity,
