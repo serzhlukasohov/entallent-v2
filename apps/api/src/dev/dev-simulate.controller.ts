@@ -268,7 +268,7 @@ export class DevSimulateController {
       wasForceIgnored: boolean;
     }>;
   }> {
-    const { userId, tenantId: _tenantId, steps } = body;
+    const { userId, steps } = body;
 
     // Find the active survey window for this user
     const [window] = await this.db.client
