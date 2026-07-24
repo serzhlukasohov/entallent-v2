@@ -1,6 +1,7 @@
 import { Nav } from '../components/Nav';
 import { fetchApi, TENANT_ID } from '../lib';
 import type { PulseOverviewResponse } from '../types';
+import { DevControls } from './DevControls';
 
 const GROUP_LABELS: Record<string, string> = {
   autonomy: 'Автономия',
@@ -177,6 +178,9 @@ export default async function PulsePage() {
                   <span style={{ color: '#10b981' }}>✓ Все вопросы закрыты</span>
                 )}
               </div>
+
+              {/* Dev controls */}
+              <DevControls userId={emp.userId} tenantId={data.tenantId} />
             </div>
           ))}
         </div>
