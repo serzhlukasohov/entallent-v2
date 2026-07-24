@@ -419,4 +419,36 @@ export class DevSimulateController {
     this.logger.log(`Dev: force-checkin enqueued ${candidates.length} users`);
     return { enqueued: candidates.length, users: candidates.map((c) => c.userId) };
   }
+
+  /**
+   * Resets a user's state for a clean re-test.
+   * By default clears: pulse backlog, survey evidence, memory, scheduled actions.
+   * Pass `{ deep: true }` to also delete all messages (full conversation wipe).
+   */
+  @Post('reset-user')
+  @HttpCode(200)
+  async resetUser(@Body() body: { userId: string; deep?: boolean }): Promise<Record<string, number>> {
+    const { userId, deep = false } = body;
+
+    const [backlogDel, evidenceDel, memoryDel, actionsDel] = await Promise.all([
+      this.db.client.delete(pulseBacklog).where(eq(pulseBacklog.userId, userId)),
+      this.db.client.delete(surveyEvidence).where(eq(surveyEvidence.userId, userId)),
+      this.db.client.delete(memoryItems).where(eq(memoryItems.userId, userId)),
+      this.db.client.delete(scheduledActions).where(eq(scheduledActions.userId, userId)),
+    ]);
+
+    let messagesDel = { rowCount: 0 };
+    if (deep) {
+      messagesDel = await this.db.client.delete(messages).where(eq(messages.userId, userId)) as typeof messagesDel;
+    }
+
+    this.logger.log(`Dev: reset user=${userId} deep=${deep}`);
+    return {
+      pulseBacklog: backlogDel.rowCount ?? 0,
+      surveyEvidence: evidenceDel.rowCount ?? 0,
+      memoryItems: memoryDel.rowCount ?? 0,
+      scheduledActions: actionsDel.rowCount ?? 0,
+      messages: messagesDel.rowCount ?? 0,
+    };
+  }
 }
