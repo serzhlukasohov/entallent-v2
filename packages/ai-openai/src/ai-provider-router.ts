@@ -16,6 +16,7 @@ import type {
   SurveyEvidenceEvaluation,
   GroupSummary,
   GroupReport,
+  ConfirmationResponse,
 } from '@entalent/contracts';
 
 /**
@@ -78,6 +79,13 @@ export class AiProviderWithFallback implements AiProviderPort {
 
   async scoreSentiment(text: string): Promise<number> {
     return this.withFallback((p) => p.scoreSentiment(text));
+  }
+
+  async interpretConfirmationResponse(
+    turns: ConversationTurn[],
+    summary: string,
+  ): Promise<ConfirmationResponse> {
+    return this.withFallback((p) => p.interpretConfirmationResponse(turns, summary));
   }
 
   private async withFallback<T>(call: (provider: AiProviderPort) => Promise<T>): Promise<T> {

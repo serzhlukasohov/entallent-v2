@@ -438,6 +438,7 @@ function buildReplyStrategy(
     proactive_follow_up: 'warm',
     onboarding: 'warm',
     celebration: 'celebratory',
+    confirmation: 'warm',
   };
 
   return {

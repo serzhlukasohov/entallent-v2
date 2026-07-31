@@ -28,6 +28,35 @@ const questions = [
   },
 ];
 
+describe('OpenAiProvider.interpretConfirmationResponse', () => {
+  beforeEach(() => createMock.mockReset());
+
+  it('parses an agree verdict', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"agree"}' } }],
+    });
+    const provider = makeProvider();
+    const r = await provider.interpretConfirmationResponse(
+      [{ role: 'user', content: 'да, всё так', timestamp: new Date() }],
+      'You value autonomy...',
+    );
+    expect(r.verdict).toBe('agree');
+  });
+
+  it('parses a correct verdict with a note', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"correct","correctionNote":"не про деньги"}' } }],
+    });
+    const provider = makeProvider();
+    const r = await provider.interpretConfirmationResponse(
+      [{ role: 'user', content: 'не совсем', timestamp: new Date() }],
+      'summary',
+    );
+    expect(r.verdict).toBe('correct');
+    expect(r.correctionNote).toBe('не про деньги');
+  });
+});
+
 describe('OpenAiProvider.complete truncation handling', () => {
   beforeEach(() => createMock.mockReset());
 

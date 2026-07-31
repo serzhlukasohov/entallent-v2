@@ -9,6 +9,7 @@ import {
   GroupSummarySchema,
   GroupReportSchema,
   SentimentScoreSchema,
+  ConfirmationResponseSchema,
   type SituationClassification,
   type RiskDetection,
   type MemoryProposal,
@@ -17,6 +18,7 @@ import {
   type SurveyEvidenceEvaluation,
   type GroupSummary,
   type GroupReport,
+  type ConfirmationResponse,
 } from '@entalent/contracts';
 import type {
   AiProviderPort,
@@ -33,6 +35,7 @@ import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
 import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey';
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
+import { buildConfirmInterpretSystemPrompt, buildConfirmInterpretUserPrompt } from './prompts/confirm-interpret';
 import { buildGroupReportSystemPrompt, buildGroupReportUserPrompt } from './prompts/group-report';
 
 export interface ModelConfig {
@@ -172,6 +175,19 @@ export class OpenAiProvider implements AiProviderPort {
       this.analysisModel,
     );
     return GroupReportSchema.parse(JSON.parse(raw));
+  }
+
+  async interpretConfirmationResponse(
+    turns: ConversationTurn[],
+    summary: string,
+  ): Promise<ConfirmationResponse> {
+    const raw = await this.complete(
+      buildConfirmInterpretSystemPrompt(),
+      buildConfirmInterpretUserPrompt(turns, summary),
+      this.analysisModel,
+      512,
+    );
+    return ConfirmationResponseSchema.parse(JSON.parse(raw));
   }
 
   async scoreSentiment(text: string): Promise<number> {

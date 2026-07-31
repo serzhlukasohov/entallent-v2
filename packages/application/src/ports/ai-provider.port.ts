@@ -7,6 +7,7 @@ import type {
   SurveyEvidenceEvaluation,
   GroupSummary,
   GroupReport,
+  ConfirmationResponse,
 } from '@entalent/contracts';
 
 export interface ConversationTurn {
@@ -69,6 +70,15 @@ export interface ResponseContext {
    * Signals that this topic is now closed — acknowledge and move on, no more probing.
    */
   topicConfirmed?: { questionGroup: string };
+  /**
+   * Set when a question group has completed and the agent should reflect its
+   * understanding back and ask for confirmation IN THIS REPLY (confirm-only, no
+   * other question, no probe).
+   */
+  confirmationRequest?: {
+    questionGroup: string;
+    evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string }>;
+  };
 }
 
 export interface AiProviderPort {
@@ -105,4 +115,9 @@ export interface AiProviderPort {
   ): Promise<GroupReport>;
 
   scoreSentiment(text: string): Promise<number>;
+
+  interpretConfirmationResponse(
+    turns: ConversationTurn[],
+    summary: string,
+  ): Promise<ConfirmationResponse>;
 }
