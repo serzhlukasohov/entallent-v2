@@ -14,7 +14,7 @@ import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
 import { FEATURE_FLAGS } from '../ports/feature-flag.port';
-import type { SurveyQuestionRecord, SurveyGroupStateRecord } from '../types/records';
+import type { SurveyQuestionRecord } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 
@@ -69,15 +69,15 @@ export class ConversationOrchestrator {
     const userTimezone = conversation.userTimezone ?? 'UTC';
     const flagCtx = { tenantId, userId };
 
-    // Check for pending group confirmations before classification.
-    // If the employee is responding to a confirmation request, intercept and process it.
-    const pendingConfirmation = this.surveyRepo
-      ? await this.surveyRepo.findPendingConfirmationGroups(input.userId)
-      : [];
-    const confirmedGroup =
-      pendingConfirmation.length > 0
-        ? await this.handleGroupConfirmation(pendingConfirmation[0], turns, input)
-        : false;
+    // ── Group confirmation interpretation (Phase B) ─────────────────────────
+    // If the employee is responding to a confirmation the agent surfaced, interpret
+    // that reply by meaning and act (agree → score/confirm/report; correct → reopen;
+    // unclear → no-op). `awaitingPresent` is true whenever a group was awaiting a
+    // reply this turn — used to stop Phase A from surfacing a second confirmation.
+    const phaseB = this.surveyRepo
+      ? await this.handleAwaitingConfirmation(turns, input)
+      : { confirmedGroup: false as string | false, awaitingPresent: false };
+    const confirmedGroup = phaseB.confirmedGroup;
     const confirmationHandled = confirmedGroup !== false;
 
     // Classify, feature flags, and memory load are all independent — run them together.
@@ -134,7 +134,7 @@ export class ConversationOrchestrator {
     // reply, weave a confirm-only message into THIS reply.
     let confirmationRequest: ResponseContext['confirmationRequest'];
     let surfacedGroup: string | undefined;
-    if (this.surveyRepo && !confirmationHandled) {
+    if (this.surveyRepo && !confirmationHandled && !phaseB.awaitingPresent) {
       const pending = await this.surveyRepo.findPendingConfirmationGroups(userId);
       if (pending.length > 0) {
         const group = pending[0];
@@ -301,85 +301,112 @@ export class ConversationOrchestrator {
     };
   }
 
-  private async handleGroupConfirmation(
-    groupState: SurveyGroupStateRecord,
+  /**
+   * If a group is awaiting a confirmation reply, interpret the employee's latest
+   * message by meaning. Returns `awaitingPresent` (true whenever a group was
+   * awaiting a reply this turn, so Phase A can avoid surfacing a second
+   * confirmation) and `confirmedGroup` (the group name on agreement, so the reply
+   * can acknowledge and move on; otherwise false).
+   */
+  private async handleAwaitingConfirmation(
     turns: ConversationTurn[],
     input: OrchestrateInput,
-  ): Promise<string | false> {
-    if (!this.aiProvider || !this.surveyRepo || !this.outbox) return false;
+  ): Promise<{ confirmedGroup: string | false; awaitingPresent: boolean }> {
+    if (!this.surveyRepo || !this.outbox) return { confirmedGroup: false, awaitingPresent: false };
     const surveyRepo = this.surveyRepo;
 
-    const lastUserTurn = [...turns].reverse().find((t) => t.role === 'user');
-    if (!lastUserTurn) return false;
+    const awaiting = await surveyRepo.findAwaitingConfirmationGroups(input.userId);
+    if (awaiting.length === 0) return { confirmedGroup: false, awaitingPresent: false };
+    const group = awaiting[0];
 
-    // Simple heuristic: look for confirmation keywords in the employee's last message.
-    const text = lastUserTurn.content.toLowerCase();
-    const CONFIRM_KEYWORDS = ['да', 'yes', 'верно', 'правильно', 'согласен', 'именно', 'точно', 'ок', 'ok', 'correct', 'right', 'sounds good'];
-    const isConfirmed = CONFIRM_KEYWORDS.some((kw) => text.includes(kw));
+    const verdict = await this.aiProvider.interpretConfirmationResponse(turns, group.aiSummary ?? '');
 
-    if (isConfirmed) {
-      // Compute employee_score before confirming
-      let employeeScore: number | undefined;
-      if (groupState.questionGroup === 'engagement') {
-        const evidenceItems = await this.surveyRepo.findQuestionsForWindow(groupState.surveyWindowId)
-          .then(async (questions) => {
-            const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
-            const evidenceList = await Promise.all(
-              groupQs.map((q) => surveyRepo.findEvidenceForQuestion(input.userId, q.id, groupState.surveyWindowId)),
-            );
-            return evidenceList.flat();
-          });
-        const numericValues = evidenceItems
-          .filter((e) => e.polarity === 'positive' || e.polarity === 'neutral' || e.polarity === 'negative')
-          .slice(0, 3)
-          .map((e) => ({ positive: 10, neutral: 5, negative: 0, mixed: 5 }[e.polarity] ?? 5));
-        if (numericValues.length === 3) {
-          employeeScore = computeEngagementIndex(numericValues[0], numericValues[1], numericValues[2]);
-        }
-      } else {
-        const questions = await this.surveyRepo.findQuestionsForWindow(groupState.surveyWindowId);
-        const groupQs = questions.filter((q) => q.questionGroup === groupState.questionGroup);
-        const questionScores: number[] = [];
-        for (const q of groupQs) {
-          const evidence = await this.surveyRepo.findEvidenceForQuestion(input.userId, q.id, groupState.surveyWindowId);
-          const latest = [...evidence].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
-          if (latest) {
-            const sentimentScore = await this.aiProvider.scoreSentiment(latest.evidenceSummary);
-            questionScores.push(computeOpenEndedQuestionScore(latest.polarity, sentimentScore));
-          }
-        }
-        if (questionScores.length > 0) {
-          employeeScore = computeGroupIndex(questionScores);
+    if (verdict.verdict === 'unclear') return { confirmedGroup: false, awaitingPresent: true };
+
+    if (verdict.verdict === 'correct') {
+      await surveyRepo.upsertGroupState({
+        surveyWindowId: group.surveyWindowId,
+        userId: group.userId,
+        tenantId: group.tenantId,
+        questionGroup: group.questionGroup,
+        status: 'in_progress',
+        aiSummary: group.aiSummary ?? undefined,
+      });
+      return { confirmedGroup: false, awaitingPresent: true };
+    }
+
+    // verdict === 'agree' → compute score, confirm, trigger report
+    const employeeScore = await this.computeGroupScore(group.surveyWindowId, group.questionGroup, input.userId);
+
+    await surveyRepo.upsertGroupState({
+      surveyWindowId: group.surveyWindowId,
+      userId: group.userId,
+      tenantId: group.tenantId,
+      questionGroup: group.questionGroup,
+      status: 'confirmed',
+      aiSummary: group.aiSummary ?? undefined,
+      employeeScore,
+      confirmedAt: new Date(),
+    });
+
+    const team = await surveyRepo.findTeamByMemberId(input.userId);
+    if (team) {
+      await this.outbox.enqueueGroupReport({
+        teamId: team.teamId,
+        questionGroup: group.questionGroup,
+        traceId: `group-report-${group.surveyWindowId}-${group.questionGroup}`,
+      });
+    }
+
+    return { confirmedGroup: group.questionGroup, awaitingPresent: true };
+  }
+
+  /**
+   * Compute the employee-level score for a confirmed question group. Preserves the
+   * engagement-index vs open-ended branches used by the confirmation flow.
+   */
+  private async computeGroupScore(
+    windowId: string,
+    questionGroup: string,
+    userId: string,
+  ): Promise<number | undefined> {
+    if (!this.surveyRepo) return undefined;
+    const surveyRepo = this.surveyRepo;
+
+    let employeeScore: number | undefined;
+    if (questionGroup === 'engagement') {
+      const evidenceItems = await surveyRepo.findQuestionsForWindow(windowId)
+        .then(async (questions) => {
+          const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
+          const evidenceList = await Promise.all(
+            groupQs.map((q) => surveyRepo.findEvidenceForQuestion(userId, q.id, windowId)),
+          );
+          return evidenceList.flat();
+        });
+      const numericValues = evidenceItems
+        .filter((e) => e.polarity === 'positive' || e.polarity === 'neutral' || e.polarity === 'negative')
+        .slice(0, 3)
+        .map((e) => ({ positive: 10, neutral: 5, negative: 0, mixed: 5 }[e.polarity] ?? 5));
+      if (numericValues.length === 3) {
+        employeeScore = computeEngagementIndex(numericValues[0], numericValues[1], numericValues[2]);
+      }
+    } else {
+      const questions = await surveyRepo.findQuestionsForWindow(windowId);
+      const groupQs = questions.filter((q) => q.questionGroup === questionGroup);
+      const questionScores: number[] = [];
+      for (const q of groupQs) {
+        const evidence = await surveyRepo.findEvidenceForQuestion(userId, q.id, windowId);
+        const latest = [...evidence].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+        if (latest) {
+          const sentimentScore = await this.aiProvider.scoreSentiment(latest.evidenceSummary);
+          questionScores.push(computeOpenEndedQuestionScore(latest.polarity, sentimentScore));
         }
       }
-
-      await this.surveyRepo.upsertGroupState({
-        surveyWindowId: groupState.surveyWindowId,
-        userId: groupState.userId,
-        tenantId: groupState.tenantId,
-        questionGroup: groupState.questionGroup,
-        status: 'confirmed',
-        aiSummary: groupState.aiSummary ?? undefined,
-        employeeScore,
-        confirmedAt: new Date(),
-      });
-
-      // Trigger report generation
-      const team = await this.surveyRepo.findTeamByMemberId(input.userId);
-      if (team) {
-        await this.outbox.enqueueGroupReport({
-          teamId: team.teamId,
-          questionGroup: groupState.questionGroup,
-          traceId: `group-report-${groupState.surveyWindowId}-${groupState.questionGroup}`,
-        });
+      if (questionScores.length > 0) {
+        employeeScore = computeGroupIndex(questionScores);
       }
     }
-    // If needs_correction: GroupConfirmationUseCase will re-run on next cycle
-    // (the group state remains pending_confirmation — no change needed here)
-
-    // Return the confirmed group name so the response generator can close gracefully.
-    // If employee said "no" / correction needed, return false — agent handles naturally.
-    return isConfirmed ? groupState.questionGroup : false;
+    return employeeScore;
   }
 
   private async collectGroupEvidence(

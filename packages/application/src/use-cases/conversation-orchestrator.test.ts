@@ -55,3 +55,71 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     );
   });
 });
+
+describe('ConversationOrchestrator group confirmation — interpret (Phase B)', () => {
+  it('agree → confirms group and enqueues report', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 'You want more ownership.' },
+    ]);
+    m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1' });
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'growth', status: 'confirmed' }),
+    );
+    expect(m.outbox.enqueueGroupReport).toHaveBeenCalled();
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.topicConfirmed).toMatchObject({ questionGroup: 'growth' });
+  });
+
+  it('correct → reopens group to in_progress and does not report', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'correct', correctionNote: 'not about promotion' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'growth', status: 'in_progress' }),
+    );
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it('unclear verdict with an awaiting group present → Phase A does NOT surface a new pending confirmation', async () => {
+    const m = baseMocks();
+    // A group is awaiting a reply; the employee's reply is unclear.
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'unclear' });
+    // A DIFFERENT group is ripe for surfacing — Phase A must NOT pick it up this turn.
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', aiSummary: 's2' },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.confirmationRequest).toBeUndefined();
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'awaiting_confirmation' }),
+    );
+  });
+});
