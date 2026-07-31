@@ -9,7 +9,7 @@ export async function runMigrations(): Promise<void> {
     throw new Error('DATABASE_URL environment variable is required');
   }
 
-  const sql = postgres(databaseUrl, { max: 1 });
+  const sql = postgres(databaseUrl, { max: 1, connect_timeout: 30 });
   const db = drizzle(sql);
 
   const migrationsFolder = path.resolve(__dirname, '..', 'migrations');

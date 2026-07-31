@@ -64,6 +64,11 @@ export interface ResponseContext {
   proactiveCheckIn?: {
     probeQuestion?: { id: string; probeStrategies: string[] };
   };
+  /**
+   * Set when the employee just confirmed a summary the agent proposed.
+   * Signals that this topic is now closed — acknowledge and move on, no more probing.
+   */
+  topicConfirmed?: { questionGroup: string };
 }
 
 export interface AiProviderPort {

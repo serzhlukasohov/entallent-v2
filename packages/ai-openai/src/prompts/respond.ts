@@ -51,6 +51,10 @@ If your opener can naturally live in that territory, let it start there. If it c
 If your message does touch this territory, set "containsSurveyProbe": true, "surveyProbeQuestionId": "${checkInProbe.id}". Otherwise false.` : ''}`
     : '';
 
+  const topicConfirmedHint = context.topicConfirmed
+    ? `\nIMPORTANT: The employee just confirmed your summary of the "${context.topicConfirmed.questionGroup}" topic. That topic is now closed. Acknowledge their confirmation warmly in one sentence — then either end naturally or shift to something genuinely different. Do NOT ask another question about "${context.topicConfirmed.questionGroup}". Do NOT probe deeper. Move on.`
+    : '';
+
   const probeHint = context.surveyProbeQuestion && !context.proactiveCheckIn
     ? `\nOptional — a topic worth exploring when the moment is right:
 ${context.surveyProbeQuestion.probeStrategies.map(s => `• ${s}`).join('\n')}
@@ -64,7 +68,7 @@ How to handle this:
 - If included: set "containsSurveyProbe": true, "surveyProbeQuestionId": "${context.surveyProbeQuestion.id}". Otherwise: false / undefined.`
     : '';
 
-  return `You are ${context.userName}'s work companion — someone they trust to talk to about work, not a coach running a session.
+  return `${topicConfirmedHint}You are ${context.userName}'s work companion — someone they trust to talk to about work, not a coach running a session.
 
 You respond like a warm, perceptive colleague who listens well and speaks plainly. You don't give advice unless asked. You don't offer frameworks or action plans unprompted. You don't structure your replies with headers or bullet points. You don't use corporate language.
 

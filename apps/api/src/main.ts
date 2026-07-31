@@ -7,10 +7,14 @@ import { runMigrations } from '@entalent/database';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
+  console.log('[Bootstrap] Starting...');
   const env = validateEnv();
+  console.log('[Bootstrap] Env validated, port:', env.API_PORT);
   const logger = new NestLogger('API');
 
+  console.log('[Bootstrap] Running migrations...');
   await runMigrations();
+  console.log('[Bootstrap] Migrations done');
   logger.log('Database migrations applied', 'Bootstrap');
 
   const adapter = new FastifyAdapter({ logger: false });
@@ -43,9 +47,11 @@ async function bootstrap(): Promise<void> {
     },
   );
 
+  console.log('[Bootstrap] Starting listener...');
   await app.listen(env.API_PORT, '0.0.0.0');
 
   logger.log(`API listening on port ${env.API_PORT}`, 'Bootstrap');
+  console.log('[Bootstrap] Ready on port', env.API_PORT);
 }
 
 bootstrap().catch((error: unknown) => {

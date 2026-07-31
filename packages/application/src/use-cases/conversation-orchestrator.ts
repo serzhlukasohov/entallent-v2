@@ -74,10 +74,11 @@ export class ConversationOrchestrator {
     const pendingConfirmation = this.surveyRepo
       ? await this.surveyRepo.findPendingConfirmationGroups(input.userId)
       : [];
-    const confirmationHandled =
+    const confirmedGroup =
       pendingConfirmation.length > 0
         ? await this.handleGroupConfirmation(pendingConfirmation[0], turns, input)
         : false;
+    const confirmationHandled = confirmedGroup !== false;
 
     // Classify, feature flags, and memory load are all independent — run them together.
     // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
@@ -207,6 +208,9 @@ export class ConversationOrchestrator {
       surveyProbeQuestion: probeQuestion
         ? { id: probeQuestion.id, probeStrategies: probeQuestion.probeStrategies }
         : undefined,
+      topicConfirmed: typeof confirmedGroup === 'string'
+        ? { questionGroup: confirmedGroup }
+        : undefined,
     });
 
     const outbound = await this.conversationRepo.saveMessage({
@@ -264,7 +268,7 @@ export class ConversationOrchestrator {
     groupState: SurveyGroupStateRecord,
     turns: ConversationTurn[],
     input: OrchestrateInput,
-  ): Promise<boolean> {
+  ): Promise<string | false> {
     if (!this.aiProvider || !this.surveyRepo || !this.outbox) return false;
     const surveyRepo = this.surveyRepo;
 
@@ -336,7 +340,9 @@ export class ConversationOrchestrator {
     // If needs_correction: GroupConfirmationUseCase will re-run on next cycle
     // (the group state remains pending_confirmation — no change needed here)
 
-    return true; // Signal that this message was a confirmation interaction
+    // Return the confirmed group name so the response generator can close gracefully.
+    // If employee said "no" / correction needed, return false — agent handles naturally.
+    return isConfirmed ? groupState.questionGroup : false;
   }
 
   private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
