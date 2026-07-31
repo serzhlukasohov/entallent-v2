@@ -20,6 +20,7 @@ import type {
   SurveyEvidenceEvaluation,
   GroupSummary,
   GroupReport,
+  ConfirmationResponse,
 } from '@entalent/contracts';
 
 @Injectable()
@@ -87,6 +88,13 @@ export class AiService implements AiProviderPort {
     trend: number | null,
   ): Promise<GroupReport> {
     return this.provider.generateGroupReport(teamSummaries, questionGroup, teamScore, trend);
+  }
+
+  interpretConfirmationResponse(
+    turns: ConversationTurn[],
+    summary: string,
+  ): Promise<ConfirmationResponse> {
+    return this.provider.interpretConfirmationResponse(turns, summary);
   }
 
   scoreSentiment(text: string): Promise<number> {
