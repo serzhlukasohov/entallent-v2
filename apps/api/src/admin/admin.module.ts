@@ -12,6 +12,7 @@ import { FeatureFlagsController } from './feature-flags.controller';
 import { ManagerTeamController } from './manager-team.controller';
 import { ManagerTrendsController } from './manager-trends.controller';
 import { PulseOverviewController } from './pulse-overview.controller';
+import { UserInsightsController } from './user-insights.controller';
 
 @Module({
   imports: [DatabaseModule, AuditModule],
@@ -26,6 +27,7 @@ import { PulseOverviewController } from './pulse-overview.controller';
     ManagerTeamController,
     ManagerTrendsController,
     PulseOverviewController,
+    UserInsightsController,
   ],
   providers: [ApiKeyGuard],
 })

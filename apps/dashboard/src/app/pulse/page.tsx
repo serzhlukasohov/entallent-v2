@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Nav } from '../components/Nav';
 import { fetchApi, TENANT_ID } from '../lib';
 import type { PulseOverviewResponse } from '../types';
@@ -72,7 +73,13 @@ export default async function PulsePage() {
             >
               {/* Employee header */}
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>
-                {emp.displayName ?? emp.userId.slice(0, 8) + '…'}
+                <Link
+                  href={`/pulse/${emp.userId}`}
+                  style={{ color: 'var(--text)', textDecoration: 'none' }}
+                >
+                  {emp.displayName ?? emp.userId.slice(0, 8) + '…'}
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>→ инсайты</span>
+                </Link>
               </div>
 
               {/* Groups grid */}

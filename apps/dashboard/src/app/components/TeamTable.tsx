@@ -113,22 +113,27 @@ function EmployeeDetail({ employee }: { employee: EmployeeRow }) {
         <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Нет инсайтов — разговоров ещё не было.</p>
       )}
       {empty.length > 0 && (
-        <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {empty.map((s) => (
-            <span
-              key={s.stableKey}
-              style={{
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                background: 'var(--surface2)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                padding: '2px 8px',
-              }}
-            >
-              {s.title}
-            </span>
-          ))}
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+            Not yet covered ({empty.length} of {employee.signals.length})
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {empty.map((s) => (
+              <span
+                key={s.stableKey}
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  background: 'var(--surface2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 4,
+                  padding: '2px 8px',
+                }}
+              >
+                {s.title}
+              </span>
+            ))}
+          </div>
         </div>
       )}
     </div>
