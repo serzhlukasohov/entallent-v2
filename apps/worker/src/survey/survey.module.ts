@@ -1,11 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { getQueueToken } from '@nestjs/bullmq';
-import type { Queue } from 'bullmq';
 import { SurveyEvidenceExtractionUseCase, GroupReportUseCase, PulseBacklogService } from '@entalent/application';
-import type { OutboxPort, GroupConfirmationPayload } from '@entalent/application';
 import { SurveyEvidenceProcessor } from './survey-evidence.processor';
-import { GroupConfirmationProcessor } from './group-confirmation.processor';
 import { GroupReportProcessor } from './group-report.processor';
 import { SurveyRepository } from './repositories/survey.repository';
 import { GroupStateRepository } from './repositories/group-state.repository';
@@ -22,7 +18,6 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     DatabaseModule,
     BullModule.registerQueue(
       { name: QUEUE_NAMES.SURVEY_EVIDENCE },
-      { name: QUEUE_NAMES.GROUP_CONFIRMATION },
       { name: QUEUE_NAMES.GROUP_REPORT },
     ),
   ],
@@ -41,18 +36,6 @@ import { QUEUE_NAMES } from '../queue/queue.module';
       inject: [PulseBacklogRepository, SurveyRepository],
     },
     {
-      provide: 'SurveyOutboxAdapter',
-      useFactory: (queue: Queue<GroupConfirmationPayload>): OutboxPort => ({
-        enqueueGroupConfirmation: async (p) => { await queue.add('confirm', p); },
-        enqueueMessageSend: async () => {},
-        enqueueMemoryExtraction: async () => {},
-        enqueueFollowUpExecution: async () => {},
-        enqueueSurveyEvidence: async () => {},
-        enqueueGroupReport: async () => {},
-      }),
-      inject: [getQueueToken(QUEUE_NAMES.GROUP_CONFIRMATION)],
-    },
-    {
       provide: SurveyEvidenceExtractionUseCase,
       useFactory: (
         ai: AiService,
@@ -69,7 +52,6 @@ import { QUEUE_NAMES } from '../queue/queue.module';
       inject: [SurveyRepository, AiService],
     },
     SurveyEvidenceProcessor,
-    GroupConfirmationProcessor,
     GroupReportProcessor,
   ],
   exports: [SurveyRepository, PulseBacklogService],

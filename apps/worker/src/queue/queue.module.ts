@@ -13,7 +13,6 @@ export const QUEUE_NAMES = {
   FOLLOWUP_EXECUTION: 'followup-execution',
   MESSAGE_SEND: 'message-send',
   PROACTIVE_SCAN: 'proactive-scan',
-  GROUP_CONFIRMATION: 'group-confirmation',
   GROUP_REPORT: 'group-report',
 } as const;
 
@@ -48,7 +47,6 @@ export const QUEUE_NAMES = {
       { name: QUEUE_NAMES.FOLLOWUP_EXECUTION },
       { name: QUEUE_NAMES.MESSAGE_SEND },
       { name: QUEUE_NAMES.PROACTIVE_SCAN },
-      { name: QUEUE_NAMES.GROUP_CONFIRMATION },
       { name: QUEUE_NAMES.GROUP_REPORT },
     ),
   ],

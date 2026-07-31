@@ -90,6 +90,7 @@ function makeAi(): AiProviderPort {
     generateGroupSummary: vi.fn(),
     generateGroupReport: vi.fn(),
     scoreSentiment: vi.fn(),
+    interpretConfirmationResponse: vi.fn(),
   };
 }
 
@@ -99,7 +100,6 @@ function makeOutbox(): OutboxPort {
     enqueueMemoryExtraction: vi.fn(),
     enqueueFollowUpExecution: vi.fn(),
     enqueueSurveyEvidence: vi.fn(),
-    enqueueGroupConfirmation: vi.fn(),
     enqueueGroupReport: vi.fn(),
   };
 }

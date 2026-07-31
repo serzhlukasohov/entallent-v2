@@ -201,8 +201,7 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
   });
 
-  it('completing a group upserts pending_confirmation and does NOT enqueue standalone confirmation', async () => {
-    const outbox = { enqueueGroupConfirmation: vi.fn(), enqueueGroupReport: vi.fn() } as any;
+  it('completing a group upserts pending_confirmation', async () => {
     const surveyRepo = makeSurveyRepo('scored');
     // group of one question fully covered
     (surveyRepo.findQuestionsForWindow as any).mockResolvedValue([makeQuestion('q-1', 'autonomy')]);
@@ -215,7 +214,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
 
     await useCase.execute(BASE_INPUT);
 
-    expect(outbox.enqueueGroupConfirmation).not.toHaveBeenCalled();
     expect(surveyRepo.upsertGroupState).toHaveBeenCalledWith(
       expect.objectContaining({ questionGroup: 'autonomy', status: 'pending_confirmation' }),
     );

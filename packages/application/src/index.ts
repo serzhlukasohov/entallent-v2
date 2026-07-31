@@ -2,7 +2,7 @@ export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, Me
 export type { ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
 export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, IngestMessageResult } from './ports/ingestion.repository.port';
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';
-export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupConfirmationPayload, GroupReportPayload } from './ports/outbox.port';
+export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload } from './ports/outbox.port';
 export type { MemoryRepositoryPort, SaveMemoryItemParams } from './ports/memory.repository.port';
 export type { GoalRepositoryPort, SaveGoalParams } from './ports/goal.repository.port';
 export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from './ports/scheduled-action.repository.port';
@@ -38,8 +38,6 @@ export type { SurveyEvidenceExtractionInput } from './use-cases/survey-evidence.
 export { DataDeletionUseCase } from './use-cases/data-deletion.use-case';
 export type { DataDeletionInput } from './use-cases/data-deletion.use-case';
 export type { DataDeletionResult } from './ports/data-deletion.repository.port';
-export { GroupConfirmationUseCase } from './use-cases/group-confirmation.use-case';
-export type { GroupConfirmationInput } from './use-cases/group-confirmation.use-case';
 export { GroupReportUseCase } from './use-cases/group-report.use-case';
 export type { GroupReportInput, GroupReportResult } from './use-cases/group-report.use-case';
 export { PulseBacklogService } from './services/pulse-backlog.service';
