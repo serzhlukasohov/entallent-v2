@@ -204,4 +204,24 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     expect(result.windowsProcessed).toBe(0);
     expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
   });
+
+  it('completing a group upserts pending_confirmation and does NOT enqueue standalone confirmation', async () => {
+    const outbox = { enqueueGroupConfirmation: vi.fn(), enqueueGroupReport: vi.fn() } as any;
+    const surveyRepo = makeSurveyRepo('scored');
+    // group of one question fully covered
+    (surveyRepo.findQuestionsForWindow as any).mockResolvedValue([makeQuestion('q-1', 'autonomy')]);
+    (surveyRepo.findAssessmentsForWindow as any).mockResolvedValue([{ surveyQuestionId: 'q-1', status: 'scored' }]);
+    (surveyRepo.findGroupState as any).mockResolvedValue(null);
+
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      makeAi('scored'), makeConversationRepo(), surveyRepo, outbox, makePulseService(),
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(outbox.enqueueGroupConfirmation).not.toHaveBeenCalled();
+    expect(surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'autonomy', status: 'pending_confirmation' }),
+    );
+  });
 });
