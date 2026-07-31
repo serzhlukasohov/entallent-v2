@@ -14,13 +14,21 @@ export class SurveyEvidenceProcessor extends WorkerHost {
   }
 
   async process(job: Job<SurveyEvidencePayload>): Promise<void> {
-    const { conversationId, userId, tenantId, inboundMessageId, traceId } = job.data;
-    this.logger.debug(`Processing survey evidence for conversation ${conversationId} [${traceId}]`);
+    const { conversationId, userId, tenantId, inboundMessageId, traceId, mode } = job.data;
+    this.logger.debug(`Processing survey evidence for conversation ${conversationId} [${traceId}] mode=${mode ?? 'live'}`);
 
     try {
-      await this.useCase.execute({ conversationId, userId, tenantId, inboundMessageId });
+      if (mode === 'backfill') {
+        const { windowsProcessed } = await this.useCase.backfill({ conversationId, userId, tenantId });
+        this.logger.log(`Survey evidence backfill processed ${windowsProcessed} windows for conversation ${conversationId} [${traceId}]`);
+      } else {
+        await this.useCase.execute({ conversationId, userId, tenantId, inboundMessageId });
+      }
     } catch (err) {
-      this.logger.error(`Survey evidence extraction failed [${traceId}]:`, err);
+      this.logger.error(
+        `Survey evidence extraction failed [${traceId}]: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
       throw err;
     }
   }

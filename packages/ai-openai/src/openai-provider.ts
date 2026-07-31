@@ -117,6 +117,7 @@ export class OpenAiProvider implements AiProviderPort {
       buildMemorySystemPrompt(),
       buildMemoryUserPrompt(turns, existing),
       this.analysisModel,
+      4096,
     );
     return MemoryProposalSchema.parse(JSON.parse(raw));
   }
@@ -129,6 +130,7 @@ export class OpenAiProvider implements AiProviderPort {
       buildSurveySystemPrompt(),
       buildSurveyUserPrompt(turns, questions),
       this.analysisModel,
+      4096,
     );
     return SurveyEvidenceEvaluationSchema.parse(JSON.parse(raw));
   }
@@ -181,7 +183,12 @@ export class OpenAiProvider implements AiProviderPort {
     return SentimentScoreSchema.parse(JSON.parse(raw)).score;
   }
 
-  private async complete(systemPrompt: string, userPrompt: string, model: string): Promise<string> {
+  private async complete(
+    systemPrompt: string,
+    userPrompt: string,
+    model: string,
+    maxTokens = 2048,
+  ): Promise<string> {
     return this.breaker.call(async () => {
       const response = await this.client.chat.completions.create({
         model,
@@ -192,11 +199,19 @@ export class OpenAiProvider implements AiProviderPort {
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.3,
-        max_completion_tokens: 1024,
+        max_completion_tokens: maxTokens,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const choice = response.choices[0];
+      const content = choice?.message?.content;
       if (!content) throw new Error('OpenAI returned an empty response');
+      // A truncated response is invalid JSON — surface it clearly instead of
+      // letting JSON.parse throw a cryptic SyntaxError the caller can't diagnose.
+      if (choice?.finish_reason === 'length') {
+        throw new Error(
+          `OpenAI response truncated (finish_reason=length, max_completion_tokens=${maxTokens}) — raise the token budget for this call`,
+        );
+      }
       return content;
     });
   }
