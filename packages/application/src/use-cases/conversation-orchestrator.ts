@@ -4,7 +4,7 @@ import type {
   ReplyStrategy,
   ConversationMode,
 } from '@entalent/contracts';
-import type { AiProviderPort, ConversationTurn } from '../ports/ai-provider.port';
+import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
@@ -129,8 +129,27 @@ export class ConversationOrchestrator {
       speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
     ]);
 
+    // ── Group confirmation surfacing (Phase A) ──────────────────────────────
+    // If a group is ripe (pending_confirmation) and none is already awaiting a
+    // reply, weave a confirm-only message into THIS reply.
+    let confirmationRequest: ResponseContext['confirmationRequest'];
+    let surfacedGroup: string | undefined;
+    if (this.surveyRepo && !confirmationHandled) {
+      const pending = await this.surveyRepo.findPendingConfirmationGroups(userId);
+      if (pending.length > 0) {
+        const group = pending[0];
+        const evidence = await this.collectGroupEvidence(userId, group.surveyWindowId, group.questionGroup);
+        if (evidence.length > 0) {
+          confirmationRequest = { questionGroup: group.questionGroup, evidence };
+          surfacedGroup = group.questionGroup;
+        }
+      }
+    }
+
     const probeQuestion =
-      !confirmationHandled && speculativeProbeAllowed && !risk.surveyMustBeBlocked ? speculativeProbe : null;
+      !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !risk.surveyMustBeBlocked
+        ? speculativeProbe
+        : null;
 
     // Persist risk signal when a real risk is detected
     if (risk.riskType && risk.severity !== 'none' && this.riskSignalRepo) {
@@ -199,7 +218,9 @@ export class ConversationOrchestrator {
       }
     }
 
-    const strategy = buildReplyStrategy(classification, risk, probeQuestion?.id);
+    const strategy = confirmationRequest
+      ? { mode: 'confirmation' as const, tone: 'warm' as const, includeFollowUpQuestion: false, maxResponseLength: 'medium' as const, forbiddenPatterns: [] }
+      : buildReplyStrategy(classification, risk, probeQuestion?.id);
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
@@ -211,6 +232,7 @@ export class ConversationOrchestrator {
       topicConfirmed: typeof confirmedGroup === 'string'
         ? { questionGroup: confirmedGroup }
         : undefined,
+      confirmationRequest,
     });
 
     const outbound = await this.conversationRepo.saveMessage({
@@ -225,6 +247,21 @@ export class ConversationOrchestrator {
         ? { containsSurveyProbe: true, surveyProbeQuestionId: generated.surveyProbeQuestionId }
         : undefined,
     });
+
+    if (surfacedGroup && this.surveyRepo) {
+      const pending = await this.surveyRepo.findPendingConfirmationGroups(userId);
+      const g = pending.find((p) => p.questionGroup === surfacedGroup);
+      if (g) {
+        await this.surveyRepo.upsertGroupState({
+          surveyWindowId: g.surveyWindowId,
+          userId: g.userId,
+          tenantId: g.tenantId,
+          questionGroup: g.questionGroup,
+          status: 'awaiting_confirmation',
+          aiSummary: g.aiSummary ?? undefined,
+        });
+      }
+    }
 
     await this.outbox.enqueueMessageSend({
       messageId: outbound.id,
@@ -343,6 +380,23 @@ export class ConversationOrchestrator {
     // Return the confirmed group name so the response generator can close gracefully.
     // If employee said "no" / correction needed, return false — agent handles naturally.
     return isConfirmed ? groupState.questionGroup : false;
+  }
+
+  private async collectGroupEvidence(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
+  ): Promise<Array<{ stableKey: string; evidenceSummary: string; polarity: string }>> {
+    if (!this.surveyRepo) return [];
+    const questions = await this.surveyRepo.findQuestionsForWindow(windowId);
+    const groupQs = questions.filter((q) => q.questionGroup === questionGroup);
+    const out: Array<{ stableKey: string; evidenceSummary: string; polarity: string }> = [];
+    for (const q of groupQs) {
+      const evidence = await this.surveyRepo.findEvidenceForQuestion(userId, q.id, windowId);
+      const latest = [...evidence].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+      if (latest) out.push({ stableKey: q.stableKey, evidenceSummary: latest.evidenceSummary, polarity: latest.polarity });
+    }
+    return out;
   }
 
   private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
