@@ -2,7 +2,7 @@ import type { AiProviderPort, ConversationTurn, SurveyQuestionForEvaluation } fr
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { OutboxPort } from '../ports/outbox.port';
-import type { SurveyQuestionRecord } from '../types/records';
+import type { SurveyQuestionRecord, SurveyWindowRecord, MessageRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
@@ -43,6 +43,62 @@ export class SurveyEvidenceExtractionUseCase {
     if (!questions.length) return;
 
     const messages = await this.conversationRepo.findRecentMessages(input.conversationId, 15);
+    if (!messages.some((m) => m.direction === 'inbound')) return;
+
+    await this.processMessageWindow(input, window, questions, messages, input.inboundMessageId);
+  }
+
+  /**
+   * Re-extracts evidence across a conversation's full recent history — used to
+   * recover findings when live extraction was previously failing. The evaluator
+   * only ever reads a short transcript window, so we slide fixed-size windows over
+   * the history (oldest → newest) and process each. Overlap between windows is
+   * absorbed by the existing supersede logic: a later (more recent) window replaces
+   * same-statement evidence produced by an earlier one, so recent phrasing wins.
+   */
+  async backfill(
+    input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
+  ): Promise<{ windowsProcessed: number }> {
+    const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
+    if (!window) return { windowsProcessed: 0 };
+
+    const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
+    if (!questions.length) return { windowsProcessed: 0 };
+
+    // Chronological (oldest → newest); large limit covers the whole recent history.
+    const history = await this.conversationRepo.findRecentMessages(input.conversationId, 500);
+    if (!history.length) return { windowsProcessed: 0 };
+
+    const WINDOW_SIZE = 15;
+    const STEP = 10; // overlap of 5 messages so signals spanning a boundary aren't lost
+
+    const starts: number[] = [];
+    for (let s = 0; s < history.length; s += STEP) starts.push(s);
+    // Ensure the final messages are covered if the last stride left a tail uncovered
+    // (only possible when STEP >= WINDOW_SIZE; harmless guard otherwise).
+    const lastStart = Math.max(0, history.length - WINDOW_SIZE);
+    if (lastStart > starts[starts.length - 1]) starts.push(lastStart);
+
+    let windowsProcessed = 0;
+    for (const start of starts) {
+      const slice = history.slice(start, start + WINDOW_SIZE);
+      if (!slice.some((m) => m.direction === 'inbound')) continue;
+      const lastInbound = [...slice].reverse().find((m) => m.direction === 'inbound')!;
+      await this.processMessageWindow(input, window, questions, slice, lastInbound.id);
+      windowsProcessed++;
+    }
+
+    return { windowsProcessed };
+  }
+
+  /** Evaluates one transcript window and persists any evidence it yields. */
+  private async processMessageWindow(
+    input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
+    window: SurveyWindowRecord,
+    questions: SurveyQuestionRecord[],
+    messages: MessageRecord[],
+    sourceMessageId: string,
+  ): Promise<void> {
     const turns: ConversationTurn[] = messages.map((m) => ({
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       content: m.text,
@@ -101,7 +157,7 @@ export class SurveyEvidenceExtractionUseCase {
         surveyWindowId: window.id,
         surveyQuestionId: ev.questionId,
         userId: input.userId,
-        sourceMessageIds: [input.inboundMessageId],
+        sourceMessageIds: [sourceMessageId],
         evidenceSummary: ev.evidenceSummary,
         polarity: ev.polarity,
         strength: ev.strength,
@@ -126,8 +182,10 @@ export class SurveyEvidenceExtractionUseCase {
         evaluatorVersion: 'v1',
       });
 
-      // Notify backlog when a question reaches coverage threshold
-      if ((status === 'scored' || status === 'covered') && this.pulseBacklogService) {
+      // Any saved evidence means the question has a root cause — mark it done
+      // for this pulse cycle so the agent stops probing it.
+      // Evidence can still be updated if the employee voluntarily revisits the topic.
+      if (this.pulseBacklogService) {
         const allEvidence = await this.surveyRepo.findEvidenceForQuestion(
           input.userId,
           ev.questionId,
@@ -146,7 +204,7 @@ export class SurveyEvidenceExtractionUseCase {
   }
 
   private async checkGroupCompletion(
-    input: SurveyEvidenceExtractionInput,
+    input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
     windowId: string,
     assessedQuestionId: string,
     allQuestions: SurveyQuestionRecord[],

@@ -131,7 +131,9 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     expect(pulseService.markQuestionCovered).toHaveBeenCalled();
   });
 
-  it('does NOT call markQuestionCovered when assessment is partially_covered', async () => {
+  it('calls markQuestionCovered even when assessment is only partially_covered', async () => {
+    // Any saved evidence closes the question for this pulse cycle — threshold lowered
+    // from scored/covered to any meaningful evidence (strength >= MIN_EVIDENCE_STRENGTH).
     const pulseService = makePulseService();
     const useCase = new SurveyEvidenceExtractionUseCase(
       makeAi('partially_covered'),
@@ -143,7 +145,7 @@ describe('SurveyEvidenceExtractionUseCase', () => {
 
     await useCase.execute(BASE_INPUT);
 
-    expect(pulseService.markQuestionCovered).not.toHaveBeenCalled();
+    expect(pulseService.markQuestionCovered).toHaveBeenCalledWith('u-1', 'w-1', 'q-1', 1);
   });
 
   it('works when pulseBacklogService is not provided', async () => {
@@ -154,5 +156,52 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     );
 
     await expect(useCase.execute(BASE_INPUT)).resolves.not.toThrow();
+  });
+
+  it('backfill slides windows over the full history and evaluates each', async () => {
+    // 35 messages, WINDOW=15, STEP=10 → window starts [0, 10, 20, 30] = 4 windows.
+    const history = Array.from({ length: 35 }, (_, i) => ({
+      id: `m-${i}`,
+      direction: i % 2 === 0 ? 'inbound' : 'outbound',
+      text: `message ${i}`,
+      occurredAt: new Date(),
+      conversationId: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
+      createdAt: new Date(),
+    }));
+    const convRepo = {
+      ...makeConversationRepo(),
+      findRecentMessages: vi.fn().mockResolvedValue(history),
+    } as unknown as ConversationRepositoryPort;
+    const ai = makeAi('scored');
+
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      ai,
+      convRepo,
+      makeSurveyRepo('scored'),
+      undefined,
+      makePulseService(),
+    );
+
+    const result = await useCase.backfill({ conversationId: 'c-1', userId: 'u-1', tenantId: 't-1' });
+
+    expect(result.windowsProcessed).toBe(4);
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledTimes(4);
+  });
+
+  it('backfill returns zero windows for an empty history', async () => {
+    const convRepo = {
+      ...makeConversationRepo(),
+      findRecentMessages: vi.fn().mockResolvedValue([]),
+    } as unknown as ConversationRepositoryPort;
+    const ai = makeAi('scored');
+
+    const useCase = new SurveyEvidenceExtractionUseCase(ai, convRepo, makeSurveyRepo('scored'));
+
+    const result = await useCase.backfill({ conversationId: 'c-1', userId: 'u-1', tenantId: 't-1' });
+
+    expect(result.windowsProcessed).toBe(0);
+    expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
   });
 });

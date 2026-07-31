@@ -34,6 +34,12 @@ export interface SurveyEvidencePayload {
   tenantId: string;
   inboundMessageId: string;
   traceId: string;
+  /**
+   * When 'backfill', the processor re-extracts evidence across the conversation's
+   * full recent history (sliding windows) instead of just the latest transcript.
+   * Used to recover findings from before live extraction was fixed.
+   */
+  mode?: 'backfill';
 }
 
 export interface GroupConfirmationPayload {

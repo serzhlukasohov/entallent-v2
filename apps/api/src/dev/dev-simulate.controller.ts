@@ -2,12 +2,13 @@ import { Controller, Post, Get, Body, Param, HttpCode, Logger, Query } from '@ne
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
-import { eq, and, desc, isNull, ne, asc, max as sqlMax } from 'drizzle-orm';
+import { eq, and, desc, isNull, ne, asc, inArray, max as sqlMax } from 'drizzle-orm';
 import { IngestionService } from '../channel/ingestion.service';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
+import { messages, memoryItems, scheduledActions, surveyEvidence, surveyAssessments, surveyGroupStates, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
+import type { SurveyEvidencePayload } from '@entalent/application';
 
 interface SimulateMessageDto {
   tenantId: string;
@@ -27,6 +28,7 @@ export class DevSimulateController {
     private readonly db: DatabaseService,
     @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly queue: Queue<ConversationJob | CheckInJob>,
     @InjectQueue(QUEUE_NAMES.PROACTIVE_SCAN) private readonly scanQueue: Queue<{ tenantId?: string }>,
+    @InjectQueue(QUEUE_NAMES.SURVEY_EVIDENCE) private readonly surveyEvidenceQueue: Queue<SurveyEvidencePayload>,
   ) {}
 
   @Post('simulate-message')
@@ -422,33 +424,92 @@ export class DevSimulateController {
 
   /**
    * Resets a user's state for a clean re-test.
-   * By default clears: pulse backlog, survey evidence, memory, scheduled actions.
+   * By default clears: pulse backlog, survey evidence + assessments + group states,
+   * memory, scheduled actions.
    * Pass `{ deep: true }` to also delete all messages (full conversation wipe).
    */
   @Post('reset-user')
   @HttpCode(200)
   async resetUser(@Body() body: { userId: string; deep?: boolean }): Promise<Record<string, number>> {
     const { userId, deep = false } = body;
+    const rowCount = (r: unknown) => (r as { rowCount?: number }).rowCount ?? 0;
 
-    const [backlogDel, evidenceDel, memoryDel, actionsDel] = await Promise.all([
+    // Assessments are keyed by window, not user — resolve this user's windows first
+    // so we can wipe the computed state alongside the raw evidence. Otherwise stale
+    // assessments (status/score/calculatedAt) survive a reset and show as old insights.
+    const userWindows = await this.db.client
+      .select({ id: surveyWindows.id })
+      .from(surveyWindows)
+      .where(eq(surveyWindows.userId, userId));
+    const windowIds = userWindows.map((w) => w.id);
+
+    const [backlogDel, evidenceDel, assessmentDel, groupStateDel, memoryDel, actionsDel] = await Promise.all([
       this.db.client.delete(pulseBacklog).where(eq(pulseBacklog.userId, userId)),
       this.db.client.delete(surveyEvidence).where(eq(surveyEvidence.userId, userId)),
+      windowIds.length
+        ? this.db.client.delete(surveyAssessments).where(inArray(surveyAssessments.surveyWindowId, windowIds))
+        : Promise.resolve({ rowCount: 0 }),
+      this.db.client.delete(surveyGroupStates).where(eq(surveyGroupStates.userId, userId)),
       this.db.client.delete(memoryItems).where(eq(memoryItems.userId, userId)),
       this.db.client.delete(scheduledActions).where(eq(scheduledActions.userId, userId)),
     ]);
 
-    let messagesDel = { rowCount: 0 };
+    let messagesRowCount = 0;
     if (deep) {
-      messagesDel = await this.db.client.delete(messages).where(eq(messages.userId, userId)) as typeof messagesDel;
+      const result = await this.db.client.delete(messages).where(eq(messages.userId, userId));
+      messagesRowCount = rowCount(result);
     }
 
     this.logger.log(`Dev: reset user=${userId} deep=${deep}`);
     return {
-      pulseBacklog: backlogDel.rowCount ?? 0,
-      surveyEvidence: evidenceDel.rowCount ?? 0,
-      memoryItems: memoryDel.rowCount ?? 0,
-      scheduledActions: actionsDel.rowCount ?? 0,
-      messages: messagesDel.rowCount ?? 0,
+      pulseBacklog: rowCount(backlogDel),
+      surveyEvidence: rowCount(evidenceDel),
+      surveyAssessments: rowCount(assessmentDel),
+      surveyGroupStates: rowCount(groupStateDel),
+      memoryItems: rowCount(memoryDel),
+      scheduledActions: rowCount(actionsDel),
+      messages: messagesRowCount,
     };
+  }
+
+  /**
+   * Re-extracts survey evidence across a user's full recent conversation history.
+   * Recovers findings from periods when live extraction was failing — enqueues one
+   * backfill job per active conversation; the worker slides windows over the history.
+   */
+  @Post('backfill-evidence')
+  @HttpCode(202)
+  async backfillEvidence(
+    @Body() body: { userId: string; tenantId?: string; conversationId?: string },
+  ): Promise<{ enqueued: number; conversations: string[] }> {
+    const { userId } = body;
+
+    const rows = await this.db.client
+      .select({
+        conversationId: conversations.id,
+        tenantId: conversations.tenantId,
+      })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.userId, userId),
+          eq(conversations.status, 'active'),
+          body.conversationId ? eq(conversations.id, body.conversationId) : undefined,
+        ),
+      );
+
+    for (const c of rows) {
+      await this.surveyEvidenceQueue.add('evaluate', {
+        conversationId: c.conversationId,
+        userId,
+        tenantId: body.tenantId ?? c.tenantId,
+        inboundMessageId: '', // unused in backfill mode
+        traceId: `backfill-${userId}-${Date.now()}`,
+        mode: 'backfill',
+      });
+    }
+
+    this.logger.log(`Dev: enqueued survey-evidence backfill for ${rows.length} conversations (user=${userId})`);
+    return { enqueued: rows.length, conversations: rows.map((c) => c.conversationId) };
   }
 }
