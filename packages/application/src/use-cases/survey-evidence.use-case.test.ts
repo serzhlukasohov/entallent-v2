@@ -107,7 +107,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       makeAi('scored'),
       makeConversationRepo(),
       makeSurveyRepo('scored'),
-      undefined,
       pulseService,
     );
 
@@ -122,7 +121,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       makeAi('covered'),
       makeConversationRepo(),
       makeSurveyRepo('covered'),
-      undefined,
       pulseService,
     );
 
@@ -139,7 +137,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       makeAi('partially_covered'),
       makeConversationRepo(),
       makeSurveyRepo('partially_covered'),
-      undefined,
       pulseService,
     );
 
@@ -180,7 +177,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       ai,
       convRepo,
       makeSurveyRepo('scored'),
-      undefined,
       makePulseService(),
     );
 
@@ -214,7 +210,7 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     (surveyRepo.findGroupState as any).mockResolvedValue(null);
 
     const useCase = new SurveyEvidenceExtractionUseCase(
-      makeAi('scored'), makeConversationRepo(), surveyRepo, outbox, makePulseService(),
+      makeAi('scored'), makeConversationRepo(), surveyRepo, makePulseService(),
     );
 
     await useCase.execute(BASE_INPUT);

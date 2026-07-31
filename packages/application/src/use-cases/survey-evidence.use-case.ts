@@ -1,7 +1,6 @@
 import type { AiProviderPort, ConversationTurn, SurveyQuestionForEvaluation } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
-import type { OutboxPort } from '../ports/outbox.port';
 import type { SurveyQuestionRecord, SurveyWindowRecord, MessageRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
@@ -31,7 +30,6 @@ export class SurveyEvidenceExtractionUseCase {
     private readonly ai: AiProviderPort,
     private readonly conversationRepo: ConversationRepositoryPort,
     private readonly surveyRepo: SurveyRepositoryPort,
-    private readonly outbox?: OutboxPort,
     private readonly pulseBacklogService?: PulseBacklogService,
   ) {}
 
