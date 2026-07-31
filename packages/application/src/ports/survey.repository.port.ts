@@ -49,6 +49,7 @@ export interface SurveyRepositoryPort {
   // Group state methods
   findGroupState(userId: string, windowId: string, questionGroup: string): Promise<SurveyGroupStateRecord | null>;
   findPendingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]>;
+  findAwaitingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]>;
   upsertGroupState(params: UpsertGroupStateParams): Promise<SurveyGroupStateRecord>;
   findConfirmedGroupStates(userIds: string[], questionGroup: string): Promise<SurveyGroupStateRecord[]>;
   // Team methods

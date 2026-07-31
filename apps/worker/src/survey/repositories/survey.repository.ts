@@ -204,6 +204,10 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return this.groupStateRepo.findPendingConfirmationGroups(userId);
   }
 
+  findAwaitingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]> {
+    return this.groupStateRepo.findAwaitingConfirmationGroups(userId);
+  }
+
   upsertGroupState(params: UpsertGroupStateParams): Promise<SurveyGroupStateRecord> {
     return this.groupStateRepo.upsertGroupState(params);
   }
