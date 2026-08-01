@@ -37,6 +37,7 @@ import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
 import { buildConfirmInterpretSystemPrompt, buildConfirmInterpretUserPrompt } from './prompts/confirm-interpret';
 import { buildGroupReportSystemPrompt, buildGroupReportUserPrompt } from './prompts/group-report';
+import { hasReflectiveOpener } from './prompts/style-antipatterns';
 
 export interface ModelConfig {
   /** Used for classification and risk detection (structured, lower cost). Default: gpt-4o-mini */
@@ -64,6 +65,9 @@ export interface AzureOpenAiConfig {
 }
 
 export type OpenAiProviderConfig = DirectOpenAiConfig | AzureOpenAiConfig;
+
+const OPENER_RETRY_INSTRUCTION =
+  '\n\nYour previous draft OPENED by labeling what the employee just said (a "verdict on their words"). Do NOT do that. Delete that opening sentence entirely and start with the substance — a specific observation or one sharp question.';
 
 export class OpenAiProvider implements AiProviderPort {
   private readonly client: OpenAI;
@@ -143,12 +147,18 @@ export class OpenAiProvider implements AiProviderPort {
     strategy: ReplyStrategy,
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
-    const raw = await this.complete(
-      buildRespondSystemPrompt(strategy, context),
-      buildRespondUserPrompt(turns, context),
-      this.generationModel,
+    const system = buildRespondSystemPrompt(strategy, context);
+    const user = buildRespondUserPrompt(turns, context);
+
+    const first = GeneratedResponseSchema.parse(
+      JSON.parse(await this.complete(system, user, this.generationModel)),
     );
-    return GeneratedResponseSchema.parse(JSON.parse(raw));
+    if (!hasReflectiveOpener(first.text)) return first;
+
+    // One corrective regeneration — the common path never reaches here.
+    return GeneratedResponseSchema.parse(
+      JSON.parse(await this.complete(system + OPENER_RETRY_INSTRUCTION, user, this.generationModel)),
+    );
   }
 
   async generateGroupSummary(
