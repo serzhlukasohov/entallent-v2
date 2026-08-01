@@ -31,12 +31,26 @@ const POLARITY_LABEL: Record<string, { label: string; color: string }> = {
   neutral: { label: '· Neutral', color: 'var(--text-muted)' },
 };
 
-function statusDot(status: string | null): string {
-  if (status === 'scored' || status === 'covered') return '#10b981';
-  if (status === 'partially_covered') return '#f59e0b';
-  if (status === 'insufficient_evidence' || status === 'unknown' || status === null) return 'var(--border)';
-  if (status === 'needs_review') return '#8b5cf6';
-  return 'var(--border)';
+/**
+ * Reconcile the assessment status with whether an insight actually exists, so the
+ * status chip/dot never contradicts the card body. Status (survey_assessments) and
+ * insight text (survey_evidence) live in separate tables and can drift:
+ *  - evidence present but low confidence/completeness → don't say "No data", say "Собрано";
+ *  - no live evidence → "No data" regardless of a stale assessment row.
+ */
+function displayStatus(q: QuestionInsight): { label: string; dot: string } {
+  const hasData = Boolean(q.currentState || q.rootCause);
+
+  if (!hasData) return { label: 'Нет данных', dot: 'var(--border)' };
+
+  const s = q.assessmentStatus;
+  if (s === 'scored' || s === 'covered') return { label: STATUS_LABEL[s], dot: '#10b981' };
+  if (s === 'partially_covered') return { label: 'Partial', dot: '#f59e0b' };
+  if (s === 'needs_review') return { label: 'Under review', dot: '#8b5cf6' };
+  if (s === 'suppressed') return { label: 'Suppressed', dot: 'var(--border)' };
+  // Insight exists but confidence/completeness is low (insufficient_evidence / unknown / null):
+  // show it as collected rather than "no data".
+  return { label: 'Собрано', dot: '#3b82f6' };
 }
 
 export default async function UserInsightsPage({
@@ -129,6 +143,7 @@ export default async function UserInsightsPage({
       <div style={{ marginTop: 40, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         <Legend dot="#10b981" label="Scored / Covered" />
         <Legend dot="#f59e0b" label="Partial" />
+        <Legend dot="#3b82f6" label="Собрано" />
         <Legend dot="#8b5cf6" label="Under review" />
         <Legend dot="var(--border)" label="No data" />
       </div>
@@ -139,6 +154,7 @@ export default async function UserInsightsPage({
 function InsightRow({ q }: { q: QuestionInsight }) {
   const polarity = q.polarity ? POLARITY_LABEL[q.polarity] : null;
   const hasData = q.currentState || q.rootCause;
+  const status = displayStatus(q);
 
   return (
     <div
@@ -159,7 +175,7 @@ function InsightRow({ q }: { q: QuestionInsight }) {
             width: 10,
             height: 10,
             borderRadius: '50%',
-            background: statusDot(q.assessmentStatus),
+            background: status.dot,
           }}
         />
       </div>
@@ -169,7 +185,7 @@ function InsightRow({ q }: { q: QuestionInsight }) {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
           <span style={{ fontSize: 14, fontWeight: 600 }}>{q.title}</span>
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            {STATUS_LABEL[q.assessmentStatus ?? 'unknown'] ?? q.assessmentStatus ?? '—'}
+            {status.label}
           </span>
           {q.score !== null && (
             <span
