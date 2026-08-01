@@ -1,6 +1,7 @@
 import type { ReplyStrategy } from '@entalent/contracts';
 import type { ConversationTurn, ResponseContext } from '@entalent/application';
 import { sanitizeTurnContent, INJECTION_GUARD } from './sanitize';
+import { RESPOND_STYLE_EXAMPLES } from './respond-examples';
 
 export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: ResponseContext): string {
   const lengthMap = { short: '1-2 sentences', medium: '2-4 sentences', long: '4-6 sentences' };
@@ -94,6 +95,8 @@ Conversation rhythm: real conversations move through topics, they don't drill in
 Thread-following: people often drop hints mid-sentence and don't develop them — "хочется на что-то более живое", "лид говорит да, но...", "вообще-то хотел предложить, но не стал". These side remarks are often more important than the main topic they're talking about. When you catch one, follow it: it's an invitation. Don't let it disappear while you keep drilling the current subject.
 
 Length: ${lengthGuide}. Write in the same language they wrote in (for a first message with no history, use the language of what you know about them, or Russian).${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${checkInHint}${probeHint}
+
+${RESPOND_STYLE_EXAMPLES}
 
 Hard rules:
 - Never diagnose, prescribe, or give medical/legal advice
