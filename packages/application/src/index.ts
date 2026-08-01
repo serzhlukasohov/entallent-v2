@@ -42,3 +42,5 @@ export type { DataDeletionResult } from './ports/data-deletion.repository.port';
 export { GroupReportUseCase } from './use-cases/group-report.use-case';
 export type { GroupReportInput, GroupReportResult } from './use-cases/group-report.use-case';
 export { PulseBacklogService } from './services/pulse-backlog.service';
+export { StyleAnalysisUseCase } from './use-cases/style-analysis.use-case';
+export type { StyleAnalysisInput } from './use-cases/style-analysis.use-case';
