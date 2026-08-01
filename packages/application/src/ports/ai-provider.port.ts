@@ -80,6 +80,11 @@ export interface ResponseContext {
     questionGroup: string;
     evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string }>;
   };
+  /**
+   * Effective (already blended base*(1-w)+user*w) style levels + weight + a few of
+   * the user's phrases. The renderer turns this into soft guidance; omitted in crisis.
+   */
+  styleAdaptation?: { dimensions: import('../types/records').StyleDimensions; weight: number; phrases: string[] };
 }
 
 export interface AiProviderPort {
