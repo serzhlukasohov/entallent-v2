@@ -40,6 +40,19 @@ export class GroupStateRepository {
     return rows.map(mapGroupState);
   }
 
+  async findAwaitingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]> {
+    const rows = await this.db.client
+      .select()
+      .from(surveyGroupStates)
+      .where(
+        and(
+          eq(surveyGroupStates.userId, userId),
+          eq(surveyGroupStates.status, 'awaiting_confirmation'),
+        ),
+      );
+    return rows.map(mapGroupState);
+  }
+
   async upsertGroupState(params: UpsertGroupStateParams): Promise<SurveyGroupStateRecord> {
     const [row] = await this.db.client
       .insert(surveyGroupStates)

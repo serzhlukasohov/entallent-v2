@@ -1,7 +1,6 @@
 import type { AiProviderPort, ConversationTurn, SurveyQuestionForEvaluation } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
-import type { OutboxPort } from '../ports/outbox.port';
 import type { SurveyQuestionRecord, SurveyWindowRecord, MessageRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
@@ -31,7 +30,6 @@ export class SurveyEvidenceExtractionUseCase {
     private readonly ai: AiProviderPort,
     private readonly conversationRepo: ConversationRepositoryPort,
     private readonly surveyRepo: SurveyRepositoryPort,
-    private readonly outbox?: OutboxPort,
     private readonly pulseBacklogService?: PulseBacklogService,
   ) {}
 
@@ -215,9 +213,10 @@ export class SurveyEvidenceExtractionUseCase {
     const questionGroup = assessedQuestion.questionGroup;
     if (!questionGroup) return;
 
-    // Check idempotency: if group state already exists (any status), skip
+    // Idempotency: skip if a group state already exists UNLESS it was reopened
+    // (in_progress) after a correction — that must be allowed to re-complete.
     const existingState = await this.surveyRepo.findGroupState(input.userId, windowId, questionGroup);
-    if (existingState) return;
+    if (existingState && existingState.status !== 'in_progress') return;
 
     const groupQuestions = allQuestions.filter((q) => q.questionGroup === questionGroup);
     if (groupQuestions.length === 0) return;
@@ -265,15 +264,6 @@ export class SurveyEvidenceExtractionUseCase {
       aiSummary,
     });
 
-    if (this.outbox) {
-      await this.outbox.enqueueGroupConfirmation({
-        surveyWindowId: windowId,
-        userId: input.userId,
-        tenantId: input.tenantId,
-        questionGroup,
-        traceId: `group-completion-${windowId}-${questionGroup}`,
-      });
-    }
   }
 }
 

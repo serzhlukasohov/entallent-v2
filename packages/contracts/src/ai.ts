@@ -167,6 +167,14 @@ export const SurveyEvidenceEvaluationSchema = z.object({
 });
 export type SurveyEvidenceEvaluation = z.infer<typeof SurveyEvidenceEvaluationSchema>;
 
+// ── Group Confirmation Response Interpreter ─────────────────────────────────
+
+export const ConfirmationResponseSchema = z.object({
+  verdict: z.enum(['agree', 'correct', 'unclear']),
+  correctionNote: z.string().optional(),
+});
+export type ConfirmationResponse = z.infer<typeof ConfirmationResponseSchema>;
+
 // ── Response Generator ──────────────────────────────────────────────────────
 
 export const ConversationModeSchema = z.enum([
@@ -179,6 +187,7 @@ export const ConversationModeSchema = z.enum([
   'proactive_follow_up',
   'onboarding',
   'celebration',
+  'confirmation',
 ]);
 export type ConversationMode = z.infer<typeof ConversationModeSchema>;
 

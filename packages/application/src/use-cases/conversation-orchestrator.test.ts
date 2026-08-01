@@ -1,0 +1,125 @@
+import { describe, it, expect, vi } from 'vitest';
+import { ConversationOrchestrator } from './conversation-orchestrator';
+
+function baseMocks() {
+  const conversationRepo = {
+    findById: vi.fn().mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userTimezone: 'UTC' }),
+    findRecentMessages: vi.fn().mockResolvedValue([
+      { id: 'm-1', direction: 'inbound', text: 'hey', occurredAt: new Date(), metadata: undefined },
+    ]),
+    saveMessage: vi.fn().mockResolvedValue({ id: 'out-1' }),
+  } as any;
+  const aiProvider = {
+    classifySituation: vi.fn().mockResolvedValue({ primaryIntent: 'casual_conversation', urgency: 'low', surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null }),
+    detectRisk: vi.fn(),
+    generateResponse: vi.fn().mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false }),
+    interpretConfirmationResponse: vi.fn(),
+  } as any;
+  const outbox = { enqueueMessageSend: vi.fn(), enqueueMemoryExtraction: vi.fn(), enqueueSurveyEvidence: vi.fn(), enqueueGroupReport: vi.fn() } as any;
+  const surveyRepo = {
+    findPendingConfirmationGroups: vi.fn().mockResolvedValue([]),
+    findAwaitingConfirmationGroups: vi.fn().mockResolvedValue([]),
+    findOrCreateActiveWindow: vi.fn().mockResolvedValue({ id: 'w-1' }),
+    findQuestionsForWindow: vi.fn().mockResolvedValue([{ id: 'q-1', stableKey: 'q12', questionGroup: 'autonomy' }]),
+    findEvidenceForQuestion: vi.fn().mockResolvedValue([{ evidenceSummary: 'values ownership', polarity: 'positive', createdAt: new Date() }]),
+    upsertGroupState: vi.fn().mockResolvedValue({}),
+    findTeamByMemberId: vi.fn().mockResolvedValue(null),
+  } as any;
+  const featureFlags = { isEnabled: vi.fn().mockResolvedValue(true) } as any;
+  return { conversationRepo, aiProvider, outbox, surveyRepo, featureFlags };
+}
+
+const INPUT = {
+  messageId: 'm-1', conversationId: 'c-1', userId: 'u-1', tenantId: 't-1',
+  externalWorkspaceId: 'ws', externalConversationId: 'ec', traceId: 'tr',
+};
+
+describe('ConversationOrchestrator group confirmation — surface (Phase A)', () => {
+  it('surfaces confirmation with confirmationRequest, no probe, and sets awaiting_confirmation', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', aiSummary: 's' },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.confirmationRequest).toMatchObject({ questionGroup: 'autonomy' });
+    expect(ctxArg.surveyProbeQuestion).toBeUndefined();
+    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'autonomy', status: 'awaiting_confirmation' }),
+    );
+  });
+});
+
+describe('ConversationOrchestrator group confirmation — interpret (Phase B)', () => {
+  it('agree → confirms group and enqueues report', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 'You want more ownership.' },
+    ]);
+    m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1' });
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'growth', status: 'confirmed' }),
+    );
+    expect(m.outbox.enqueueGroupReport).toHaveBeenCalled();
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.topicConfirmed).toMatchObject({ questionGroup: 'growth' });
+  });
+
+  it('correct → reopens group to in_progress and does not report', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'correct', correctionNote: 'not about promotion' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'growth', status: 'in_progress' }),
+    );
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it('unclear verdict with an awaiting group present → Phase A does NOT surface a new pending confirmation', async () => {
+    const m = baseMocks();
+    // A group is awaiting a reply; the employee's reply is unclear.
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'unclear' });
+    // A DIFFERENT group is ripe for surfacing — Phase A must NOT pick it up this turn.
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', aiSummary: 's2' },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.confirmationRequest).toBeUndefined();
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'awaiting_confirmation' }),
+    );
+  });
+});

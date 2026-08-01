@@ -107,7 +107,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       makeAi('scored'),
       makeConversationRepo(),
       makeSurveyRepo('scored'),
-      undefined,
       pulseService,
     );
 
@@ -122,7 +121,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       makeAi('covered'),
       makeConversationRepo(),
       makeSurveyRepo('covered'),
-      undefined,
       pulseService,
     );
 
@@ -139,7 +137,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       makeAi('partially_covered'),
       makeConversationRepo(),
       makeSurveyRepo('partially_covered'),
-      undefined,
       pulseService,
     );
 
@@ -180,7 +177,6 @@ describe('SurveyEvidenceExtractionUseCase', () => {
       ai,
       convRepo,
       makeSurveyRepo('scored'),
-      undefined,
       makePulseService(),
     );
 
@@ -203,5 +199,23 @@ describe('SurveyEvidenceExtractionUseCase', () => {
 
     expect(result.windowsProcessed).toBe(0);
     expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('completing a group upserts pending_confirmation', async () => {
+    const surveyRepo = makeSurveyRepo('scored');
+    // group of one question fully covered
+    (surveyRepo.findQuestionsForWindow as any).mockResolvedValue([makeQuestion('q-1', 'autonomy')]);
+    (surveyRepo.findAssessmentsForWindow as any).mockResolvedValue([{ surveyQuestionId: 'q-1', status: 'scored' }]);
+    (surveyRepo.findGroupState as any).mockResolvedValue(null);
+
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      makeAi('scored'), makeConversationRepo(), surveyRepo, makePulseService(),
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'autonomy', status: 'pending_confirmation' }),
+    );
   });
 });

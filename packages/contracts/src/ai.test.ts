@@ -7,6 +7,8 @@ import {
   GeneratedResponseSchema,
   ReplyStrategySchema,
   FollowUpCandidateSchema,
+  ConfirmationResponseSchema,
+  ConversationModeSchema,
 } from './ai';
 
 describe('Contract: SituationClassificationSchema', () => {
@@ -323,5 +325,25 @@ describe('Contract: FollowUpCandidateSchema', () => {
         confidence: 1.5,
       }),
     ).toThrow();
+  });
+});
+
+describe('ConfirmationResponseSchema', () => {
+  it('accepts a valid agree verdict', () => {
+    const r = ConfirmationResponseSchema.parse({ verdict: 'agree' });
+    expect(r.verdict).toBe('agree');
+  });
+
+  it('accepts correct with a note', () => {
+    const r = ConfirmationResponseSchema.parse({ verdict: 'correct', correctionNote: 'not about pay' });
+    expect(r.correctionNote).toBe('not about pay');
+  });
+
+  it('rejects an unknown verdict', () => {
+    expect(() => ConfirmationResponseSchema.parse({ verdict: 'maybe' })).toThrow();
+  });
+
+  it('allows confirmation as a conversation mode', () => {
+    expect(ConversationModeSchema.parse('confirmation')).toBe('confirmation');
   });
 });

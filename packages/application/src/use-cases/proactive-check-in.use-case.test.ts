@@ -65,6 +65,7 @@ function makeAiProvider(containsSurveyProbe = false, probeQuestionId: string | n
     classifyIntent: vi.fn(),
     extractMemory: vi.fn(),
     detectRisk: vi.fn(),
+    interpretConfirmationResponse: vi.fn(),
   } as unknown as AiProviderPort;
 }
 
@@ -74,7 +75,6 @@ function makeOutbox(): OutboxPort {
     enqueueMemoryExtraction: vi.fn(),
     enqueueFollowUpExecution: vi.fn(),
     enqueueSurveyEvidence: vi.fn(),
-    enqueueGroupConfirmation: vi.fn(),
     enqueueGroupReport: vi.fn(),
   };
 }
