@@ -3,3 +3,4 @@ export type { OpenAiProviderConfig, DirectOpenAiConfig, AzureOpenAiConfig, Model
 export { AiProviderWithFallback } from './ai-provider-router';
 export { CircuitBreaker } from './circuit-breaker';
 export type { CircuitBreakerOptions } from './circuit-breaker';
+export { OPENER_ANTIPATTERNS, hasReflectiveOpener } from './prompts/style-antipatterns';
