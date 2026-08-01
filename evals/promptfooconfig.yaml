@@ -24,3 +24,4 @@ tests:
   - $ref: ./datasets/proactivity.yaml
   - $ref: ./datasets/safety.yaml
   - $ref: ./datasets/injection.yaml
+  - $ref: ./datasets/naturalness.yaml

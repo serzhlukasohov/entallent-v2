@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildRespondSystemPrompt } from './respond';
+import { RESPOND_STYLE_EXAMPLES } from './respond-examples';
 import type { ReplyStrategy } from '@entalent/contracts';
 
 const strategy: ReplyStrategy = {
@@ -26,5 +27,21 @@ describe('buildRespondSystemPrompt confirmation branch', () => {
   it('does not emit confirm instructions otherwise', () => {
     const prompt = buildRespondSystemPrompt(strategy, { userName: 'Test' });
     expect(prompt).not.toMatch(/did i get that right/i);
+  });
+});
+
+describe('buildRespondSystemPrompt few-shot exemplars', () => {
+  const strat: ReplyStrategy = {
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion: true,
+    maxResponseLength: 'medium', forbiddenPatterns: [],
+  };
+  it('includes the BAD→GOOD exemplars block', () => {
+    const prompt = buildRespondSystemPrompt(strat, { userName: 'Test' });
+    expect(prompt).toContain(RESPOND_STYLE_EXAMPLES.trim().slice(0, 24));
+  });
+  it('exemplars demonstrate leading with substance, not labeling', () => {
+    expect(RESPOND_STYLE_EXAMPLES.toLowerCase()).toContain('вот это');   // shown as the BAD pattern
+    expect(RESPOND_STYLE_EXAMPLES).toMatch(/BAD|ПЛОХО/);
+    expect(RESPOND_STYLE_EXAMPLES).toMatch(/GOOD|ХОРОШО/);
   });
 });

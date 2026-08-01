@@ -11,6 +11,7 @@ vi.mock('openai', () => {
 });
 
 import { OpenAiProvider } from './openai-provider';
+import { ReplyStrategy } from '@entalent/contracts';
 
 function makeProvider() {
   return new OpenAiProvider({ azure: false, apiKey: 'test', model: 'gpt-test' });
@@ -54,6 +55,54 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
     );
     expect(r.verdict).toBe('correct');
     expect(r.correctionNote).toBe('не про деньги');
+  });
+});
+
+describe('OpenAiProvider.generateResponse opener gate', () => {
+  beforeEach(() => createMock.mockReset());
+  const strat = { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] } as ReplyStrategy;
+
+  it('regenerates once when the first draft opens with a reflective label', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Вот это, похоже, и есть корень: шум.","confidence":0.9,"containsSurveyProbe":false}' } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"А что мешает отсечь это первым?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse([{ role: 'user', content: 'суета', timestamp: new Date() }], strat, { userName: 'X' });
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('А что мешает отсечь это первым?');
+  });
+
+  it('does not regenerate when the first draft is clean', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"А что мешает отсечь это первым?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    const provider = makeProvider();
+    await provider.generateResponse([{ role: 'user', content: 'суета', timestamp: new Date() }], strat, { userName: 'X' });
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not run the opener gate for confirmation replies (confirmationRequest set)', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Похоже, для тебя важнее автономия — я правильно понял?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse(
+      [{ role: 'user', content: 'да', timestamp: new Date() }],
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      { userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } },
+    );
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toContain('я правильно понял');
+  });
+
+  it('returns the regenerated draft unconditionally even if it also opens reflectively (no loop)', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Вот это, похоже, и есть корень: шум.","confidence":0.9,"containsSurveyProbe":false}' } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Звучит как перегрузка, честно.","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse(
+      [{ role: 'user', content: 'суета', timestamp: new Date() }],
+      { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      { userName: 'X' },
+    );
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('Звучит как перегрузка, честно.');
   });
 });
 
