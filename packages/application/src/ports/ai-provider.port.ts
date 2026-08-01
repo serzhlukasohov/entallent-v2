@@ -8,6 +8,7 @@ import type {
   GroupSummary,
   GroupReport,
   ConfirmationResponse,
+  ObservedStyle,
 } from '@entalent/contracts';
 
 export interface ConversationTurn {
@@ -120,4 +121,6 @@ export interface AiProviderPort {
     turns: ConversationTurn[],
     summary: string,
   ): Promise<ConfirmationResponse>;
+
+  analyzeStyle(userTurns: string[]): Promise<ObservedStyle>;
 }

@@ -232,3 +232,16 @@ export const SentimentScoreSchema = z.object({
   score: z.number().min(0).max(1),  // 0 = strongly negative, 1 = strongly positive
 });
 export type SentimentScore = z.infer<typeof SentimentScoreSchema>;
+
+// ── Style Analyzer ───────────────────────────────────────────────────────────
+
+export const ObservedStyleSchema = z.object({
+  dimensions: z.object({
+    register: z.number().min(0).max(1),
+    humor: z.number().min(0).max(1),
+    verbosity: z.number().min(0).max(1),
+    emoji: z.number().min(0).max(1),
+  }),
+  phrases: z.array(z.string()).max(10),
+});
+export type ObservedStyle = z.infer<typeof ObservedStyleSchema>;

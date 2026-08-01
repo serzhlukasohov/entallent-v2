@@ -106,6 +106,17 @@ describe('OpenAiProvider.generateResponse opener gate', () => {
   });
 });
 
+describe('OpenAiProvider.analyzeStyle', () => {
+  beforeEach(() => createMock.mockReset());
+  it('parses observed style', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"dimensions":{"register":0.9,"humor":0.6,"verbosity":0.3,"emoji":0.1},"phrases":["ну такое"]}' } }] });
+    const provider = makeProvider();
+    const r = await provider.analyzeStyle(['привет, ну такое']);
+    expect(r.dimensions.register).toBe(0.9);
+    expect(r.phrases).toContain('ну такое');
+  });
+});
+
 describe('OpenAiProvider.complete truncation handling', () => {
   beforeEach(() => createMock.mockReset());
 

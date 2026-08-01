@@ -10,6 +10,7 @@ import {
   GroupReportSchema,
   SentimentScoreSchema,
   ConfirmationResponseSchema,
+  ObservedStyleSchema,
   type SituationClassification,
   type RiskDetection,
   type MemoryProposal,
@@ -19,6 +20,7 @@ import {
   type GroupSummary,
   type GroupReport,
   type ConfirmationResponse,
+  type ObservedStyle,
 } from '@entalent/contracts';
 import type {
   AiProviderPort,
@@ -30,6 +32,7 @@ import type {
   SurveyQuestionForEvaluation,
 } from '@entalent/application';
 import { buildClassifySystemPrompt, buildClassifyUserPrompt } from './prompts/classify';
+import { buildStyleAnalyzeSystemPrompt, buildStyleAnalyzeUserPrompt } from './prompts/style-analyze';
 import { buildMemorySystemPrompt, buildMemoryUserPrompt } from './prompts/memory';
 import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
@@ -208,6 +211,16 @@ export class OpenAiProvider implements AiProviderPort {
       this.analysisModel,
     );
     return SentimentScoreSchema.parse(JSON.parse(raw)).score;
+  }
+
+  async analyzeStyle(userTurns: string[]): Promise<ObservedStyle> {
+    const raw = await this.complete(
+      buildStyleAnalyzeSystemPrompt(),
+      buildStyleAnalyzeUserPrompt(userTurns),
+      this.analysisModel,
+      1024,
+    );
+    return ObservedStyleSchema.parse(JSON.parse(raw));
   }
 
   private async complete(
