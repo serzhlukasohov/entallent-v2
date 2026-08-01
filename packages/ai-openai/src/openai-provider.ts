@@ -153,7 +153,8 @@ export class OpenAiProvider implements AiProviderPort {
     const first = GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
     );
-    if (!hasReflectiveOpener(first.text)) return first;
+    // Confirmation replies legitimately open by paraphrasing understanding — exempt them from the gate.
+    if (context.confirmationRequest || !hasReflectiveOpener(first.text)) return first;
 
     // One corrective regeneration — the common path never reaches here.
     return GeneratedResponseSchema.parse(
