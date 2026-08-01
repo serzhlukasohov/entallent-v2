@@ -1,6 +1,9 @@
 // promptfoo prompt function: renders the REAL production respond prompt from test vars,
 // so evals exercise buildRespondSystemPrompt/buildRespondUserPrompt, not a stub.
-const { buildRespondSystemPrompt, buildRespondUserPrompt } = require('@entalent/ai-openai');
+const path = require('path');
+const { buildRespondSystemPrompt, buildRespondUserPrompt } = require(
+  path.resolve(__dirname, '../../packages/ai-openai/dist/index.js')
+);
 
 module.exports = async function ({ vars }) {
   const strategy = vars.strategy || {
