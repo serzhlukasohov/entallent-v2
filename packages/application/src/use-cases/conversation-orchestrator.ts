@@ -17,7 +17,6 @@ import type { FeatureFlagPort } from '../ports/feature-flag.port';
 import { FEATURE_FLAGS } from '../ports/feature-flag.port';
 import type { SurveyQuestionRecord } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
-import { effectiveStyleLevels } from '../utils/style-adaptation';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 
 export interface OrchestrateInput {
@@ -107,8 +106,11 @@ export class ConversationOrchestrator {
 
     // Blend the user's learned style profile toward the base style, gated on the
     // same flag as memory. Only build adaptation when a profile actually exists.
+    // Pass the OBSERVED user style (u) + weight; the renderer decides which axes to
+    // nudge (u vs base) and how strongly (scaled by weight). Passing the pre-blended
+    // effective level here would damp the signal below the renderer's threshold.
     const styleAdaptation = (memoryEnabled && profile)
-      ? { dimensions: effectiveStyleLevels(profile), weight: profile.adaptationWeight, phrases: profile.phrases.map((p) => p.text) }
+      ? { dimensions: profile.dimensions, weight: profile.adaptationWeight, phrases: profile.phrases.map((p) => p.text) }
       : undefined;
 
     const memoryContext = {

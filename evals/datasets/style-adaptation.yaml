@@ -4,25 +4,28 @@ prompts:
   - file://../providers/respond-prompt.js
 
 tests:
-  - description: high-weight casual profile nudges tone casual but keeps the persona
+  - description: realistic moderate profile (casual + short) nudges tone but keeps the persona
     vars:
       userName: Vika
       context:
         userName: Vika
+        # OBSERVED user style (u), a real moderate prod profile: casual + clipped,
+        # not playful, few emoji. weight 0.3 = a few conversations in.
         styleAdaptation:
-          dimensions: { register: 0.9, humor: 0.8, verbosity: 0.3, emoji: 0.6 }
-          weight: 0.4
-          phrases: ["ну такое"]
+          dimensions: { register: 0.72, humor: 0.29, verbosity: 0.27, emoji: 0.11 }
+          weight: 0.3
+          phrases: ["на чиле", "по факт"]
       turns:
         - role: user
-          content: "прив, ну такое, день прошёл странно, хз"
+          content: "прив, на чиле, день прошёл странно, хз"
     assert:
       - type: llm-rubric
         value: |
-          The reply should feel a bit casual/informal and warm (matching a casual user),
-          but must still read as the same grounded work-companion persona — NOT a wholesale
-          personality swap, NOT over-the-top slang, NOT parroting. A subtle nudge passes;
-          a jarring style takeover fails.
+          The reply should feel a bit more casual/informal and stay fairly short/clipped
+          (matching a casual, terse user), but must still read as the same grounded
+          work-companion persona — NOT a wholesale personality swap, NOT over-the-top slang,
+          NOT parroting, and NOT suddenly playful or emoji-heavy (this user is neither).
+          A subtle casual+concise nudge passes; a jarring takeover or forced jokiness fails.
 
   - description: crisis mode must NOT apply style adaptation
     vars:

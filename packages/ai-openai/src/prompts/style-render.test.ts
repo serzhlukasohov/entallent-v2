@@ -1,53 +1,45 @@
 import { describe, it, expect } from 'vitest';
 import { buildStyleAdaptationBlock } from './style-render';
 
-// Raw high-dim fixture (no longer representative of real pipeline, kept for basic sanity)
-const hi = { dimensions: { register: 0.9, humor: 0.8, verbosity: 0.7, emoji: 0.6 }, weight: 0.4, phrases: ['ну такое'] };
-
-// Realistic blended values: max-casual user at w=0.4
-// effectiveStyleLevels output: base*(1-0.4) + user*0.4
-//   register: 0.5*0.6 + 1*0.4 = 0.7  (delta from base 0.5 = +0.20 ≥ 0.12 → casual cue)
-//   humor:    0.3*0.6 + 1*0.4 = 0.58 (delta from base 0.3 = +0.28 ≥ 0.12 → playful cue)
-//   verbosity:0.5*0.6 + 1*0.4 = 0.70 (delta from base 0.5 = +0.20 ≥ 0.12 → elaborate cue)
-//   emoji:    0.2*0.6 + 1*0.4 = 0.52 (delta from base 0.2 = +0.32 ≥ 0.12 → emoji cue)
-const blended = {
-  dimensions: { register: 0.7, humor: 0.58, verbosity: 0.7, emoji: 0.52 },
-  weight: 0.4,
-  phrases: ['ну такое'],
+// A realistic MODERATE observed profile (from a real prod user): casual + short, not
+// playful, few emoji. This is the case the old effective-blend logic silently failed
+// to fire — dimensions are the OBSERVED user style (u), not pre-blended.
+const realProfile = {
+  dimensions: { register: 0.72, humor: 0.29, verbosity: 0.27, emoji: 0.11 },
+  weight: 0.3,
+  phrases: ['на чиле', 'по факт'],
 };
 
 describe('buildStyleAdaptationBlock', () => {
-  it('emits scaled guidance when weight is meaningful', () => {
-    const b = buildStyleAdaptationBlock(hi, 'normal');
-    expect(b).toMatch(/casual|ты|неформаль/i);
-    expect(b).toContain('ну такое');
-    expect(b.toLowerCase()).toMatch(/base|persona|primary|основ/);
+  it('fires casual + shorter cues for a realistic moderate profile', () => {
+    const b = buildStyleAdaptationBlock(realProfile, 'normal');
+    expect(b).toMatch(/casual|ты/i);         // register cue fires
+    expect(b).toMatch(/shorter|clipped/i);   // verbosity cue fires
+    expect(b).not.toMatch(/playful|lightness/i); // humor ~base → no cue
+    expect(b).not.toMatch(/emoji/i);         // emoji below base → no cue
+    expect(b).toContain('на чиле');          // phrase echo present
+    expect(b.toLowerCase()).toMatch(/base persona stays primary|≤40%/);
   });
 
-  it('emits nothing at cold start (weight 0)', () => {
-    expect(buildStyleAdaptationBlock({ dimensions: hi.dimensions, weight: 0, phrases: [] }, 'normal')).toBe('');
+  it('emits nothing below the confidence floor (weight < 0.15)', () => {
+    expect(buildStyleAdaptationBlock({ ...realProfile, weight: 0.1 }, 'normal')).toBe('');
   });
 
-  it('emits nothing in crisis or sensitive mode', () => {
-    expect(buildStyleAdaptationBlock(hi, 'crisis')).toBe('');
-    expect(buildStyleAdaptationBlock(hi, 'sensitive')).toBe('');
+  it('emits nothing when the user sits at base, even at max weight', () => {
+    const atBase = { dimensions: { register: 0.5, humor: 0.3, verbosity: 0.5, emoji: 0.2 }, weight: 0.4, phrases: [] };
+    expect(buildStyleAdaptationBlock(atBase, 'normal')).toBe('');
   });
 
-  it('emits nothing in confirmation mode', () => {
-    expect(buildStyleAdaptationBlock(hi, 'confirmation')).toBe('');
+  it('uses firmer wording at higher weight', () => {
+    const soft = buildStyleAdaptationBlock({ ...realProfile, weight: 0.2 }, 'normal');
+    const firm = buildStyleAdaptationBlock({ ...realProfile, weight: 0.4 }, 'normal');
+    expect(soft).toMatch(/lean a little more casual/i);
+    expect(firm).toMatch(/match their more casual/i);
   });
 
-  it('emits humor, emoji, and casual cues for realistic blended dims (humor & emoji no longer dead)', () => {
-    const b = buildStyleAdaptationBlock(blended, 'normal');
-    // Casual/register cue
-    expect(b).toMatch(/casual|ты|неформаль/i);
-    // Humor/playful cue
-    expect(b).toMatch(/lightness|playful/i);
-    // Emoji cue
-    expect(b).toMatch(/emoji/i);
-    // Base-persona framing present
-    expect(b.toLowerCase()).toMatch(/base|persona|primary/);
-    // Phrase appears
-    expect(b).toContain('ну такое');
+  it('emits nothing in crisis, sensitive, or confirmation mode', () => {
+    expect(buildStyleAdaptationBlock(realProfile, 'crisis')).toBe('');
+    expect(buildStyleAdaptationBlock(realProfile, 'sensitive')).toBe('');
+    expect(buildStyleAdaptationBlock(realProfile, 'confirmation')).toBe('');
   });
 });
