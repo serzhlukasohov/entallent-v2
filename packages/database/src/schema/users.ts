@@ -9,6 +9,7 @@ export const users = pgTable('users', {
   status: text('status').notNull().default('active'),
   preferredName: text('preferred_name'),
   timezone: text('timezone'),
+  timezoneUpdatedAt: timestamp('timezone_updated_at', { withTimezone: true }),
   locale: text('locale').notNull().default('en'),
   communicationPreferences: jsonb('communication_preferences').notNull().default({}),
   proactiveMessagingEnabled: boolean('proactive_messaging_enabled').notNull().default(true),

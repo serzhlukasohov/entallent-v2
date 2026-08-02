@@ -19,6 +19,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         status: conversations.status,
         userDisplayName: users.preferredName,
         userTimezone: users.timezone,
+        userTimezoneUpdatedAt: users.timezoneUpdatedAt,
       })
       .from(conversations)
       .leftJoin(users, eq(conversations.userId, users.id))
@@ -36,6 +37,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
       status: row.status,
       userDisplayName: row.userDisplayName ?? undefined,
       userTimezone: row.userTimezone ?? undefined,
+      userTimezoneUpdatedAt: row.userTimezoneUpdatedAt ?? undefined,
     };
   }
 

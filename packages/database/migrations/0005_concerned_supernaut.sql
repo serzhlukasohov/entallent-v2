@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "timezone_updated_at" timestamp with time zone;

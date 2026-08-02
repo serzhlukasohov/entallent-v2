@@ -8,6 +8,7 @@ export interface ConversationRecord {
   userDisplayName?: string;
   /** IANA timezone of the conversation's user, if known */
   userTimezone?: string;
+  userTimezoneUpdatedAt?: Date;
 }
 
 export interface MessageRecord {
