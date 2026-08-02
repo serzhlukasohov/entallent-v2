@@ -27,6 +27,7 @@ export type { ProactiveCheckInInput, ProactiveCheckInResult } from './use-cases/
 export { ProactiveSchedulerUseCase } from './use-cases/proactive-scheduler.use-case';
 export type { ProactiveScanConfig, ProactiveScanResult } from './use-cases/proactive-scheduler.use-case';
 export { isInQuietHours, getLocalHour } from './utils/quiet-hours';
+export { BASE_STYLE } from './utils/style-adaptation';
 export type { QuietHours } from './utils/quiet-hours';
 export { MemoryExtractionUseCase } from './use-cases/memory-extraction.use-case';
 export type { MemoryExtractionInput, MemoryExtractionResult } from './use-cases/memory-extraction.use-case';
