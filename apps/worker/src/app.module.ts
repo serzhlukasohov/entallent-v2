@@ -12,6 +12,7 @@ import { SurveyModule } from './survey/survey.module';
 import { SafetyModule } from './safety/safety.module';
 import { ProactiveSchedulerModule } from './proactive/proactive-scheduler.module';
 import { StyleModule } from './style/style.module';
+import { ProfileModule } from './profile/profile.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { StyleModule } from './style/style.module';
     SafetyModule,
     ProactiveSchedulerModule,
     StyleModule,
+    ProfileModule,
   ],
 })
 export class AppModule {}

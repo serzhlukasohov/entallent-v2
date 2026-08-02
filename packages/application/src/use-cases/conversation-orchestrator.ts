@@ -40,6 +40,8 @@ export interface OrchestrateResult {
   risk: RiskDetection;
 }
 
+const TZ_REFRESH_DAYS = 30;
+
 export class ConversationOrchestrator {
   constructor(
     private readonly conversationRepo: ConversationRepositoryPort,
@@ -61,6 +63,15 @@ export class ConversationOrchestrator {
 
     const conversation = await this.conversationRepo.findById(conversationId, tenantId);
     if (!conversation) throw new Error(`Conversation ${conversationId} not found`);
+
+    const tzMissing = !conversation.userTimezone;
+    const tzStale = !!conversation.userTimezoneUpdatedAt &&
+      Date.now() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000;
+    if (tzMissing || tzStale) {
+      await this.outbox.enqueueProfileHydration({
+        userId, tenantId, channelType: conversation.channelType, traceId: input.traceId,
+      });
+    }
 
     const dbMessages = await this.conversationRepo.findRecentMessages(conversationId, 20);
 

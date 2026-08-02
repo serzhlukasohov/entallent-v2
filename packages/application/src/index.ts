@@ -2,7 +2,9 @@ export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, Me
 export type { ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
 export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, IngestMessageResult } from './ports/ingestion.repository.port';
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';
-export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload, StyleAnalysisPayload } from './ports/outbox.port';
+export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload, StyleAnalysisPayload, ProfileHydrationPayload } from './ports/outbox.port';
+export type { ExternalProfilePort } from './ports/external-profile.port';
+export type { UserProfileRepositoryPort } from './ports/user-profile.repository.port';
 export type { MemoryRepositoryPort, SaveMemoryItemParams } from './ports/memory.repository.port';
 export type { GoalRepositoryPort, SaveGoalParams } from './ports/goal.repository.port';
 export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from './ports/scheduled-action.repository.port';
@@ -45,3 +47,5 @@ export type { GroupReportInput, GroupReportResult } from './use-cases/group-repo
 export { PulseBacklogService } from './services/pulse-backlog.service';
 export { StyleAnalysisUseCase } from './use-cases/style-analysis.use-case';
 export type { StyleAnalysisInput } from './use-cases/style-analysis.use-case';
+export { ProfileHydrationUseCase } from './use-cases/profile-hydration.use-case';
+export type { ProfileHydrationInput } from './use-cases/profile-hydration.use-case';

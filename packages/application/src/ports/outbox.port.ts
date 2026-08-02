@@ -55,6 +55,13 @@ export interface StyleAnalysisPayload {
   traceId: string;
 }
 
+export interface ProfileHydrationPayload {
+  userId: string;
+  tenantId: string;
+  channelType: string;
+  traceId: string;
+}
+
 export interface OutboxPort {
   enqueueMessageSend(payload: MessageSendPayload): Promise<void>;
   enqueueMemoryExtraction(payload: MemoryExtractionPayload): Promise<void>;
@@ -62,4 +69,5 @@ export interface OutboxPort {
   enqueueSurveyEvidence(payload: SurveyEvidencePayload): Promise<void>;
   enqueueGroupReport(payload: GroupReportPayload): Promise<void>;
   enqueueStyleAnalysis(payload: StyleAnalysisPayload): Promise<void>;
+  enqueueProfileHydration(payload: ProfileHydrationPayload): Promise<void>;
 }

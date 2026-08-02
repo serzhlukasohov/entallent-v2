@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload, StyleAnalysisPayload } from '@entalent/application';
+import type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload, StyleAnalysisPayload, ProfileHydrationPayload } from '@entalent/application';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import type { MessageSendJob } from '../message-send/message-send.processor';
 
@@ -19,6 +19,8 @@ export class OutboxService implements OutboxPort {
     private readonly groupReportQueue: Queue<GroupReportPayload>,
     @InjectQueue(QUEUE_NAMES.STYLE_ANALYSIS)
     private readonly styleAnalysisQueue: Queue<StyleAnalysisPayload>,
+    @InjectQueue(QUEUE_NAMES.PROFILE_HYDRATION)
+    private readonly profileHydrationQueue: Queue<ProfileHydrationPayload>,
   ) {}
 
   async enqueueMessageSend(payload: MessageSendPayload): Promise<void> {
@@ -53,5 +55,9 @@ export class OutboxService implements OutboxPort {
 
   async enqueueStyleAnalysis(payload: StyleAnalysisPayload): Promise<void> {
     await this.styleAnalysisQueue.add('analyze', payload);
+  }
+
+  async enqueueProfileHydration(payload: ProfileHydrationPayload): Promise<void> {
+    await this.profileHydrationQueue.add('hydrate', payload);
   }
 }

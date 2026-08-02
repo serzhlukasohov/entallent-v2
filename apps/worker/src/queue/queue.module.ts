@@ -15,6 +15,7 @@ export const QUEUE_NAMES = {
   PROACTIVE_SCAN: 'proactive-scan',
   GROUP_REPORT: 'group-report',
   STYLE_ANALYSIS: 'style-analysis',
+  PROFILE_HYDRATION: 'profile-hydration',
 } as const;
 
 @Global()
@@ -50,6 +51,7 @@ export const QUEUE_NAMES = {
       { name: QUEUE_NAMES.PROACTIVE_SCAN },
       { name: QUEUE_NAMES.GROUP_REPORT },
       { name: QUEUE_NAMES.STYLE_ANALYSIS },
+      { name: QUEUE_NAMES.PROFILE_HYDRATION },
     ),
   ],
   providers: [RedisService],
