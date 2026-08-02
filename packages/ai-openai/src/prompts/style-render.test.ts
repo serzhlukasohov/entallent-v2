@@ -17,7 +17,8 @@ describe('buildStyleAdaptationBlock', () => {
     expect(b).toMatch(/shorter|clipped/i);   // verbosity cue fires
     expect(b).not.toMatch(/playful|lightness/i); // humor ~base → no cue
     expect(b).not.toMatch(/emoji/i);         // emoji below base → no cue
-    expect(b).toContain('на чиле');          // phrase echo present
+    expect(b).toContain('на чиле');          // phrases present as a word-choice cue
+    expect(b).toMatch(/do not quote|not.*verbatim/i); // #3: cue only, no verbatim echo
     expect(b.toLowerCase()).toMatch(/base persona stays primary|≤40%/);
   });
 

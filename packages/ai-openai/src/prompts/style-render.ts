@@ -32,7 +32,9 @@ export function buildStyleAdaptationBlock(style: StyleAdaptation, mode: string):
 
   const cues: string[] = [];
   if (u.register - BASE_STYLE.register >= MARGIN) {
-    cues.push(firm ? 'match their more casual register — «ты» and informal phrasing fit' : 'lean a little more casual — «ты» is fine');
+    cues.push(firm
+      ? 'match their more casual register — «ты», plain everyday wording, short connectors; skip bureaucratic phrasing'
+      : 'lean a little more casual — «ты» and simpler wording are fine');
   } else if (BASE_STYLE.register - u.register >= MARGIN) {
     cues.push(firm ? 'keep a more formal, respectful register' : 'stay a touch more formal in register');
   }
@@ -49,7 +51,7 @@ export function buildStyleAdaptationBlock(style: StyleAdaptation, mode: string):
   if (cues.length === 0 && style.phrases.length === 0) return '';
 
   const phraseLine = style.phrases.length
-    ? `\nExpressions this person uses that you may occasionally echo — sparingly, only if natural, never forced: ${style.phrases.slice(0, 2).join(', ')}.`
+    ? `\nHow this person phrases things — use ONLY as a cue for your own word choice (lean casual/plain in this direction). Do NOT quote these back, echo them verbatim, or force them in: ${style.phrases.slice(0, 3).join('; ')}.`
     : '';
 
   return `\nStyle adaptation (your base persona stays PRIMARY — a subtle, bounded (≤40%) nudge toward how this person talks, never a rewrite or mimicry):
