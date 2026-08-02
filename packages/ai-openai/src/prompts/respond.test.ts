@@ -45,3 +45,22 @@ describe('buildRespondSystemPrompt few-shot exemplars', () => {
     expect(RESPOND_STYLE_EXAMPLES).toMatch(/GOOD|ХОРОШО/);
   });
 });
+
+describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', () => {
+  const normal = (includeFollowUpQuestion: boolean): ReplyStrategy => ({
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion, maxResponseLength: 'short', forbiddenPatterns: [],
+  });
+
+  it('encourages a question when includeFollowUpQuestion is true', () => {
+    const p = buildRespondSystemPrompt(normal(true), { userName: 'T' });
+    expect(p).toMatch(/one sharp question/i);
+    expect(p).toContain('Что ещё сейчас занимает голову'); // rhythm exit question available
+  });
+
+  it('suppresses questions across the persona body when false (not just the trailing note)', () => {
+    const p = buildRespondSystemPrompt(normal(false), { userName: 'T' });
+    expect(p).toMatch(/Do NOT ask a question this turn/i);
+    expect(p).not.toMatch(/one sharp question/i);
+    expect(p).not.toContain('Что ещё сейчас занимает голову');
+  });
+});

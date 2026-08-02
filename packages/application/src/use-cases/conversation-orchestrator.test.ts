@@ -134,8 +134,12 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     upsert: vi.fn(),
   }) as any;
 
-  it('shortens the reply and drops the follow-up for a confident terse user', async () => {
+  it('terse user is always shortened; skips the question when the agent just asked one', async () => {
     const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'i-1', direction: 'inbound', text: 'ага', occurredAt: new Date(), metadata: undefined },
+      { id: 'o-1', direction: 'outbound', text: 'а что именно тебя держит?', occurredAt: new Date(), metadata: undefined },
+    ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
       undefined, undefined, m.featureFlags, undefined, undefined, profile(0.27, 0.3),
@@ -143,7 +147,23 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     await orch.orchestrate(INPUT);
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     expect(strategyArg.maxResponseLength).toBe('short');
-    expect(strategyArg.includeFollowUpQuestion).toBe(false);
+    expect(strategyArg.includeFollowUpQuestion).toBe(false); // just asked → skip this turn
+  });
+
+  it('terse user asks a follow-up when the previous reply had no question', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'i-1', direction: 'inbound', text: 'ага', occurredAt: new Date(), metadata: undefined },
+      { id: 'o-1', direction: 'outbound', text: 'понял, звучит выматывающе.', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined, profile(0.27, 0.3),
+    );
+    await orch.orchestrate(INPUT);
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    expect(strategyArg.maxResponseLength).toBe('short');
+    expect(strategyArg.includeFollowUpQuestion).toBe(true); // didn't just ask → may ask
   });
 
   it('does not shorten for a non-terse user (verbosity near base)', async () => {
