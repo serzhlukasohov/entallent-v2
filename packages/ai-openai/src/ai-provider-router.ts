@@ -17,6 +17,7 @@ import type {
   GroupSummary,
   GroupReport,
   ConfirmationResponse,
+  ObservedStyle,
 } from '@entalent/contracts';
 
 /**
@@ -86,6 +87,10 @@ export class AiProviderWithFallback implements AiProviderPort {
     summary: string,
   ): Promise<ConfirmationResponse> {
     return this.withFallback((p) => p.interpretConfirmationResponse(turns, summary));
+  }
+
+  async analyzeStyle(userTurns: string[]): Promise<ObservedStyle> {
+    return this.withFallback((p) => p.analyzeStyle(userTurns));
   }
 
   private async withFallback<T>(call: (provider: AiProviderPort) => Promise<T>): Promise<T> {

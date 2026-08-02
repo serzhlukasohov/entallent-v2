@@ -21,6 +21,7 @@ import type {
   GroupSummary,
   GroupReport,
   ConfirmationResponse,
+  ObservedStyle,
 } from '@entalent/contracts';
 
 @Injectable()
@@ -99,5 +100,9 @@ export class AiService implements AiProviderPort {
 
   scoreSentiment(text: string): Promise<number> {
     return this.provider.scoreSentiment(text);
+  }
+
+  analyzeStyle(userTurns: string[]): Promise<ObservedStyle> {
+    return this.provider.analyzeStyle(userTurns);
   }
 }

@@ -9,6 +9,7 @@ import { LlmRunRepository } from './llm-run.repository';
 import { DatabaseModule } from '../database/database.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SurveyModule } from '../survey/survey.module';
+import { StyleModule } from '../style/style.module';
 import { SafetyModule } from '../safety/safety.module';
 import { FeatureFlagModule } from '../feature-flags/feature-flag.module';
 import { FeatureFlagRepository } from '../feature-flags/feature-flag.repository';
@@ -17,6 +18,7 @@ import { SurveyRepository } from '../survey/repositories/survey.repository';
 import { RiskSignalRepository } from '../safety/repositories/risk-signal.repository';
 import { EscalationStubService } from '../safety/escalation-stub.service';
 import { ScheduledActionRepository } from '../followup/repositories/scheduled-action.repository';
+import { StyleProfileRepository } from '../style/repositories/style-profile.repository';
 import { QUEUE_NAMES } from '../queue/queue.module';
 
 @Module({
@@ -24,6 +26,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     DatabaseModule,
     MemoryModule,
     SurveyModule,
+    StyleModule,
     SafetyModule,
     FeatureFlagModule,
     BullModule.registerQueue(
@@ -52,7 +55,8 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         featureFlags: FeatureFlagRepository,
         scheduledActionRepo: ScheduledActionRepository,
         pulseBacklogService: PulseBacklogService,
-      ) => new ConversationOrchestrator(repo, ai, outbox, memoryRepo, surveyRepo, riskSignalRepo, escalation, featureFlags, scheduledActionRepo, pulseBacklogService),
+        styleProfileRepo: StyleProfileRepository,
+      ) => new ConversationOrchestrator(repo, ai, outbox, memoryRepo, surveyRepo, riskSignalRepo, escalation, featureFlags, scheduledActionRepo, pulseBacklogService, styleProfileRepo),
       inject: [
         ConversationRepository,
         AiService,
@@ -64,6 +68,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         FeatureFlagRepository,
         ScheduledActionRepository,
         PulseBacklogService,
+        StyleProfileRepository,
       ],
     },
     {

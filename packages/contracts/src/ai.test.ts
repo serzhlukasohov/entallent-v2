@@ -9,6 +9,7 @@ import {
   FollowUpCandidateSchema,
   ConfirmationResponseSchema,
   ConversationModeSchema,
+  ObservedStyleSchema,
 } from './ai';
 
 describe('Contract: SituationClassificationSchema', () => {
@@ -325,6 +326,16 @@ describe('Contract: FollowUpCandidateSchema', () => {
         confidence: 1.5,
       }),
     ).toThrow();
+  });
+});
+
+describe('ObservedStyleSchema', () => {
+  it('accepts valid observed style', () => {
+    const r = ObservedStyleSchema.parse({ dimensions: { register: 1, humor: 0.5, verbosity: 0.2, emoji: 0 }, phrases: ['ну такое'] });
+    expect(r.dimensions.register).toBe(1);
+  });
+  it('rejects out-of-range', () => {
+    expect(() => ObservedStyleSchema.parse({ dimensions: { register: 2, humor: 0, verbosity: 0, emoji: 0 }, phrases: [] })).toThrow();
   });
 });
 

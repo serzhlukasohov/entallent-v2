@@ -10,12 +10,14 @@ import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { RiskSignalRepositoryPort } from '../ports/risk-signal.repository.port';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
+import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
 import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
 import { FEATURE_FLAGS } from '../ports/feature-flag.port';
 import type { SurveyQuestionRecord } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
+import { effectiveStyleLevels } from '../utils/style-adaptation';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 
 export interface OrchestrateInput {
@@ -48,6 +50,7 @@ export class ConversationOrchestrator {
     private readonly featureFlags?: FeatureFlagPort,
     private readonly scheduledActionRepo?: ScheduledActionRepositoryPort,
     private readonly pulseBacklogService?: PulseBacklogService,
+    private readonly styleProfileRepo?: StyleProfileRepositoryPort,
   ) {}
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
@@ -82,7 +85,7 @@ export class ConversationOrchestrator {
 
     // Classify, feature flags, and memory load are all independent — run them together.
     // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
-    const [classification, [memoryEnabled, surveyEnabled], speculativeMemory] = await Promise.all([
+    const [classification, [memoryEnabled, surveyEnabled], speculativeMemory, profile] = await Promise.all([
       this.aiProvider.classifySituation(turns, {
         userName,
         now: new Date().toISOString(),
@@ -93,9 +96,16 @@ export class ConversationOrchestrator {
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.CONVERSATIONAL_SURVEY, flagCtx) : Promise.resolve(true),
       ]),
       this.memoryRepo ? this.memoryRepo.findActiveByUser(userId, tenantId, 20) : Promise.resolve([]),
+      this.styleProfileRepo ? this.styleProfileRepo.findByUser(userId, tenantId) : Promise.resolve(null),
     ]);
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
+
+    // Blend the user's learned style profile toward the base style, gated on the
+    // same flag as memory. Only build adaptation when a profile actually exists.
+    const styleAdaptation = (memoryEnabled && profile)
+      ? { dimensions: effectiveStyleLevels(profile), weight: profile.adaptationWeight, phrases: profile.phrases.map((p) => p.text) }
+      : undefined;
 
     const memoryContext = {
       items: memoryItems.map((i) => ({
@@ -233,6 +243,7 @@ export class ConversationOrchestrator {
         ? { questionGroup: confirmedGroup }
         : undefined,
       confirmationRequest,
+      styleAdaptation,
     });
 
     const outbound = await this.conversationRepo.saveMessage({
@@ -282,6 +293,13 @@ export class ConversationOrchestrator {
       traceId: input.traceId,
       channelType: conversation.channelType,
       externalConversationId: externalConversationId,
+    });
+
+    if (memoryEnabled) await this.outbox.enqueueStyleAnalysis({
+      conversationId,
+      userId,
+      tenantId,
+      traceId: input.traceId,
     });
 
     if (surveyEnabled) await this.outbox.enqueueSurveyEvidence({

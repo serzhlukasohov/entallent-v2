@@ -14,6 +14,7 @@ export const QUEUE_NAMES = {
   MESSAGE_SEND: 'message-send',
   PROACTIVE_SCAN: 'proactive-scan',
   GROUP_REPORT: 'group-report',
+  STYLE_ANALYSIS: 'style-analysis',
 } as const;
 
 @Global()
@@ -48,6 +49,7 @@ export const QUEUE_NAMES = {
       { name: QUEUE_NAMES.MESSAGE_SEND },
       { name: QUEUE_NAMES.PROACTIVE_SCAN },
       { name: QUEUE_NAMES.GROUP_REPORT },
+      { name: QUEUE_NAMES.STYLE_ANALYSIS },
     ),
   ],
   providers: [RedisService],

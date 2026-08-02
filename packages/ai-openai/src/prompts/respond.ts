@@ -2,6 +2,7 @@ import type { ReplyStrategy } from '@entalent/contracts';
 import type { ConversationTurn, ResponseContext } from '@entalent/application';
 import { sanitizeTurnContent, INJECTION_GUARD } from './sanitize';
 import { RESPOND_STYLE_EXAMPLES } from './respond-examples';
+import { buildStyleAdaptationBlock } from './style-render';
 
 export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: ResponseContext): string {
   const lengthMap = { short: '1-2 sentences', medium: '2-4 sentences', long: '4-6 sentences' };
@@ -30,6 +31,8 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
   const reminderIntent = context.reminderIntent
     ? `\nThis message IS the reminder the employee asked you for earlier: "${context.reminderIntent}". Deliver it warmly and briefly â€” remind them of this as they requested. It's fine to reference that they asked you to remind them. One or two sentences.`
     : '';
+
+  const styleBlock = context.styleAdaptation ? buildStyleAdaptationBlock(context.styleAdaptation, strategy.mode) : '';
 
   const memoryHint = context.memoryContext && context.memoryContext.items.length > 0
     ? `\nThings you already know about ${context.userName} (use naturally, do not repeat back verbatim): ${context.memoryContext.items.slice(0, 5).map(i => i.content).join('; ')}`
@@ -96,7 +99,7 @@ Thread-following: people often drop hints mid-sentence and don't develop them â€
 
 Length: ${lengthGuide}. Write in the same language they wrote in (for a first message with no history, use the language of what you know about them, or Russian).${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${checkInHint}${probeHint}
 
-${RESPOND_STYLE_EXAMPLES}
+${RESPOND_STYLE_EXAMPLES}${styleBlock}
 
 Hard rules:
 - Never diagnose, prescribe, or give medical/legal advice

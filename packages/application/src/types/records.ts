@@ -212,3 +212,25 @@ export interface TeamMembershipRecord {
   joinedAt: Date;
   leftAt: Date | null;
 }
+
+export interface StyleDimensions {
+  register: number;   // 0 formal/вы … 1 casual/ты
+  humor: number;      // 0 earnest … 1 playful
+  verbosity: number;  // 0 terse … 1 elaborate
+  emoji: number;      // 0 none … 1 frequent
+}
+
+export interface StylePhrase {
+  text: string;
+  count: number;
+}
+
+export interface StyleProfileRecord {
+  userId: string;
+  tenantId: string;
+  dimensions: StyleDimensions;
+  phrases: StylePhrase[];
+  adaptationWeight: number;
+  conversationsAnalyzed: number;
+  updatedAt: Date;
+}
