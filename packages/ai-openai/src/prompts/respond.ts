@@ -81,9 +81,11 @@ How to handle this:
 - If included: set "containsSurveyProbe": true, "surveyProbeQuestionId": "${context.surveyProbeQuestion.id}". Otherwise: false / undefined.`
     : '';
 
-  const timeHint = context.localTime
-    ? `\nEmployee's current local time: ${context.localTime}. If this reads like the start of a session or a natural goodbye, a brief time-appropriate greeting (доброе утро / добрый вечер) or sign-off (хорошего вечера / до связи) fits — only when natural, never as filler and never mid-conversation.`
-    : '';
+  const timeHint = context.localTime && context.isSessionStart
+    ? `\nEmployee's current local time: ${context.localTime}. This looks like the start of a session — a brief time-appropriate greeting (доброе утро / добрый вечер) or, if they're wrapping up, a sign-off fits. Only when natural, never as filler; at night keep it low-key, not a chirpy "доброе утро".`
+    : context.localTime
+      ? `\nEmployee's current local time: ${context.localTime}. Mid-conversation — do NOT open with a greeting.`
+      : '';
 
   return `${topicConfirmedHint}${confirmationHint}You are ${context.userName}'s work companion — someone they trust to talk to about work, not a coach running a session.
 

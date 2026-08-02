@@ -20,6 +20,7 @@ import { FEATURE_FLAGS } from '../ports/feature-flag.port';
 import type { SurveyQuestionRecord } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
+import { isSessionStart } from '../utils/session';
 
 export interface OrchestrateInput {
   messageId: string;
@@ -70,7 +71,7 @@ export class ConversationOrchestrator {
     }));
 
     const userName = conversation.userDisplayName ?? 'there';
-    const userTimezone = conversation.userTimezone ?? 'UTC';
+    const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
 
     // ── Group confirmation interpretation (Phase B) ─────────────────────────
@@ -219,7 +220,7 @@ export class ConversationOrchestrator {
             },
             reason: 'Employee explicitly asked to be reminded',
             dueAt,
-            timezone: userTimezone,
+            timezone: userTimezone ?? 'UTC',
             cancellationConditions: [],
             deduplicationKey: dedupKey,
             sourceMessageIds: [input.messageId],
@@ -246,6 +247,10 @@ export class ConversationOrchestrator {
     const lastReplyAskedQuestion = (lastOutbound?.text ?? '').includes('?');
     const strategy = applyTerseStyle(baseStrategy, memoryEnabled ? profile : null, lastReplyAskedQuestion);
 
+    const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
+    const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
+    const sessionStart = isSessionStart(lastPriorAt, new Date());
+
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
       memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
@@ -258,7 +263,8 @@ export class ConversationOrchestrator {
         : undefined,
       confirmationRequest,
       styleAdaptation,
-      localTime: describeLocalTime(userTimezone),
+      localTime: describeLocalTime(conversation.userTimezone),
+      isSessionStart: sessionStart,
     });
 
     const outbound = await this.conversationRepo.saveMessage({
@@ -502,7 +508,8 @@ function safeDefault(): RiskDetection {
 }
 
 /** Human-readable local time in the employee's timezone, e.g. "суббота, 15:30 (день)". */
-function describeLocalTime(timezone: string): string | undefined {
+function describeLocalTime(timezone: string | undefined | null): string | undefined {
+  if (!timezone) return undefined;
   try {
     const now = new Date();
     const when = new Intl.DateTimeFormat('ru-RU', {

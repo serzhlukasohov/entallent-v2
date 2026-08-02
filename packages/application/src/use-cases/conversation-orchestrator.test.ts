@@ -201,4 +201,28 @@ describe('ConversationOrchestrator local time', () => {
     expect(typeof ctxArg.localTime).toBe('string');
     expect(ctxArg.localTime).toMatch(/утро|день|вечер|ночь/);
   });
+
+  it('marks session start when only the current inbound exists (no prior messages)', async () => {
+    const m = baseMocks();
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+    await orch.orchestrate(INPUT);
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.isSessionStart).toBe(true);
+  });
+
+  it('marks session start and omits localTime when tz is unknown', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userTimezone: undefined });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+    await orch.orchestrate(INPUT);
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.isSessionStart).toBe(true);
+    expect(ctxArg.localTime).toBeUndefined();
+  });
 });

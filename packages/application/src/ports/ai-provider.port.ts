@@ -91,6 +91,8 @@ export interface ResponseContext {
    * Lets the reply use a natural time-appropriate greeting/sign-off when it fits.
    */
   localTime?: string;
+  /** True on the first message of a session (long gap) — greetings/sign-offs fit here. */
+  isSessionStart?: boolean;
 }
 
 export interface AiProviderPort {

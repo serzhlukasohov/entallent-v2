@@ -67,13 +67,30 @@ describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', (
 
 describe('buildRespondSystemPrompt local time', () => {
   const base = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
-  it('includes local time + greeting guidance when localTime is set', () => {
-    const p = buildRespondSystemPrompt(base(), { userName: 'T', localTime: 'суббота, 09:15 (утро)' });
+  it('includes local time + greeting guidance when localTime is set and isSessionStart is true', () => {
+    const p = buildRespondSystemPrompt(base(), { userName: 'T', localTime: 'суббота, 09:15 (утро)', isSessionStart: true });
     expect(p).toContain('суббота, 09:15 (утро)');
     expect(p).toMatch(/доброе утро|greeting|sign-off/i);
   });
   it('omits the time hint when localTime is absent', () => {
     const p = buildRespondSystemPrompt(base(), { userName: 'T' });
+    expect(p).not.toMatch(/current local time/i);
+  });
+});
+
+describe('buildRespondSystemPrompt session-aware greeting', () => {
+  const s = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
+  it('offers a greeting at session start with known time', () => {
+    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'суббота, 09:00 (утро)', isSessionStart: true });
+    expect(p).toMatch(/start of a session/i);
+    expect(p).toContain('суббота, 09:00 (утро)');
+  });
+  it('suppresses greeting mid-session', () => {
+    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'суббота, 09:00 (утро)', isSessionStart: false });
+    expect(p).toMatch(/do NOT open with a greeting/i);
+  });
+  it('no time hint when tz unknown', () => {
+    const p = buildRespondSystemPrompt(s(), { userName: 'T', isSessionStart: true });
     expect(p).not.toMatch(/current local time/i);
   });
 });
