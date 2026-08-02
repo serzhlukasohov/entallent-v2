@@ -31,6 +31,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
           minSilenceDays: config.get('PROACTIVE_MIN_SILENCE_DAYS', { infer: true }),
           minCheckInGapDays: config.get('PROACTIVE_MIN_GAP_DAYS', { infer: true }),
           batchLimit: config.get('PROACTIVE_BATCH_LIMIT', { infer: true }),
+          quietHoursEnabled: config.get('QUIET_HOURS_ENABLED', { infer: true }),
         }),
       inject: [ProactiveSchedulerRepository, CheckInEnqueueService, ConfigService],
     },

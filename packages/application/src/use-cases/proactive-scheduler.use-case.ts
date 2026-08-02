@@ -11,12 +11,15 @@ export interface ProactiveScanConfig {
   minCheckInGapDays: number;
   /** Max users contacted in a single scan (protects against a thundering herd) */
   batchLimit: number;
+  /** Whether to apply the quiet-hours guard (dev toggle) */
+  quietHoursEnabled: boolean;
 }
 
 const DEFAULT_CONFIG: ProactiveScanConfig = {
   minSilenceDays: 3,
   minCheckInGapDays: 3,
   batchLimit: 50,
+  quietHoursEnabled: true,
 };
 
 export interface ProactiveScanResult {
@@ -55,7 +58,7 @@ export class ProactiveSchedulerUseCase {
     let skippedQuietHours = 0;
 
     for (const c of candidates) {
-      if (isInQuietHours(c.timezone, c.quietHours)) {
+      if (this.config.quietHoursEnabled && isInQuietHours(c.timezone, c.quietHours)) {
         skippedQuietHours++;
         continue;
       }
