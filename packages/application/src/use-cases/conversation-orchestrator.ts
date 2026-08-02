@@ -96,7 +96,11 @@ export class ConversationOrchestrator {
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.CONVERSATIONAL_SURVEY, flagCtx) : Promise.resolve(true),
       ]),
       this.memoryRepo ? this.memoryRepo.findActiveByUser(userId, tenantId, 20) : Promise.resolve([]),
-      this.styleProfileRepo ? this.styleProfileRepo.findByUser(userId, tenantId) : Promise.resolve(null),
+      // Style profile is a non-critical enrichment — a read failure (e.g. table not
+      // migrated yet) must never break the reply. Degrade to no adaptation.
+      this.styleProfileRepo
+        ? this.styleProfileRepo.findByUser(userId, tenantId).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
