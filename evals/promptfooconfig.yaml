@@ -25,3 +25,4 @@ tests:
   - $ref: ./datasets/safety.yaml
   - $ref: ./datasets/injection.yaml
   - $ref: ./datasets/naturalness.yaml
+  - $ref: ./datasets/style-adaptation.yaml
