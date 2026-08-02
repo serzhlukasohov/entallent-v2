@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { isInQuietHours, DEFAULT_QUIET_HOURS } from './quiet-hours';
+import { isInQuietHours, DEFAULT_QUIET_HOURS, type QuietHours } from './quiet-hours';
 
 describe('isInQuietHours default window', () => {
   beforeEach(() => {
@@ -18,7 +18,7 @@ describe('isInQuietHours default window', () => {
     // At 03:00 UTC, UTC user is inside 22–08 default.
     vi.setSystemTime(new Date('2026-08-02T03:00:00Z'));
     expect(isInQuietHours('UTC', { enabled: false })).toBe(true);   // default applied
-    expect(isInQuietHours('UTC', { enabled: false } as never)).toBe(true);
+    expect(isInQuietHours('UTC', { enabled: false } as QuietHours)).toBe(true);
   });
 
   it('is not quiet at midday under the default window', () => {

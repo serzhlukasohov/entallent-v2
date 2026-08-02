@@ -69,7 +69,8 @@ describe('ProactiveSchedulerUseCase', () => {
 
     const repo = makeRepo([
       makeCandidate({ userId: 'quiet', timezone: 'UTC', quietHours: { enabled: true, startHour: 22, endHour: 8 } }),
-      makeCandidate({ userId: 'awake', timezone: 'UTC', quietHours: { enabled: false } }),
+      // 'awake' has an explicit quiet window (01–04) that does NOT include 23:00
+      makeCandidate({ userId: 'awake', timezone: 'UTC', quietHours: { enabled: true, startHour: 1, endHour: 4 } }),
     ]);
     const queue = makeQueue();
     const useCase = new ProactiveSchedulerUseCase(repo, queue);
@@ -111,6 +112,47 @@ describe('ProactiveSchedulerUseCase', () => {
     expect(repo.findCheckInCandidates).toHaveBeenCalledWith(
       expect.objectContaining({ minCheckInGapDays: 3 }),
     );
+  });
+
+  describe('quietHoursEnabled bypass', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      // 03:00 UTC — inside the default 22–08 quiet window for a UTC user
+      vi.setSystemTime(new Date('2026-08-02T03:00:00Z'));
+    });
+
+    it('enqueues a candidate who would otherwise be in quiet hours when quietHoursEnabled=false', async () => {
+      const candidate = makeCandidate({
+        userId: 'night-owl',
+        timezone: 'UTC',
+        quietHours: { enabled: true, startHour: 22, endHour: 8 },
+      });
+      const repo = makeRepo([candidate]);
+      const queue = makeQueue();
+      const useCase = new ProactiveSchedulerUseCase(repo, queue, { quietHoursEnabled: false });
+
+      const result = await useCase.scan();
+
+      expect(queue.enqueueCheckIn).toHaveBeenCalledTimes(1);
+      expect(queue.enqueueCheckIn).toHaveBeenCalledWith(expect.objectContaining({ userId: 'night-owl' }));
+      expect(result).toMatchObject({ candidatesFound: 1, enqueued: 1, skippedQuietHours: 0 });
+    });
+
+    it('skips a UTC candidate at 03:00 when quietHoursEnabled=true (default window 22–08)', async () => {
+      const candidate = makeCandidate({
+        userId: 'sleeping',
+        timezone: 'UTC',
+        quietHours: { enabled: false }, // no custom window → DEFAULT_QUIET_HOURS (22–08) applies
+      });
+      const repo = makeRepo([candidate]);
+      const queue = makeQueue();
+      const useCase = new ProactiveSchedulerUseCase(repo, queue, { quietHoursEnabled: true });
+
+      const result = await useCase.scan();
+
+      expect(queue.enqueueCheckIn).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ candidatesFound: 1, enqueued: 0, skippedQuietHours: 1 });
+    });
   });
 
   afterEach(() => {

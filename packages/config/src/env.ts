@@ -46,7 +46,10 @@ const envSchema = z.object({
   PROACTIVE_MIN_SILENCE_DAYS: z.coerce.number().int().nonnegative().default(3), // silence before a check-in is considered; 0 = no silence gate (testing)
   PROACTIVE_MIN_GAP_DAYS: z.coerce.number().int().nonnegative().default(3), // min days between proactive contacts; 0 = check in every scan (testing)
   PROACTIVE_BATCH_LIMIT: z.coerce.number().int().positive().default(50), // max users contacted per scan
-  QUIET_HOURS_ENABLED: z.coerce.boolean().default(true), // false disables the quiet-hours guard (dev)
+  QUIET_HOURS_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v !== 'false' && v !== '0'), // false disables the quiet-hours guard (dev)
 
   // Observability (optional)
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
