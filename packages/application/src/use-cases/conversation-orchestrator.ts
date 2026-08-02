@@ -11,6 +11,8 @@ import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { RiskSignalRepositoryPort } from '../ports/risk-signal.repository.port';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
 import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
+import type { StyleProfileRecord } from '../types/records';
+import { BASE_STYLE, STYLE_CONFIDENCE_FLOOR, STYLE_OFF_BASE_MARGIN } from '../utils/style-adaptation';
 import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
@@ -234,9 +236,12 @@ export class ConversationOrchestrator {
       }
     }
 
-    const strategy = confirmationRequest
+    const baseStrategy = confirmationRequest
       ? { mode: 'confirmation' as const, tone: 'warm' as const, includeFollowUpQuestion: false, maxResponseLength: 'medium' as const, forbiddenPatterns: [] }
       : buildReplyStrategy(classification, risk, probeQuestion?.id);
+    // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
+    // shorten the reply and drop the forced follow-up so it actually reads like them.
+    const strategy = applyTerseStyle(baseStrategy, memoryEnabled ? profile : null);
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
@@ -490,6 +495,21 @@ function safeDefault(): RiskDetection {
     proactiveMessagesMustBePaused: false,
     reasoningSummary: 'Safety check not required for this conversation.',
   };
+}
+
+/**
+ * Structural style adaptation for verbosity: a confident, clearly-terse user's replies
+ * should actually BE short (and drop the forced follow-up), rather than relying on a soft
+ * prompt hint the persona overrides. Never touches crisis/sensitive/confirmation turns.
+ */
+function applyTerseStyle(strategy: ReplyStrategy, profile: StyleProfileRecord | null): ReplyStrategy {
+  if (!profile) return strategy;
+  if (strategy.mode === 'crisis' || strategy.mode === 'sensitive' || strategy.mode === 'confirmation') return strategy;
+  const terse =
+    profile.adaptationWeight >= STYLE_CONFIDENCE_FLOOR &&
+    BASE_STYLE.verbosity - profile.dimensions.verbosity >= STYLE_OFF_BASE_MARGIN;
+  if (!terse) return strategy;
+  return { ...strategy, maxResponseLength: 'short', includeFollowUpQuestion: false };
 }
 
 function buildReplyStrategy(

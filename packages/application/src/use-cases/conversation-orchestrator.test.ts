@@ -123,3 +123,48 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
     );
   });
 });
+
+describe('ConversationOrchestrator style adaptation — structural verbosity', () => {
+  const profile = (verbosity: number, weight: number) => ({
+    findByUser: vi.fn().mockResolvedValue({
+      userId: 'u-1', tenantId: 't-1',
+      dimensions: { register: 0.72, humor: 0.29, verbosity, emoji: 0.11 },
+      phrases: [], adaptationWeight: weight, conversationsAnalyzed: 4, updatedAt: new Date(),
+    }),
+    upsert: vi.fn(),
+  }) as any;
+
+  it('shortens the reply and drops the follow-up for a confident terse user', async () => {
+    const m = baseMocks();
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined, profile(0.27, 0.3),
+    );
+    await orch.orchestrate(INPUT);
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    expect(strategyArg.maxResponseLength).toBe('short');
+    expect(strategyArg.includeFollowUpQuestion).toBe(false);
+  });
+
+  it('does not shorten for a non-terse user (verbosity near base)', async () => {
+    const m = baseMocks();
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined, profile(0.5, 0.3),
+    );
+    await orch.orchestrate(INPUT);
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    expect(strategyArg.maxResponseLength).not.toBe('short');
+  });
+
+  it('does not shorten below the confidence floor (low weight)', async () => {
+    const m = baseMocks();
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined, profile(0.27, 0.1),
+    );
+    await orch.orchestrate(INPUT);
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    expect(strategyArg.maxResponseLength).not.toBe('short');
+  });
+});

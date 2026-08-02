@@ -8,6 +8,11 @@ export const MAX_PHRASES = 5;
 
 export const BASE_STYLE: StyleDimensions = { register: 0.5, humor: 0.3, verbosity: 0.5, emoji: 0.2 };
 
+/** Don't act on the style profile until it's seen the user consistently (~2 conversations). */
+export const STYLE_CONFIDENCE_FLOOR = 0.15;
+/** The user must sit at least this far from base on an axis before we adapt it. */
+export const STYLE_OFF_BASE_MARGIN = 0.15;
+
 export interface ObservedStyle {
   dimensions: StyleDimensions;
   phrases: string[];
