@@ -48,10 +48,18 @@ export interface GroupReportPayload {
   traceId: string;
 }
 
+export interface StyleAnalysisPayload {
+  conversationId: string;
+  userId: string;
+  tenantId: string;
+  traceId: string;
+}
+
 export interface OutboxPort {
   enqueueMessageSend(payload: MessageSendPayload): Promise<void>;
   enqueueMemoryExtraction(payload: MemoryExtractionPayload): Promise<void>;
   enqueueFollowUpExecution(payload: FollowUpExecutionPayload): Promise<void>;
   enqueueSurveyEvidence(payload: SurveyEvidencePayload): Promise<void>;
   enqueueGroupReport(payload: GroupReportPayload): Promise<void>;
+  enqueueStyleAnalysis(payload: StyleAnalysisPayload): Promise<void>;
 }

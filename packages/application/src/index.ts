@@ -2,7 +2,7 @@ export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, Me
 export type { ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
 export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, IngestMessageResult } from './ports/ingestion.repository.port';
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';
-export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload } from './ports/outbox.port';
+export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload, StyleAnalysisPayload } from './ports/outbox.port';
 export type { MemoryRepositoryPort, SaveMemoryItemParams } from './ports/memory.repository.port';
 export type { GoalRepositoryPort, SaveGoalParams } from './ports/goal.repository.port';
 export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from './ports/scheduled-action.repository.port';

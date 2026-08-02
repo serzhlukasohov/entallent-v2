@@ -15,7 +15,7 @@ function baseMocks() {
     generateResponse: vi.fn().mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false }),
     interpretConfirmationResponse: vi.fn(),
   } as any;
-  const outbox = { enqueueMessageSend: vi.fn(), enqueueMemoryExtraction: vi.fn(), enqueueSurveyEvidence: vi.fn(), enqueueGroupReport: vi.fn() } as any;
+  const outbox = { enqueueMessageSend: vi.fn(), enqueueMemoryExtraction: vi.fn(), enqueueSurveyEvidence: vi.fn(), enqueueGroupReport: vi.fn(), enqueueStyleAnalysis: vi.fn() } as any;
   const surveyRepo = {
     findPendingConfirmationGroups: vi.fn().mockResolvedValue([]),
     findAwaitingConfirmationGroups: vi.fn().mockResolvedValue([]),
