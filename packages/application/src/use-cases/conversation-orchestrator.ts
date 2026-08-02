@@ -258,6 +258,7 @@ export class ConversationOrchestrator {
         : undefined,
       confirmationRequest,
       styleAdaptation,
+      localTime: describeLocalTime(userTimezone),
     });
 
     const outbound = await this.conversationRepo.saveMessage({
@@ -498,6 +499,23 @@ function safeDefault(): RiskDetection {
     proactiveMessagesMustBePaused: false,
     reasoningSummary: 'Safety check not required for this conversation.',
   };
+}
+
+/** Human-readable local time in the employee's timezone, e.g. "суббота, 15:30 (день)". */
+function describeLocalTime(timezone: string): string | undefined {
+  try {
+    const now = new Date();
+    const when = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: timezone, weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(now);
+    const hour = Number(
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', hour12: false }).format(now),
+    );
+    const partOfDay = hour < 5 ? 'ночь' : hour < 12 ? 'утро' : hour < 18 ? 'день' : 'вечер';
+    return `${when} (${partOfDay})`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

@@ -188,3 +188,17 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     expect(strategyArg.maxResponseLength).not.toBe('short');
   });
 });
+
+describe('ConversationOrchestrator local time', () => {
+  it('passes a human-readable local time into the response context', async () => {
+    const m = baseMocks();
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+    await orch.orchestrate(INPUT);
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(typeof ctxArg.localTime).toBe('string');
+    expect(ctxArg.localTime).toMatch(/утро|день|вечер|ночь/);
+  });
+});

@@ -86,6 +86,11 @@ export interface ResponseContext {
    * strongly (scaled by weight), keeping the base persona dominant; omitted in crisis.
    */
   styleAdaptation?: { dimensions: import('../types/records').StyleDimensions; weight: number; phrases: string[] };
+  /**
+   * Employee's current local time, human-readable (e.g. "суббота, 15:30 (день)").
+   * Lets the reply use a natural time-appropriate greeting/sign-off when it fits.
+   */
+  localTime?: string;
 }
 
 export interface AiProviderPort {

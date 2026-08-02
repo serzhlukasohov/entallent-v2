@@ -64,3 +64,16 @@ describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', (
     expect(p).not.toContain('Что ещё сейчас занимает голову');
   });
 });
+
+describe('buildRespondSystemPrompt local time', () => {
+  const base = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
+  it('includes local time + greeting guidance when localTime is set', () => {
+    const p = buildRespondSystemPrompt(base(), { userName: 'T', localTime: 'суббота, 09:15 (утро)' });
+    expect(p).toContain('суббота, 09:15 (утро)');
+    expect(p).toMatch(/доброе утро|greeting|sign-off/i);
+  });
+  it('omits the time hint when localTime is absent', () => {
+    const p = buildRespondSystemPrompt(base(), { userName: 'T' });
+    expect(p).not.toMatch(/current local time/i);
+  });
+});
