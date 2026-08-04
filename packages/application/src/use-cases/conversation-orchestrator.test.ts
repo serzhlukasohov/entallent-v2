@@ -56,6 +56,42 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
   });
 });
 
+describe('ConversationOrchestrator deterministic safety pass', () => {
+  it('forces the safety pass for a burnout_signal even when the classifier left requiresSafetyCheck false', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'burnout_signal', secondaryIntents: [], urgency: 'medium',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity: 'none', riskType: undefined, confidence: 0,
+      surveyMustBeBlocked: false, immediateResponseRequired: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.detectRisk).toHaveBeenCalled();
+    expect(result.classification.requiresSafetyCheck).toBe(true);
+  });
+
+  it('does not force a safety pass for a benign intent', async () => {
+    const m = baseMocks(); // default classification: casual_conversation, requiresSafetyCheck false
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.detectRisk).not.toHaveBeenCalled();
+    expect(result.classification.requiresSafetyCheck).toBe(false);
+  });
+});
+
 describe('ConversationOrchestrator group confirmation — interpret (Phase B)', () => {
   it('agree → confirms group and enqueues report', async () => {
     const m = baseMocks();

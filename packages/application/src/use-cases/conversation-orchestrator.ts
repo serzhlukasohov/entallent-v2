@@ -98,7 +98,7 @@ export class ConversationOrchestrator {
 
     // Classify, feature flags, and memory load are all independent — run them together.
     // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
-    const [classification, [memoryEnabled, surveyEnabled], speculativeMemory, profile] = await Promise.all([
+    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile] = await Promise.all([
       this.aiProvider.classifySituation(turns, {
         userName,
         now: new Date().toISOString(),
@@ -115,6 +115,14 @@ export class ConversationOrchestrator {
         ? this.styleProfileRepo.findByUser(userId, tenantId).catch(() => null)
         : Promise.resolve(null),
     ]);
+
+    // Safety is too important to hinge on one model field. Intents that already route to
+    // sensitive/crisis mode force the safety pass deterministically, even if the classifier
+    // left requiresSafetyCheck false — otherwise detectRisk silently never runs on a burnout
+    // or harassment turn and no risk signal can ever fire.
+    const classification: SituationClassification = SAFETY_INTENTS.has(rawClassification.primaryIntent)
+      ? { ...rawClassification, requiresSafetyCheck: true }
+      : rawClassification;
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
 
@@ -556,6 +564,13 @@ function applyTerseStyle(
   // other turn, so a terse person isn't interrogated each message.
   return { ...strategy, maxResponseLength: 'short', includeFollowUpQuestion: !lastReplyAskedQuestion };
 }
+
+/**
+ * Intents that route to sensitive/crisis mode (see modeMap below). The safety pass is forced
+ * for these regardless of the classifier's requiresSafetyCheck field, so a single missed flag
+ * can never silently skip risk detection on a burnout / harassment / crisis turn.
+ */
+const SAFETY_INTENTS = new Set<string>(['burnout_signal', 'harassment_signal', 'potential_crisis']);
 
 function buildReplyStrategy(
   classification: SituationClassification,
