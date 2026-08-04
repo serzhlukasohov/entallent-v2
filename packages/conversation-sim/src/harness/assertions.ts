@@ -26,6 +26,15 @@ export function findViolations(harness: CoachHarness): Violation[] {
       });
     }
 
+    const questions = extractQuestions(turn.responseText);
+    if (questions.length > 1) {
+      violations.push({
+        turn: position,
+        rule: 'too-many-questions',
+        detail: questions.join(' / '),
+      });
+    }
+
     const crisis = turn.mode === 'crisis' || turn.mode === 'sensitive';
     if (crisis && turn.classification.surveyAllowed) {
       violations.push({
@@ -50,6 +59,10 @@ export function findViolations(harness: CoachHarness): Violation[] {
   }
 
   return violations;
+}
+
+export function countQuestions(text: string): number {
+  return extractQuestions(text).length;
 }
 
 export function describeViolations(violations: Violation[]): string {

@@ -7,7 +7,8 @@ import { judgeModel, SET_ID, simulatorModel } from './config';
 
 /**
  * A fact stated early must survive several unrelated turns and come back when it
- * matters. This exercises the extraction → storage → retrieval loop that a mocked
+ * matters after it has fallen out of the response prompt's 15-turn transcript
+ * window. This exercises the extraction → storage → retrieval loop that a mocked
  * `AiProviderPort` short-circuits entirely.
  */
 describe('coach recalling an earlier commitment', () => {
@@ -19,8 +20,9 @@ describe('coach recalling an earlier commitment', () => {
       description: `
         On Monday Igor mentioned that on Friday he's defending the payments architecture in
         front of the tech committee. He then spends several messages talking about other
-        things. At the end he writes that he's nervous, without saying why — the coach should
-        connect that back to the defense on its own.
+        things, enough to push that first fact out of the prompt transcript window. At the end
+        he writes that he's nervous, without saying why — the coach should connect that back
+        to the defense from memory.
       `,
       agents: [
         agent,
@@ -42,11 +44,19 @@ describe('coach recalling an earlier commitment', () => {
         agentTurn(),
         user("and in parallel I'm fixing flaky tests in CI, they annoy everyone"),
         agentTurn(),
+        user("also had to review two merge requests for the mobile team"),
+        agentTurn(),
+        user("there was a production alert after lunch, false alarm but noisy"),
+        agentTurn(),
+        user("then product changed a small requirement again"),
+        agentTurn(),
+        user("I still need to clean up the dashboard copy"),
+        agentTurn(),
         user("I'm feeling kind of nervous"),
         agentTurn(),
         judge(),
       ],
-      maxTurns: 12,
+      maxTurns: 20,
       setId: SET_ID,
     });
 
@@ -61,6 +71,26 @@ describe('coach recalling an earlier commitment', () => {
       /committee|payments?\s*architecture/i.test(item.content),
     );
     expect(remembersDefence, formatMemory(harness.memoryItems)).toBe(true);
+
+    const finalReply = harness.replies[harness.replies.length - 1] ?? '';
+    const finalPlan = harness.generateResponseCalls[harness.generateResponseCalls.length - 1]?.context.replyPlan;
+    const finalMemoryAnchors = finalPlan?.memoryAnchors.map((item) => item.content).join('\n') ?? '';
+    expect(
+      /payments?\s*architecture/i.test(finalMemoryAnchors),
+      `final reply plan did not carry the payments architecture memory anchor:\n${finalMemoryAnchors}`,
+    ).toBe(true);
+    const finalRequiredGrounding = finalPlan?.requiredGrounding.map((item) => item.content).join('\n') ?? '';
+    expect(
+      /payments?\s*architecture/i.test(finalRequiredGrounding),
+      `final reply plan did not require the payments architecture memory anchor:\n${finalRequiredGrounding}`,
+    ).toBe(true);
+
+    const recallsArchitecture = /payments?\s*architecture|architecture|payments?\s*defen[cs]e/i.test(finalReply);
+    const recallsDefenseContext = /friday|committee|defen[cs]e/i.test(finalReply);
+    expect(
+      recallsArchitecture && recallsDefenseContext,
+      `final reply did not recall the payments-architecture defense:\n${finalReply}`,
+    ).toBe(true);
 
     // The judge verdict is a single subjective sample — advisory, not a CI gate (see README:
     // "a single run is a sample, not a verdict"). The deterministic gates above (memory recall

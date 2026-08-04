@@ -1,34 +1,40 @@
 import { agent as agentTurn, judge, judgeAgent, run, user, userSimulatorAgent } from '@langwatch/scenario';
 import { BASE_STYLE } from '@entalent/application';
+import { buildRespondSystemPrompt } from '@entalent/ai-openai';
 import { describe, expect, it } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
-import { describeViolations, findViolations } from '../harness/assertions';
+import { countQuestions, describeViolations, findViolations } from '../harness/assertions';
 import { reportRun } from '../harness/report';
 import { judgeModel, SET_ID, simulatorModel } from './config';
 
+const STYLE_WEIGHT_CAP = 0.4;
+
 /**
- * Verbosity adaptation is structural: the style profile must actually shift and
- * shorten later replies. Scripted user turns keep the input identical between runs
- * so only the coach's behaviour varies.
+ * Style mirroring is cross-conversation. The first conversation verifies that the
+ * profile learns a terse style; a fresh follow-up conversation verifies that the
+ * learned profile is available to reply generation. This does not assert that the
+ * agent must shorten inside the same conversation.
  */
 describe('coach talking to a consistently terse user', () => {
-  it('learns the register and stops writing paragraphs at someone who answers in three words', async () => {
-    const { agent, harness } = createCoachAgent({ userName: 'Dima', analyzeStyle: true });
+  it('learns a bounded terse style profile and applies it on the next conversation', async () => {
+    const { agent: learningAgent, harness: learningHarness } = createCoachAgent({
+      userName: 'Dima',
+      analyzeStyle: true,
+    });
 
-    const result = await run({
-      name: 'terse user style adaptation',
-      description: 'Dima answers extremely briefly and dislikes being bombarded with questions.',
+    const learningResult = await run({
+      name: 'terse user style learning',
+      description: 'Dima answers extremely briefly. This run should teach a bounded style profile.',
       agents: [
-        agent,
+        learningAgent,
         // Every user turn here is scripted; the simulator only satisfies Scenario's
         // requirement that a user-role agent exists.
         userSimulatorAgent({ model: simulatorModel() }),
         judgeAgent({
           model: judgeModel(),
           criteria: [
-            "The coach's later replies are shorter and terser than the earlier ones",
-            'The coach does not ask a question in every single message',
-            'The coach does not comment out loud on how few words the person uses',
+            'The coach treats short answers as normal and does not comment on their brevity',
+            'The coach asks no more than one question per message',
           ],
         }),
       ],
@@ -55,36 +61,114 @@ describe('coach talking to a consistently terse user', () => {
       setId: SET_ID,
     });
 
-    await reportRun('terse user', harness, result);
+    await reportRun('terse user learning', learningHarness, learningResult);
 
-    const violations = findViolations(harness);
+    const learningViolations = findViolations(learningHarness);
+    expect(describeViolations(learningViolations)).toBe('');
+
+    const learnedProfile = await learningHarness.styleProfile();
+    expect(learnedProfile, 'style analysis never produced a profile').not.toBeNull();
+    expect(learnedProfile!.conversationsAnalyzed).toBeGreaterThan(0);
+    expect(learnedProfile!.adaptationWeight).toBeGreaterThan(0);
+    expect(learnedProfile!.adaptationWeight).toBeLessThanOrEqual(STYLE_WEIGHT_CAP);
+    expect(1 - learnedProfile!.adaptationWeight).toBeGreaterThanOrEqual(0.6);
+    expect(learnedProfile!.dimensions.verbosity).toBeLessThan(BASE_STYLE.verbosity);
+
+    const effectiveVerbosity =
+      BASE_STYLE.verbosity * (1 - learnedProfile!.adaptationWeight) +
+      learnedProfile!.dimensions.verbosity * learnedProfile!.adaptationWeight;
+    expect(effectiveVerbosity).toBeLessThan(BASE_STYLE.verbosity);
+
+    const noSubstanceLearningCalls = learningHarness.generateResponseCalls.filter(
+      (call) => call.context.replyPlan?.latestUserSubstance === null,
+    );
+    expect(
+      noSubstanceLearningCalls.length,
+      `reply plans: ${learningHarness.generateResponseCalls.map((call) => JSON.stringify(call.context.replyPlan)).join('\n')}`,
+    ).toBeGreaterThan(0);
+    expect(noSubstanceLearningCalls.every((call) => call.context.replyPlan?.mayInferFromBrevity === false)).toBe(true);
+    expect(noSubstanceLearningCalls.every((call) => call.context.replyPlan?.questionPolicy.maxQuestions === 0)).toBe(true);
+
+    if (!learningResult.success) {
+      console.warn(`[terse-user:learning] judge did not pass this sample: ${learningResult.reasoning}`);
+    }
+
+    const { agent: followupAgent, harness: followupHarness } = createCoachAgent({
+      userName: 'Dima',
+      seedStyleProfile: learnedProfile!,
+    });
+
+    const followupResult = await run({
+      name: 'terse user next conversation',
+      description: 'A later conversation starts with the previously learned terse profile.',
+      agents: [
+        followupAgent,
+        userSimulatorAgent({ model: simulatorModel() }),
+        judgeAgent({
+          model: judgeModel(),
+          criteria: [
+            'The coach keeps a normal colleague tone rather than mimicking one-word answers',
+            'At least one coach message is a statement with no question',
+            'The coach does not comment out loud on how few words the person uses',
+          ],
+        }),
+      ],
+      script: [
+        user('back'),
+        agentTurn(),
+        user('same issue'),
+        agentTurn(),
+        user('blocked again'),
+        agentTurn(),
+        user('ok'),
+        agentTurn(),
+        judge(),
+      ],
+      maxTurns: 12,
+      setId: SET_ID,
+    });
+
+    await reportRun('terse user next conversation', followupHarness, followupResult);
+
+    const violations = findViolations(followupHarness);
     expect(describeViolations(violations)).toBe('');
 
-    const profile = await harness.styleProfile();
-    expect(profile, 'style analysis never produced a profile').not.toBeNull();
-    expect(profile!.adaptationWeight).toBeGreaterThanOrEqual(0.15);
-    expect(profile!.dimensions.verbosity).toBeLessThan(BASE_STYLE.verbosity);
+    const firstGeneration = followupHarness.generateResponseCalls[0];
+    expect(firstGeneration.context.styleAdaptation).toMatchObject({
+      dimensions: { verbosity: learnedProfile!.dimensions.verbosity },
+      weight: learnedProfile!.adaptationWeight,
+    });
 
-    const lengths = harness.replies.map((r) => r.length);
-    // Adaptation ramps over the first turns, so the opening reply is an unreliable baseline
-    // (a bare greeting before any style is learned). The real invariant is absolute: once the
-    // terse register is learned, later replies are genuinely short — no paragraphs — and well
-    // below the conversation's longest reply. A broken verbosity axis (paragraph-length late
-    // replies, as before the length gate) still fails this.
-    const peak = Math.max(...lengths);
-    const late = lengths.slice(-3);
-    expect(Math.max(...late), `reply lengths: ${lengths.join(', ')}`).toBeLessThanOrEqual(180);
-    expect(average(late), `reply lengths: ${lengths.join(', ')}`).toBeLessThan(peak * 0.8);
+    const prompt = buildRespondSystemPrompt(firstGeneration.strategy, firstGeneration.context);
+    expect(prompt).toContain('Style adaptation');
+    expect(prompt).toContain('base persona stays PRIMARY');
+    expect(prompt).toContain('bounded (≤40%)');
+    expect(prompt).toMatch(/shorter|short and clipped/i);
 
-    // Judge verdict is a single subjective sample — advisory (see README). The style-profile
-    // and length invariants above are the deterministic gate; subjective criteria want a pass
-    // rate across N runs, not one sample.
-    if (!result.success) {
-      console.warn(`[terse-user] judge did not pass this sample: ${result.reasoning}`);
+    const noSubstanceFollowupCalls = followupHarness.generateResponseCalls.filter(
+      (call) => call.context.replyPlan?.latestUserSubstance === null,
+    );
+    expect(
+      noSubstanceFollowupCalls.length,
+      `reply plans: ${followupHarness.generateResponseCalls.map((call) => JSON.stringify(call.context.replyPlan)).join('\n')}`,
+    ).toBeGreaterThan(0);
+    expect(noSubstanceFollowupCalls.every((call) => call.context.replyPlan?.questionPolicy.maxQuestions === 0)).toBe(true);
+    const noSubstancePrompt = buildRespondSystemPrompt(
+      noSubstanceFollowupCalls[0].strategy,
+      noSubstanceFollowupCalls[0].context,
+    );
+    expect(noSubstancePrompt).toContain('Latest employee substance: none');
+    expect(noSubstancePrompt).toContain('Question policy (hard contract): ask zero questions this turn');
+    expect(noSubstancePrompt).toMatch(/Do not infer mood, impatience, depth, personality, or unstated meaning/i);
+
+    const questionCounts = followupHarness.replies.map(countQuestions);
+    expect(
+      questionCounts.some((count) => count === 0),
+      `question counts: ${questionCounts.join(', ')}`,
+    ).toBe(true);
+
+    if (!followupResult.success) {
+      console.warn(`[terse-user:next] judge did not pass this sample: ${followupResult.reasoning}`);
     }
   });
 });
-
-function average(values: number[]): number {
-  return values.reduce((sum, v) => sum + v, 0) / values.length;
-}

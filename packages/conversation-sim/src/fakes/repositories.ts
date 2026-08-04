@@ -161,7 +161,11 @@ export class InMemoryGoalRepository implements GoalRepositoryPort {
 }
 
 export class InMemoryStyleProfileRepository implements StyleProfileRepositoryPort {
-  private profile: StyleProfileRecord | null = null;
+  private profile: StyleProfileRecord | null;
+
+  constructor(seedProfile: StyleProfileRecord | null = null) {
+    this.profile = seedProfile;
+  }
 
   async findByUser(userId: string, tenantId: string): Promise<StyleProfileRecord | null> {
     if (!this.profile) return null;

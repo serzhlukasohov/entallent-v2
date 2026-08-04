@@ -1,0 +1,27 @@
+{
+  "runs": 5,
+  "infraRetries": 1,
+  "scenarios": [
+    {
+      "id": "burnout",
+      "name": "burnout",
+      "file": "src/scenarios/burnout.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4
+    },
+    {
+      "id": "memory-recall",
+      "name": "memory recall",
+      "file": "src/scenarios/memory-recall.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4
+    },
+    {
+      "id": "terse-user",
+      "name": "terse user",
+      "file": "src/scenarios/terse-user.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 3
+    }
+  ]
+}

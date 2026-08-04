@@ -1,14 +1,32 @@
 import {
   ConversationOrchestrator,
   type AiProviderPort,
+  type ClassifyContext,
   type ConversationRecord,
+  type ConversationTurn,
   type EscalationEvent,
   type EscalationPort,
+  type MemoryContext,
   type MemoryItemRecord,
   type MessageRecord,
   type OrchestrateResult,
+  type ResponseContext,
+  type RiskContext,
+  type SurveyQuestionForEvaluation,
   type StyleProfileRecord,
 } from '@entalent/application';
+import type {
+  ConfirmationResponse,
+  GeneratedResponse,
+  GroupReport,
+  GroupSummary,
+  MemoryProposal,
+  ObservedStyle,
+  ReplyStrategy,
+  RiskDetection,
+  SituationClassification,
+  SurveyEvidenceEvaluation,
+} from '@entalent/contracts';
 import { OpenAiProvider } from '@entalent/ai-openai';
 import {
   InMemoryConversationRepository,
@@ -30,7 +48,15 @@ export interface CoachHarnessOptions {
   analyzeStyle?: boolean;
   /** Memory items the user is assumed to have accumulated before this conversation. */
   seedMemory?: Array<Pick<MemoryItemRecord, 'category' | 'content' | 'importance'>>;
+  /** Style profile learned in a previous conversation. */
+  seedStyleProfile?: StyleProfileRecord;
   aiProvider?: AiProviderPort;
+}
+
+export interface GenerateResponseCall {
+  turns: ConversationTurn[];
+  strategy: ReplyStrategy;
+  context: ResponseContext;
 }
 
 class RecordingEscalation implements EscalationPort {
@@ -51,10 +77,11 @@ export class CoachHarness {
   readonly conversationRepo: InMemoryConversationRepository;
   readonly memoryRepo = new InMemoryMemoryRepository();
   readonly goalRepo = new InMemoryGoalRepository();
-  readonly styleRepo = new InMemoryStyleProfileRepository();
+  readonly styleRepo: InMemoryStyleProfileRepository;
   readonly escalation = new RecordingEscalation();
   readonly outbox: InlineOutbox;
   readonly turns: OrchestrateResult[] = [];
+  readonly generateResponseCalls: GenerateResponseCall[] = [];
 
   private readonly orchestrator: ConversationOrchestrator;
 
@@ -72,8 +99,12 @@ export class CoachHarness {
     };
 
     this.conversationRepo = new InMemoryConversationRepository(conversation);
+    this.styleRepo = new InMemoryStyleProfileRepository(options.seedStyleProfile ?? null);
 
-    const ai = options.aiProvider ?? createLiveProvider();
+    const ai = new RecordingAiProvider(
+      options.aiProvider ?? createLiveProvider(),
+      this.generateResponseCalls,
+    );
     this.outbox = new InlineOutbox(
       ai,
       this.conversationRepo,
@@ -149,6 +180,75 @@ export class CoachHarness {
 
   styleProfile(): Promise<StyleProfileRecord | null> {
     return this.styleRepo.findByUser(USER_ID, TENANT_ID);
+  }
+}
+
+class RecordingAiProvider implements AiProviderPort {
+  constructor(
+    private readonly delegate: AiProviderPort,
+    private readonly generateCalls: GenerateResponseCall[],
+  ) {}
+
+  classifySituation(
+    turns: ConversationTurn[],
+    context: ClassifyContext,
+  ): Promise<SituationClassification> {
+    return this.delegate.classifySituation(turns, context);
+  }
+
+  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
+    return this.delegate.detectRisk(turns, context);
+  }
+
+  extractMemory(turns: ConversationTurn[], existing: MemoryContext): Promise<MemoryProposal> {
+    return this.delegate.extractMemory(turns, existing);
+  }
+
+  evaluateSurveyEvidence(
+    turns: ConversationTurn[],
+    questions: SurveyQuestionForEvaluation[],
+  ): Promise<SurveyEvidenceEvaluation> {
+    return this.delegate.evaluateSurveyEvidence(turns, questions);
+  }
+
+  async generateResponse(
+    turns: ConversationTurn[],
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+  ): Promise<GeneratedResponse> {
+    this.generateCalls.push({ turns, strategy, context });
+    return this.delegate.generateResponse(turns, strategy, context);
+  }
+
+  generateGroupSummary(
+    summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
+    questionGroup: string,
+  ): Promise<GroupSummary> {
+    return this.delegate.generateGroupSummary(summaries, questionGroup);
+  }
+
+  generateGroupReport(
+    teamSummaries: string[],
+    questionGroup: string,
+    teamScore: number,
+    trend: number | null,
+  ): Promise<GroupReport> {
+    return this.delegate.generateGroupReport(teamSummaries, questionGroup, teamScore, trend);
+  }
+
+  scoreSentiment(text: string): Promise<number> {
+    return this.delegate.scoreSentiment(text);
+  }
+
+  interpretConfirmationResponse(
+    turns: ConversationTurn[],
+    summary: string,
+  ): Promise<ConfirmationResponse> {
+    return this.delegate.interpretConfirmationResponse(turns, summary);
+  }
+
+  analyzeStyle(userTurns: string[]): Promise<ObservedStyle> {
+    return this.delegate.analyzeStyle(userTurns);
   }
 }
 

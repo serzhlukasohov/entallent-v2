@@ -5,6 +5,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "sim": "vitest run",
+    "sim:gate": "pnpm exec tsx src/gate/run-gate.ts",
     "sim:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\""
