@@ -33,6 +33,8 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
     : '';
 
   const styleBlock = context.styleAdaptation ? buildStyleAdaptationBlock(context.styleAdaptation, strategy.mode) : '';
+  const replyPlan = context.replyPlan ?? context.replyBrief;
+  const replyPlanBlock = replyPlan ? buildReplyPlanBlock(replyPlan) : '';
 
   const memoryHint = context.memoryContext && context.memoryContext.items.length > 0
     ? `\nThings you already know about ${context.userName} (use naturally, do not repeat back verbatim): ${context.memoryContext.items.slice(0, 5).map(i => i.content).join('; ')}`
@@ -109,7 +111,7 @@ Thread-following: people often drop hints mid-sentence and don't develop them â€
 
 Length: ${lengthGuide}. Write in English.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${checkInHint}${probeHint}${timeHint}
 
-${RESPOND_STYLE_EXAMPLES}${styleBlock}
+${replyPlanBlock}${RESPOND_STYLE_EXAMPLES}${styleBlock}
 
 Hard rules:
 - Never diagnose, prescribe, or give medical/legal advice
@@ -131,6 +133,38 @@ Return JSON:
 }
 
 Output only valid JSON, no markdown.${INJECTION_GUARD}`;
+}
+
+function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): string {
+  const substance = plan.latestUserSubstance
+    ? `\nLatest employee substance: ${plan.latestUserSubstance}`
+    : '\nLatest employee substance: none; treat the latest message as an acknowledgement/backchannel, not as hidden content.';
+  const anchor = plan.topicAnchor
+    ? `\nTopic anchor to continue from: ${plan.topicAnchor}`
+    : '';
+  const memoryAnchors = plan.memoryAnchors.length > 0
+    ? `\nRelevant memory anchors (use only if they fit; preserve their concrete nouns rather than vague references):\n${plan.memoryAnchors.map((item) => `- [${item.category}] ${item.content}`).join('\n')}`
+    : '';
+  const requiredGrounding = plan.requiredGrounding.length > 0
+    ? `\nRequired grounding (hard contract): mention this memory concretely and recognizably in the reply; do not collapse it into only time/place/generalities:\n${plan.requiredGrounding.map((item) => `- [${item.category}] ${item.content}`).join('\n')}`
+    : '';
+  const memoryUse = plan.memoryAnchors.length > 0 && (plan.responseMove === 'support_emotion' || !plan.latestUserSubstance)
+    ? '\nIf the employee names a feeling without restating the cause, connect it to one relevant memory anchor explicitly and concretely. Do not reduce a specific anchor like "payments architecture defense" to only "Friday" or "the committee".'
+    : '';
+  const questionPolicy = plan.questionPolicy.maxQuestions === 0
+    ? `\nQuestion policy (hard contract): ask zero questions this turn. Reason: ${plan.questionPolicy.reason}. A plain statement or acknowledgement is enough.`
+    : `\nQuestion policy: you may ask at most one question this turn if it is genuinely useful. Reason: ${plan.questionPolicy.reason}.`;
+  const forbiddenMoves = plan.forbiddenMoves.length > 0
+    ? `\nForbidden moves for this turn: ${plan.forbiddenMoves.join(', ')}.`
+    : '';
+  const brevity = plan.mayInferFromBrevity
+    ? ''
+    : '\nDo not infer mood, impatience, depth, personality, or unstated meaning from the employee being brief. Do not mention their brevity, one-word answer, or short wording. Do not quote the short acknowledgement as evidence. Continue from the topic anchor or close the thread naturally.';
+
+  return `\nReply plan (follow this typed policy over the raw surface form of the latest message):
+  - dialogueAct: ${plan.dialogueAct}
+  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${forbiddenMoves}${brevity}
+  `;
 }
 
 export function buildRespondUserPrompt(turns: ConversationTurn[], context: ResponseContext): string {

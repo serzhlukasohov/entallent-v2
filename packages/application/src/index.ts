@@ -1,4 +1,4 @@
-export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, MemoryContext, ResponseContext, SurveyQuestionForEvaluation } from './ports/ai-provider.port';
+export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, MemoryContext, ResponseContext, ReplyBrief, ReplyPlan, SurveyQuestionForEvaluation } from './ports/ai-provider.port';
 export type { ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
 export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, IngestMessageResult } from './ports/ingestion.repository.port';
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';

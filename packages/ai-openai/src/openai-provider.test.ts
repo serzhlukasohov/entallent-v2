@@ -12,6 +12,7 @@ vi.mock('openai', () => {
 
 import { OpenAiProvider } from './openai-provider';
 import { ReplyStrategy } from '@entalent/contracts';
+import type { MemoryContext } from '@entalent/application';
 
 function makeProvider() {
   return new OpenAiProvider({ azure: false, apiKey: 'test', model: 'gpt-test' });
@@ -147,6 +148,30 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     );
     expect(createMock).toHaveBeenCalledTimes(2);
     expect(res.text).toBe('Makes sense.');
+  });
+});
+
+describe('OpenAiProvider.extractMemory resilience', () => {
+  beforeEach(() => createMock.mockReset());
+
+  it('drops items with an invalid category instead of throwing away the batch', async () => {
+    const payload = JSON.stringify({
+      memoryItems: [
+        { category: 'stressors', content: 'invalid category', confidence: 0.9, importance: 0.5, sensitivity: 'normal', expectedLifetime: 'weeks', sourceMessageIds: [], action: 'create' },
+        { category: 'stressor', content: 'valid item', confidence: 0.9, importance: 0.5, sensitivity: 'normal', expectedLifetime: 'weeks', sourceMessageIds: [], action: 'create' },
+      ],
+      goalProposals: [], commitmentProposals: [], followUpCandidates: [],
+    });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: payload } }] });
+    const provider = makeProvider();
+
+    const result = await provider.extractMemory(
+      [{ role: 'user', content: 'x', timestamp: new Date() }],
+      { items: [], goals: [] } as unknown as MemoryContext,
+    );
+
+    expect(result.memoryItems).toHaveLength(1);
+    expect(result.memoryItems[0].content).toBe('valid item');
   });
 });
 

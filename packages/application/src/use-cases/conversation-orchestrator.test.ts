@@ -10,7 +10,20 @@ function baseMocks() {
     saveMessage: vi.fn().mockResolvedValue({ id: 'out-1' }),
   } as any;
   const aiProvider = {
-    classifySituation: vi.fn().mockResolvedValue({ primaryIntent: 'casual_conversation', urgency: 'low', surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null }),
+    classifySituation: vi.fn().mockResolvedValue({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      surveyAllowed: true,
+      requiresSafetyCheck: false,
+      reasoningSummary: 'test',
+      reminderRequest: null,
+      dialogueAct: 'new_substance',
+      latestUserSubstance: 'hey',
+      topicAnchor: null,
+    }),
     detectRisk: vi.fn(),
     generateResponse: vi.fn().mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false }),
     interpretConfirmationResponse: vi.fn(),
@@ -61,7 +74,9 @@ describe('ConversationOrchestrator deterministic safety pass', () => {
     const m = baseMocks();
     m.aiProvider.classifySituation.mockResolvedValue({
       primaryIntent: 'burnout_signal', secondaryIntents: [], urgency: 'medium',
+      emotionalState: ['exhausted'], confidence: 0.9, reasoningSummary: 'burnout',
       surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: 'burned out', topicAnchor: 'release',
     });
     m.aiProvider.detectRisk.mockResolvedValue({
       severity: 'none', riskType: undefined, confidence: 0,
@@ -89,6 +104,45 @@ describe('ConversationOrchestrator deterministic safety pass', () => {
 
     expect(m.aiProvider.detectRisk).not.toHaveBeenCalled();
     expect(result.classification.requiresSafetyCheck).toBe(false);
+  });
+});
+
+describe('ConversationOrchestrator reply plan', () => {
+  it('passes acknowledgement dialogue state to response generation', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      surveyAllowed: true,
+      requiresSafetyCheck: false,
+      reasoningSummary: 'ack',
+      reminderRequest: null,
+      dialogueAct: 'acknowledgement',
+      latestUserSubstance: null,
+      topicAnchor: 'the release shipped over the weekend',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.replyPlan).toMatchObject({
+      dialogueAct: 'acknowledgement',
+      responseMove: 'continue_existing_thread',
+      latestUserSubstance: null,
+      topicAnchor: 'the release shipped over the weekend',
+      mayInferFromBrevity: false,
+      questionPolicy: { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' },
+    });
+    expect(ctxArg.replyBrief).toBe(ctxArg.replyPlan);
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    expect(strategyArg.includeFollowUpQuestion).toBe(false);
   });
 });
 
@@ -170,20 +224,36 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     upsert: vi.fn(),
   }) as any;
 
-  it('terse user is always shortened; skips the question when the agent just asked one', async () => {
+  it('terse user is shortened while reply plan skips the question when the agent just asked one', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
       { id: 'o-1', direction: 'outbound', text: 'what exactly is holding you back?', occurredAt: new Date(), metadata: undefined },
     ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      surveyAllowed: true,
+      requiresSafetyCheck: false,
+      reasoningSummary: 'continuing same thread',
+      reminderRequest: null,
+      dialogueAct: 'continuation',
+      latestUserSubstance: 'same thing is still blocked',
+      topicAnchor: 'recurring blocker',
+    });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
       undefined, undefined, m.featureFlags, undefined, undefined, profile(0.27, 0.3),
     );
     await orch.orchestrate(INPUT);
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(strategyArg.maxResponseLength).toBe('short');
-    expect(strategyArg.includeFollowUpQuestion).toBe(false); // just asked → skip this turn
+    expect(strategyArg.includeFollowUpQuestion).toBe(false);
+    expect(ctxArg.replyPlan.questionPolicy).toEqual({ maxQuestions: 0, reason: 'asked_recently' });
   });
 
   it('terse user asks a follow-up when the previous reply had no question', async () => {

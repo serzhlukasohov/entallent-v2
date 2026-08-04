@@ -33,6 +33,17 @@ export const ReminderRequestSchema = z.object({
 });
 export type ReminderRequest = z.infer<typeof ReminderRequestSchema>;
 
+export const DialogueActSchema = z.enum([
+  'new_substance',
+  'acknowledgement',
+  'continuation',
+  'correction',
+  'request',
+  'emotional_disclosure',
+  'closing',
+]);
+export type DialogueAct = z.infer<typeof DialogueActSchema>;
+
 export const SituationClassificationSchema = z.object({
   primaryIntent: SituationIntentSchema,
   secondaryIntents: z.array(z.string()),
@@ -44,6 +55,21 @@ export const SituationClassificationSchema = z.object({
   reasoningSummary: z.string(),
   /** Present only when the employee explicitly asked to be reminded of something */
   reminderRequest: ReminderRequestSchema.nullish(),
+  /**
+   * What the latest employee message contributes to the dialogue, separate from
+   * surface style. This lets response generation avoid interpreting terse wording
+   * as hidden meaning.
+   */
+  dialogueAct: DialogueActSchema.default('new_substance'),
+  /**
+   * Concise substance from the latest employee turn, or null when the message is
+   * only an acknowledgement/backchannel like "ok", "yeah", "fine".
+   */
+  latestUserSubstance: z.string().nullable().default(null),
+  /**
+   * Existing topic to continue when the latest turn has no new substance.
+   */
+  topicAnchor: z.string().nullable().default(null),
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 
@@ -205,7 +231,7 @@ export const GeneratedResponseSchema = z.object({
   text: z.string(),
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
-  surveyProbeQuestionId: z.string().optional(),
+  surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
 });
 export type GeneratedResponse = z.infer<typeof GeneratedResponseSchema>;
 

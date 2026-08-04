@@ -15,6 +15,9 @@ const CLASSIFICATION: SituationClassification = {
   requiresSafetyCheck: false,
   surveyAllowed: true,
   reasoningSummary: 'Normal conversation.',
+  dialogueAct: 'new_substance',
+  latestUserSubstance: 'Hello',
+  topicAnchor: null,
 };
 
 function makeProvider(result: SituationClassification | Error): AiProviderPort {

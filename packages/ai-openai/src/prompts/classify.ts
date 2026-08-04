@@ -14,8 +14,21 @@ Return a JSON object with exactly these fields:
   "requiresSafetyCheck": boolean,// true if potential self-harm, crisis, harassment, or immediate danger signals
   "surveyAllowed": boolean,      // false if user appears distressed, in crisis, or if topic is sensitive
   "reasoningSummary": string,    // 1-2 sentence explanation
-  "reminderRequest": null        // see reminder rules below; null unless explicitly requested
+  "reminderRequest": null,       // see reminder rules below; null unless explicitly requested
+  "dialogueAct": string,         // one of: "new_substance","acknowledgement","continuation","correction","request","emotional_disclosure","closing"
+  "latestUserSubstance": string|null, // what the latest employee message newly contributes; null for pure acknowledgements/backchannels
+  "topicAnchor": string|null     // existing topic to continue when latestUserSubstance is null
 }
+
+Dialogue act rules:
+- Classify the LATEST employee message's contribution, not their personality or writing style.
+- Use "acknowledgement" for backchannels / minimal replies that add no new work substance ("ok", "yeah", "fine", "a bit", "sure", "thanks").
+- Use "continuation" when the latest message continues a known topic with some new detail.
+- Use "new_substance" when it introduces a new concrete fact, event, task, blocker, preference, or concern.
+- Use "emotional_disclosure" when the latest message primarily discloses feelings or wellbeing.
+- Use "request" for explicit asks to the mentor; "correction" for correcting the mentor; "closing" for ending/wrapping.
+- Never infer impatience, hidden meaning, depth, or personality from brevity itself.
+- When dialogueAct is "acknowledgement", latestUserSubstance MUST be null and topicAnchor should name the active topic from the prior turns.
 
 Reminder detection:
 - Set "reminderRequest" ONLY when the employee explicitly asks to be reminded of something ("remind me to…", "ping me when…", "don't let me forget to…").

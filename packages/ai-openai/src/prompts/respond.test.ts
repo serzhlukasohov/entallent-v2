@@ -94,3 +94,60 @@ describe('buildRespondSystemPrompt session-aware greeting', () => {
     expect(p).not.toMatch(/current local time/i);
   });
 });
+
+describe('buildRespondSystemPrompt reply plan', () => {
+  const s = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] });
+
+  it('renders acknowledgement turns as no-new-substance without brevity inference', () => {
+    const p = buildRespondSystemPrompt(s(), {
+      userName: 'T',
+      replyPlan: {
+        dialogueAct: 'acknowledgement',
+        latestUserSubstance: null,
+        topicAnchor: 'the release shipped over the weekend',
+        memoryAnchors: [{ category: 'commitment', content: 'will monitor the release over the weekend' }],
+        responseMove: 'continue_existing_thread',
+        mayInferFromBrevity: false,
+        questionPolicy: { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' },
+        requiredGrounding: [],
+        forbiddenMoves: ['comment_on_brevity'],
+      },
+    });
+
+    expect(p).toContain('Reply plan');
+    expect(p).toContain('dialogueAct: acknowledgement');
+    expect(p).toContain('Latest employee substance: none');
+    expect(p).toContain('the release shipped over the weekend');
+    expect(p).toContain('Relevant memory anchors');
+    expect(p).toContain('will monitor the release over the weekend');
+    expect(p).toContain('Question policy (hard contract): ask zero questions this turn');
+    expect(p).toMatch(/Do not infer mood, impatience, depth, personality, or unstated meaning/i);
+    expect(p).toMatch(/Do not mention their brevity, one-word answer, or short wording/i);
+  });
+
+  it('renders required memory grounding as a hard contract', () => {
+    const p = buildRespondSystemPrompt(s(), {
+      userName: 'T',
+      replyPlan: {
+        dialogueAct: 'emotional_disclosure',
+        latestUserSubstance: 'I am nervous',
+        topicAnchor: null,
+        memoryAnchors: [{ category: 'milestone', content: 'defending the payments architecture on Friday' }],
+        responseMove: 'support_emotion',
+        mayInferFromBrevity: true,
+        questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+        requiredGrounding: [{
+          source: 'memory',
+          category: 'milestone',
+          content: 'defending the payments architecture on Friday',
+          requirement: 'mention_explicitly',
+        }],
+        forbiddenMoves: [],
+      },
+    });
+
+    expect(p).toContain('Required grounding (hard contract)');
+    expect(p).toContain('defending the payments architecture on Friday');
+    expect(p).toMatch(/do not collapse it into only time\/place\/generalities/i);
+  });
+});

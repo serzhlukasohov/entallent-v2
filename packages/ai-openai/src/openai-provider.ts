@@ -3,7 +3,9 @@ import { CircuitBreaker } from './circuit-breaker';
 import {
   SituationClassificationSchema,
   RiskDetectionSchema,
-  MemoryProposalSchema,
+  MemoryItemProposalSchema,
+  GoalProposalSchema,
+  FollowUpCandidateSchema,
   GeneratedResponseSchema,
   SurveyEvidenceEvaluationSchema,
   GroupSummarySchema,
@@ -105,6 +107,24 @@ function endsWithQuestion(text: string): boolean {
   return /\?["'”’)\]]*\s*$/.test(text.trim());
 }
 
+/** Structural shape of a Zod schema's safeParse — lets keepValid stay decoupled from zod. */
+type SafeParser<T> = { safeParse(input: unknown): { success: true; data: T } | { success: false } };
+
+/**
+ * Validate an array of untrusted model output element-by-element, keeping only the items that
+ * parse and silently dropping the rest. A single malformed item (e.g. a hallucinated enum
+ * value) must never discard the whole batch or throw.
+ */
+function keepValid<T>(value: unknown, schema: SafeParser<T>): T[] {
+  if (!Array.isArray(value)) return [];
+  const out: T[] = [];
+  for (const item of value) {
+    const result = schema.safeParse(item);
+    if (result.success) out.push(result.data);
+  }
+  return out;
+}
+
 export class OpenAiProvider implements AiProviderPort {
   private readonly client: OpenAI;
   private readonly analysisModel: string;
@@ -162,7 +182,22 @@ export class OpenAiProvider implements AiProviderPort {
       this.analysisModel,
       4096,
     );
-    return MemoryProposalSchema.parse(JSON.parse(raw));
+    const parsed: unknown = JSON.parse(raw);
+    const obj: Record<string, unknown> =
+      parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+    // The model occasionally emits a near-miss category ("stressors" for "stressor") or an
+    // otherwise malformed item. Drop the offending items rather than throwing away the whole
+    // extraction — one bad field must not lose every memory from the turn or crash the job.
+    return {
+      memoryItems: keepValid(obj['memoryItems'], MemoryItemProposalSchema),
+      goalProposals: keepValid(obj['goalProposals'], GoalProposalSchema),
+      commitmentProposals: Array.isArray(obj['commitmentProposals'])
+        ? (obj['commitmentProposals'] as unknown[]).filter(
+            (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+          )
+        : [],
+      followUpCandidates: keepValid(obj['followUpCandidates'], FollowUpCandidateSchema),
+    };
   }
 
   async evaluateSurveyEvidence(

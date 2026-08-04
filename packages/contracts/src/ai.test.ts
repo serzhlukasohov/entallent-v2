@@ -14,18 +14,38 @@ import {
 
 describe('Contract: SituationClassificationSchema', () => {
   it('accepts a valid classification', () => {
-    expect(() =>
-      SituationClassificationSchema.parse({
-        primaryIntent: 'support',
-        secondaryIntents: ['burnout_signal'],
-        emotionalState: ['stressed'],
-        urgency: 'high',
-        confidence: 0.9,
-        requiresSafetyCheck: true,
-        surveyAllowed: false,
-        reasoningSummary: 'User shows burnout signs.',
-      }),
-    ).not.toThrow();
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'support',
+      secondaryIntents: ['burnout_signal'],
+      emotionalState: ['stressed'],
+      urgency: 'high',
+      confidence: 0.9,
+      requiresSafetyCheck: true,
+      surveyAllowed: false,
+      reasoningSummary: 'User shows burnout signs.',
+      dialogueAct: 'emotional_disclosure',
+      latestUserSubstance: 'barely sleeping after carrying the release',
+      topicAnchor: 'release strain',
+    });
+    expect(parsed.dialogueAct).toBe('emotional_disclosure');
+    expect(parsed.latestUserSubstance).toContain('barely sleeping');
+    expect(parsed.topicAnchor).toBe('release strain');
+  });
+
+  it('defaults dialogue-state fields for older classifier payloads', () => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'support',
+      secondaryIntents: ['burnout_signal'],
+      emotionalState: ['stressed'],
+      urgency: 'high',
+      confidence: 0.9,
+      requiresSafetyCheck: true,
+      surveyAllowed: false,
+      reasoningSummary: 'User shows burnout signs.',
+    });
+    expect(parsed.dialogueAct).toBe('new_substance');
+    expect(parsed.latestUserSubstance).toBeNull();
+    expect(parsed.topicAnchor).toBeNull();
   });
 
   it('rejects unknown primaryIntent', () => {
@@ -279,6 +299,17 @@ describe('Contract: GeneratedResponseSchema', () => {
       surveyProbeQuestionId: 'q-team-collab',
     });
     expect(result.surveyProbeQuestionId).toBe('q-team-collab');
+  });
+
+  it('normalizes null optional survey probe id from model output', () => {
+    const result = GeneratedResponseSchema.parse({
+      text: 'That is a lot to carry.',
+      confidence: 0.88,
+      containsSurveyProbe: false,
+      surveyProbeQuestionId: null,
+    });
+
+    expect(result.surveyProbeQuestionId).toBeUndefined();
   });
 });
 

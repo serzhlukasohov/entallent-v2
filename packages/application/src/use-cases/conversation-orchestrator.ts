@@ -13,6 +13,7 @@ import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.re
 import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
 import type { StyleProfileRecord } from '../types/records';
 import { BASE_STYLE, STYLE_CONFIDENCE_FLOOR, STYLE_OFF_BASE_MARGIN } from '../utils/style-adaptation';
+import { buildReplyPlan } from '../utils/reply-plan';
 import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
@@ -262,13 +263,24 @@ export class ConversationOrchestrator {
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
-    const lastOutbound = [...dbMessages].reverse().find((m) => m.direction === 'outbound');
-    const lastReplyAskedQuestion = (lastOutbound?.text ?? '').includes('?');
-    const strategy = applyTerseStyle(baseStrategy, memoryEnabled ? profile : null, lastReplyAskedQuestion);
+    const strategyWithStyle = applyTerseStyle(baseStrategy, memoryEnabled ? profile : null);
 
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
     const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
     const sessionStart = isSessionStart(lastPriorAt, new Date());
+    const lastOutbound = [...dbMessages].reverse().find((m) => m.direction === 'outbound');
+    const lastReplyAskedQuestion = (lastOutbound?.text ?? '').includes('?');
+    const replyPlan = confirmationRequest
+      ? undefined
+      : buildReplyPlan({
+          classification,
+          memoryItems,
+          includeFollowUpQuestion: strategyWithStyle.includeFollowUpQuestion,
+          lastReplyAskedQuestion,
+          surveyProbeQuestionId: probeQuestion?.id,
+          sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
+        });
+    const strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
@@ -284,6 +296,8 @@ export class ConversationOrchestrator {
       styleAdaptation,
       localTime: describeLocalTime(conversation.userTimezone),
       isSessionStart: sessionStart,
+      replyBrief: replyPlan,
+      replyPlan,
     });
 
     const outbound = await this.conversationRepo.saveMessage({
@@ -552,7 +566,6 @@ function describeLocalTime(timezone: string | undefined | null): string | undefi
 function applyTerseStyle(
   strategy: ReplyStrategy,
   profile: StyleProfileRecord | null,
-  lastReplyAskedQuestion: boolean,
 ): ReplyStrategy {
   if (!profile) return strategy;
   if (strategy.mode === 'crisis' || strategy.mode === 'sensitive' || strategy.mode === 'confirmation') return strategy;
@@ -560,9 +573,12 @@ function applyTerseStyle(
     profile.adaptationWeight >= STYLE_CONFIDENCE_FLOOR &&
     BASE_STYLE.verbosity - profile.dimensions.verbosity >= STYLE_OFF_BASE_MARGIN;
   if (!terse) return strategy;
-  // Always shorter (A). Ask a follow-up only if we did NOT just ask one (C) — every
-  // other turn, so a terse person isn't interrogated each message.
-  return { ...strategy, maxResponseLength: 'short', includeFollowUpQuestion: !lastReplyAskedQuestion };
+  return { ...strategy, maxResponseLength: 'short' };
+}
+
+function applyReplyPlanToStrategy(strategy: ReplyStrategy, plan: ResponseContext['replyPlan']): ReplyStrategy {
+  if (!plan || plan.questionPolicy.maxQuestions > 0) return strategy;
+  return { ...strategy, includeFollowUpQuestion: false };
 }
 
 /**

@@ -44,6 +44,33 @@ export interface SurveyQuestionForEvaluation {
   contraindications: string[];
 }
 
+export interface ReplyPlan {
+  dialogueAct: import('@entalent/contracts').DialogueAct;
+  latestUserSubstance: string | null;
+  topicAnchor: string | null;
+  memoryAnchors: Array<{ category: string; content: string }>;
+  responseMove: 'address_new_substance' | 'continue_existing_thread' | 'answer_request' | 'support_emotion' | 'close_or_pause';
+  mayInferFromBrevity: boolean;
+  questionPolicy: {
+    maxQuestions: 0 | 1;
+    reason:
+      | 'strategy_disallows_questions'
+      | 'acknowledgement_no_new_substance'
+      | 'asked_recently'
+      | 'new_substance_allows_question';
+  };
+  requiredGrounding: Array<{
+    source: 'memory';
+    category: string;
+    content: string;
+    requirement: 'mention_explicitly';
+  }>;
+  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'action_plan'>;
+}
+
+/** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
+export type ReplyBrief = ReplyPlan;
+
 export interface ResponseContext {
   userName: string;
   tenantContext?: string;
@@ -93,6 +120,14 @@ export interface ResponseContext {
   localTime?: string;
   /** True on the first message of a session (long gap) — greetings/sign-offs fit here. */
   isSessionStart?: boolean;
+  /**
+   * Structured dialogue-state for the next reply. This is generated before prose
+   * generation so style mirroring affects wording only, not semantic inference from
+   * terse surface form.
+   */
+  replyBrief?: ReplyBrief;
+  /** Typed response policy: what the generator must do, before it decides wording. */
+  replyPlan?: ReplyPlan;
 }
 
 export interface AiProviderPort {
