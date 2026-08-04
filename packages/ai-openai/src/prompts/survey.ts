@@ -21,7 +21,7 @@ evidenceSummary — write a self-contained insight (2-4 sentences) that a manage
 1. What the employee said or revealed (the concrete fact or pattern)
 2. The situational or emotional context that makes it meaningful
 3. What this signals about their experience relevant to this question
-Write in the same language as the conversation (Russian if the conversation is in Russian). Do not quote verbatim — synthesize. Do not start with "The employee said" — lead with the substance.
+Write in English. Do not quote verbatim — synthesize. Do not start with "The employee said" — lead with the substance.
 
 Important:
 - Only include a question in evidence[] if there IS a signal — omit questions with no relevant content

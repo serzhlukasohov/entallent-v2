@@ -331,7 +331,7 @@ describe('Contract: FollowUpCandidateSchema', () => {
 
 describe('ObservedStyleSchema', () => {
   it('accepts valid observed style', () => {
-    const r = ObservedStyleSchema.parse({ dimensions: { register: 1, humor: 0.5, verbosity: 0.2, emoji: 0 }, phrases: ['ну такое'] });
+    const r = ObservedStyleSchema.parse({ dimensions: { register: 1, humor: 0.5, verbosity: 0.2, emoji: 0 }, phrases: ['eh, so-so'] });
     expect(r.dimensions.register).toBe(1);
   });
   it('rejects out-of-range', () => {

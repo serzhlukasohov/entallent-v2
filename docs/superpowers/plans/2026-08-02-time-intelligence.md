@@ -304,7 +304,7 @@ In `packages/ai-openai/src/prompts/respond.ts`, change the `timeHint` condition 
 
 ```typescript
   const timeHint = context.localTime && context.isSessionStart
-    ? `\nEmployee's current local time: ${context.localTime}. This looks like the start of a session — a brief time-appropriate greeting (доброе утро / добрый вечер) or, if they're wrapping up, a sign-off fits. Only when natural, never as filler; at night keep it low-key, not a chirpy "доброе утро".`
+    ? `\nEmployee's current local time: ${context.localTime}. This looks like the start of a session — a brief time-appropriate greeting (good morning / good evening) or, if they're wrapping up, a sign-off fits. Only when natural, never as filler; at night keep it low-key, not a chirpy "good morning".`
     : context.localTime
       ? `\nEmployee's current local time: ${context.localTime}. Mid-conversation — do NOT open with a greeting.`
       : '';
@@ -318,12 +318,12 @@ Add to `packages/ai-openai/src/prompts/respond.test.ts`:
 describe('buildRespondSystemPrompt session-aware greeting', () => {
   const s = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
   it('offers a greeting at session start with known time', () => {
-    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'суббота, 09:00 (утро)', isSessionStart: true });
+    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: true });
     expect(p).toMatch(/start of a session/i);
-    expect(p).toContain('суббота, 09:00 (утро)');
+    expect(p).toContain('Saturday, 09:00 (morning)');
   });
   it('suppresses greeting mid-session', () => {
-    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'суббота, 09:00 (утро)', isSessionStart: false });
+    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: false });
     expect(p).toMatch(/do NOT open with a greeting/i);
   });
   it('no time hint when tz unknown', () => {

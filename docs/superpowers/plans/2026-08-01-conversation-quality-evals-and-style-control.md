@@ -54,21 +54,21 @@ import { hasReflectiveOpener } from './style-antipatterns';
 
 describe('hasReflectiveOpener', () => {
   it('flags observed verdict-on-their-words openers', () => {
-    expect(hasReflectiveOpener('Вот это уже звучит как очень трезвая позиция: тебе важен результат.')).toBe(true);
-    expect(hasReflectiveOpener('Вот это, похоже, и есть корень: не просто шум, а шум который заражает.')).toBe(true);
-    expect(hasReflectiveOpener('Звучит как классическая перегрузка.')).toBe(true);
-    expect(hasReflectiveOpener('То, что ты описываешь — это выгорание.')).toBe(true);
+    expect(hasReflectiveOpener("That's already sounding like a very clear-eyed take: results matter to you.")).toBe(true);
+    expect(hasReflectiveOpener('That, it seems, is the real root: not just noise, but noise that spreads.')).toBe(true);
+    expect(hasReflectiveOpener('Sounds like a classic overload.')).toBe(true);
+    expect(hasReflectiveOpener("What you're describing is burnout.")).toBe(true);
   });
 
   it('does not flag replies that lead with substance or a question', () => {
-    expect(hasReflectiveOpener('А когда лид сказал «да-да» — это было безразличие или у него не было ответа?')).toBe(false);
-    expect(hasReflectiveOpener('Роль у тебя вроде ясная, но решения всё равно идут через Рому — это тормозит?')).toBe(false);
-    expect(hasReflectiveOpener('Окей. Что из этого злит сильнее всего?')).toBe(false);
+    expect(hasReflectiveOpener("And when your lead said 'yeah, yeah' — was that indifference, or did he just not have an answer?")).toBe(false);
+    expect(hasReflectiveOpener('Your role seems clear enough, but decisions still route through Roma — is that what slows things down?')).toBe(false);
+    expect(hasReflectiveOpener('Okay. Which part of this makes you angriest?')).toBe(false);
   });
 
   it('only inspects the opener, not later sentences', () => {
     // A between-the-lines naming later in the reply is fine.
-    expect(hasReflectiveOpener('Давай по порядку. Похоже, дело не в дедлайнах.')).toBe(false);
+    expect(hasReflectiveOpener("Let's take it in order. Sounds like it's not really about the deadlines.")).toBe(false);
   });
 });
 ```
@@ -86,17 +86,18 @@ Create `packages/ai-openai/src/prompts/style-antipatterns.ts`:
 /**
  * Reflective "verdict-on-their-words" opener patterns — the formulaic way the model
  * opens a reply by labeling/characterizing what the employee just said instead of
- * leading with substance ("Вот это уже звучит как…", "Звучит как…", "То, что ты
- * описываешь — это…"). Single source of truth for both the runtime gate and evals.
+ * leading with substance ("That's starting to sound like…", "Sounds like…", "What
+ * you're describing is…"). Single source of truth for both the runtime gate and evals.
  * Matched ONLY against the reply's first sentence/line.
  */
 export const OPENER_ANTIPATTERNS: RegExp[] = [
-  /^вот это\b/i,
-  /^(ну\s+)?это\s+(уже\s+)?звучит\s+как\b/i,
-  /^звучит\s+как\b/i,
-  /^похоже,/i,
-  /^то,?\s*что\s+ты\s+(опис|говор|расск)/i,
-  /^получается,\s*(что\s+)?ты\b/i,
+  /^that(?:'s|\s+is)?\s+(?:already\s+|starting\s+to\s+)?sound(?:s|ing)?\s+like\b/i,
+  /^(?:it\s+)?sounds\s+like\b/i,
+  /^(?:it\s+)?seems\s+like\b/i,
+  /^what\s+you(?:'re|\s+are)\s+(?:describing|saying)\b/i,
+  /^so,?\s+(?:what\s+)?you(?:'re|\s+are)\s+saying\b/i,
+  /^that,\s+it\s+seems,\s+is\b/i,
+  /^that(?:'s|\s+is)\s+(?:really\s+|probably\s+)?(?:the\s+)?(?:real\s+)?(?:root|core|crux|heart|problem|issue)\b/i,
 ];
 
 /** True if the reply OPENS with a reflective label on the user's own words. */
@@ -163,9 +164,9 @@ describe('buildRespondSystemPrompt few-shot exemplars', () => {
     expect(prompt).toContain(RESPOND_STYLE_EXAMPLES.trim().slice(0, 24));
   });
   it('exemplars demonstrate leading with substance, not labeling', () => {
-    expect(RESPOND_STYLE_EXAMPLES.toLowerCase()).toContain('вот это');   // shown as the BAD pattern
-    expect(RESPOND_STYLE_EXAMPLES).toMatch(/BAD|ПЛОХО/);
-    expect(RESPOND_STYLE_EXAMPLES).toMatch(/GOOD|ХОРОШО/);
+    expect(RESPOND_STYLE_EXAMPLES.toLowerCase()).toContain('that, it seems');   // shown as the BAD pattern
+    expect(RESPOND_STYLE_EXAMPLES).toMatch(/BAD/);
+    expect(RESPOND_STYLE_EXAMPLES).toMatch(/GOOD/);
   });
 });
 ```
@@ -187,13 +188,13 @@ Create `packages/ai-openai/src/prompts/respond-examples.ts`:
  */
 export const RESPOND_STYLE_EXAMPLES = `How a good reply differs from a bad one (do NOT copy content, copy the MOVE):
 
-Employee: "в суете, которая приносит много триггеров, все начинают распыляться"
-BAD (opens by labeling what they said): "Вот это, похоже, и есть корень: не просто шум, а шум, который заражает всех вокруг…"
-GOOD (leads with substance / a real question): "А ты уже понял, что именно надо отсечь первым, чтобы суета не разносилась дальше — или пока непонятно, за что хвататься?"
+Employee: "in all the chaos, with so many things pulling at everyone, people start spreading themselves thin"
+BAD (opens by labeling what they said): "That, it seems, is the real root: not just noise, but noise that infects everyone around it…"
+GOOD (leads with substance / a real question): "Have you figured out what to cut off first so the chaos stops spreading — or is it still unclear what to grab onto?"
 
-Employee: "делаешь нормально, а результат теряется где-то дальше"
-BAD: "Вот это уже звучит как очень трезвая позиция: тебе важен результат…"
-GOOD: "Где именно теряется — на передаче другим или когда меняются приоритеты по ходу?"`;
+Employee: "you do your part well, but the result gets lost somewhere down the line"
+BAD: "That's already sounding like a very clear-eyed take: results matter to you…"
+GOOD: "Where exactly does it get lost — in the handoff to others, or when priorities shift midway?"`;
 ```
 
 - [ ] **Step 4: Wire it into the prompt**
@@ -246,18 +247,18 @@ describe('OpenAiProvider.generateResponse opener gate', () => {
 
   it('regenerates once when the first draft opens with a reflective label', async () => {
     createMock
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Вот это, похоже, и есть корень: шум.","confidence":0.9,"containsSurveyProbe":false}' } }] })
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"А что мешает отсечь это первым?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}' } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"What is stopping you from cutting that off first?","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
-    const res = await provider.generateResponse([{ role: 'user', content: 'суета', timestamp: new Date() }], strat, { userName: 'X' });
+    const res = await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, { userName: 'X' });
     expect(createMock).toHaveBeenCalledTimes(2);
-    expect(res.text).toBe('А что мешает отсечь это первым?');
+    expect(res.text).toBe('What is stopping you from cutting that off first?');
   });
 
   it('does not regenerate when the first draft is clean', async () => {
-    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"А что мешает отсечь это первым?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"What is stopping you from cutting that off first?","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
-    await provider.generateResponse([{ role: 'user', content: 'суета', timestamp: new Date() }], strat, { userName: 'X' });
+    await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, { userName: 'X' });
     expect(createMock).toHaveBeenCalledTimes(1);
   });
 });
@@ -374,7 +375,7 @@ module.exports = async function ({ vars }) {
 
 Run:
 ```bash
-node -e "const f=require('./evals/providers/respond-prompt.js'); f({vars:{userName:'X',turns:[{role:'user',content:'привет'}]}}).then(m=>console.log(m[0].content.slice(0,40)))"
+node -e "const f=require('./evals/providers/respond-prompt.js'); f({vars:{userName:'X',turns:[{role:'user',content:'hi'}]}}).then(m=>console.log(m[0].content.slice(0,40)))"
 ```
 Expected: prints the first ~40 chars of the real system prompt (not an error). If it errors with "Cannot find module '@entalent/ai-openai'", run the Step 1 build first.
 
@@ -409,14 +410,14 @@ prompts:
   - file://../providers/respond-prompt.js
 
 tests:
-  - description: reply to a "суета/шум" observation must not open with a verdict-label
+  - description: reply to a "chaos/noise" observation must not open with a verdict-label
     vars:
       userName: Vika
       turns:
         - role: assistant
-          content: "Где сейчас у тебя больше всего утекает результат?"
+          content: "Where is your output leaking the most right now?"
         - role: user
-          content: "в суете, которая приносит много триггеров, что все начинают распыляться"
+          content: "in all the chaos, with so many things pulling at everyone, people start spreading themselves thin"
     assert:
       - type: javascript
         value: |
@@ -428,16 +429,16 @@ tests:
       - type: llm-rubric
         value: |
           The reply must NOT open by labeling or characterizing what the employee just said
-          (e.g. "Вот это звучит как…", "Вот это и есть корень…", "То, что ты описываешь — это…").
+          (e.g. "That's starting to sound like…", "That's the real root…", "What you're describing is…").
           It should lead with substance — a specific observation or a single genuine question.
           Fail if the first sentence is a verdict on the employee's words.
 
-  - description: reply to "результат теряется дальше" must lead with substance
+  - description: reply to "the result gets lost down the line" must lead with substance
     vars:
       userName: Vika
       turns:
         - role: user
-          content: "делаешь нормально, а результат где-то теряется дальше"
+          content: "you do your part well, but the result gets lost somewhere down the line"
     assert:
       - type: javascript
         value: |

@@ -92,7 +92,7 @@ export class ProactiveCheckInUseCase {
       tone: 'warm',
       includeFollowUpQuestion: true,
       maxResponseLength: 'short',
-      forbiddenPatterns: ['checking in', 'просто решил узнать', 'reminder'],
+      forbiddenPatterns: ['checking in', 'just wanted to check', 'reminder'],
     };
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {

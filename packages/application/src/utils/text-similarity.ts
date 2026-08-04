@@ -18,8 +18,6 @@ const STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'with', 'they', 'their', 'them', 'has', 'have',
   'are', 'was', 'were', 'which', 'says', 'said', 'employee', 'currently', 'now',
   'not', 'but', 'for', 'from', 'about', 'like', 'such', 'also', 'when', 'what',
-  // Russian filler
-  'это', 'что', 'как', 'его', 'она', 'оно', 'они', 'для', 'при', 'если',
 ]);
 
 function tokenSet(s: string): Set<string> {

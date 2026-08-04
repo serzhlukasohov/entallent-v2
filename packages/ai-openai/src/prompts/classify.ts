@@ -18,14 +18,14 @@ Return a JSON object with exactly these fields:
 }
 
 Reminder detection:
-- Set "reminderRequest" ONLY when the employee explicitly asks to be reminded of something ("напомни мне…", "remind me to…", "ping me when…", "не дай забыть…").
-- Never infer a reminder from a vague intention ("надо бы созвониться", "хочу это сделать") — those are not reminder requests, keep reminderRequest null.
+- Set "reminderRequest" ONLY when the employee explicitly asks to be reminded of something ("remind me to…", "ping me when…", "don't let me forget to…").
+- Never infer a reminder from a vague intention ("I should give them a call", "I want to get this done") — those are not reminder requests, keep reminderRequest null.
 - When a reminder IS requested, return:
   {
     "intent": string,   // what to remind them about, phrased in the employee's own language
     "dueAt": string     // absolute ISO 8601 timestamp computed from the current time below
   }
-- Interpret relative times ("завтра в 10", "через неделю", "в пятницу") against the current time and timezone provided in the prompt. If no time is given, default to the next morning (09:00 local).
+- Interpret relative times ("tomorrow at 10", "in a week", "on Friday") against the current time and timezone provided in the prompt. If no time is given, default to the next morning (09:00 local).
 
 Output only valid JSON, no markdown.${INJECTION_GUARD}`;
 }

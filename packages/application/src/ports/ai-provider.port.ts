@@ -87,7 +87,7 @@ export interface ResponseContext {
    */
   styleAdaptation?: { dimensions: import('../types/records').StyleDimensions; weight: number; phrases: string[] };
   /**
-   * Employee's current local time, human-readable (e.g. "суббота, 15:30 (день)").
+   * Employee's current local time, human-readable (e.g. "Saturday, 15:30 (afternoon)").
    * Lets the reply use a natural time-appropriate greeting/sign-off when it fits.
    */
   localTime?: string;

@@ -518,18 +518,18 @@ function safeDefault(): RiskDetection {
   };
 }
 
-/** Human-readable local time in the employee's timezone, e.g. "суббота, 15:30 (день)". */
+/** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
 function describeLocalTime(timezone: string | undefined | null): string | undefined {
   if (!timezone) return undefined;
   try {
     const now = new Date();
-    const when = new Intl.DateTimeFormat('ru-RU', {
+    const when = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone, weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(now);
     const hour = Number(
       new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', hour12: false }).format(now),
     );
-    const partOfDay = hour < 5 ? 'ночь' : hour < 12 ? 'утро' : hour < 18 ? 'день' : 'вечер';
+    const partOfDay = hour < 5 ? 'night' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
     return `${when} (${partOfDay})`;
   } catch {
     return undefined;

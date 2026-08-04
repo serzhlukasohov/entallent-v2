@@ -5,10 +5,10 @@
  */
 export const RESPOND_STYLE_EXAMPLES = `How a good reply differs from a bad one (do NOT copy content, copy the MOVE):
 
-Employee: "в суете, которая приносит много триггеров, все начинают распыляться"
-BAD (opens by labeling what they said): "Вот это, похоже, и есть корень: не просто шум, а шум, который заражает всех вокруг…"
-GOOD (leads with substance / a real question): "А ты уже понял, что именно надо отсечь первым, чтобы суета не разносилась дальше — или пока непонятно, за что хвататься?"
+Employee: "in all the chaos, with so many things pulling at everyone, people start spreading themselves thin"
+BAD (opens by labeling what they said): "That, it seems, is the real root: not just noise, but noise that infects everyone around it…"
+GOOD (leads with substance / a real question): "Have you figured out what to cut off first so the chaos stops spreading — or is it still unclear what to grab onto?"
 
-Employee: "делаешь нормально, а результат теряется где-то дальше"
-BAD: "Вот это уже звучит как очень трезвая позиция: тебе важен результат…"
-GOOD: "Где именно теряется — на передаче другим или когда меняются приоритеты по ходу?"`;
+Employee: "you do your part well, but the result gets lost somewhere down the line"
+BAD: "That's already sounding like a very clear-eyed take: results matter to you…"
+GOOD: "Where exactly does it get lost — in the handoff to others, or when priorities shift midway?"`;

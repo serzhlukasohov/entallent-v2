@@ -35,13 +35,13 @@ const POLARITY_LABEL: Record<string, { label: string; color: string }> = {
  * Reconcile the assessment status with whether an insight actually exists, so the
  * status chip/dot never contradicts the card body. Status (survey_assessments) and
  * insight text (survey_evidence) live in separate tables and can drift:
- *  - evidence present but low confidence/completeness → don't say "No data", say "Собрано";
+ *  - evidence present but low confidence/completeness → don't say "No data", say "Collected";
  *  - no live evidence → "No data" regardless of a stale assessment row.
  */
 function displayStatus(q: QuestionInsight): { label: string; dot: string } {
   const hasData = Boolean(q.currentState || q.rootCause);
 
-  if (!hasData) return { label: 'Нет данных', dot: 'var(--border)' };
+  if (!hasData) return { label: 'No data', dot: 'var(--border)' };
 
   const s = q.assessmentStatus;
   if (s === 'scored' || s === 'covered') return { label: STATUS_LABEL[s], dot: '#10b981' };
@@ -50,7 +50,7 @@ function displayStatus(q: QuestionInsight): { label: string; dot: string } {
   if (s === 'suppressed') return { label: 'Suppressed', dot: 'var(--border)' };
   // Insight exists but confidence/completeness is low (insufficient_evidence / unknown / null):
   // show it as collected rather than "no data".
-  return { label: 'Собрано', dot: '#3b82f6' };
+  return { label: 'Collected', dot: '#3b82f6' };
 }
 
 export default async function UserInsightsPage({
@@ -69,7 +69,7 @@ export default async function UserInsightsPage({
       <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
         <Nav active="pulse" />
         <Link href="/pulse" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>
-          ← Назад к Pulse
+          ← Back to Pulse
         </Link>
         <p style={{ marginTop: 32, color: 'var(--text-muted)' }}>
           No active survey window for this user.
@@ -95,7 +95,7 @@ export default async function UserInsightsPage({
     <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
       <Nav active="pulse" />
       <Link href="/pulse" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>
-        ← Назад к Pulse
+        ← Back to Pulse
       </Link>
 
       <div style={{ marginTop: 20, marginBottom: 28 }}>
@@ -143,7 +143,7 @@ export default async function UserInsightsPage({
       <div style={{ marginTop: 40, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         <Legend dot="#10b981" label="Scored / Covered" />
         <Legend dot="#f59e0b" label="Partial" />
-        <Legend dot="#3b82f6" label="Собрано" />
+        <Legend dot="#3b82f6" label="Collected" />
         <Legend dot="#8b5cf6" label="Under review" />
         <Legend dot="var(--border)" label="No data" />
       </div>

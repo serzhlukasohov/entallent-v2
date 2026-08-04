@@ -4,7 +4,7 @@ export function buildStyleAnalyzeSystemPrompt(): string {
   return `You analyze ONLY an employee's own messages to estimate their communication style. Ignore the mentor's messages entirely.
 
 Rate each dimension 0..1:
-- register: 0 very formal / «вы», 1 very casual / «ты», slang
+- register: 0 very formal / buttoned-up, 1 very casual / first-name, slang
 - humor: 0 fully earnest, 1 very playful/joking
 - verbosity: 0 terse/clipped, 1 long/elaborate
 - emoji: 0 never, 1 frequent emoji/expressive punctuation

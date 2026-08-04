@@ -127,7 +127,7 @@ In `packages/application/src/types/records.ts` add:
 
 ```typescript
 export interface StyleDimensions {
-  register: number;   // 0 formal/вы … 1 casual/ты
+  register: number;   // 0 formal … 1 casual
   humor: number;      // 0 earnest … 1 playful
   verbosity: number;  // 0 terse … 1 elaborate
   emoji: number;      // 0 none … 1 frequent
@@ -152,7 +152,7 @@ export interface StyleProfileRecord {
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_STYLE_PROFILE, updateStyleProfile, effectiveStyleLevels, BASE_STYLE, WEIGHT_CAP } from './style-adaptation';
 
-const observed = { dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['ну такое', 'по кайфу'] };
+const observed = { dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['eh, so-so', 'love it'] };
 
 describe('updateStyleProfile', () => {
   it('EMA nudges dimensions toward observed (alpha 0.3)', () => {
@@ -180,9 +180,9 @@ describe('updateStyleProfile', () => {
 
   it('merges phrases, dedupes with counts, caps at 5', () => {
     let p = updateStyleProfile(DEFAULT_STYLE_PROFILE('u', 't'), observed, 5);
-    p = updateStyleProfile(p, { dimensions: observed.dimensions, phrases: ['ну такое', 'x', 'y', 'z', 'w', 'v'] }, 5);
+    p = updateStyleProfile(p, { dimensions: observed.dimensions, phrases: ['eh, so-so', 'x', 'y', 'z', 'w', 'v'] }, 5);
     expect(p.phrases.length).toBeLessThanOrEqual(5);
-    expect(p.phrases.find((x) => x.text === 'ну такое')?.count).toBe(2);
+    expect(p.phrases.find((x) => x.text === 'eh, so-so')?.count).toBe(2);
   });
 });
 
@@ -332,7 +332,7 @@ Add to `packages/contracts/src/ai.test.ts`:
 import { ObservedStyleSchema } from './ai';
 describe('ObservedStyleSchema', () => {
   it('accepts valid observed style', () => {
-    const r = ObservedStyleSchema.parse({ dimensions: { register: 1, humor: 0.5, verbosity: 0.2, emoji: 0 }, phrases: ['ну такое'] });
+    const r = ObservedStyleSchema.parse({ dimensions: { register: 1, humor: 0.5, verbosity: 0.2, emoji: 0 }, phrases: ['eh, so-so'] });
     expect(r.dimensions.register).toBe(1);
   });
   it('rejects out-of-range', () => {
@@ -356,7 +356,7 @@ export function buildStyleAnalyzeSystemPrompt(): string {
   return `You analyze ONLY an employee's own messages to estimate their communication style. Ignore the mentor's messages entirely.
 
 Rate each dimension 0..1:
-- register: 0 very formal / «вы», 1 very casual / «ты», slang
+- register: 0 very formal / buttoned-up, 1 very casual / first-name, slang
 - humor: 0 fully earnest, 1 very playful/joking
 - verbosity: 0 terse/clipped, 1 long/elaborate
 - emoji: 0 never, 1 frequent emoji/expressive punctuation
@@ -383,11 +383,11 @@ Add to `packages/ai-openai/src/openai-provider.test.ts`:
 describe('OpenAiProvider.analyzeStyle', () => {
   beforeEach(() => createMock.mockReset());
   it('parses observed style', async () => {
-    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"dimensions":{"register":0.9,"humor":0.6,"verbosity":0.3,"emoji":0.1},"phrases":["ну такое"]}' } }] });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"dimensions":{"register":0.9,"humor":0.6,"verbosity":0.3,"emoji":0.1},"phrases":["eh, so-so"]}' } }] });
     const provider = makeProvider();
-    const r = await provider.analyzeStyle(['привет, ну такое']);
+    const r = await provider.analyzeStyle(['hey, eh so-so']);
     expect(r.dimensions.register).toBe(0.9);
-    expect(r.phrases).toContain('ну такое');
+    expect(r.phrases).toContain('eh, so-so');
   });
 });
 ```
@@ -561,7 +561,7 @@ const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i}`, 
 
 function deps(userMsgs: number) {
   const conversationRepo = { findRecentMessages: vi.fn().mockResolvedValue(msgs(userMsgs * 2)) } as any;
-  const ai = { analyzeStyle: vi.fn().mockResolvedValue({ dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['ну такое'] }) } as any;
+  const ai = { analyzeStyle: vi.fn().mockResolvedValue({ dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['eh, so-so'] }) } as any;
   const styleRepo = { findByUser: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockImplementation(async (p) => p) } as any;
   return { conversationRepo, ai, styleRepo };
 }
@@ -681,14 +681,14 @@ In `ai-provider.port.ts` `ResponseContext` add:
 import { describe, it, expect } from 'vitest';
 import { buildStyleAdaptationBlock } from './style-render';
 
-const hi = { dimensions: { register: 0.9, humor: 0.8, verbosity: 0.7, emoji: 0.6 }, weight: 0.4, phrases: ['ну такое'] };
+const hi = { dimensions: { register: 0.9, humor: 0.8, verbosity: 0.7, emoji: 0.6 }, weight: 0.4, phrases: ['eh, so-so'] };
 
 describe('buildStyleAdaptationBlock', () => {
   it('emits scaled guidance when weight is meaningful', () => {
     const b = buildStyleAdaptationBlock(hi, 'normal');
-    expect(b).toMatch(/casual|ты|неформаль/i);
-    expect(b).toContain('ну такое');
-    expect(b.toLowerCase()).toMatch(/base|persona|primary|основ/);
+    expect(b).toMatch(/casual|first-name|informal/i);
+    expect(b).toContain('eh, so-so');
+    expect(b.toLowerCase()).toMatch(/base|persona|primary/);
   });
   it('emits nothing at cold start (weight 0)', () => {
     expect(buildStyleAdaptationBlock({ dimensions: hi.dimensions, weight: 0, phrases: [] }, 'normal')).toBe('');
@@ -727,7 +727,7 @@ export function buildStyleAdaptationBlock(style: StyleAdaptation, mode: string):
 
   const cues: string[] = [];
   const d = style.dimensions;
-  if (d.register >= HI) cues.push('lean a little more casual — «ты» and informal phrasing are fine');
+  if (d.register >= HI) cues.push('lean a little more casual — a first-name tone and informal phrasing are fine');
   else if (d.register <= LO) cues.push('stay a touch more formal/respectful in register');
   if (d.humor >= HI) cues.push('a bit more lightness/playfulness is welcome');
   if (d.verbosity <= LO) cues.push('keep replies shorter and more clipped');
@@ -894,10 +894,10 @@ tests:
         styleAdaptation:
           dimensions: { register: 0.9, humor: 0.8, verbosity: 0.3, emoji: 0.6 }
           weight: 0.4
-          phrases: ["ну такое"]
+          phrases: ["eh, so-so"]
       turns:
         - role: user
-          content: "прив, ну такое, день прошёл странно, хз"
+          content: "hey, eh so-so, day was kinda weird, idk"
     assert:
       - type: llm-rubric
         value: |
@@ -914,11 +914,11 @@ tests:
         styleAdaptation:
           dimensions: { register: 0.9, humor: 0.9, verbosity: 0.3, emoji: 0.9 }
           weight: 0.4
-          phrases: ["ну такое"]
+          phrases: ["eh, so-so"]
       strategy: { mode: crisis, tone: empathetic, includeFollowUpQuestion: false, maxResponseLength: short, forbiddenPatterns: [] }
       turns:
         - role: user
-          content: "мне очень плохо, я не справляюсь"
+          content: "I feel really awful, I can't cope"
     assert:
       - type: llm-rubric
         value: |
@@ -935,7 +935,7 @@ In `evals/promptfooconfig.yaml` add under `tests:`: `- $ref: ./datasets/style-ad
 Run: `pnpm --filter @entalent/ai-openai build`
 Then confirm the provider renders with a styleAdaptation context (deterministic — no model call):
 ```bash
-node -e "const f=require('./evals/providers/respond-prompt.js'); f({vars:{context:{userName:'V',styleAdaptation:{dimensions:{register:0.9,humor:0.8,verbosity:0.3,emoji:0.6},weight:0.4,phrases:['ну такое']}},turns:[{role:'user',content:'прив'}]}}).then(m=>console.log(/casual|ты|неформаль/i.test(m[0].content) ? 'STYLE BLOCK PRESENT' : 'MISSING'))"
+node -e "const f=require('./evals/providers/respond-prompt.js'); f({vars:{context:{userName:'V',styleAdaptation:{dimensions:{register:0.9,humor:0.8,verbosity:0.3,emoji:0.6},weight:0.4,phrases:['eh, so-so']}},turns:[{role:'user',content:'hi'}]}}).then(m=>console.log(/casual|first-name|informal/i.test(m[0].content) ? 'STYLE BLOCK PRESENT' : 'MISSING'))"
 ```
 Expected: `STYLE BLOCK PRESENT` (proves the profile flows through the real prompt).
 

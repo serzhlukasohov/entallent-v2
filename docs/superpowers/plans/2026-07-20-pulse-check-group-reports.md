@@ -773,7 +773,7 @@ export function buildGroupConfirmationSystemPrompt(questionGroup: string): strin
 Your goal: write a short, warm confirmation message that the employee can say "yes, that's right" or "actually, let me clarify" to.
 
 Rules:
-- Write in the same language as the conversation (Russian if the conversation is in Russian)
+- Write in English
 - Write in first person from the AI mentor's perspective: "Based on our conversations, it sounds like..."
 - Be specific about what they said — don't paraphrase vaguely
 - End with a clear invite to confirm or correct: "Is that a fair reflection of how you're feeling?"
@@ -1829,7 +1829,7 @@ Return JSON: {"outcome": "confirmed" | "needs_correction", "corrections": "what 
   // We parse the result from the reasoning summary as a workaround.
   // This is a simple heuristic: look for confirmation keywords.
   const text = lastUserTurn.content.toLowerCase();
-  const CONFIRM_KEYWORDS = ['да', 'yes', 'верно', 'правильно', 'согласен', 'именно', 'точно', 'ок', 'ok', 'correct', 'right', 'sounds good'];
+  const CONFIRM_KEYWORDS = ['yes', 'yeah', 'yep', 'correct', 'right', 'agreed', 'exactly', 'ok', 'sounds good'];
   const isConfirmed = CONFIRM_KEYWORDS.some((kw) => text.includes(kw));
 
   if (isConfirmed) {
@@ -1990,7 +1990,7 @@ The bot should send a summary message like "Based on our conversations, it seems
 
 - [ ] **Step 6: Reply to confirm**
 
-Send "да, верно" (or "yes, that's right"). Verify in DB:
+Send "yes, that's right". Verify in DB:
 
 ```bash
 psql ... -c "SELECT status, confirmed_at FROM survey_group_states WHERE user_id = '3f89097d-c104-4da3-8bfd-4384a97dc269';"

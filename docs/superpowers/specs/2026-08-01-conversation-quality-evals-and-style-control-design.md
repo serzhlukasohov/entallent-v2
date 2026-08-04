@@ -10,8 +10,8 @@ entirely by a growing list of **negative prompt rules** ("don't start with…",
 "don't nod along…"). Two systemic issues:
 
 1. **Rules get gamed.** The model routes around specific bans with new phrasings.
-   Example: after banning "Это звучит" / "Похоже", it opened replies with "Вот это
-   уже звучит как…" and "Вот это, похоже, и есть корень:" — the same reflective
+   Example: after banning "That sounds" / "It seems like", it opened replies with "That's
+   already sounding like…" and "That, it seems, is the real root:" — the same reflective
    "verdict-on-their-words" opener, new words.
 2. **Changes are blind.** There is no measurement, so no one can tell whether a
    prompt edit improved naturalness or regressed something else.
@@ -51,8 +51,8 @@ prompt-rules-only (status quo — the problem).
 
 `packages/ai-openai/src/prompts/style-antipatterns.ts` (NEW):
 - Exports `OPENER_ANTIPATTERNS: RegExp[]` — patterns for the reflective/label opener
-  (e.g. `/^\s*вот это\b/i`, `/^\s*(это )?звучит как\b/i`, `/^\s*похоже,/i`,
-  `/^\s*то,?\s*что ты (описыва|говор)/i`), matched against the reply's FIRST
+  (e.g. `/^\s*that sounds like\b/i`, `/^\s*sounds like\b/i`, `/^\s*seems like\b/i`,
+  `/^\s*what you(?:'re| are) (describing|saying)\b/i`), matched against the reply's FIRST
   sentence/line only.
 - Exports `hasReflectiveOpener(text: string): boolean`.
 - This module is the ONE definition consumed by both the runtime gate (Component 3)

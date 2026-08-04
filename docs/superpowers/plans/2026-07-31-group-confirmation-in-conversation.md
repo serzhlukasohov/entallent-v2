@@ -155,7 +155,7 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
     });
     const provider = makeProvider();
     const r = await provider.interpretConfirmationResponse(
-      [{ role: 'user', content: 'да, всё так', timestamp: new Date() }],
+      [{ role: 'user', content: "yes, that's right", timestamp: new Date() }],
       'You value autonomy...',
     );
     expect(r.verdict).toBe('agree');
@@ -163,15 +163,15 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
 
   it('parses a correct verdict with a note', async () => {
     createMock.mockResolvedValue({
-      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"correct","correctionNote":"не про деньги"}' } }],
+      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"correct","correctionNote":"not about money"}' } }],
     });
     const provider = makeProvider();
     const r = await provider.interpretConfirmationResponse(
-      [{ role: 'user', content: 'не совсем', timestamp: new Date() }],
+      [{ role: 'user', content: 'not quite', timestamp: new Date() }],
       'summary',
     );
     expect(r.verdict).toBe('correct');
-    expect(r.correctionNote).toBe('не про деньги');
+    expect(r.correctionNote).toBe('not about money');
   });
 });
 ```
@@ -194,7 +194,7 @@ export function buildConfirmInterpretSystemPrompt(): string {
 
 The mentor paraphrased its understanding of one topic and asked "did I get that right?".
 Read the employee's latest reply and decide:
-- "agree": they confirm it is accurate (even loosely — "да", "в целом так", "верно", "yeah that's right").
+- "agree": they confirm it is accurate (even loosely — "yes", "more or less", "correct", "yeah that's right").
 - "correct": they push back, disagree, or add a correction that changes the picture.
 - "unclear": they neither confirm nor correct (changed subject, asked something, ambiguous).
 

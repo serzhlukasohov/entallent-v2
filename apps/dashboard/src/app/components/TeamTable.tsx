@@ -11,10 +11,10 @@ const POLARITY_COLOR: Record<string, string> = {
 };
 
 const POLARITY_LABEL: Record<string, string> = {
-  positive: 'позитив',
-  negative: 'негатив',
-  mixed: 'смешанный',
-  neutral: 'нейтральный',
+  positive: 'positive',
+  negative: 'negative',
+  mixed: 'mixed',
+  neutral: 'neutral',
 };
 
 const STATUS_ORDER: Record<string, number> = {
@@ -30,7 +30,7 @@ function SignalDot({ signal }: { signal: QuestionSignal }) {
 
   return (
     <div
-      title={`${signal.title}\n${signal.polarity ? POLARITY_LABEL[signal.polarity] : 'нет данных'}\n${signal.evidenceSummary ?? ''}`}
+      title={`${signal.title}\n${signal.polarity ? POLARITY_LABEL[signal.polarity] : 'no data'}\n${signal.evidenceSummary ?? ''}`}
       style={{
         width: 10,
         height: 10,
@@ -110,7 +110,7 @@ function EmployeeDetail({ employee }: { employee: EmployeeRow }) {
           ))}
         </div>
       ) : (
-        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Нет инсайтов — разговоров ещё не было.</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No insights — no conversations yet.</p>
       )}
       {empty.length > 0 && (
         <div style={{ marginTop: 12 }}>
@@ -144,11 +144,11 @@ function formatRelative(isoDate: string | null): string {
   if (!isoDate) return '—';
   const diff = Date.now() - new Date(isoDate).getTime();
   const days = Math.floor(diff / 86400000);
-  if (days === 0) return 'сегодня';
-  if (days === 1) return 'вчера';
-  if (days < 7) return `${days}д назад`;
-  if (days < 30) return `${Math.floor(days / 7)}нед назад`;
-  return `${Math.floor(days / 30)}мес назад`;
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
 }
 
 function CoverageBar({ pct, total, scored }: { pct: number; total: number; scored: number }) {
@@ -205,10 +205,10 @@ export function TeamTable({ employees }: { employees: EmployeeRow[] }) {
           gap: 12,
         }}
       >
-        <span>Сотрудник</span>
-        <span>Q12 сигналы</span>
-        <span>Покрытие</span>
-        <span>Активность</span>
+        <span>Employee</span>
+        <span>Q12 signals</span>
+        <span>Coverage</span>
+        <span>Activity</span>
         <span></span>
       </div>
 
@@ -263,7 +263,7 @@ export function TeamTable({ employees }: { employees: EmployeeRow[] }) {
                 </div>
                 {emp.hasActiveRisk && (
                   <div style={{ fontSize: 10, color: 'var(--risk)', marginTop: 1 }}>
-                    ⚠ риск сигнал
+                    ⚠ risk signal
                   </div>
                 )}
               </div>

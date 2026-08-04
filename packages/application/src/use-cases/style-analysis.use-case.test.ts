@@ -5,7 +5,7 @@ const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i}`, 
 
 function deps(userMsgs: number) {
   const conversationRepo = { findRecentMessages: vi.fn().mockResolvedValue(msgs(userMsgs * 2)) } as any;
-  const ai = { analyzeStyle: vi.fn().mockResolvedValue({ dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['ну такое'] }) } as any;
+  const ai = { analyzeStyle: vi.fn().mockResolvedValue({ dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['eh, so-so'] }) } as any;
   const styleRepo = { findByUser: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockImplementation(async (p) => p) } as any;
   return { conversationRepo, ai, styleRepo };
 }

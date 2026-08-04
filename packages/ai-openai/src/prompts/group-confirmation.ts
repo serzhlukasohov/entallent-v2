@@ -6,7 +6,7 @@ export function buildGroupConfirmationSystemPrompt(questionGroup: string): strin
 Your goal: write a short, warm confirmation message that the employee can say "yes, that's right" or "actually, let me clarify" to.
 
 Rules:
-- Write in the same language as the conversation (Russian if the conversation is in Russian)
+- Write in English
 - Write in first person from the AI mentor's perspective: "Based on our conversations, it sounds like..."
 - Be specific about what they said — don't paraphrase vaguely
 - End with a clear invite to confirm or correct: "Is that a fair reflection of how you're feeling?"

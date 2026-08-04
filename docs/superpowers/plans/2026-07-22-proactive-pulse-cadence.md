@@ -1330,7 +1330,7 @@ export class ProactiveCheckInUseCase {
       tone: 'warm',
       includeFollowUpQuestion: true,
       maxResponseLength: 'short',
-      forbiddenPatterns: ['checking in', 'просто решил узнать', 'reminder'],
+      forbiddenPatterns: ['checking in', 'just wanted to check', 'reminder'],
     };
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
@@ -2254,16 +2254,16 @@ In `apps/dashboard/src/app/pulse/page.tsx`, add a backlog summary row inside eac
 ```tsx
 {/* Backlog progress row */}
 <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--surface)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 16, alignItems: 'center' }}>
-  <span>Бэклог: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> закрыто</span>
-  <span><b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> ожидает</span>
+  <span>Backlog: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> closed</span>
+  <span><b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> pending</span>
   {emp.backlog.totalIgnoreCount > 0 && (
-    <span style={{ color: '#f59e0b' }}>↩ {emp.backlog.totalIgnoreCount} проигнорировано</span>
+    <span style={{ color: '#f59e0b' }}>↩ {emp.backlog.totalIgnoreCount} ignored</span>
   )}
   {emp.backlog.nextQuestion && (
-    <span>Следующий: <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> ({emp.backlog.nextQuestion.group})</span>
+    <span>Next: <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> ({emp.backlog.nextQuestion.group})</span>
   )}
   {!emp.backlog.nextQuestion && emp.backlog.doneCount > 0 && (
-    <span style={{ color: '#10b981' }}>✓ Все вопросы закрыты</span>
+    <span style={{ color: '#10b981' }}>✓ All questions closed</span>
   )}
 </div>
 ```

@@ -1,168 +1,168 @@
 # Master Prompt: Conversational Employee Care Platform
 
-Ты — Principal Software Architect, Staff Backend Engineer и AI Systems Engineer. Твоя задача — спроектировать и реализовать production-ready платформу с AI-агентом для общения с сотрудниками через мессенджеры.
+You are a Principal Software Architect, Staff Backend Engineer, and AI Systems Engineer. Your task is to design and implement a production-ready platform with an AI agent for communicating with employees through messengers.
 
-Не ограничивайся демонстрационным чат-ботом. Создавай расширяемую продуктовую архитектуру, в которой:
+Do not limit yourself to a demo chatbot. Build an extensible product architecture in which:
 
-* Slack является первым каналом интеграции;
-* в будущем можно добавить Microsoft Teams, Telegram, WhatsApp и другие каналы;
-* агент ведёт долгосрочную персонализированную коммуникацию;
-* агент помнит важную информацию о пользователе;
-* агент помогает как эмпатичный people manager или mentor;
-* агент может проактивно возвращаться к целям и проблемам пользователя;
-* агент проводит conversational survey незаметно в рамках естественного диалога;
-* система безопасно работает с чувствительными данными;
-* все действия AI контролируются обычным кодом, схемами, политиками и аудитом.
+* Slack is the first integration channel;
+* Microsoft Teams, Telegram, WhatsApp, and other channels can be added in the future;
+* the agent conducts long-term, personalized communication;
+* the agent remembers important information about the user;
+* the agent helps like an empathetic people manager or mentor;
+* the agent can proactively return to the user's goals and problems;
+* the agent runs a conversational survey unobtrusively within a natural dialogue;
+* the system handles sensitive data safely;
+* all AI actions are controlled by ordinary code, schemas, policies, and audit.
 
-Не создавай одного автономного «суперагента», которому разрешено самостоятельно записывать данные, отправлять сообщения, выставлять оценки и принимать критические решения.
+Do not create a single autonomous "super-agent" allowed to independently write data, send messages, assign scores, and make critical decisions.
 
-LLM должен быть исполнителем внутри контролируемой системы:
+The LLM must be an executor inside a controlled system:
 
-* LLM анализирует;
-* LLM предлагает;
-* LLM генерирует structured output;
-* backend валидирует;
-* domain logic принимает решение;
-* база данных хранит состояние;
-* workflow engine отвечает за выполнение;
-* audit log объясняет, почему действие было выполнено.
+* the LLM analyzes;
+* the LLM proposes;
+* the LLM generates structured output;
+* the backend validates;
+* domain logic makes the decision;
+* the database stores state;
+* the workflow engine handles execution;
+* the audit log explains why an action was taken.
 
 ---
 
 # 1. Product vision
 
-Платформа должна создавать для пользователя ощущение продолжительного общения с внимательным и эмпатичным менеджером или ментором.
+The platform should create for the user a sense of ongoing communication with an attentive and empathetic manager or mentor.
 
-Примеры пользовательских сообщений:
+Examples of user messages:
 
-* «Я выгораю на проекте».
-* «Мне кажется, что я не справляюсь».
-* «Я готовлюсь к ассесменту на Lead Software Engineer».
-* «Через месяц хочу пройти JS assessment».
-* «У меня конфликт с менеджером».
-* «На проекте слишком много неопределённости».
-* «Мне сложно понять, чего от меня ожидают».
-* «Я закончил подготовку и прошёл ассесмент».
-* «Я боюсь, что меня уволят».
-* «Последние две недели у меня слишком большая нагрузка».
+* "I'm burning out on the project."
+* "I feel like I'm not coping."
+* "I'm preparing for the Lead Software Engineer assessment."
+* "In a month I want to pass the JS assessment."
+* "I have a conflict with my manager."
+* "There's too much uncertainty on the project."
+* "It's hard for me to understand what's expected of me."
+* "I finished preparing and passed the assessment."
+* "I'm afraid I'll be fired."
+* "The last two weeks my workload has been too heavy."
 
-Система должна:
+The system must:
 
-1. Понимать текущий контекст.
-2. Учитывать историю общения.
-3. Помнить устойчивые факты, цели, проблемы и договорённости.
-4. Не заставлять пользователя повторять уже известную информацию.
-5. Реагировать эмпатично, но не шаблонно.
-6. Предлагать практическую помощь.
-7. Не перегружать пользователя советами.
-8. Запоминать обещания и дальнейшие шаги.
-9. Создавать уместные follow-up actions.
-10. Возвращаться к важным темам через подходящее время.
-11. Определять, остаётся ли follow-up актуальным.
-12. Отменять или переносить неуместные follow-up messages.
-13. Встраивать survey-вопросы в естественный разговор.
-14. Не проводить survey, когда пользователь находится в сильном стрессе или обсуждает критическую проблему.
-15. Не выдавать себя за человека.
-16. Не использовать холодные шаблонные фразы, похожие на ответы службы поддержки.
-17. Не ставить медицинские, психологические или HR-диагнозы.
-18. Не раскрывать приватные разговоры менеджеру или HR без соответствующего основания и разрешений.
+1. Understand the current context.
+2. Take the conversation history into account.
+3. Remember durable facts, goals, problems, and agreements.
+4. Not make the user repeat information already known.
+5. React empathetically, but not formulaically.
+6. Offer practical help.
+7. Not overload the user with advice.
+8. Remember promises and next steps.
+9. Create appropriate follow-up actions.
+10. Return to important topics at a suitable time.
+11. Determine whether a follow-up is still relevant.
+12. Cancel or reschedule inappropriate follow-up messages.
+13. Embed survey questions into a natural conversation.
+14. Not run a survey when the user is under heavy stress or discussing a critical problem.
+15. Not pretend to be a human.
+16. Not use cold, templated phrases resembling support-desk replies.
+17. Not make medical, psychological, or HR diagnoses.
+18. Not disclose private conversations to a manager or HR without appropriate grounds and permissions.
 
 ---
 
 # 2. Core use cases
 
-## 2.1 Обычный диалог
+## 2.1 Regular dialogue
 
-Пользователь пишет Slack-боту в DM.
+The user messages the Slack bot in a DM.
 
-Система:
+The system:
 
-1. Принимает событие.
-2. Проверяет Slack signature.
-3. Выполняет idempotency check.
-4. Сохраняет raw event.
-5. Нормализует сообщение в channel-independent формат.
-6. Загружает профиль, релевантную память, активные цели, survey state и последние сообщения.
-7. Проверяет safety и risk signals.
-8. Определяет тип ситуации.
-9. Выбирает reply strategy.
-10. Генерирует ответ.
-11. Валидирует ответ.
-12. Отправляет его пользователю.
-13. Асинхронно запускает memory extraction, survey evidence extraction и follow-up planning.
-14. Записывает trace и audit information.
+1. Accepts the event.
+2. Verifies the Slack signature.
+3. Performs an idempotency check.
+4. Stores the raw event.
+5. Normalizes the message into a channel-independent format.
+6. Loads the profile, relevant memory, active goals, survey state, and recent messages.
+7. Checks safety and risk signals.
+8. Determines the type of situation.
+9. Selects a reply strategy.
+10. Generates a response.
+11. Validates the response.
+12. Sends it to the user.
+13. Asynchronously starts memory extraction, survey evidence extraction, and follow-up planning.
+14. Records trace and audit information.
 
-## 2.2 Запоминание информации
+## 2.2 Remembering information
 
-Пример:
+Example:
 
-> Я готовлюсь к ассесменту на Lead по JavaScript через две недели и переживаю, что плохо знаю system design.
+> I'm preparing for a Lead assessment in JavaScript in two weeks and I'm worried that I don't know system design well.
 
-Система может извлечь:
+The system might extract:
 
-* цель: пройти Lead assessment;
-* предполагаемая дата: через две недели;
-* область подготовки: JavaScript;
-* проблема: system design;
-* эмоциональный контекст: тревога;
-* potential follow-up: спросить о подготовке через 2–3 дня;
-* potential support action: предложить mock interview или план подготовки.
+* goal: pass the Lead assessment;
+* estimated date: in two weeks;
+* preparation area: JavaScript;
+* problem: system design;
+* emotional context: anxiety;
+* potential follow-up: ask about preparation in 2–3 days;
+* potential support action: offer a mock interview or a preparation plan.
 
-AI не должен напрямую записывать это в профиль.
+The AI must not write this directly into the profile.
 
-AI возвращает structured proposal. Backend:
+The AI returns a structured proposal. The backend:
 
-1. Валидирует schema.
-2. Проверяет дубликаты.
-3. Определяет sensitivity.
-4. Применяет conflict resolution.
-5. Сохраняет разрешённые memory items.
-6. Создаёт или обновляет цель.
-7. Создаёт scheduled intent при наличии оснований.
+1. Validates the schema.
+2. Checks for duplicates.
+3. Determines sensitivity.
+4. Applies conflict resolution.
+5. Saves the permitted memory items.
+6. Creates or updates a goal.
+7. Creates a scheduled intent when there are grounds.
 
-## 2.3 Проактивный follow-up
+## 2.3 Proactive follow-up
 
-Через два дня система рассматривает scheduled intent:
+Two days later the system considers a scheduled intent:
 
-> Проверить прогресс подготовки к Lead assessment.
+> Check on the progress of Lead assessment preparation.
 
-Перед отправкой необходимо проверить:
+Before sending, it must check:
 
-* локальное время пользователя;
+* the user's local time;
 * quiet hours;
-* отключил ли пользователь proactive messages;
-* писал ли пользователь недавно на эту тему;
-* была ли цель уже завершена;
-* был ли assessment отменён или перенесён;
-* отправлялся ли похожий follow-up недавно;
-* есть ли более важная текущая проблема;
-* не находится ли пользователь в активном кризисном или чувствительном сценарии;
-* не будет ли сообщение выглядеть навязчивым.
+* whether the user has disabled proactive messages;
+* whether the user recently wrote about this topic;
+* whether the goal has already been completed;
+* whether the assessment was cancelled or rescheduled;
+* whether a similar follow-up was sent recently;
+* whether there is a more important current problem;
+* whether the user is not in an active crisis or sensitive scenario;
+* whether the message would look intrusive.
 
-После проверки система может:
+After the check the system may:
 
-* отправить сообщение;
-* перенести follow-up;
-* отменить follow-up;
-* объединить его с другим касанием;
-* дождаться следующего естественного входящего сообщения.
+* send the message;
+* reschedule the follow-up;
+* cancel the follow-up;
+* merge it with another touchpoint;
+* wait for the next natural incoming message.
 
-Пример естественного сообщения:
+Example of a natural message:
 
-> Ты пару дней назад рассказывал, что готовишься к Lead assessment и переживаешь из-за system design. Как сейчас идёт подготовка? Можем разобрать один из вопросов вместе или провести небольшой mock interview.
+> A couple of days ago you mentioned you're preparing for a Lead assessment and worried about system design. How's the prep going now? We could work through one of the questions together or run a quick mock interview.
 
-Не отправляй сообщения вроде:
+Do not send messages like:
 
-> Напоминание: как проходит выполнение вашей цели?
+> Reminder: how is progress on your goal?
 
 ## 2.4 Conversational survey
 
-Survey не должен выглядеть как формальный опросник.
+The survey must not look like a formal questionnaire.
 
-Каждый survey question или dimension должен иметь:
+Each survey question or dimension must have:
 
 * stable internal ID;
-* quarter или assessment window;
+* quarter or assessment window;
 * canonical meaning;
 * evidence requirements;
 * positive and negative indicators;
@@ -179,46 +179,46 @@ Survey не должен выглядеть как формальный опро
 * prompt version;
 * evaluator version.
 
-Содержимое survey questions должно загружаться из конфигурации или базы данных. Не связывай архитектуру с конкретным набором вопросов.
+The contents of survey questions must be loaded from configuration or a database. Do not couple the architecture to a specific set of questions.
 
-Survey Engine должен:
+The Survey Engine must:
 
-1. Анализировать естественные сообщения пользователя.
-2. Извлекать возможные evidence points даже без прямого вопроса.
-3. Накапливать evidence в рамках assessment window.
-4. Отличать частичное evidence от достаточного ответа.
-5. Определять confidence.
-6. Выбирать, требуется ли дополнительный вопрос.
-7. Решать, уместно ли задать вопрос сейчас.
-8. Формулировать вопрос в контексте текущей темы.
-9. Не задавать несколько survey-вопросов подряд.
-10. Не превращать поддержку пользователя в сбор метрик.
-11. Не задавать survey probe во время кризиса, сильного стресса, конфликта, сообщения о выгорании или другой чувствительной ситуации.
-12. Завершать сбор evidence, когда threshold достигнут.
-13. Не считать отсутствие информации негативным ответом.
-14. Не делать вывод по одному неоднозначному сообщению.
-15. Позволять пересматривать assessment при появлении новых evidence.
-16. Хранить ссылки на source messages и evaluator version.
+1. Analyze the user's natural messages.
+2. Extract possible evidence points even without a direct question.
+3. Accumulate evidence within the assessment window.
+4. Distinguish partial evidence from a sufficient answer.
+5. Determine confidence.
+6. Decide whether an additional question is required.
+7. Decide whether it is appropriate to ask a question now.
+8. Phrase the question in the context of the current topic.
+9. Not ask several survey questions in a row.
+10. Not turn support for the user into metric collection.
+11. Not ask a survey probe during a crisis, heavy stress, conflict, a burnout report, or another sensitive situation.
+12. Stop collecting evidence once the threshold is reached.
+13. Not treat missing information as a negative answer.
+14. Not draw a conclusion from a single ambiguous message.
+15. Allow an assessment to be revised when new evidence appears.
+16. Store references to source messages and the evaluator version.
 
-Пример естественного probe:
+Example of a natural probe:
 
-Вместо:
+Instead of:
 
-> Ты знаешь, чего от тебя ожидают на работе?
+> Do you know what's expected of you at work?
 
-Использовать:
+Use:
 
-> Когда ты говоришь, что проект сейчас давит, это больше из-за объёма задач или из-за того, что ожидания и приоритеты постоянно меняются?
+> When you say the project is pressuring you right now, is that more about the volume of tasks or about the fact that expectations and priorities keep changing?
 
 ---
 
 # 3. Architecture principles
 
-Обязательно соблюдай следующие принципы.
+You must follow these principles.
 
 ## 3.1 Hexagonal architecture
 
-Разделяй:
+Separate:
 
 * domain;
 * application use cases;
@@ -230,13 +230,13 @@ Survey Engine должен:
 * AI providers;
 * channel providers.
 
-Domain layer не должен импортировать Slack SDK, OpenAI SDK, BullMQ, Redis, NestJS или ORM.
+The domain layer must not import the Slack SDK, OpenAI SDK, BullMQ, Redis, NestJS, or the ORM.
 
 ## 3.2 Channel-independent core
 
-Slack-specific объекты не должны распространяться по системе.
+Slack-specific objects must not spread across the system.
 
-Все события нормализуются в общие контракты:
+All events are normalized into shared contracts:
 
 ```ts
 interface IncomingMessage {
@@ -264,7 +264,7 @@ interface OutgoingMessage {
 }
 ```
 
-Создай порт:
+Create a port:
 
 ```ts
 interface ChannelAdapter {
@@ -276,18 +276,18 @@ interface ChannelAdapter {
 }
 ```
 
-Для каждого нового мессенджера должна добавляться новая реализация адаптера без изменения conversation domain.
+For each new messenger, a new adapter implementation should be added without changing the conversation domain.
 
 ## 3.3 AI provider abstraction
 
-Создай собственный LLM Gateway.
+Build your own LLM Gateway.
 
-Он должен поддерживать:
+It must support:
 
-* разные провайдеры;
-* разные модели по задачам;
+* different providers;
+* different models per task;
 * structured outputs;
-* JSON Schema или Zod validation;
+* JSON Schema or Zod validation;
 * retries;
 * timeouts;
 * tracing;
@@ -301,15 +301,15 @@ interface ChannelAdapter {
 * PII-safe logging;
 * redaction;
 * configurable temperature;
-* deterministic mode для classifiers и extractors.
+* deterministic mode for classifiers and extractors.
 
-Не вызывай OpenAI SDK напрямую из domain или use-case сервисов.
+Do not call the OpenAI SDK directly from domain or use-case services.
 
 ## 3.4 Event-driven processing
 
-Используй асинхронные события и jobs там, где ответ пользователю не должен ждать выполнения всей обработки.
+Use asynchronous events and jobs wherever the reply to the user should not wait for all processing to finish.
 
-Основные события:
+Core events:
 
 * `channel.event.received`
 * `message.normalized`
@@ -332,7 +332,7 @@ interface ChannelAdapter {
 * `followup.cancelled`
 * `human.escalation.requested`
 
-Добавь:
+Add:
 
 * idempotency keys;
 * retry policy;
@@ -341,15 +341,15 @@ interface ChannelAdapter {
 * correlation ID;
 * causation ID;
 * trace ID;
-* outbox pattern для критических событий;
-* обработку повторной доставки;
-* защиту от race conditions.
+* outbox pattern for critical events;
+* redelivery handling;
+* protection against race conditions.
 
 ---
 
 # 4. Recommended technology stack
 
-Используй следующий стек как основной.
+Use the following stack as the primary one.
 
 ## Monorepo
 
@@ -360,7 +360,7 @@ interface ChannelAdapter {
 * strict TypeScript mode;
 * ESLint;
 * Prettier;
-* commit hooks только там, где они не мешают автоматизации.
+* commit hooks only where they don't interfere with automation.
 
 ## Backend API
 
@@ -368,24 +368,24 @@ interface ChannelAdapter {
 * Fastify adapter;
 * REST API;
 * OpenAPI specification;
-* Zod для domain и AI schemas;
-* отдельные DTO на transport boundary.
+* Zod for domain and AI schemas;
+* separate DTOs at the transport boundary.
 
 ## Slack integration
 
 * Slack Bolt SDK;
-* Events API для production;
-* Socket Mode как удобный локальный режим;
-* Slack Web API для отправки сообщений;
+* Events API for production;
+* Socket Mode as a convenient local mode;
+* Slack Web API for sending messages;
 * Slack App Manifest;
-* обработка DM, mentions и interactivity;
-* игнорирование собственных bot messages;
-* дедупликация по `event_id`;
-* поддержка Slack retry headers;
-* немедленный acknowledgement webhook;
-* дальнейшая обработка через очередь.
+* handling of DMs, mentions, and interactivity;
+* ignoring the bot's own messages;
+* deduplication by `event_id`;
+* support for Slack retry headers;
+* immediate acknowledgement of the webhook;
+* further processing via a queue.
 
-Не загружай историю Slack как основной источник контекста. Собственная база сообщений является source of truth.
+Do not load Slack history as the primary source of context. Your own message store is the source of truth.
 
 ## Database
 
@@ -393,15 +393,15 @@ interface ChannelAdapter {
 * pgvector;
 * Drizzle ORM;
 * SQL migrations;
-* транзакции;
+* transactions;
 * row-level tenant isolation;
-* soft delete только там, где это действительно необходимо;
+* soft delete only where it is truly necessary;
 * encrypted sensitive fields;
-* database constraints вместо надежды только на application validation.
+* database constraints instead of relying on application validation alone.
 
 ## Queue and scheduling
 
-На MVP:
+For the MVP:
 
 * Redis;
 * BullMQ;
@@ -410,32 +410,32 @@ interface ChannelAdapter {
 * retry and backoff;
 * dead-letter queues.
 
-Архитектура должна позволять позднее перенести long-running workflows в Temporal без переписывания domain logic.
+The architecture should allow long-running workflows to be moved to Temporal later without rewriting domain logic.
 
 ## AI runtime
 
-Основной вариант:
+Primary option:
 
-* OpenAI Responses API через собственный LLM Gateway;
+* OpenAI Responses API via your own LLM Gateway;
 * structured outputs;
 * Zod schemas;
-* разные модели для response generation и background analysis.
+* different models for response generation and background analysis.
 
-Допустимые расширения:
+Acceptable extensions:
 
-* Vercel AI SDK как provider abstraction;
-* LiteLLM при необходимости multi-provider routing;
-* LangGraph только для сложных conversational graphs;
-* Temporal для durable workflows.
+* Vercel AI SDK as a provider abstraction;
+* LiteLLM when multi-provider routing is needed;
+* LangGraph only for complex conversational graphs;
+* Temporal for durable workflows.
 
-Не используй LangChain как основу всей системы.
+Do not use LangChain as the foundation of the whole system.
 
 ## Admin application
 
 * Next.js;
 * TypeScript;
 * server-side authorization;
-* безопасный доступ к admin API;
+* secure access to the admin API;
 * tenant-aware UI;
 * audit trail;
 * feature flags.
@@ -446,14 +446,14 @@ interface ChannelAdapter {
 * Sentry;
 * structured JSON logs;
 * Prometheus-compatible metrics;
-* Grafana позже;
-* Promptfoo для AI regression tests;
-* Langfuse, Braintrust или LangSmith как optional AI observability layer;
-* PostHog только для privacy-safe product analytics.
+* Grafana later;
+* Promptfoo for AI regression tests;
+* Langfuse, Braintrust, or LangSmith as an optional AI observability layer;
+* PostHog only for privacy-safe product analytics.
 
 ## Infrastructure
 
-Для local development:
+For local development:
 
 * Docker Compose;
 * PostgreSQL;
@@ -461,18 +461,18 @@ interface ChannelAdapter {
 * API;
 * Worker;
 * Admin;
-* Mailhog или mock notification service при необходимости.
+* Mailhog or a mock notification service when needed.
 
-Для MVP deployment:
+For MVP deployment:
 
 * Docker;
 * managed PostgreSQL;
 * managed Redis;
-* отдельные API и worker processes.
+* separate API and worker processes.
 
-Для enterprise:
+For enterprise:
 
-* AWS или GCP;
+* AWS or GCP;
 * KMS;
 * secret manager;
 * private networking;
@@ -486,7 +486,7 @@ interface ChannelAdapter {
 
 # 5. Monorepo structure
 
-Создай структуру, похожую на следующую:
+Create a structure similar to the following:
 
 ```text
 /apps
@@ -541,13 +541,13 @@ interface ChannelAdapter {
   /kubernetes
 ```
 
-Не создавай искусственное количество пакетов, если это делает MVP слишком сложным. Сохрани логические boundaries, даже если часть модулей сначала находится в одном deployable service.
+Do not create an artificial number of packages if it makes the MVP too complex. Keep logical boundaries even if some modules initially live in a single deployable service.
 
 ---
 
 # 6. Domain model
 
-Спроектируй следующие основные entities.
+Design the following core entities.
 
 ## Tenant and access
 
@@ -643,13 +643,13 @@ interface ChannelAdapter {
 * model;
 * deletedAt.
 
-Raw user message должен сохраняться отдельно от AI-derived data.
+The raw user message must be stored separately from AI-derived data.
 
 ## Memory
 
 ### MemoryItem
 
-Поля:
+Fields:
 
 * id;
 * tenantId;
@@ -674,7 +674,7 @@ Raw user message должен сохраняться отдельно от AI-de
 * createdAt;
 * updatedAt.
 
-Категории памяти:
+Memory categories:
 
 * profile_fact;
 * role;
@@ -692,15 +692,15 @@ Raw user message должен сохраняться отдельно от AI-de
 * recurring_topic;
 * support_preference.
 
-Не сохраняй как долгосрочную память:
+Do not store as long-term memory:
 
-* случайную реплику без будущей ценности;
-* непроверенный вывод;
-* временную эмоцию без контекста;
-* диагноз;
-* предположение о личной характеристике;
-* секрет или чувствительную информацию без продуктовой необходимости;
-* данные, запрещённые privacy policy.
+* a random remark with no future value;
+* an unverified inference;
+* a transient emotion without context;
+* a diagnosis;
+* an assumption about a personal trait;
+* a secret or sensitive information without a product need;
+* data prohibited by the privacy policy.
 
 ## Goals
 
@@ -742,7 +742,7 @@ Raw user message должен сохраняться отдельно от AI-de
 * resolvedAt;
 * expiresAt.
 
-RiskSignal не является диагнозом.
+A RiskSignal is not a diagnosis.
 
 ## Scheduled actions
 
@@ -771,7 +771,7 @@ RiskSignal не является диагнозом.
 * createdAt;
 * updatedAt.
 
-Типы:
+Types:
 
 * goal_check_in;
 * wellbeing_check_in;
@@ -786,7 +786,7 @@ RiskSignal не является диагнозом.
 ### SurveyDefinition
 
 * id;
-* tenantId или global scope;
+* tenantId or global scope;
 * name;
 * version;
 * active;
@@ -890,7 +890,7 @@ RiskSignal не является диагнозом.
 * errorCode;
 * createdAt.
 
-Не сохраняй полный чувствительный prompt в обычные application logs.
+Do not store the full sensitive prompt in regular application logs.
 
 ## Security and audit
 
@@ -908,58 +908,58 @@ RiskSignal не является диагнозом.
 * traceId;
 * createdAt.
 
-Audit log должен быть append-only.
+The audit log must be append-only.
 
 ---
 
 # 7. Memory architecture
 
-Не создавай одну vector-memory «свалку».
+Do not create a single vector-memory "dump."
 
-Используй несколько уровней.
+Use several layers.
 
 ## 7.1 Raw memory
 
-Все сообщения и channel events.
+All messages and channel events.
 
-Назначение:
+Purpose:
 
-* аудит;
-* восстановление контекста;
-* повторная обработка;
-* улучшение extractor versions;
-* расследование ошибок.
+* audit;
+* context reconstruction;
+* reprocessing;
+* improving extractor versions;
+* error investigation.
 
 ## 7.2 Episodic memory
 
-Summary определённой беседы, дня или темы.
+A summary of a specific conversation, day, or topic.
 
-Пример:
+Example:
 
-> Пользователь готовится к Lead assessment. Основное беспокойство связано с system design. Он согласился попробовать mock interview на следующей неделе.
+> The user is preparing for a Lead assessment. Their main concern is system design. They agreed to try a mock interview next week.
 
 ## 7.3 Semantic profile
 
-Устойчивые факты:
+Durable facts:
 
-* роль;
-* проект;
-* карьерная цель;
-* важные предпочтения;
-* формат помощи;
+* role;
+* project;
+* career goal;
+* important preferences;
+* preferred form of help;
 * recurring challenges.
 
 ## 7.4 Active context
 
-Текущие цели, проблемы, обязательства и follow-ups.
+Current goals, problems, commitments, and follow-ups.
 
 ## 7.5 Survey evidence
 
-Отдельное хранилище evidence. Не смешивай его с обычными memory items.
+A separate store of evidence. Do not mix it with regular memory items.
 
 ## 7.6 Retrieval strategy
 
-При подготовке ответа учитывай:
+When preparing a reply, consider:
 
 * semantic relevance;
 * recency;
@@ -972,9 +972,9 @@ Summary определённой беседы, дня или темы.
 * confirmation by user;
 * context budget.
 
-Не добавляй чувствительную память в unrelated conversation только потому, что vector similarity оказался высоким.
+Do not add sensitive memory into an unrelated conversation just because the vector similarity happened to be high.
 
-Результат retrieval должен быть typed:
+The retrieval result must be typed:
 
 ```ts
 interface RetrievedUserContext {
@@ -991,51 +991,51 @@ interface RetrievedUserContext {
 
 ## 7.7 Conflict resolution
 
-Если новая информация конфликтует со старой:
+If new information conflicts with old:
 
-* не перезаписывай старую запись без следа;
-* учитывай recency;
-* учитывай confidence;
-* учитывай явное подтверждение пользователя;
-* помечай старую запись как superseded;
-* сохраняй source messages;
-* при необходимости задай естественный уточняющий вопрос.
+* do not overwrite the old record without a trace;
+* consider recency;
+* consider confidence;
+* consider explicit confirmation from the user;
+* mark the old record as superseded;
+* keep the source messages;
+* if needed, ask a natural clarifying question.
 
-Пример:
+Example:
 
-Старая память:
+Old memory:
 
-> Assessment состоится 20 августа.
+> The assessment is on August 20.
 
-Новое сообщение:
+New message:
 
-> Assessment перенесли на сентябрь.
+> The assessment was moved to September.
 
-Создай новую версию и отмени follow-ups, привязанные к старой дате.
+Create a new version and cancel follow-ups tied to the old date.
 
 ## 7.8 User controls
 
-Пользователь должен иметь возможность:
+The user must be able to:
 
-* посмотреть, что система помнит;
-* исправить память;
-* удалить отдельную память;
-* удалить историю;
-* отключить proactive messages;
-* настроить quiet hours;
-* отключить участие в survey;
-* запросить удаление аккаунта;
-* экспортировать свои данные.
+* see what the system remembers;
+* correct memory;
+* delete an individual memory;
+* delete history;
+* disable proactive messages;
+* configure quiet hours;
+* opt out of the survey;
+* request account deletion;
+* export their data.
 
 ---
 
 # 8. AI services
 
-Создай отдельные AI-компоненты с независимыми schemas и prompt versions.
+Create separate AI components with independent schemas and prompt versions.
 
 ## 8.1 Situation Classifier
 
-Определяет:
+Determines:
 
 * support;
 * coaching;
@@ -1082,11 +1082,11 @@ const SituationClassificationSchema = z.object({
 });
 ```
 
-`reasoningSummary` должен быть кратким объяснением результата, а не скрытым chain of thought.
+`reasoningSummary` must be a brief explanation of the result, not a hidden chain of thought.
 
 ## 8.2 Memory Extractor
 
-Возвращает proposals:
+Returns proposals:
 
 ```ts
 const MemoryProposalSchema = z.object({
@@ -1117,9 +1117,9 @@ const MemoryProposalSchema = z.object({
 
 ## 8.3 Risk Detector
 
-Отдельный шаг, не совмещённый только с response generation.
+A separate step, not merged into response generation only.
 
-Возвращает:
+Returns:
 
 * risk type;
 * severity;
@@ -1132,7 +1132,7 @@ const MemoryProposalSchema = z.object({
 
 ## 8.4 Survey Evidence Evaluator
 
-Возвращает:
+Returns:
 
 * candidate question IDs;
 * evidence;
@@ -1146,9 +1146,9 @@ const MemoryProposalSchema = z.object({
 
 ## 8.5 Follow-up Planner
 
-Предлагает scheduled intents, но не создаёт jobs напрямую.
+Proposes scheduled intents but does not create jobs directly.
 
-Каждый proposal содержит:
+Each proposal contains:
 
 * type;
 * topic;
@@ -1161,77 +1161,77 @@ const MemoryProposalSchema = z.object({
 * message strategy;
 * confidence.
 
-Backend применяет policy и решает, создавать ли scheduled action.
+The backend applies policy and decides whether to create a scheduled action.
 
 ## 8.6 Response Generator
 
-Response Generator получает уже подготовленный context и reply strategy.
+The Response Generator receives already-prepared context and a reply strategy.
 
-Он не должен самостоятельно:
+It must not, on its own:
 
-* читать всю базу;
-* выполнять произвольный retrieval;
-* записывать память;
-* создавать scheduled actions;
-* выставлять survey score;
-* отправлять Slack messages;
-* эскалировать пользователя;
-* менять permissions.
+* read the whole database;
+* perform arbitrary retrieval;
+* write memory;
+* create scheduled actions;
+* assign a survey score;
+* send Slack messages;
+* escalate the user;
+* change permissions.
 
-Ответ должен соответствовать communication policy.
+The reply must comply with the communication policy.
 
 ---
 
 # 9. Conversation policy
 
-Ответы агента должны быть:
+The agent's replies must be:
 
-* естественными;
-* конкретными;
-* эмпатичными;
-* персонализированными;
-* не слишком длинными;
-* связанными с текущей ситуацией;
-* без повторения одного и того же вступления;
-* без постоянного «Мне жаль, что вы с этим столкнулись»;
-* без излишней терапии;
-* без корпоративной канцелярщины;
-* без давления;
-* без ложной уверенности;
-* без необоснованных выводов.
+* natural;
+* specific;
+* empathetic;
+* personalized;
+* not too long;
+* connected to the current situation;
+* without repeating the same opening;
+* without a constant "I'm sorry you're going through this";
+* without excessive therapy;
+* without corporate boilerplate;
+* without pressure;
+* without false confidence;
+* without unfounded conclusions.
 
-Рекомендуемая структура ответа не должна быть жёстким шаблоном, но может включать:
+The recommended reply structure must not be a rigid template, but may include:
 
-1. Признание ситуации или эмоции.
-2. Уточнение наиболее важной части.
-3. Один конкретный следующий шаг.
-4. Предложение практической помощи.
-5. При необходимости — согласование будущего follow-up.
+1. Acknowledging the situation or emotion.
+2. Clarifying the most important part.
+3. One specific next step.
+4. An offer of practical help.
+5. If needed — agreeing on a future follow-up.
 
-Пример плохого ответа:
+Example of a bad reply:
 
-> Я понимаю ваши чувства. Выгорание является серьёзной проблемой. Рекомендую поговорить с менеджером, отдыхать и соблюдать work-life balance.
+> I understand your feelings. Burnout is a serious problem. I recommend talking to your manager, resting, and maintaining a work-life balance.
 
-Пример более подходящего ответа:
+Example of a more suitable reply:
 
-> Похоже, тебя выматывает не только объём работы, но и ощущение, что этому пока не видно конца. Что сейчас сильнее всего давит: сроки, количество задач или то, что приоритеты постоянно меняются? От этого можно оттолкнуться и решить, что реально получится изменить уже на этой неделе.
+> It sounds like what's wearing you down isn't just the volume of work, but the feeling that there's no end in sight yet. What's pressing hardest right now: the deadlines, the number of tasks, or the fact that priorities keep changing? We can start from that and decide what's realistically possible to change this week.
 
-При обсуждении целей агент должен помнить контекст и предлагать конкретный формат помощи:
+When discussing goals, the agent must remember the context and offer a specific form of help:
 
-* подготовить план;
-* провести mock interview;
-* разобрать вопрос;
-* помочь сформулировать разговор с менеджером;
-* разделить большую цель на шаги;
-* вернуться к теме позже.
+* prepare a plan;
+* run a mock interview;
+* work through a question;
+* help draft a conversation with the manager;
+* break a large goal into steps;
+* return to the topic later.
 
 ---
 
 # 10. Conversation orchestrator
 
-Conversation Orchestrator должен быть application service, а не одним prompt.
+The Conversation Orchestrator must be an application service, not a single prompt.
 
-Пример pipeline:
+Example pipeline:
 
 ```text
 Receive normalized message
@@ -1265,17 +1265,17 @@ Conversation modes:
 * onboarding;
 * celebration.
 
-Код определяет доступные переходы между modes.
+Code determines the available transitions between modes.
 
 ---
 
 # 11. Proactive messaging engine
 
-Проактивность должна быть основана на scheduled intents, а не на произвольных cron-prompts.
+Proactivity must be based on scheduled intents, not on arbitrary cron-prompts.
 
 ## Required policies
 
-* user opt-in или tenant policy;
+* user opt-in or tenant policy;
 * quiet hours;
 * timezone;
 * daily and weekly contact limits;
@@ -1289,7 +1289,7 @@ Conversation modes:
 * user inactivity rules;
 * no guilt-inducing language.
 
-Каждый due follow-up проходит workflow:
+Each due follow-up goes through the workflow:
 
 ```text
 Scheduled action becomes due
@@ -1309,23 +1309,23 @@ Scheduled action becomes due
   -> Persist result
 ```
 
-Поддерживай natural scheduling phrases:
+Support natural scheduling phrases:
 
-* «через пару дней»;
-* «на следующей неделе»;
-* «после встречи в пятницу»;
-* «перед ассесментом»;
-* «после релиза».
+* "in a couple of days";
+* "next week";
+* "after the meeting on Friday";
+* "before the assessment";
+* "after the release."
 
-Относительные даты должны преобразовываться в конкретный `dueAt` с сохранением исходной формулировки и confidence.
+Relative dates must be converted into a concrete `dueAt` while preserving the original phrasing and confidence.
 
 ---
 
 # 12. Survey Engine
 
-Survey Engine должен быть самостоятельным domain module.
+The Survey Engine must be a self-contained domain module.
 
-Основные компоненты:
+Core components:
 
 * SurveyWindowManager;
 * SurveyCoverageService;
@@ -1338,21 +1338,21 @@ Survey Engine должен быть самостоятельным domain module
 
 ## Opportunity policy
 
-Survey probe разрешён только если:
+A survey probe is allowed only if:
 
-* нет high-risk ситуации;
-* пользователь не находится в явном сильном стрессе;
-* текущий вопрос логически связан с темой;
-* cooldown соблюдён;
-* за последнюю беседу не было слишком много probes;
-* evidence ещё недостаточно;
-* пользователь не отключил survey;
-* вопрос не был уже закрыт с высокой уверенностью;
-* probe не мешает решить основную проблему пользователя.
+* there is no high-risk situation;
+* the user is not in clear heavy stress;
+* the current question is logically connected to the topic;
+* the cooldown is respected;
+* there weren't too many probes in the last conversation;
+* there isn't enough evidence yet;
+* the user hasn't opted out of the survey;
+* the question wasn't already closed with high confidence;
+* the probe doesn't get in the way of solving the user's main problem.
 
 ## Evidence lifecycle
 
-Evidence может быть:
+Evidence can be:
 
 * implicit;
 * explicit;
@@ -1372,24 +1372,24 @@ Assessment statuses:
 * needs_review;
 * suppressed.
 
-Не генерируй score, если evidence недостаточно.
+Do not generate a score if there isn't enough evidence.
 
-Храни отдельно:
+Store separately:
 
 * factual evidence;
 * evaluator interpretation;
 * final score;
 * confidence.
 
-Это позволит позднее переоценить evidence новой моделью без изменения raw messages.
+This will allow evidence to be re-evaluated later with a new model without changing the raw messages.
 
 ---
 
 # 13. Safety architecture
 
-Создай собственный policy engine. Не полагайся только на provider moderation.
+Build your own policy engine. Do not rely on provider moderation alone.
 
-Поддерживай сценарии:
+Support scenarios:
 
 * burnout;
 * severe stress;
@@ -1400,24 +1400,24 @@ Assessment statuses:
 * potential self-harm;
 * immediate danger;
 * medical or legal request;
-* request to expose another employee’s private data.
+* request to expose another employee's private data.
 
 ## Safety rules
 
-* не ставить диагнозы;
-* не утверждать, что пользователь точно находится в состоянии выгорания;
-* не делать performance conclusions по одному сообщению;
-* не сообщать менеджеру содержимое личных разговоров по умолчанию;
-* не использовать survey во время safety-sensitive сценария;
-* не давать ложных обещаний конфиденциальности;
-* прозрачно объяснять privacy boundaries;
-* при critical risk использовать tenant-configurable escalation workflow;
-* сохранять минимально необходимый объём чувствительных данных;
-* ограничивать срок хранения risk signals;
-* регистрировать доступ к чувствительным данным;
-* не показывать sensitive risk details в обычной manager analytics.
+* do not make diagnoses;
+* do not claim the user is definitely in a state of burnout;
+* do not make performance conclusions from a single message;
+* do not report the contents of private conversations to a manager by default;
+* do not run a survey during a safety-sensitive scenario;
+* do not make false promises of confidentiality;
+* transparently explain privacy boundaries;
+* on critical risk, use a tenant-configurable escalation workflow;
+* store the minimum necessary amount of sensitive data;
+* limit the retention period of risk signals;
+* log access to sensitive data;
+* do not show sensitive risk details in ordinary manager analytics.
 
-Создай отдельный `SAFETY.md` с:
+Create a separate `SAFETY.md` with:
 
 * taxonomy;
 * severity definitions;
@@ -1432,15 +1432,15 @@ Assessment statuses:
 
 # 14. Privacy and permissions
 
-Продукт работает с чувствительной информацией сотрудников. Privacy является частью архитектуры, а не поздним дополнением.
+The product handles sensitive employee information. Privacy is part of the architecture, not a late addition.
 
-Обязательно реализуй:
+You must implement:
 
 * multi-tenant isolation;
-* tenant ID во всех tenant-owned entities;
+* tenant ID on all tenant-owned entities;
 * database-level restrictions;
 * RBAC;
-* ABAC для sensitive resources;
+* ABAC for sensitive resources;
 * encryption at rest;
 * encryption in transit;
 * secret management;
@@ -1459,7 +1459,7 @@ Assessment statuses:
 
 ## Roles
 
-Минимально:
+At minimum:
 
 * platform_admin;
 * tenant_admin;
@@ -1469,31 +1469,31 @@ Assessment statuses:
 * analyst;
 * employee.
 
-Менеджер не получает доступ к raw conversations по умолчанию.
+A manager does not get access to raw conversations by default.
 
-Manager analytics может показывать:
+Manager analytics may show:
 
-* агрегированные trends;
+* aggregated trends;
 * survey coverage;
 * anonymized cohort indicators;
 * changes over time;
 * areas requiring organizational attention.
 
-Не показывай:
+Do not show:
 
-* личные цитаты без явного разрешения;
-* полный message history;
-* индивидуальные private concerns;
+* personal quotes without explicit permission;
+* full message history;
+* individual private concerns;
 * inferred diagnoses;
 * single-person cohort analytics.
 
-Используй minimum cohort size и suppression rules для снижения риска повторной идентификации.
+Use a minimum cohort size and suppression rules to reduce the risk of re-identification.
 
 ---
 
 # 15. Slack-specific implementation
 
-Реализуй следующие Slack flows:
+Implement the following Slack flows:
 
 ## Installation
 
@@ -1507,10 +1507,10 @@ Manager analytics может показывать:
 
 ## Events
 
-Поддерживай:
+Support:
 
 * direct messages;
-* app mentions при необходимости;
+* app mentions when needed;
 * message events;
 * Slack retries;
 * duplicate delivery;
@@ -1518,16 +1518,16 @@ Manager analytics может показывать:
 * deleted messages;
 * bot messages;
 * thread replies;
-* user profile changes при необходимости.
+* user profile changes when needed.
 
-Webhook должен:
+The webhook must:
 
-1. Проверить signature.
-2. Проверить timestamp.
-3. Обработать URL verification.
-4. Вернуть acknowledgement максимально быстро.
-5. Положить event в queue.
-6. Не выполнять LLM call внутри webhook request.
+1. Verify the signature.
+2. Check the timestamp.
+3. Handle URL verification.
+4. Return an acknowledgement as fast as possible.
+5. Put the event in a queue.
+6. Not make an LLM call inside the webhook request.
 
 ## Message sending
 
@@ -1542,15 +1542,15 @@ Webhook должен:
 
 ## Local development
 
-Поддержи Socket Mode, чтобы разработчик мог запустить Slack integration без публичного webhook.
+Support Socket Mode so a developer can run the Slack integration without a public webhook.
 
 ---
 
 # 16. API surface
 
-Создай versioned REST API.
+Create a versioned REST API.
 
-Примерные endpoints:
+Example endpoints:
 
 ```text
 POST   /api/v1/channel/slack/events
@@ -1578,13 +1578,13 @@ GET    /api/v1/admin/dead-letter-jobs
 POST   /api/v1/admin/dead-letter-jobs/:id/retry
 ```
 
-Применяй authorization на каждом endpoint.
+Apply authorization on every endpoint.
 
 ---
 
 # 17. Admin panel
 
-Создай admin panel со следующими разделами.
+Create an admin panel with the following sections.
 
 ## Operations
 
@@ -1611,18 +1611,18 @@ POST   /api/v1/admin/dead-letter-jobs/:id/retry
 
 ## User debug view
 
-Только для авторизованных ролей:
+Only for authorized roles:
 
 * user profile;
-* recent messages с redaction policy;
+* recent messages with a redaction policy;
 * active memory;
 * goals;
 * scheduled actions;
 * survey coverage;
-* risk status в разрешённой форме;
+* risk status in an allowed form;
 * audit trail.
 
-Каждый доступ к sensitive user view должен попадать в audit log.
+Every access to a sensitive user view must be recorded in the audit log.
 
 ## Survey configuration
 
@@ -1636,17 +1636,17 @@ POST   /api/v1/admin/dead-letter-jobs/:id/retry
 
 ## Prompt management
 
-На MVP prompts могут храниться в Git, но admin должен хотя бы показывать используемые версии.
+For the MVP, prompts may be stored in Git, but the admin panel should at least show the versions in use.
 
-Не разрешай редактировать production prompts без versioning, review и rollback.
+Do not allow editing production prompts without versioning, review, and rollback.
 
 ---
 
 # 18. Observability
 
-Для каждого входящего сообщения создай единый trace.
+For each incoming message, create a single trace.
 
-Trace должен связывать:
+The trace must link:
 
 * Slack event;
 * normalized message;
@@ -1683,72 +1683,72 @@ Metrics:
 * token usage;
 * LLM cost per tenant and task type.
 
-Логи должны быть structured JSON и не содержать чувствительный message text по умолчанию.
+Logs must be structured JSON and must not contain sensitive message text by default.
 
 ---
 
 # 19. AI evaluation framework
 
-Создай evaluation pipeline до масштабирования продукта.
+Create an evaluation pipeline before scaling the product.
 
-Используй:
+Use:
 
 * Promptfoo;
 * versioned datasets;
 * deterministic test fixtures;
-* mocked LLM responses для integration tests;
+* mocked LLM responses for integration tests;
 * optional real-model evaluation jobs;
 * comparison between prompt/model versions.
 
 ## Golden datasets
 
-Минимальные категории:
+Minimal categories:
 
 ### Empathy
 
-* пользователь сообщает о выгорании;
-* пользователь сомневается в себе;
-* пользователь переживает перед assessment;
-* пользователь сообщает о конфликте;
-* пользователь делится успехом.
+* the user reports burnout;
+* the user doubts themselves;
+* the user is anxious before an assessment;
+* the user reports a conflict;
+* the user shares a success.
 
 ### Memory
 
-* новая устойчивая цель;
-* временная информация;
-* конфликтующая дата;
-* завершённая цель;
-* чувствительная информация;
-* информация, которую не нужно сохранять.
+* a new durable goal;
+* temporary information;
+* a conflicting date;
+* a completed goal;
+* sensitive information;
+* information that should not be stored.
 
 ### Proactivity
 
-* follow-up действительно нужен;
-* тема уже закрыта;
-* пользователь недавно сам обновил статус;
-* пользователь отключил proactive messages;
-* наступили quiet hours;
-* несколько похожих scheduled actions;
-* follow-up больше не актуален.
+* a follow-up is genuinely needed;
+* the topic is already closed;
+* the user recently updated the status themselves;
+* the user disabled proactive messages;
+* quiet hours have started;
+* several similar scheduled actions;
+* the follow-up is no longer relevant.
 
 ### Survey
 
-* evidence присутствует без прямого вопроса;
-* evidence частичное;
-* evidence противоречивое;
-* вопрос уместен;
-* вопрос неуместен;
-* пользователь находится в стрессе;
-* confidence недостаточен;
-* assessment уже закрыт.
+* evidence is present without a direct question;
+* evidence is partial;
+* evidence is contradictory;
+* the question is appropriate;
+* the question is inappropriate;
+* the user is under stress;
+* confidence is insufficient;
+* the assessment is already closed.
 
 ### Privacy
 
-* менеджер запрашивает личный разговор;
-* аналитика строится для одного человека;
-* пользователь просит удалить память;
-* пользователь исправляет ошибочный факт;
-* sensitive data появляется в logs.
+* a manager requests a private conversation;
+* analytics is built for a single person;
+* the user asks to delete memory;
+* the user corrects an incorrect fact;
+* sensitive data appears in logs.
 
 ### Safety
 
@@ -1757,8 +1757,8 @@ Metrics:
 * potential self-harm;
 * immediate danger;
 * vague distress;
-* обычное плохое настроение;
-* просьба о медицинском диагнозе.
+* an ordinary bad mood;
+* a request for a medical diagnosis.
 
 ## Evaluation dimensions
 
@@ -1779,7 +1779,7 @@ Metrics:
 * follow-up usefulness;
 * follow-up annoyance risk.
 
-Добавь threshold, при котором prompt или model version нельзя выпускать в production.
+Add a threshold below which a prompt or model version cannot be released to production.
 
 ---
 
@@ -1787,7 +1787,7 @@ Metrics:
 
 ## Unit tests
 
-Покрой:
+Cover:
 
 * domain policies;
 * memory conflict resolution;
@@ -1803,9 +1803,9 @@ Metrics:
 
 ## Integration tests
 
-Используй test containers для PostgreSQL и Redis.
+Use test containers for PostgreSQL and Redis.
 
-Покрой:
+Cover:
 
 * database repositories;
 * transaction boundaries;
@@ -1818,7 +1818,7 @@ Metrics:
 
 ## Contract tests
 
-Проверь:
+Verify:
 
 * ChannelAdapter interface;
 * LLM Gateway interface;
@@ -1828,34 +1828,34 @@ Metrics:
 
 ## End-to-end tests
 
-Сценарии:
+Scenarios:
 
-1. Пользователь впервые пишет боту.
-2. Завершается onboarding.
-3. Пользователь сообщает о цели.
-4. Создаётся memory item.
-5. Создаётся scheduled follow-up.
-6. Follow-up становится due.
-7. Relevance check проходит.
-8. Сообщение отправляется.
-9. Пользователь отвечает.
-10. Цель обновляется.
+1. The user messages the bot for the first time.
+2. Onboarding completes.
+3. The user reports a goal.
+4. A memory item is created.
+5. A scheduled follow-up is created.
+6. The follow-up becomes due.
+7. The relevance check passes.
+8. The message is sent.
+9. The user replies.
+10. The goal is updated.
 
-Отдельный E2E:
+A separate E2E:
 
-1. Пользователь пишет о сильном стрессе.
-2. Safety layer блокирует survey.
-3. Response Generator получает supportive strategy.
-4. Scheduled survey action не создаётся.
-5. Решение попадает в audit trail.
+1. The user writes about heavy stress.
+2. The safety layer blocks the survey.
+3. The Response Generator receives a supportive strategy.
+4. No scheduled survey action is created.
+5. The decision lands in the audit trail.
 
 ## Load tests
 
-Проверь:
+Verify:
 
 * burst Slack events;
 * duplicate deliveries;
-* slow LLM provider;
+* a slow LLM provider;
 * provider outage;
 * Redis restart;
 * worker restart;
@@ -1864,36 +1864,36 @@ Metrics:
 
 ## Security tests
 
-Проверь:
+Verify:
 
 * tenant data leakage;
 * broken object-level authorization;
 * prompt injection;
-* malicious Slack payload;
+* a malicious Slack payload;
 * replay attack;
 * secret exposure;
 * sensitive logs;
 * unauthorized admin access;
-* user data deletion completeness.
+* completeness of user data deletion.
 
 ---
 
 # 21. Prompt injection protection
 
-Пользовательский текст является недоверенным вводом.
+User text is untrusted input.
 
-Нельзя позволять сообщению пользователя:
+A user's message must not be allowed to:
 
-* менять system policy;
-* запрашивать hidden prompts;
-* заставлять AI раскрывать другую память;
-* выполнять произвольные tools;
-* обходить privacy rules;
-* изменять survey score напрямую;
-* отправлять сообщения другим пользователям;
-* читать admin data.
+* change system policy;
+* request hidden prompts;
+* force the AI to reveal other memory;
+* execute arbitrary tools;
+* bypass privacy rules;
+* change a survey score directly;
+* send messages to other users;
+* read admin data.
 
-Разделяй:
+Separate:
 
 * system instructions;
 * tenant configuration;
@@ -1901,35 +1901,35 @@ Metrics:
 * untrusted user content;
 * tool outputs.
 
-Все tool calls должны быть allowlisted и typed.
+All tool calls must be allowlisted and typed.
 
-Для conversation response предпочтительно вообще не давать модели mutation tools.
+For conversation responses, it is preferable not to give the model mutation tools at all.
 
 ---
 
 # 22. Data lifecycle
 
-Реализуй:
+Implement:
 
 * configurable retention;
-* soft deletion только для recoverable operational cases;
-* hard deletion workflow для user request;
+* soft deletion only for recoverable operational cases;
+* hard deletion workflow for user requests;
 * cancellation of pending jobs after deletion;
 * deletion from vector indexes;
 * deletion or anonymization of derived data;
-* audit event без сохранения удалённого content;
+* an audit event without storing the deleted content;
 * backup retention policy;
 * export generation;
 * legal hold extension point;
 * tenant offboarding.
 
-Derived data должно быть связано с source data, чтобы его можно было удалить или пересчитать.
+Derived data must be linked to source data so it can be deleted or recomputed.
 
 ---
 
 # 23. Reliability requirements
 
-Система должна поддерживать:
+The system must support:
 
 * idempotent handlers;
 * at-least-once event delivery;
@@ -1951,13 +1951,13 @@ Derived data должно быть связано с source data, чтобы е�
 * migrations before application startup;
 * safe rollback.
 
-Не считай queue job успешно выполненным до подтверждённой записи результата.
+Do not consider a queue job successfully completed until the result is confirmed as written.
 
 ---
 
 # 24. Feature flags
 
-Добавь tenant-aware feature flags:
+Add tenant-aware feature flags:
 
 * proactive messaging;
 * conversational survey;
@@ -1966,12 +1966,12 @@ Derived data должно быть связано с source data, чтобы е�
 * memory extraction;
 * vector retrieval;
 * manager analytics;
-* specific model version;
-* specific prompt version;
-* new survey evaluator;
+* a specific model version;
+* a specific prompt version;
+* a new survey evaluator;
 * Temporal workflows.
 
-Feature flags должны позволять:
+Feature flags must allow:
 
 * gradual rollout;
 * tenant allowlist;
@@ -1983,30 +1983,30 @@ Feature flags должны позволять:
 
 # 25. Development workflow
 
-Если репозиторий пустой:
+If the repository is empty:
 
-1. Инициализируй monorepo.
-2. Создай базовые приложения и packages.
-3. Настрой TypeScript.
-4. Настрой linting и formatting.
-5. Добавь Docker Compose.
-6. Добавь PostgreSQL и Redis.
-7. Создай migrations.
-8. Создай `.env.example`.
-9. Добавь health endpoints.
-10. Добавь CI.
-11. Добавь документацию.
-12. После этого реализуй vertical slices.
+1. Initialize the monorepo.
+2. Create the base applications and packages.
+3. Set up TypeScript.
+4. Set up linting and formatting.
+5. Add Docker Compose.
+6. Add PostgreSQL and Redis.
+7. Create migrations.
+8. Create `.env.example`.
+9. Add health endpoints.
+10. Add CI.
+11. Add documentation.
+12. After that, implement vertical slices.
 
-Если репозиторий уже существует:
+If the repository already exists:
 
-1. Сначала изучи текущую структуру.
-2. Не переписывай рабочие части без необходимости.
-3. Создай gap analysis.
-4. Предложи migration plan.
-5. Сохраняй backwards compatibility, где это разумно.
-6. Делай небольшие логические изменения.
-7. Не создавай фиктивные реализации, замаскированные под готовую функциональность.
+1. First study the current structure.
+2. Do not rewrite working parts without need.
+3. Create a gap analysis.
+4. Propose a migration plan.
+5. Preserve backwards compatibility where reasonable.
+6. Make small, logical changes.
+7. Do not create fake implementations disguised as finished functionality.
 
 ---
 
@@ -2014,7 +2014,7 @@ Feature flags должны позволять:
 
 ## Phase 0: Foundation
 
-Реализовать:
+Implement:
 
 * monorepo;
 * configuration;
@@ -2034,43 +2034,43 @@ Feature flags должны позволять:
 
 Acceptance criteria:
 
-* весь проект запускается одной командой;
-* migrations применяются;
-* API и worker доступны;
-* health checks работают;
-* тесты проходят;
-* tenant context обязателен.
+* the whole project starts with a single command;
+* migrations apply;
+* API and worker are reachable;
+* health checks work;
+* tests pass;
+* tenant context is required.
 
 ## Phase 1: Slack vertical slice
 
-Реализовать:
+Implement:
 
 * Slack installation;
 * Events API;
-* Socket Mode для local;
+* Socket Mode for local;
 * signature verification;
 * event acknowledgement;
 * event persistence;
 * normalization;
 * queue processing;
 * message storage;
-* simple AI response;
+* a simple AI response;
 * Slack sending;
 * idempotency;
 * trace linking.
 
 Acceptance criteria:
 
-* пользователь пишет в Slack DM;
-* webhook быстро отвечает;
-* сообщение проходит через queue;
-* ответ отправляется;
-* duplicate event не создаёт duplicate response;
-* все шаги видны в trace.
+* a user writes in a Slack DM;
+* the webhook responds quickly;
+* the message goes through the queue;
+* a reply is sent;
+* a duplicate event doesn't create a duplicate response;
+* all steps are visible in the trace.
 
 ## Phase 2: Memory
 
-Реализовать:
+Implement:
 
 * MemoryItem model;
 * memory extraction;
@@ -2083,15 +2083,15 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-* цель пользователя сохраняется;
-* случайная информация не сохраняется;
-* конфликтующие данные версионируются;
-* ответ использует релевантную память;
-* пользователь может удалить memory item.
+* the user's goal is saved;
+* random information is not saved;
+* conflicting data is versioned;
+* the reply uses relevant memory;
+* the user can delete a memory item.
 
 ## Phase 3: Proactive follow-ups
 
-Реализовать:
+Implement:
 
 * follow-up proposals;
 * ScheduledAction;
@@ -2105,15 +2105,15 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-* цель создаёт уместный follow-up;
-* завершённая цель отменяет follow-up;
-* quiet hours соблюдаются;
-* duplicate follow-ups не отправляются;
-* follow-up не выглядит как системное напоминание.
+* a goal creates an appropriate follow-up;
+* a completed goal cancels the follow-up;
+* quiet hours are respected;
+* duplicate follow-ups are not sent;
+* the follow-up doesn't look like a system reminder.
 
 ## Phase 4: Conversational survey
 
-Реализовать:
+Implement:
 
 * survey definitions;
 * survey windows;
@@ -2126,19 +2126,19 @@ Acceptance criteria:
 * suppression;
 * assessment state.
 
-Начать с 2–3 configurable dimensions, но архитектура должна поддерживать полный набор.
+Start with 2–3 configurable dimensions, but the architecture must support the full set.
 
 Acceptance criteria:
 
-* evidence может быть извлечено без прямого вопроса;
-* partial evidence не закрывает вопрос;
-* survey probe связан с текущей темой;
-* survey блокируется во время сильного стресса;
-* assessment хранит evidence и evaluator version.
+* evidence can be extracted without a direct question;
+* partial evidence doesn't close the question;
+* the survey probe is tied to the current topic;
+* the survey is blocked during heavy stress;
+* the assessment stores evidence and the evaluator version.
 
 ## Phase 5: Safety and privacy
 
-Реализовать:
+Implement:
 
 * risk detector;
 * policy engine;
@@ -2154,14 +2154,14 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-* sensitive сценарии корректно маршрутизируются;
-* менеджер не может читать raw conversations;
-* удаление пользователя очищает derived data;
-* доступ к sensitive view аудируется.
+* sensitive scenarios are routed correctly;
+* a manager cannot read raw conversations;
+* deleting a user clears derived data;
+* access to a sensitive view is audited.
 
 ## Phase 6: Admin and analytics
 
-Реализовать:
+Implement:
 
 * operations dashboard;
 * queue status;
@@ -2175,7 +2175,7 @@ Acceptance criteria:
 
 ## Phase 7: Scaling
 
-Подготовить:
+Prepare:
 
 * Temporal migration adapter;
 * provider routing;
@@ -2190,7 +2190,7 @@ Acceptance criteria:
 
 # 27. Documentation deliverables
 
-Обязательно создай:
+You must create:
 
 ## `ARCHITECTURE.md`
 
@@ -2273,7 +2273,7 @@ Acceptance criteria:
 
 ## ADRs
 
-Минимально:
+At minimum:
 
 * ADR-001: Hexagonal architecture;
 * ADR-002: PostgreSQL as source of truth;
@@ -2291,85 +2291,85 @@ Acceptance criteria:
 # 28. Coding standards
 
 * TypeScript strict mode.
-* Не использовать `any`, кроме обоснованных boundary cases.
-* Все public functions и domain contracts typed.
-* Все AI outputs валидируются.
-* Все dates хранятся в UTC.
-* User timezone применяется только при presentation и scheduling.
-* Business rules не находятся в controllers.
-* Controllers тонкие.
-* ORM entities не используются как domain entities.
-* Не создавать generic repository без реальной необходимости.
-* Не добавлять abstraction только ради abstraction.
-* Использовать dependency inversion на внешних boundaries.
-* Ошибки должны быть typed.
-* Не скрывать ошибки пустыми `catch`.
-* Все background handlers должны быть idempotent.
-* Sensitive values не логируются.
-* Комментарии объясняют причину, а не повторяют код.
-* Названия кода, документации и commit messages — на английском.
-* Пользовательские тексты поддерживают localization.
+* Do not use `any`, except for justified boundary cases.
+* All public functions and domain contracts are typed.
+* All AI outputs are validated.
+* All dates are stored in UTC.
+* User timezone is applied only for presentation and scheduling.
+* Business rules do not live in controllers.
+* Controllers are thin.
+* ORM entities are not used as domain entities.
+* Do not create a generic repository without a real need.
+* Do not add abstraction just for the sake of abstraction.
+* Use dependency inversion at external boundaries.
+* Errors must be typed.
+* Do not swallow errors with empty `catch` blocks.
+* All background handlers must be idempotent.
+* Sensitive values are not logged.
+* Comments explain the reason, not restate the code.
+* Code, documentation, and commit message names are in English.
+* User-facing texts support localization.
 
 ---
 
 # 29. Definition of done
 
-Функциональность считается завершённой, только когда:
+Functionality is considered complete only when:
 
-* есть рабочая реализация;
-* есть unit tests;
-* есть integration tests;
-* есть error handling;
-* есть logs и metrics;
-* есть permissions;
-* учтена tenant isolation;
-* обновлена документация;
-* обновлена схема базы;
-* есть migration;
-* есть rollback consideration;
-* AI outputs валидируются;
-* sensitive data не попадает в logs;
-* добавлен audit trail, если действие чувствительное;
-* добавлены evaluation scenarios, если изменяется AI behavior.
+* there is a working implementation;
+* there are unit tests;
+* there are integration tests;
+* there is error handling;
+* there are logs and metrics;
+* there are permissions;
+* tenant isolation is accounted for;
+* documentation is updated;
+* the database schema is updated;
+* there is a migration;
+* rollback has been considered;
+* AI outputs are validated;
+* sensitive data does not end up in logs;
+* an audit trail is added if the action is sensitive;
+* evaluation scenarios are added if AI behavior changes.
 
 ---
 
 # 30. Required working style
 
-Во время реализации:
+During implementation:
 
-1. Сначала проанализируй репозиторий.
-2. Зафиксируй assumptions.
-3. Создай architecture plan.
-4. Определи boundaries.
-5. Создай ADR для значимых решений.
-6. После этого реализуй минимальный end-to-end vertical slice.
-7. Не создавай сразу десятки disconnected services.
-8. Предпочитай modular monolith для MVP.
-9. Подготавливай boundaries для дальнейшего выделения сервисов.
-10. После каждого этапа запускай lint, typecheck и tests.
-11. Исправляй ошибки, а не оставляй их как «future work».
-12. Не заменяй реализацию псевдокодом.
-13. Не создавай mock implementation в production path.
-14. Явно отмечай то, что невозможно завершить без credentials или внешней конфигурации.
-15. Не удаляй существующий код без обоснования.
-16. Не добавляй LangChain, LangGraph, Temporal или vector database только ради модных технологий.
-17. Для каждого инструмента объясняй конкретную продуктовую необходимость.
-18. При неоднозначности выбирай безопасное расширяемое решение и документируй assumption.
-19. Не задавай уточняющий вопрос по мелким деталям — используй разумные defaults и документируй их.
-20. Не утверждай, что production readiness достигнута, если отсутствуют security, monitoring, testing или privacy controls.
+1. First analyze the repository.
+2. Record your assumptions.
+3. Create an architecture plan.
+4. Define boundaries.
+5. Create an ADR for significant decisions.
+6. After that, implement a minimal end-to-end vertical slice.
+7. Do not create dozens of disconnected services at once.
+8. Prefer a modular monolith for the MVP.
+9. Prepare boundaries for later extraction of services.
+10. After each stage, run lint, typecheck, and tests.
+11. Fix errors rather than leaving them as "future work."
+12. Do not replace implementation with pseudocode.
+13. Do not create mock implementations in the production path.
+14. Explicitly mark what cannot be completed without credentials or external configuration.
+15. Do not delete existing code without justification.
+16. Do not add LangChain, LangGraph, Temporal, or a vector database just for trendy tech.
+17. For each tool, explain the specific product need.
+18. When there is ambiguity, choose a safe, extensible solution and document the assumption.
+19. Do not ask a clarifying question about minor details — use reasonable defaults and document them.
+20. Do not claim production readiness is achieved if security, monitoring, testing, or privacy controls are missing.
 
 ---
 
 # 31. Expected first output
 
-Перед началом массовой реализации выдай:
+Before starting mass implementation, produce:
 
-1. Краткое понимание продукта.
-2. Список assumptions.
-3. Architecture overview.
-4. Container diagram в Mermaid.
-5. Основные sequence diagrams в Mermaid:
+1. A brief understanding of the product.
+2. A list of assumptions.
+3. An architecture overview.
+4. A container diagram in Mermaid.
+5. Core sequence diagrams in Mermaid:
 
    * inbound Slack message;
    * memory extraction;
@@ -2381,18 +2381,18 @@ Acceptance criteria:
 8. Event catalog.
 9. Security and privacy risks.
 10. Implementation roadmap.
-11. Перечень ADR.
-12. Первый vertical slice, который будет реализован.
-13. Команды для запуска проекта.
-14. Список необходимых environment variables.
+11. A list of ADRs.
+12. The first vertical slice to be implemented.
+13. Commands to run the project.
+14. A list of required environment variables.
 
-После этого переходи к созданию файлов и реализации.
+After that, proceed to creating files and implementation.
 
 ---
 
 # 32. Final architectural target
 
-Целевая схема:
+Target diagram:
 
 ```text
 Slack / Future Channels
@@ -2424,7 +2424,7 @@ Outgoing Message Queue
 Channel Adapter
 ```
 
-Параллельные процессы:
+Parallel processes:
 
 ```text
 Persisted Message
@@ -2438,7 +2438,7 @@ Persisted Message
    +--> Follow-up Planning
 ```
 
-Проактивность:
+Proactivity:
 
 ```text
 Scheduled Action
@@ -2458,17 +2458,17 @@ Relevance and Policy Check
           Channel Adapter
 ```
 
-Главное правило всей реализации:
+The main rule of the whole implementation:
 
-> AI помогает понимать и формулировать, но не владеет состоянием продукта и не принимает неконтролируемые бизнес-решения.
+> The AI helps understand and formulate, but does not own the product's state and does not make uncontrolled business decisions.
 
-Построй систему так, чтобы в будущем можно было заменить:
+Build the system so that in the future you can replace:
 
-* Slack на Teams или другой channel adapter;
-* OpenAI на Anthropic, Gemini или локальную модель;
-* BullMQ на Temporal;
-* pgvector на Qdrant;
-* modular monolith на отдельные services;
-* конкретный survey на другую assessment methodology;
+* Slack with Teams or another channel adapter;
+* OpenAI with Anthropic, Gemini, or a local model;
+* BullMQ with Temporal;
+* pgvector with Qdrant;
+* the modular monolith with separate services;
+* a specific survey with another assessment methodology;
 
-без переписывания conversation domain, memory model, privacy model и основной business logic.
+without rewriting the conversation domain, memory model, privacy model, and core business logic.

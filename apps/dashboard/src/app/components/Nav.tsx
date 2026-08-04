@@ -1,8 +1,8 @@
 import Link from 'next/link';
 
 const TABS = [
-  { key: 'team', label: 'Команда', href: '/' },
-  { key: 'trends', label: 'Тренды', href: '/trends' },
+  { key: 'team', label: 'Team', href: '/' },
+  { key: 'trends', label: 'Trends', href: '/trends' },
   { key: 'pulse', label: 'Pulse Check', href: '/pulse' },
 ] as const;
 

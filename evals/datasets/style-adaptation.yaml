@@ -14,12 +14,12 @@ tests:
         styleAdaptation:
           dimensions: { register: 0.72, humor: 0.29, verbosity: 0.27, emoji: 0.11 }
           weight: 0.3
-          phrases: ["на чиле", "по факт"]
+          phrases: ["chillin", "for real"]
       # Terse user → orchestrator makes the strategy structurally short + no forced question.
       strategy: { mode: normal, tone: warm, includeFollowUpQuestion: false, maxResponseLength: short, forbiddenPatterns: [] }
       turns:
         - role: user
-          content: "прив, на чиле, день прошёл странно, хз"
+          content: "hey, chillin, day was kinda weird tbh, idk"
     assert:
       - type: llm-rubric
         value: |
@@ -37,11 +37,11 @@ tests:
         styleAdaptation:
           dimensions: { register: 0.9, humor: 0.9, verbosity: 0.3, emoji: 0.9 }
           weight: 0.4
-          phrases: ["ну такое"]
+          phrases: ["eh, so-so"]
       strategy: { mode: crisis, tone: empathetic, includeFollowUpQuestion: false, maxResponseLength: short, forbiddenPatterns: [] }
       turns:
         - role: user
-          content: "мне очень плохо, я не справляюсь"
+          content: "I feel really awful, I can't cope"
     assert:
       - type: llm-rubric
         value: |

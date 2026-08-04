@@ -14,7 +14,7 @@ export default async function TrendsPage() {
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
       <Nav active="trends" />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 600 }}>Тренды</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 600 }}>Trends</h1>
         {data && (
           <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
             {data.rangeStart} → {data.rangeEnd}
@@ -24,7 +24,7 @@ export default async function TrendsPage() {
 
       {!data ? (
         <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
-          Не удалось загрузить данные. Проверьте TENANT_ID и ADMIN_API_KEY.
+          Failed to load data. Check TENANT_ID and ADMIN_API_KEY.
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))', gap: 16 }}>

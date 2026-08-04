@@ -22,8 +22,8 @@ export type SituationIntent = z.infer<typeof SituationIntentSchema>;
 
 /**
  * An explicit request from the employee to be reminded about something.
- * Only set when the employee clearly asks for a reminder ("напомни мне…",
- * "remind me to…") — never inferred from a vague intention to do something.
+ * Only set when the employee clearly asks for a reminder ("remind me to…",
+ * "ping me when…") — never inferred from a vague intention to do something.
  */
 export const ReminderRequestSchema = z.object({
   /** What to remind them about, phrased in the employee's own language */

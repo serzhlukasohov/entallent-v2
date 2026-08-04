@@ -5,22 +5,22 @@ import type { PulseOverviewResponse } from '../types';
 import { DevControls } from './DevControls';
 
 const GROUP_LABELS: Record<string, string> = {
-  autonomy: 'Автономия',
-  belonging: 'Принадлежность',
-  engagement: 'Вовлечённость',
-  growth: 'Рост',
-  purpose: 'Смысл',
+  autonomy: 'Autonomy',
+  belonging: 'Belonging',
+  engagement: 'Engagement',
+  growth: 'Growth',
+  purpose: 'Purpose',
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  pending_confirmation: 'Ожидает',
-  confirmed: 'Подтверждено',
+  pending_confirmation: 'Pending',
+  confirmed: 'Confirmed',
 };
 
 const ASSESSMENT_LABELS: Record<string, string> = {
-  scored: 'Оценено',
-  partially_covered: 'Частично',
-  insufficient_evidence: 'Мало данных',
+  scored: 'Scored',
+  partially_covered: 'Partial',
+  insufficient_evidence: 'Low data',
   unknown: '—',
 };
 
@@ -44,7 +44,7 @@ export default async function PulsePage() {
   );
 
   const updated = data
-    ? new Date(data.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    ? new Date(data.generatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     : '—';
 
   return (
@@ -52,12 +52,12 @@ export default async function PulsePage() {
       <Nav active="pulse" />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 28 }}>
         <h1 style={{ fontSize: 22, fontWeight: 600 }}>Pulse Check Groups</h1>
-        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>обновлено в {updated}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>updated at {updated}</span>
       </div>
 
       {!data || data.employees.length === 0 ? (
         <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
-          Нет данных. Убедитесь, что TENANT_ID настроен и сотрудники прошли хотя бы одну оценку.
+          No data. Make sure TENANT_ID is configured and employees have completed at least one assessment.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -78,7 +78,7 @@ export default async function PulsePage() {
                   style={{ color: 'var(--text)', textDecoration: 'none' }}
                 >
                   {emp.displayName ?? emp.userId.slice(0, 8) + '…'}
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>→ инсайты</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>→ insights</span>
                 </Link>
               </div>
 
@@ -119,7 +119,7 @@ export default async function PulsePage() {
                           {STATUS_LABELS[g.status] ?? g.status}
                         </span>
                       ) : (
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Нет данных</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No data</span>
                       )}
                     </div>
 
@@ -152,14 +152,14 @@ export default async function PulsePage() {
                         </div>
                       ))}
                       {g.questions.length === 0 && (
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Нет вопросов</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No questions</span>
                       )}
                     </div>
 
                     {/* Confirmed at */}
                     {g.confirmedAt && (
                       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
-                        {new Date(g.confirmedAt).toLocaleDateString('ru-RU', {
+                        {new Date(g.confirmedAt).toLocaleDateString('en-US', {
                           day: 'numeric',
                           month: 'short',
                           hour: '2-digit',
@@ -173,16 +173,16 @@ export default async function PulsePage() {
 
               {/* Backlog progress row */}
               <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--surface)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 16, alignItems: 'center' }}>
-                <span>Бэклог: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> закрыто</span>
-                <span><b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> ожидает</span>
+                <span>Backlog: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> closed</span>
+                <span><b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> pending</span>
                 {emp.backlog.totalIgnoreCount > 0 && (
-                  <span style={{ color: '#f59e0b' }}>↩ {emp.backlog.totalIgnoreCount} проигнорировано</span>
+                  <span style={{ color: '#f59e0b' }}>↩ {emp.backlog.totalIgnoreCount} ignored</span>
                 )}
                 {emp.backlog.nextQuestion && (
-                  <span>Следующий: <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> ({emp.backlog.nextQuestion.group})</span>
+                  <span>Next: <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> ({emp.backlog.nextQuestion.group})</span>
                 )}
                 {!emp.backlog.nextQuestion && emp.backlog.doneCount > 0 && (
-                  <span style={{ color: '#10b981' }}>✓ Все вопросы закрыты</span>
+                  <span style={{ color: '#10b981' }}>✓ All questions closed</span>
                 )}
               </div>
 
@@ -195,10 +195,10 @@ export default async function PulsePage() {
 
       {/* Legend */}
       <div style={{ marginTop: 28, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-        <Legend dot="var(--green)" label="Оценено / Подтверждено" />
-        <Legend dot="#f59e0b" label="Частично / Ожидает подтверждения" />
-        <Legend dot="var(--text-muted)" label="Мало данных" />
-        <Legend dot="var(--border)" label="Нет данных" />
+        <Legend dot="var(--green)" label="Scored / Confirmed" />
+        <Legend dot="#f59e0b" label="Partial / Awaiting confirmation" />
+        <Legend dot="var(--text-muted)" label="Low data" />
+        <Legend dot="var(--border)" label="No data" />
       </div>
     </main>
   );
@@ -210,7 +210,7 @@ function ScoreBar({ score }: { score: number }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Индекс</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Index</span>
         <span style={{ fontSize: 12, fontWeight: 600, color }}>{score.toFixed(1)}</span>
       </div>
       <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>

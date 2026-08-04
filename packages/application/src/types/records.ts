@@ -215,7 +215,7 @@ export interface TeamMembershipRecord {
 }
 
 export interface StyleDimensions {
-  register: number;   // 0 formal/вы … 1 casual/ты
+  register: number;   // 0 formal … 1 casual
   humor: number;      // 0 earnest … 1 playful
   verbosity: number;  // 0 terse … 1 elaborate
   emoji: number;      // 0 none … 1 frequent

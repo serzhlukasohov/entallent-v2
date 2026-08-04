@@ -1,194 +1,194 @@
-# Pulse Cadence System — Руководство для Product Owner
+# Pulse Cadence System — Product Owner Guide
 
-## Что это такое
+## What it is
 
-Система автоматически пишет каждому сотруднику раз в 3 дня — одно короткое сообщение в Slack с встроенным вопросом. Вопросы берутся из персонального бэклога сотрудника и покрывают четыре темы: автономия, принадлежность, рост, цель.
+The system automatically messages every employee once every 3 days — one short Slack message with an embedded question. Questions come from the employee's personal backlog and cover four themes: autonomy, belonging, growth, purpose.
 
-Цель — собрать данные по всем четырём темам за квартал, не перегружая сотрудника.
-
----
-
-## Как выглядит бэклог сотрудника
-
-У каждого сотрудника на квартал — **12 вопросов** в фиксированном порядке:
-
-```
-Автономия (3 вопроса) → Принадлежность (3) → Рост (3) → Цель (3)
-```
-
-Система идёт по ним по одному. Следующий вопрос — только после того, как предыдущий закрыт или проигнорирован.
-
-Плюс **3 engagement-вопроса**, которые активируются в последние 14 дней квартала.
+The goal is to collect data across all four themes over the quarter without overloading the employee.
 
 ---
 
-## Жизненный цикл вопроса
+## What an employee's backlog looks like
+
+Each employee has **12 questions** per quarter in a fixed order:
 
 ```
-Ожидает → Отправлен → Закрыт
+Autonomy (3 questions) → Belonging (3) → Growth (3) → Purpose (3)
+```
+
+The system works through them one at a time. The next question is only surfaced after the previous one is closed or ignored.
+
+Plus **3 engagement questions** that activate in the last 14 days of the quarter.
+
+---
+
+## Question lifecycle
+
+```
+Pending → Sent → Closed
               ↓
-         (48ч без ответа)
+         (48h with no reply)
               ↓
-         Ожидает (уходит в конец очереди)
+         Pending (moves to the back of the queue)
 ```
 
-**Закрытым** вопрос считается в двух случаях:
-- Сотрудник **ответил** на вопрос в разговоре с AI — система сама это фиксирует
-- Сотрудник **сам затронул** тему в любом разговоре без проактивного вопроса (cross-pollination)
+A question is considered **closed** in two cases:
+- The employee **answered** the question in a conversation with the AI — the system records this itself
+- The employee **raised the topic themselves** in any conversation without a proactive question (cross-pollination)
 
-**Проигнорированным** — если 48 часов прошло и ни одного сообщения не было. Вопрос уходит в конец очереди.
-
----
-
-## Как тестировать через Slack
-
-### Что нужно перед началом
-
-- Тестовый пользователь, подключённый к Slack workspace
-- Доступ к API (Postman / curl)
-- Дашборд открыт на `/pulse`
-- Знать `tenantId` тестовой компании
+It is considered **ignored** if 48 hours pass with no message at all. The question moves to the back of the queue.
 
 ---
 
-### Сценарий 1: Проактивное сообщение приходит и сотрудник отвечает
+## How to test via Slack
 
-**Шаг 1 — Запустить check-in прямо сейчас**
+### What you need before starting
 
-Вместо ожидания 3 дней запускаем планировщик вручную:
+- A test user connected to the Slack workspace
+- API access (Postman / curl)
+- The dashboard open at `/pulse`
+- The `tenantId` of the test company
+
+---
+
+### Scenario 1: A proactive message arrives and the employee replies
+
+**Step 1 — Trigger a check-in right now**
+
+Instead of waiting 3 days, run the scheduler manually:
 
 ```http
 POST /dev/simulate-proactive-scan
 Content-Type: application/json
 
-{ "tenantId": "<id компании>" }
+{ "tenantId": "<company id>" }
 ```
 
-Через несколько секунд тестовый сотрудник получит сообщение в Slack от AI-ментора.
+Within a few seconds the test employee receives a message in Slack from the AI mentor.
 
-**Шаг 2 — Прочитать и ответить в Slack**
+**Step 2 — Read and reply in Slack**
 
-Открой Slack как тестовый сотрудник. Должно прийти сообщение примерно такого вида:
+Open Slack as the test employee. A message roughly like this should arrive:
 
-> *"Привет! Хотел спросить — насколько ты сам выбираешь, как подходить к своим задачам? Есть ли ощущение, что ты можешь работать так, как тебе удобнее?"*
+> *"Hey! I wanted to ask — how much do you get to choose how you approach your tasks? Do you feel you can work in the way that suits you best?"*
 
-Ответь развёрнуто, 2–3 предложения. Система должна распознать ответ как релевантный.
+Reply in some detail, 2–3 sentences. The system should recognize the reply as relevant.
 
-**Шаг 3 — Проверить дашборд**
+**Step 3 — Check the dashboard**
 
-Открой `/pulse`, найди тестового сотрудника. Через 10–20 секунд после ответа:
-- Счётчик `закрыто` должен вырасти на 1
-- `Следующий вопрос` должен смениться на следующий по очереди
+Open `/pulse`, find the test employee. Within 10–20 seconds of the reply:
+- The `closed` counter should increase by 1
+- `Next question` should change to the next one in the queue
 
-**Что проверяем:**
-- ✅ Сообщение пришло в Slack
-- ✅ В сообщении виден конкретный вопрос (не generic приветствие)
-- ✅ После ответа прогресс обновился в дашборде
-- ✅ Следующий вопрос — из той же группы или следующей по порядку
+**What we're checking:**
+- ✅ The message arrived in Slack
+- ✅ The message contains a concrete question (not a generic greeting)
+- ✅ After the reply, progress updated on the dashboard
+- ✅ The next question is from the same group or the next one in order
 
 ---
 
-### Сценарий 2: Сотрудник игнорирует (ignore flow)
+### Scenario 2: The employee ignores it (ignore flow)
 
-**Шаг 1** — Запусти check-in (как в сценарии 1), убедись что сообщение пришло.
+**Step 1** — Trigger a check-in (as in Scenario 1), confirm the message arrived.
 
-**Шаг 2** — Не отвечай. Попроси разработчика передвинуть `proactive_sent_at` на 49 часов назад в БД для тестового пользователя.
+**Step 2** — Don't reply. Ask a developer to move `proactive_sent_at` 49 hours into the past in the DB for the test user.
 
-**Шаг 3** — Снова запусти:
+**Step 3** — Run it again:
 
 ```http
 POST /dev/simulate-proactive-scan
-{ "tenantId": "<id компании>" }
+{ "tenantId": "<company id>" }
 ```
 
-Планировщик разрешит игнор и возьмёт следующий вопрос.
+The scheduler will allow the ignore and pick up the next question.
 
-**Шаг 4** — Через несколько секунд придёт новое сообщение — с другим вопросом.
+**Step 4** — Within a few seconds a new message arrives — with a different question.
 
-**Что проверяем:**
-- ✅ Пришёл второй вопрос, не тот же самый
-- ✅ В дашборде: `проигнорировано: 1`
-- ✅ Первый вопрос всё ещё в очереди (он ушёл в конец, но не пропал)
-
----
-
-### Сценарий 3: Сотрудник сам затрагивает тему (cross-pollination)
-
-Сотрудник пишет AI-ментору сам, без проактивного вопроса, но говорит о чём-то связанном с темой из бэклога.
-
-**Шаг 1** — Напиши в Slack от имени тестового сотрудника что-то вроде:
-
-> *"Слушай, я последнее время чувствую, что совсем не понимаю зачем делаю эту работу. Потерял смысл немного."*
-
-Это касается темы **цель (purpose)**.
-
-**Шаг 2** — Подожди 15–20 секунд.
-
-**Шаг 3** — Проверь дашборд:
-
-**Что проверяем:**
-- ✅ Если вопрос по теме `purpose` был в бэклоге → он отмечен как `закрыт` без проактивного сообщения
-- ✅ Счётчик `закрыто` вырос
-- ✅ AI ответил в Slack (показал что услышал, не проигнорировал)
+**What we're checking:**
+- ✅ A second question arrived, not the same one
+- ✅ On the dashboard: `ignored: 1`
+- ✅ The first question is still in the queue (it moved to the back, but didn't disappear)
 
 ---
 
-### Сценарий 4: Несколько сотрудников, у каждого свой прогресс
+### Scenario 3: The employee raises the topic themselves (cross-pollination)
 
-Запусти check-in дважды с разными `tenantId` или убедись что в одной компании несколько сотрудников.
+The employee messages the AI mentor on their own, without a proactive question, but talks about something related to a theme from the backlog.
 
-**Что проверяем:**
-- ✅ У каждого сотрудника свой счётчик в дашборде
-- ✅ Вопросы могут быть разными (зависит от того, где каждый из них в бэклоге)
-- ✅ Ответ одного не влияет на прогресс другого
+**Step 1** — Message in Slack as the test employee, something like:
 
----
+> *"Listen, lately I feel like I don't really understand why I'm doing this work at all. Lost the meaning a bit."*
 
-### Сценарий 5: Конец квартала — engagement-вопросы
+This touches the **purpose** theme.
 
-Этот сценарий требует участия разработчика: нужно установить `engagementUnlockDays` в очень большое значение, либо вручную сдвинуть дату окончания квартала ближе.
+**Step 2** — Wait 15–20 seconds.
 
-**Что должно произойти:**
-- Обычные вопросы перестают отправляться
-- Приходят 3 engagement-вопроса — более прямые, о вовлечённости и намерении остаться
+**Step 3** — Check the dashboard:
 
-**Что проверяем:**
-- ✅ Тема вопросов отличается от обычных (более прямые о чувстве принадлежности к компании)
-- ✅ После 3-х engagement-вопросов система возвращается к обычным (если есть pending)
+**What we're checking:**
+- ✅ If a `purpose` question was in the backlog → it is marked `closed` without a proactive message
+- ✅ The `closed` counter increased
+- ✅ The AI replied in Slack (showed it heard, didn't ignore)
 
 ---
 
-## Таблица приёмочных проверок
+### Scenario 4: Multiple employees, each with their own progress
 
-| # | Что проверить | Как запустить | Ожидаемый результат |
+Trigger a check-in twice with different `tenantId`s, or make sure one company has several employees.
+
+**What we're checking:**
+- ✅ Each employee has their own counter on the dashboard
+- ✅ Questions may differ (depends on where each of them is in the backlog)
+- ✅ One employee's reply doesn't affect another's progress
+
+---
+
+### Scenario 5: End of quarter — engagement questions
+
+This scenario needs a developer: set `engagementUnlockDays` to a very large value, or manually move the quarter-end date closer.
+
+**What should happen:**
+- Regular questions stop being sent
+- 3 engagement questions arrive — more direct, about engagement and intent to stay
+
+**What we're checking:**
+- ✅ The question topic differs from the regular ones (more direct, about a sense of belonging to the company)
+- ✅ After the 3 engagement questions the system returns to the regular ones (if any are pending)
+
+---
+
+## Acceptance checklist
+
+| # | What to check | How to trigger | Expected result |
 |---|--------------|--------------|---------------------|
-| 1 | Сообщение приходит в Slack | `simulate-proactive-scan` | Сообщение с вопросом в Slack |
-| 2 | Вопрос соответствует группе | Посмотреть текст в Slack | Вопрос про автономию, если первый |
-| 3 | Ответ закрывает вопрос | Ответить в Slack | Дашборд: +1 закрыто |
-| 4 | Игнор → следующий вопрос | Не отвечать 48ч → scan | Новый вопрос, `проигнорировано: 1` |
-| 5 | Cross-pollination | Написать о теме без вопроса | Вопрос закрыт автоматически |
-| 6 | Порядок тем | 3 check-in'а подряд | autonomy → belonging → ... |
-| 7 | Бэклоги независимы | Два сотрудника | Разные счётчики у каждого |
+| 1 | Message arrives in Slack | `simulate-proactive-scan` | A message with a question in Slack |
+| 2 | Question matches the group | Look at the text in Slack | A question about autonomy, if it's the first |
+| 3 | A reply closes the question | Reply in Slack | Dashboard: +1 closed |
+| 4 | Ignore → next question | Don't reply for 48h → scan | New question, `ignored: 1` |
+| 5 | Cross-pollination | Write about the topic without a question | Question closed automatically |
+| 6 | Theme order | 3 check-ins in a row | autonomy → belonging → ... |
+| 7 | Backlogs are independent | Two employees | Different counters for each |
 
 ---
 
-## Настройки per-компания
+## Per-company settings
 
-| Параметр | По умолчанию | Описание |
+| Parameter | Default | Description |
 |----------|-------------|----------|
-| `ignoreWindowHours` | 48 часов | Сколько ждать ответа до считать ignored |
-| `engagementUnlockDays` | 14 дней | За сколько дней до конца квартала включать engagement-вопросы |
+| `ignoreWindowHours` | 48 hours | How long to wait for a reply before counting it as ignored |
+| `engagementUnlockDays` | 14 days | How many days before quarter-end to enable engagement questions |
 
-Поменять — попросить разработчика обновить `proactive_messaging_policy` для нужной компании.
+To change these — ask a developer to update `proactive_messaging_policy` for the company in question.
 
 ---
 
-## Что делать если что-то не так
+## What to do if something's off
 
-**Сообщение не пришло в Slack** — проверь что у тестового пользователя есть активный survey window и подключённый Slack workspace. Без активного окна бэклог не инициализируется.
+**Message didn't arrive in Slack** — check that the test user has an active survey window and a connected Slack workspace. Without an active window the backlog isn't initialized.
 
-**Пришло generic приветствие без вопроса** — вероятно, бэклог не инициализировался. Попроси разработчика проверить `pulse_backlog` в БД для этого пользователя.
+**A generic greeting arrived without a question** — the backlog probably wasn't initialized. Ask a developer to check `pulse_backlog` in the DB for this user.
 
-**В дашборде не обновляется прогресс** — убедись что survey window активен (`status = 'active'`). Бэклог в дашборде показывается только для активного квартала.
+**Progress isn't updating on the dashboard** — make sure the survey window is active (`status = 'active'`). The backlog is only shown on the dashboard for the active quarter.
 
-**Приходит тот же вопрос снова** — ignore window (48ч) не прошёл, система ждёт ещё. Попроси разработчика сдвинуть `proactive_sent_at`.
+**The same question keeps arriving** — the ignore window (48h) hasn't passed, the system is still waiting. Ask a developer to move `proactive_sent_at` back.

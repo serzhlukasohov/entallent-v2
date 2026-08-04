@@ -12,11 +12,11 @@ export default async function DashboardPage() {
       <Header data={data} />
       {!data ? (
         <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
-          Не удалось загрузить данные. Проверьте TENANT_ID и ADMIN_API_KEY в .env.
+          Failed to load data. Check TENANT_ID and ADMIN_API_KEY in .env.
         </div>
       ) : data.employees.length === 0 ? (
         <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
-          Нет сотрудников в этом тенанте.
+          No employees in this tenant.
         </div>
       ) : (
         <TeamTable employees={data.employees} />
@@ -30,19 +30,19 @@ function Header({ data }: { data: TeamOverviewResponse | null }) {
   const total = data?.teamSize ?? 0;
   const risks = data?.employees.filter((e) => e.hasActiveRisk).length ?? 0;
   const updated = data
-    ? new Date(data.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    ? new Date(data.generatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     : '—';
 
   return (
     <div style={{ marginBottom: 32 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 600 }}>Team Q12 Pulse</h1>
-        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>обновлено в {updated}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>updated at {updated}</span>
       </div>
       <div style={{ display: 'flex', gap: 16 }}>
-        <Stat label="Всего" value={String(total)} />
-        <Stat label="Есть данные" value={String(scored)} accent="var(--green)" />
-        {risks > 0 && <Stat label="Риск сигналы" value={String(risks)} accent="var(--risk)" />}
+        <Stat label="Total" value={String(total)} />
+        <Stat label="Has data" value={String(scored)} accent="var(--green)" />
+        {risks > 0 && <Stat label="Risk signals" value={String(risks)} accent="var(--risk)" />}
       </div>
     </div>
   );

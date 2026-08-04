@@ -7,17 +7,17 @@ import { buildStyleAdaptationBlock } from './style-render';
 const realProfile = {
   dimensions: { register: 0.72, humor: 0.29, verbosity: 0.27, emoji: 0.11 },
   weight: 0.3,
-  phrases: ['на чиле', 'по факт'],
+  phrases: ['chillin', 'for real'],
 };
 
 describe('buildStyleAdaptationBlock', () => {
   it('fires casual + shorter cues for a realistic moderate profile', () => {
     const b = buildStyleAdaptationBlock(realProfile, 'normal');
-    expect(b).toMatch(/casual|ты/i);         // register cue fires
+    expect(b).toMatch(/casual|first-name/i); // register cue fires
     expect(b).toMatch(/shorter|clipped/i);   // verbosity cue fires
     expect(b).not.toMatch(/playful|lightness/i); // humor ~base → no cue
     expect(b).not.toMatch(/emoji/i);         // emoji below base → no cue
-    expect(b).toContain('на чиле');          // phrases present as a word-choice cue
+    expect(b).toContain('chillin');          // phrases present as a word-choice cue
     expect(b).toMatch(/do not quote|not.*verbatim/i); // #3: cue only, no verbatim echo
     expect(b.toLowerCase()).toMatch(/base persona stays primary|≤40%/);
   });

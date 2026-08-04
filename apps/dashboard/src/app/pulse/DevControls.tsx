@@ -12,7 +12,7 @@ export function DevControls({ userId, tenantId }: { userId: string; tenantId: st
     setMsg('');
     try {
       const result = await resetUser(userId, deep);
-      setMsg(`Сброшено: бэклог ${result.pulseBacklog}, evidence ${result.surveyEvidence}, memory ${result.memoryItems}${deep ? `, сообщений ${result.messages}` : ''}`);
+      setMsg(`Reset: backlog ${result.pulseBacklog}, evidence ${result.surveyEvidence}, memory ${result.memoryItems}${deep ? `, messages ${result.messages}` : ''}`);
       setStatus('done');
     } catch (e) {
       setMsg(String(e));
@@ -25,7 +25,7 @@ export function DevControls({ userId, tenantId }: { userId: string; tenantId: st
     setMsg('');
     try {
       await forceCheckIn(userId, tenantId);
-      setMsg('Check-in запущен — жди сообщения в Slack');
+      setMsg('Check-in triggered — watch for a message in Slack');
       setStatus('done');
     } catch (e) {
       setMsg(String(e));
@@ -42,14 +42,14 @@ export function DevControls({ userId, tenantId }: { userId: string; tenantId: st
         disabled={disabled}
         style={btnStyle('#3b82f6', disabled)}
       >
-        Сбросить бэклог
+        Reset backlog
       </button>
       <button
         onClick={() => handleReset(true)}
         disabled={disabled}
         style={btnStyle('#ef4444', disabled)}
       >
-        Полный сброс
+        Full reset
       </button>
       <button
         onClick={handleCheckIn}

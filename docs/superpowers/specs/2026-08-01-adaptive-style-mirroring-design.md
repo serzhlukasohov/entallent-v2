@@ -46,7 +46,7 @@ singleton that does not fit the `memory_items` "list of facts" model):
 
 - `userId`, `tenantId` (unique together)
 - `dimensions jsonb` — observed user level `u[dim] ∈ [0,1]` per axis:
-  - `register`: 0 = formal / «вы», 1 = casual / «ты»
+  - `register`: 0 = formal, 1 = casual
   - `humor`: 0 = earnest, 1 = playful
   - `verbosity`: 0 = terse/clipped, 1 = elaborate
   - `emoji`: 0 = none, 1 = frequent
@@ -86,7 +86,7 @@ profile. Separate job = separate concern, shared timing.
 A function that turns the profile into a compact "style adaptation" block for
 `buildRespondSystemPrompt`, scaled by `w`:
 - Translate each effective dimension level into concrete, soft guidance (e.g. high
-  register→"lean a bit more casual, ты is fine"; higher humor→"a little more
+  register→"lean a bit more casual, first-name is fine"; higher humor→"a little more
   playful"; higher emoji→"an occasional emoji is fine"; verbosity→length nudge).
 - If `w` is low / few conversations analyzed, emit little or nothing (cold start).
 - May list ≤2 of the user's characteristic phrases as "expressions you can

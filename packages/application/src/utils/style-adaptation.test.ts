@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_STYLE_PROFILE, updateStyleProfile, effectiveStyleLevels, BASE_STYLE, WEIGHT_CAP } from './style-adaptation';
 
-const observed = { dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['ну такое', 'по кайфу'] };
+const observed = { dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['eh, so-so', 'love it'] };
 
 describe('updateStyleProfile', () => {
   it('EMA nudges dimensions toward observed (alpha 0.3)', () => {
@@ -29,9 +29,9 @@ describe('updateStyleProfile', () => {
 
   it('merges phrases, dedupes with counts, caps at 5', () => {
     let p = updateStyleProfile(DEFAULT_STYLE_PROFILE('u', 't'), observed, 5);
-    p = updateStyleProfile(p, { dimensions: observed.dimensions, phrases: ['ну такое', 'x', 'y', 'z', 'w', 'v'] }, 5);
+    p = updateStyleProfile(p, { dimensions: observed.dimensions, phrases: ['eh, so-so', 'x', 'y', 'z', 'w', 'v'] }, 5);
     expect(p.phrases.length).toBeLessThanOrEqual(5);
-    expect(p.phrases.find((x) => x.text === 'ну такое')?.count).toBe(2);
+    expect(p.phrases.find((x) => x.text === 'eh, so-so')?.count).toBe(2);
   });
 });
 

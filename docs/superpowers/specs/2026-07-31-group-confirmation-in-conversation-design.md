@@ -18,11 +18,11 @@ Today the confirmation is **broken as a UX**:
    `conversationId` (`group-confirm-…`). It is not saved to the `messages` table.
    It arrives mid-conversation and interrupts the employee — e.g. while they are
    answering the agent's previous question.
-2. **Wrong language.** The summary is produced by `generateGroupSummary` in
-   isolation from the transcript, so it comes out in English even for Russian
-   conversations (weak language signal in the prompt).
+2. **Wrong language / tone.** The summary is produced by `generateGroupSummary` in
+   isolation from the transcript, so it can drift from the conversation's own
+   wording and register (weak signal in the prompt).
 3. **Reply not recognised.** `ConversationOrchestrator.handleGroupConfirmation`
-   detects confirmation by **keyword match** ('да', 'yes', …) on the user's next
+   detects confirmation by **keyword match** ('yes', 'yeah', …) on the user's next
    message. When the employee replies substantively (answering the previous
    question, or phrasing agreement without a keyword), it is not accepted.
 

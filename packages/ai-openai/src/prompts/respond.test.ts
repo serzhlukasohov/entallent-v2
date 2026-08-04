@@ -40,9 +40,9 @@ describe('buildRespondSystemPrompt few-shot exemplars', () => {
     expect(prompt).toContain(RESPOND_STYLE_EXAMPLES.trim().slice(0, 24));
   });
   it('exemplars demonstrate leading with substance, not labeling', () => {
-    expect(RESPOND_STYLE_EXAMPLES.toLowerCase()).toContain('вот это');   // shown as the BAD pattern
-    expect(RESPOND_STYLE_EXAMPLES).toMatch(/BAD|ПЛОХО/);
-    expect(RESPOND_STYLE_EXAMPLES).toMatch(/GOOD|ХОРОШО/);
+    expect(RESPOND_STYLE_EXAMPLES.toLowerCase()).toContain('that, it seems');   // shown as the BAD pattern
+    expect(RESPOND_STYLE_EXAMPLES).toMatch(/BAD/);
+    expect(RESPOND_STYLE_EXAMPLES).toMatch(/GOOD/);
   });
 });
 
@@ -54,23 +54,23 @@ describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', (
   it('encourages a question when includeFollowUpQuestion is true', () => {
     const p = buildRespondSystemPrompt(normal(true), { userName: 'T' });
     expect(p).toMatch(/one sharp question/i);
-    expect(p).toContain('Что ещё сейчас занимает голову'); // rhythm exit question available
+    expect(p).toContain('What else is on your mind right now'); // rhythm exit question available
   });
 
   it('suppresses questions across the persona body when false (not just the trailing note)', () => {
     const p = buildRespondSystemPrompt(normal(false), { userName: 'T' });
     expect(p).toMatch(/Do NOT ask a question this turn/i);
     expect(p).not.toMatch(/one sharp question/i);
-    expect(p).not.toContain('Что ещё сейчас занимает голову');
+    expect(p).not.toContain('What else is on your mind right now');
   });
 });
 
 describe('buildRespondSystemPrompt local time', () => {
   const base = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
   it('includes local time + greeting guidance when localTime is set and isSessionStart is true', () => {
-    const p = buildRespondSystemPrompt(base(), { userName: 'T', localTime: 'суббота, 09:15 (утро)', isSessionStart: true });
-    expect(p).toContain('суббота, 09:15 (утро)');
-    expect(p).toMatch(/доброе утро|greeting|sign-off/i);
+    const p = buildRespondSystemPrompt(base(), { userName: 'T', localTime: 'Saturday, 09:15 (morning)', isSessionStart: true });
+    expect(p).toContain('Saturday, 09:15 (morning)');
+    expect(p).toMatch(/good morning|greeting|sign-off/i);
   });
   it('omits the time hint when localTime is absent', () => {
     const p = buildRespondSystemPrompt(base(), { userName: 'T' });
@@ -81,12 +81,12 @@ describe('buildRespondSystemPrompt local time', () => {
 describe('buildRespondSystemPrompt session-aware greeting', () => {
   const s = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
   it('offers a greeting at session start with known time', () => {
-    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'суббота, 09:00 (утро)', isSessionStart: true });
+    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: true });
     expect(p).toMatch(/start of a session/i);
-    expect(p).toContain('суббота, 09:00 (утро)');
+    expect(p).toContain('Saturday, 09:00 (morning)');
   });
   it('suppresses greeting mid-session', () => {
-    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'суббота, 09:00 (утро)', isSessionStart: false });
+    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: false });
     expect(p).toMatch(/do NOT open with a greeting/i);
   });
   it('no time hint when tz unknown', () => {

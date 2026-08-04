@@ -6,7 +6,7 @@
 ## Problem
 
 The agent doesn't reliably know the employee's local date/time, so:
-- No time-appropriate greetings/sign-offs ("доброе утро", "хорошего вечера").
+- No time-appropriate greetings/sign-offs ("good morning", "have a good evening").
 - Proactive check-ins can fire at night.
 - `users.timezone` is never populated (defaults to UTC everywhere), so even the
   recently-added `localTime` hint greets by UTC — wrong for most users.
@@ -47,7 +47,7 @@ wrong) when the timezone is genuinely unknown.
   there is no prior message.
 - Passed into `ResponseContext.isSessionStart`. `respond.ts` only offers a
   time-appropriate greeting/sign-off when `isSessionStart` AND `localTime` is known.
-  Mid-session replies get no greeting (fixes "доброе утро" on every turn).
+  Mid-session replies get no greeting (fixes "good morning" on every turn).
 
 ### Component 3: Quiet hours — default window, dev toggle, tone
 
@@ -57,8 +57,8 @@ wrong) when the timezone is genuinely unknown.
   — we can't compute local night, and proactive already requires an active channel).
 - **Dev toggle.** New env `QUIET_HOURS_ENABLED` (default `true`). When `false`, the
   proactive scheduler skips the quiet-hours guard entirely (for local/dev testing).
-- **Tone.** `describeLocalTime` already yields a part-of-day label ("ночь"), which
-  steers the reply away from a chipper "доброе утро" at night; the greeting hint
+- **Tone.** `describeLocalTime` already yields a part-of-day label ("night"), which
+  steers the reply away from a chipper "good morning" at night; the greeting hint
   reinforces a wind-down tone late.
 
 ### Component 4: Timezone refresh (travel)

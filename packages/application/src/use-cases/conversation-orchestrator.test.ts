@@ -137,8 +137,8 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
   it('terse user is always shortened; skips the question when the agent just asked one', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'i-1', direction: 'inbound', text: 'ага', occurredAt: new Date(), metadata: undefined },
-      { id: 'o-1', direction: 'outbound', text: 'а что именно тебя держит?', occurredAt: new Date(), metadata: undefined },
+      { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
+      { id: 'o-1', direction: 'outbound', text: 'what exactly is holding you back?', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -153,8 +153,8 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
   it('terse user asks a follow-up when the previous reply had no question', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'i-1', direction: 'inbound', text: 'ага', occurredAt: new Date(), metadata: undefined },
-      { id: 'o-1', direction: 'outbound', text: 'понял, звучит выматывающе.', occurredAt: new Date(), metadata: undefined },
+      { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
+      { id: 'o-1', direction: 'outbound', text: 'got it, sounds draining.', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -199,7 +199,7 @@ describe('ConversationOrchestrator local time', () => {
     await orch.orchestrate(INPUT);
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(typeof ctxArg.localTime).toBe('string');
-    expect(ctxArg.localTime).toMatch(/утро|день|вечер|ночь/);
+    expect(ctxArg.localTime).toMatch(/morning|afternoon|evening|night/);
   });
 
   it('marks session start when only the current inbound exists (no prior messages)', async () => {

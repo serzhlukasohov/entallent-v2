@@ -38,7 +38,7 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
     });
     const provider = makeProvider();
     const r = await provider.interpretConfirmationResponse(
-      [{ role: 'user', content: 'да, всё так', timestamp: new Date() }],
+      [{ role: 'user', content: "yes, that's right", timestamp: new Date() }],
       'You value autonomy...',
     );
     expect(r.verdict).toBe('agree');
@@ -46,15 +46,15 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
 
   it('parses a correct verdict with a note', async () => {
     createMock.mockResolvedValue({
-      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"correct","correctionNote":"не про деньги"}' } }],
+      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"correct","correctionNote":"not about money"}' } }],
     });
     const provider = makeProvider();
     const r = await provider.interpretConfirmationResponse(
-      [{ role: 'user', content: 'не совсем', timestamp: new Date() }],
+      [{ role: 'user', content: 'not quite', timestamp: new Date() }],
       'summary',
     );
     expect(r.verdict).toBe('correct');
-    expect(r.correctionNote).toBe('не про деньги');
+    expect(r.correctionNote).toBe('not about money');
   });
 });
 
@@ -64,56 +64,56 @@ describe('OpenAiProvider.generateResponse opener gate', () => {
 
   it('regenerates once when the first draft opens with a reflective label', async () => {
     createMock
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Вот это, похоже, и есть корень: шум.","confidence":0.9,"containsSurveyProbe":false}' } }] })
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"А что мешает отсечь это первым?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}' } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"What is stopping you from cutting that off first?","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
-    const res = await provider.generateResponse([{ role: 'user', content: 'суета', timestamp: new Date() }], strat, { userName: 'X' });
+    const res = await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, { userName: 'X' });
     expect(createMock).toHaveBeenCalledTimes(2);
-    expect(res.text).toBe('А что мешает отсечь это первым?');
+    expect(res.text).toBe('What is stopping you from cutting that off first?');
   });
 
   it('does not regenerate when the first draft is clean', async () => {
-    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"А что мешает отсечь это первым?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"What is stopping you from cutting that off first?","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
-    await provider.generateResponse([{ role: 'user', content: 'суета', timestamp: new Date() }], strat, { userName: 'X' });
+    await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, { userName: 'X' });
     expect(createMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not run the opener gate for confirmation replies (confirmationRequest set)', async () => {
-    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Похоже, для тебя важнее автономия — я правильно понял?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"It seems like autonomy matters more to you — did I get that right?","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
     const res = await provider.generateResponse(
-      [{ role: 'user', content: 'да', timestamp: new Date() }],
+      [{ role: 'user', content: 'yes', timestamp: new Date() }],
       { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
       { userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } },
     );
     expect(createMock).toHaveBeenCalledTimes(1);
-    expect(res.text).toContain('я правильно понял');
+    expect(res.text).toContain('did I get that right');
   });
 
   it('returns the regenerated draft unconditionally even if it also opens reflectively (no loop)', async () => {
     createMock
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Вот это, похоже, и есть корень: шум.","confidence":0.9,"containsSurveyProbe":false}' } }] })
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Звучит как перегрузка, честно.","confidence":0.9,"containsSurveyProbe":false}' } }] });
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}' } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Sounds like an overload, honestly.","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
     const res = await provider.generateResponse(
-      [{ role: 'user', content: 'суета', timestamp: new Date() }],
+      [{ role: 'user', content: 'chaos', timestamp: new Date() }],
       { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] },
       { userName: 'X' },
     );
     expect(createMock).toHaveBeenCalledTimes(2);
-    expect(res.text).toBe('Звучит как перегрузка, честно.');
+    expect(res.text).toBe('Sounds like an overload, honestly.');
   });
 });
 
 describe('OpenAiProvider.analyzeStyle', () => {
   beforeEach(() => createMock.mockReset());
   it('parses observed style', async () => {
-    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"dimensions":{"register":0.9,"humor":0.6,"verbosity":0.3,"emoji":0.1},"phrases":["ну такое"]}' } }] });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"dimensions":{"register":0.9,"humor":0.6,"verbosity":0.3,"emoji":0.1},"phrases":["eh, so-so"]}' } }] });
     const provider = makeProvider();
-    const r = await provider.analyzeStyle(['привет, ну такое']);
+    const r = await provider.analyzeStyle(['hey, eh so-so']);
     expect(r.dimensions.register).toBe(0.9);
-    expect(r.phrases).toContain('ну такое');
+    expect(r.phrases).toContain('eh, so-so');
   });
 });
 

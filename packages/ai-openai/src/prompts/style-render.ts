@@ -33,8 +33,8 @@ export function buildStyleAdaptationBlock(style: StyleAdaptation, mode: string):
   const cues: string[] = [];
   if (u.register - BASE_STYLE.register >= MARGIN) {
     cues.push(firm
-      ? 'match their more casual register — «ты», plain everyday wording, short connectors; skip bureaucratic phrasing'
-      : 'lean a little more casual — «ты» and simpler wording are fine');
+      ? 'match their more casual register — first-name basis, contractions, plain everyday wording, short connectors; skip bureaucratic phrasing'
+      : 'lean a little more casual — a first-name tone and simpler wording are fine');
   } else if (BASE_STYLE.register - u.register >= MARGIN) {
     cues.push(firm ? 'keep a more formal, respectful register' : 'stay a touch more formal in register');
   }

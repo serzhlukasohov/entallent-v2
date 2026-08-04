@@ -38,7 +38,7 @@ export function EngagementChart({ data }: { data: EngagementPoint[] }) {
   const H = 120;
 
   return (
-    <Card title="Вовлечённость" subtitle="входящие сообщения (столбцы) · активные юзеры (точки) в день">
+    <Card title="Engagement" subtitle="inbound messages (bars) · active users (dots) per day">
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: H, position: 'relative' }}>
         {data.map((d) => {
           const msgH = (d.inboundMessages / maxMsg) * (H - 20);
@@ -49,7 +49,7 @@ export function EngagementChart({ data }: { data: EngagementPoint[] }) {
                 {d.inboundMessages || ''}
               </span>
               <div
-                title={`${d.date}: ${d.inboundMessages} сообщений, ${d.activeUsers} активных`}
+                title={`${d.date}: ${d.inboundMessages} messages, ${d.activeUsers} active`}
                 style={{ width: '70%', height: Math.max(2, msgH), background: C.blue, borderRadius: '3px 3px 0 0', opacity: d.inboundMessages ? 0.85 : 0.2 }}
               />
               {d.activeUsers > 0 && (
@@ -84,7 +84,7 @@ export function SignalChart({ data }: { data: SignalPoint[] }) {
   ];
 
   return (
-    <Card title="Захват сигнала" subtitle="записи evidence в день, по полярности">
+    <Card title="Signal capture" subtitle="evidence records per day, by polarity">
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: H }}>
         {data.map((d) => (
           <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
@@ -116,13 +116,13 @@ export function SignalChart({ data }: { data: SignalPoint[] }) {
 }
 
 const FUNNEL_LABELS: Record<string, string> = {
-  unknown: 'Неизвестно',
-  insufficient_evidence: 'Недостаточно',
-  partially_covered: 'Частично',
-  covered: 'Покрыто',
-  scored: 'Оценено',
-  needs_review: 'На проверку',
-  suppressed: 'Скрыто',
+  unknown: 'Unknown',
+  insufficient_evidence: 'Insufficient',
+  partially_covered: 'Partial',
+  covered: 'Covered',
+  scored: 'Scored',
+  needs_review: 'Needs review',
+  suppressed: 'Suppressed',
 };
 const FUNNEL_ORDER = ['insufficient_evidence', 'partially_covered', 'covered', 'scored'];
 const FUNNEL_COLORS: Record<string, string> = {
@@ -137,9 +137,9 @@ export function CoverageFunnel({ data }: { data: Record<string, number> }) {
   const max = Math.max(1, ...shown.map((s) => data[s]));
 
   return (
-    <Card title="Воронка покрытия" subtitle="статусы ассессментов по всем вопросам × сотрудникам">
+    <Card title="Coverage funnel" subtitle="assessment statuses across all questions × employees">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {shown.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Нет данных</span>}
+        {shown.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No data</span>}
         {shown.map((s) => (
           <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ width: 110, fontSize: 12, color: 'var(--text-muted)' }}>{FUNNEL_LABELS[s]}</span>
@@ -160,9 +160,9 @@ export function QuestionSentimentChart({ data }: { data: QuestionSentiment[] }) 
   const withData = data.filter((q) => q.net !== null);
 
   return (
-    <Card title="Сентимент по вопросам Q12" subtitle="net = (позитив − негатив) / всего, по когорте · снизу самое проблемное">
+    <Card title="Sentiment by Q12 question" subtitle="net = (positive − negative) / total, by cohort · most problematic at the bottom">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {withData.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Нет данных</span>}
+        {withData.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No data</span>}
         {withData.map((q) => {
           const net = q.net ?? 0;
           const pct = Math.abs(net) * 50; // half-width max
@@ -176,7 +176,7 @@ export function QuestionSentimentChart({ data }: { data: QuestionSentiment[] }) 
                 {/* center line */}
                 <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'var(--border)' }} />
                 <div
-                  title={`net ${net} · +${q.positive}/-${q.negative} (всего ${q.total})`}
+                  title={`net ${net} · +${q.positive}/-${q.negative} (total ${q.total})`}
                   style={{
                     position: 'absolute',
                     top: 3,

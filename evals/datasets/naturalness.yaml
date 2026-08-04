@@ -4,30 +4,30 @@ prompts:
   - file://../providers/respond-prompt.js
 
 tests:
-  - description: reply to a "суета/шум" observation must not open with a verdict-label
+  - description: reply to a "chaos/noise" observation must not open with a verdict-label
     vars:
       userName: Vika
       turns:
         - role: assistant
-          content: "Где сейчас у тебя больше всего утекает результат?"
+          content: "Where is your output leaking the most right now?"
         - role: user
-          content: "в суете, которая приносит много триггеров, что все начинают распыляться"
+          content: "in all the chaos, with so many things pulling at everyone, people start spreading themselves thin"
     assert:
       - type: javascript
         value: file://../asserts/no-reflective-opener.js
       - type: llm-rubric
         value: |
           The reply must NOT open by labeling or characterizing what the employee just said
-          (e.g. "Вот это звучит как…", "Вот это и есть корень…", "То, что ты описываешь — это…").
+          (e.g. "That's starting to sound like…", "That's the real root…", "What you're describing is…").
           It should lead with substance — a specific observation or a single genuine question.
           Fail if the first sentence is a verdict on the employee's words.
 
-  - description: reply to "результат теряется дальше" must lead with substance
+  - description: reply to "the result gets lost down the line" must lead with substance
     vars:
       userName: Vika
       turns:
         - role: user
-          content: "делаешь нормально, а результат где-то теряется дальше"
+          content: "you do your part well, but the result gets lost somewhere down the line"
     assert:
       - type: javascript
         value: file://../asserts/no-reflective-opener.js
