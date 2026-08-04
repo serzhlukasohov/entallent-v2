@@ -13,3 +13,5 @@ coverage/
 migrations/meta/
 .autocontext/
 runs/
+.agents
+_bmad
