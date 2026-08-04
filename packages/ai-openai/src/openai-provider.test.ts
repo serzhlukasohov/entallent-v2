@@ -106,6 +106,50 @@ describe('OpenAiProvider.generateResponse opener gate', () => {
   });
 });
 
+describe('OpenAiProvider.generateResponse length + question gates', () => {
+  beforeEach(() => createMock.mockReset());
+  const terseContext = {
+    userName: 'X',
+    styleAdaptation: { dimensions: { register: 0.5, humor: 0.3, verbosity: 0.08, emoji: 0.2 }, weight: 0.4, phrases: [] },
+  };
+  const shortNoQuestion = {
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'short', forbiddenPatterns: [],
+  } as ReplyStrategy;
+
+  it('regenerates once when a terse short reply overruns the length budget', async () => {
+    const tooLong =
+      'This is a much longer reply than a terse user warrants, packed with an extra observation, a follow-on thought, and yet another clause that just keeps going well past any short budget.';
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: tooLong, confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Rough one.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse([{ role: 'user', content: 'tired', timestamp: new Date() }], shortNoQuestion, terseContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('Rough one.');
+  });
+
+  it('does not regenerate a short reply within the terse budget', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Rough one.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+    await provider.generateResponse([{ role: 'user', content: 'tired', timestamp: new Date() }], shortNoQuestion, terseContext);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('regenerates when a no-question turn ends with a question', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'And what will you change about it?', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Makes sense.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse(
+      [{ role: 'user', content: 'ok', timestamp: new Date() }],
+      { mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      { userName: 'X' },
+    );
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('Makes sense.');
+  });
+});
+
 describe('OpenAiProvider.analyzeStyle', () => {
   beforeEach(() => createMock.mockReset());
   it('parses observed style', async () => {

@@ -72,6 +72,39 @@ export type OpenAiProviderConfig = DirectOpenAiConfig | AzureOpenAiConfig;
 const OPENER_RETRY_INSTRUCTION =
   '\n\nYour previous draft OPENED by labeling what the employee just said (a "verdict on their words"). Do NOT do that. Delete that opening sentence entirely and start with the substance — a specific observation or one sharp question.';
 
+const QUESTION_RETRY_INSTRUCTION =
+  '\n\nYour previous draft ended with a question. This turn must NOT ask one — respond to what they said and leave the space open. Remove the trailing question.';
+
+/** Firm rewrite instruction when a reply overruns its length budget. */
+function lengthRetryInstruction(maxChars: number): string {
+  const words = Math.max(8, Math.round(maxChars / 6));
+  return `\n\nYour previous draft was too long for this turn. Rewrite it much shorter — at most ${words} words, one sentence if you can. Keep only the single most useful thing and drop the extra observation.`;
+}
+
+/**
+ * Hard length ceiling (characters) per reply-length tier, tightened for a clearly terse
+ * user. This is the structural backstop the persona won't honour from a soft prompt hint —
+ * the same reason the reflective-opener gate exists. Verbosity comes from the observed
+ * style profile already carried in the response context.
+ */
+function maxReplyChars(strategy: ReplyStrategy, context: ResponseContext): number {
+  const verbosity = context.styleAdaptation?.dimensions.verbosity;
+  const terse = typeof verbosity === 'number' && verbosity <= 0.3;
+  switch (strategy.maxResponseLength) {
+    case 'short':
+      return terse ? 140 : 360;
+    case 'medium':
+      return terse ? 340 : 680;
+    default:
+      return 980;
+  }
+}
+
+/** True when the reply's final visible character is a question mark (allowing closing quotes/brackets). */
+function endsWithQuestion(text: string): boolean {
+  return /\?["'”’)\]]*\s*$/.test(text.trim());
+}
+
 export class OpenAiProvider implements AiProviderPort {
   private readonly client: OpenAI;
   private readonly analysisModel: string;
@@ -156,12 +189,27 @@ export class OpenAiProvider implements AiProviderPort {
     const first = GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
     );
-    // Confirmation replies legitimately open by paraphrasing understanding — exempt them from the gate.
-    if (context.confirmationRequest || !hasReflectiveOpener(first.text)) return first;
 
-    // One corrective regeneration — the common path never reaches here.
+    // Confirmation replies legitimately paraphrase understanding and end with a question —
+    // exempt them from every post-generation gate.
+    if (context.confirmationRequest) return first;
+
+    // Deterministic invariants the persona won't respect from a soft prompt hint. Same
+    // backstop pattern as the reflective-opener gate: collect what fired, do ONE corrective
+    // regeneration addressing all of it, return unconditionally (no loop). The common path
+    // fires nothing and returns immediately.
+    const retries: string[] = [];
+    if (hasReflectiveOpener(first.text)) retries.push(OPENER_RETRY_INSTRUCTION);
+    if (first.text.length > maxReplyChars(strategy, context)) {
+      retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
+    }
+    if (!strategy.includeFollowUpQuestion && !context.proactiveCheckIn && endsWithQuestion(first.text)) {
+      retries.push(QUESTION_RETRY_INSTRUCTION);
+    }
+    if (retries.length === 0) return first;
+
     return GeneratedResponseSchema.parse(
-      JSON.parse(await this.complete(system + OPENER_RETRY_INSTRUCTION, user, this.generationModel)),
+      JSON.parse(await this.complete(system + retries.join(''), user, this.generationModel)),
     );
   }
 

@@ -5,7 +5,7 @@ import { RESPOND_STYLE_EXAMPLES } from './respond-examples';
 import { buildStyleAdaptationBlock } from './style-render';
 
 export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: ResponseContext): string {
-  const lengthMap = { short: '1-2 sentences', medium: '2-4 sentences', long: '4-6 sentences' };
+  const lengthMap = { short: 'one short sentence, two at most (aim for under 25 words)', medium: '2-4 sentences', long: '4-6 sentences' };
   const lengthGuide = lengthMap[strategy.maxResponseLength];
 
   const forbidden = strategy.forbiddenPatterns.length > 0
@@ -120,6 +120,7 @@ Hard rules:
 - Do not be relentlessly positive or use hollow affirmations ("That's great!", "It's wonderful that you notice that")
 - Do not nod along for three sentences — if your whole response is just agreeing with different words, start over
 - Do not ask the same question reframed — if you already probed this angle and got an answer (even a short one), you have what you need; move on rather than drilling further into the same vein
+- Never comment on how much or how little they write — no remarks on their brevity, word count, or one-word answers ("one word is doing a lot of work there", "you're a person of few words")
 
 Return JSON:
 {
