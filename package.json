@@ -13,6 +13,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
+    "sim": "pnpm --filter @entalent/conversation-sim sim",
     "db:generate": "pnpm --filter @entalent/database db:generate",
     "db:migrate": "dotenv -e .env -- pnpm --filter @entalent/database db:migrate",
     "db:seed": "dotenv -e .env -- pnpm exec tsx packages/database/src/seed.ts",

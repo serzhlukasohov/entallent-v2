@@ -1,0 +1,28 @@
+{
+  "name": "@entalent/conversation-sim",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "sim": "vitest run",
+    "sim:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\""
+  },
+  "devDependencies": {
+    "@ai-sdk/azure": "^3.0.0",
+    "@ai-sdk/openai": "^3.0.0",
+    "@entalent/eslint-config": "workspace:*",
+    "@entalent/typescript-config": "workspace:*",
+    "@langwatch/scenario": "^0.4.15",
+    "ai": "^6.0.0",
+    "dotenv": "^16.4.5",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@entalent/ai-openai": "workspace:*",
+    "@entalent/application": "workspace:*",
+    "@entalent/contracts": "workspace:*"
+  }
+}

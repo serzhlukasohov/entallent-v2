@@ -12,3 +12,4 @@ coverage/
 *.tsbuildinfo
 migrations/meta/
 .autocontext/
+runs/
