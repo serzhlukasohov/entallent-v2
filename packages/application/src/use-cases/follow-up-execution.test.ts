@@ -91,6 +91,7 @@ function makeAi(): AiProviderPort {
     generateGroupReport: vi.fn(),
     scoreSentiment: vi.fn(),
     interpretConfirmationResponse: vi.fn(),
+    analyzeStyle: vi.fn(),
   };
 }
 
@@ -101,6 +102,8 @@ function makeOutbox(): OutboxPort {
     enqueueFollowUpExecution: vi.fn(),
     enqueueSurveyEvidence: vi.fn(),
     enqueueGroupReport: vi.fn(),
+    enqueueStyleAnalysis: vi.fn(),
+    enqueueProfileHydration: vi.fn(),
   };
 }
 
