@@ -108,6 +108,70 @@ describe('RuntimeLedgerRepository', () => {
     expect(db.calls.update).not.toHaveBeenCalled();
   });
 
+  it('finds an attempt by tenant-scoped durable fallback key without mutating phase', async () => {
+    const db = createDbMock();
+    const repository = new RuntimeLedgerRepository(db as never);
+    db.calls.limit.mockResolvedValueOnce([{ ...startedAttempt, phase: 'actions_committed' }]);
+
+    await expect(
+      repository.findAttemptByDurableKey({
+        tenantId: 'tenant-1',
+        requestId: 'request-1',
+        eventId: 'event-1',
+        messageId: 'message-1',
+        runtimeAttempt: 1,
+      }),
+    ).resolves.toMatchObject({
+      id: 'attempt-1',
+      traceId: 'trace-1',
+      runtimeMode: 'maf_shadow',
+      runtimeAttempt: 1,
+      phase: 'actions_committed',
+    });
+
+    expect(db.calls.select).toHaveBeenCalledWith({
+      id: expect.anything(),
+      traceId: expect.anything(),
+      runtimeMode: expect.anything(),
+      runtimeAttempt: expect.anything(),
+      phase: expect.anything(),
+      failureReason: expect.anything(),
+    });
+    expect(db.calls.update).not.toHaveBeenCalled();
+  });
+
+  it('returns null for a missing durable fallback key', async () => {
+    const db = createDbMock();
+    const repository = new RuntimeLedgerRepository(db as never);
+    db.calls.limit.mockResolvedValueOnce([]);
+
+    await expect(
+      repository.findAttemptByDurableKey({
+        tenantId: 'tenant-1',
+        requestId: 'request-1',
+        eventId: 'event-1',
+        messageId: 'message-1',
+        runtimeAttempt: 1,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('includes tenant scope in durable fallback key lookup', async () => {
+    const db = createDbMock();
+    const repository = new RuntimeLedgerRepository(db as never);
+
+    await repository.findAttemptByDurableKey({
+      tenantId: 'tenant-2',
+      requestId: 'request-1',
+      eventId: 'event-1',
+      messageId: 'message-1',
+      runtimeAttempt: 1,
+    });
+
+    expect(db.calls.where).toHaveBeenCalled();
+    expect(db.calls.update).not.toHaveBeenCalled();
+  });
+
   it('records action envelopes atomically with canonical side-effect state only', async () => {
     const db = createDbMock();
     const repository = new RuntimeLedgerRepository(db as never);

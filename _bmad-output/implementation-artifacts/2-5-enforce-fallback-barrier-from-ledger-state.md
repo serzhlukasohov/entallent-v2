@@ -4,7 +4,7 @@ baseline_commit: d6a809a51d2eb57f3cd59c34f0e3e4abca296e7a
 
 # Story 2.5: Enforce Fallback Barrier From Ledger State
 
-Status: ready-for-dev
+Status: review
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.5
 
@@ -24,41 +24,41 @@ so that retries cannot duplicate replies, memories, or follow-ups.
 
 ## Tasks / Subtasks
 
-- [ ] Add a reusable fallback-barrier classifier. (AC: 1, 2, 4)
-  - [ ] Add a small framework-neutral classifier in `packages/application/src/use-cases/` or a nearby runtime module.
-  - [ ] Classify `started`, `candidate_received`, `actions_validated`, and `failed` as fallback-open for the current first slice.
-  - [ ] Classify `actions_committed` and `reply_committed` as fallback-closed.
-  - [ ] Return stable reason codes such as `fallback_open_before_side_effect`, `fallback_closed_after_actions_committed`, `fallback_closed_after_reply_committed`, and `fallback_barrier_unknown`.
-  - [ ] Keep the classifier pure and independent of Drizzle, Nest, BullMQ, Python, HTTP, and MAF framework types.
-- [ ] Add runtime ledger read support needed by the barrier. (AC: 1, 3, 4)
-  - [ ] Extend `RuntimeLedgerRepository` with a tenant-scoped lookup by durable attempt key: tenant ID, request ID, event ID, message ID, and runtime attempt.
-  - [ ] Return only the fields needed for fallback classification: attempt ID, trace ID, runtime mode, runtime attempt, phase, and failure reason if present.
-  - [ ] Do not mutate phase while reading fallback eligibility.
-  - [ ] Treat unknown phase values as invalid/unknown even though the database now has enum-like check constraints.
-- [ ] Add a worker-side barrier adapter around the repository. (AC: 1, 2, 3, 4)
-  - [ ] Register a Nest-compatible service near `apps/worker/src/conversation/runtime-ledger.repository.ts`, for example `RuntimeFallbackBarrierService`.
-  - [ ] Map `ProcessMessageRequest` ledger metadata to the repository durable-key lookup.
-  - [ ] Return an explicit fallback decision object with `allowed`, `barrierStatus`, `reasonCode`, `phase`, `traceId`, and `runtimeAttempt`.
-  - [ ] Log only non-content identifiers and reason codes; do not log Slack text, reply text, classification payloads, risk evidence, memory content, or action payloads.
-- [ ] Wire the guard to the runtime failure decision point without changing current routing behavior. (AC: 2, 5)
-  - [ ] Add an optional runtime-router or worker-level hook that future MAF failure handling must call before falling back to `TypeScriptAgentRuntime`.
-  - [ ] Preserve current `AgentRuntimeRouter` behavior: until a real `MafAgentRuntimeClient` exists, all modes still delegate to the existing TypeScript runtime path exactly as they do now.
-  - [ ] Do not block normal TypeScript runtime failures using the MAF fallback barrier; the barrier is for MAF-to-TypeScript fallback only.
-  - [ ] Do not add the MAF HTTP client, Python service, FastAPI route, workflow code, or production MAF routing branch in this story.
-- [ ] Add focused tests. (AC: 1-5)
-  - [ ] Add pure classifier tests for every ledger phase and unknown/malformed phase handling.
-  - [ ] Add worker repository tests for durable-key lookup, tenant scoping, missing attempt handling, and no phase mutation.
-  - [ ] Add barrier adapter tests proving closed phases forbid fallback and open phases allow fallback.
-  - [ ] Add a regression test proving current router delegation to `TypeScriptAgentRuntime` is unchanged for `typescript`, `maf_disabled`, `maf_shadow`, and `maf_canary` modes while no MAF client exists.
-  - [ ] Add a guard test proving a closed barrier decision does not call the fallback TypeScript runtime in the simulated MAF-failure path.
-- [ ] Run and record verification. (AC: 1-5)
-  - [ ] Run `pnpm --filter @entalent/application test`.
-  - [ ] Run `pnpm --filter @entalent/worker test`.
-  - [ ] Run `pnpm --filter @entalent/application build`.
-  - [ ] Run `pnpm --filter @entalent/worker build`.
-  - [ ] Run `pnpm --filter @entalent/database test:integration` if `DATABASE_URL` is available; otherwise record the skip reason.
-  - [ ] Run `pnpm test`.
-  - [ ] Run `git diff --check`.
+- [x] Add a reusable fallback-barrier classifier. (AC: 1, 2, 4)
+  - [x] Add a small framework-neutral classifier in `packages/application/src/use-cases/` or a nearby runtime module.
+  - [x] Classify `started`, `candidate_received`, `actions_validated`, and `failed` as fallback-open for the current first slice.
+  - [x] Classify `actions_committed` and `reply_committed` as fallback-closed.
+  - [x] Return stable reason codes such as `fallback_open_before_side_effect`, `fallback_closed_after_actions_committed`, `fallback_closed_after_reply_committed`, and `fallback_barrier_unknown`.
+  - [x] Keep the classifier pure and independent of Drizzle, Nest, BullMQ, Python, HTTP, and MAF framework types.
+- [x] Add runtime ledger read support needed by the barrier. (AC: 1, 3, 4)
+  - [x] Extend `RuntimeLedgerRepository` with a tenant-scoped lookup by durable attempt key: tenant ID, request ID, event ID, message ID, and runtime attempt.
+  - [x] Return only the fields needed for fallback classification: attempt ID, trace ID, runtime mode, runtime attempt, phase, and failure reason if present.
+  - [x] Do not mutate phase while reading fallback eligibility.
+  - [x] Treat unknown phase values as invalid/unknown even though the database now has enum-like check constraints.
+- [x] Add a worker-side barrier adapter around the repository. (AC: 1, 2, 3, 4)
+  - [x] Register a Nest-compatible service near `apps/worker/src/conversation/runtime-ledger.repository.ts`, for example `RuntimeFallbackBarrierService`.
+  - [x] Map `ProcessMessageRequest` ledger metadata to the repository durable-key lookup.
+  - [x] Return an explicit fallback decision object with `allowed`, `barrierStatus`, `reasonCode`, `phase`, `traceId`, and `runtimeAttempt`.
+  - [x] Log only non-content identifiers and reason codes; do not log Slack text, reply text, classification payloads, risk evidence, memory content, or action payloads.
+- [x] Wire the guard to the runtime failure decision point without changing current routing behavior. (AC: 2, 5)
+  - [x] Add an optional runtime-router or worker-level hook that future MAF failure handling must call before falling back to `TypeScriptAgentRuntime`.
+  - [x] Preserve current `AgentRuntimeRouter` behavior: until a real `MafAgentRuntimeClient` exists, all modes still delegate to the existing TypeScript runtime path exactly as they do now.
+  - [x] Do not block normal TypeScript runtime failures using the MAF fallback barrier; the barrier is for MAF-to-TypeScript fallback only.
+  - [x] Do not add the MAF HTTP client, Python service, FastAPI route, workflow code, or production MAF routing branch in this story.
+- [x] Add focused tests. (AC: 1-5)
+  - [x] Add pure classifier tests for every ledger phase and unknown/malformed phase handling.
+  - [x] Add worker repository tests for durable-key lookup, tenant scoping, missing attempt handling, and no phase mutation.
+  - [x] Add barrier adapter tests proving closed phases forbid fallback and open phases allow fallback.
+  - [x] Add a regression test proving current router delegation to `TypeScriptAgentRuntime` is unchanged for `typescript`, `maf_disabled`, `maf_shadow`, and `maf_canary` modes while no MAF client exists.
+  - [x] Add a guard test proving a closed barrier decision does not call the fallback TypeScript runtime in the simulated MAF-failure path.
+- [x] Run and record verification. (AC: 1-5)
+  - [x] Run `pnpm --filter @entalent/application test`.
+  - [x] Run `pnpm --filter @entalent/worker test`.
+  - [x] Run `pnpm --filter @entalent/application build`.
+  - [x] Run `pnpm --filter @entalent/worker build`.
+  - [x] Run `pnpm --filter @entalent/database test:integration` if `DATABASE_URL` is available; otherwise record the skip reason.
+  - [x] Run `pnpm test`.
+  - [x] Run `git diff --check`.
 
 ## Dev Notes
 
@@ -156,16 +156,48 @@ GPT-5 Codex
 - Story created from sprint backlog after Story 2.4 was marked done at commit `d6a809a`.
 - Loaded BMAD create-story workflow, config, epics, architecture spine, runtime contract, and previous Story 2.4 review notes.
 - No `project-context.md` or UX artifact was found; this story is backend/runtime control-plane work.
+- Started implementation from baseline `d6a809a51d2eb57f3cd59c34f0e3e4abca296e7a`.
+- RED: `pnpm --filter @entalent/application test -- runtime-fallback-barrier.test.ts` failed while the classifier module did not exist.
+- GREEN: `pnpm --filter @entalent/application test -- runtime-fallback-barrier.test.ts` passed with 15 tests.
+- RED: `pnpm --filter @entalent/worker test -- runtime-ledger.repository.test.ts` failed while durable-key fallback lookup did not exist.
+- GREEN: `pnpm --filter @entalent/worker test -- runtime-ledger.repository.test.ts` passed with 20 tests.
+- RED: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts` failed while the worker barrier service did not exist.
+- GREEN: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts` passed with 7 tests.
+- Verification: `pnpm --filter @entalent/application test` passed with 155 tests.
+- Verification: `pnpm --filter @entalent/worker test` passed with 35 tests.
+- Verification: `pnpm --filter @entalent/application build` passed.
+- Verification: `pnpm --filter @entalent/worker build` passed.
+- Verification: `pnpm --filter @entalent/database test:integration` ran and skipped 14 tests because `DATABASE_URL` is not set in this local environment.
+- Verification: targeted eslint for changed application and worker files passed.
+- Note: full `pnpm --filter @entalent/application lint` still fails on pre-existing `no-explicit-any` errors in unrelated older test files; no current Story 2.5 files are affected.
+- Full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: `git diff --check` passed.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- Added pure runtime fallback barrier classifier with explicit open, closed, and unknown decisions.
+- Added `executeRuntimeFallbackIfAllowed` and `RuntimeFallbackBlockedError` so future MAF-to-TypeScript fallback paths cannot invoke fallback when the durable barrier is closed or unknown.
+- Added tenant-scoped durable runtime attempt lookup for fallback classification without mutating ledger phase.
+- Added `RuntimeFallbackBarrierService` as the worker-side adapter around the repository and registered it in `ConversationModule`.
+- Preserved current router behavior: all runtime modes still delegate to `TypeScriptAgentRuntime` while no MAF client exists.
+- No `MafAgentRuntimeClient`, `agent-service`, FastAPI route, Python workflow, action executor, queued side effect, or production MAF routing behavior was added.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/2-5-enforce-fallback-barrier-from-ledger-state.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `apps/worker/src/conversation/conversation.module.ts`
+- `apps/worker/src/conversation/runtime-fallback-barrier.service.test.ts`
+- `apps/worker/src/conversation/runtime-fallback-barrier.service.ts`
+- `apps/worker/src/conversation/runtime-ledger.repository.test.ts`
+- `apps/worker/src/conversation/runtime-ledger.repository.ts`
+- `packages/application/src/index.ts`
+- `packages/application/src/use-cases/agent-runtime-router.test.ts`
+- `packages/application/src/use-cases/runtime-fallback-barrier.test.ts`
+- `packages/application/src/use-cases/runtime-fallback-barrier.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 2.5 developer context from Epic 2, architecture spine, runtime contract, and Story 2.4 review learnings.
+- 2026-08-05: Implemented fallback barrier classifier, durable ledger lookup, worker adapter, tests, and verification for Story 2.5.

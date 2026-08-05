@@ -130,6 +130,23 @@ describe('AgentRuntimeRouter', () => {
     expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
   });
 
+  it.each(['typescript', 'maf_disabled', 'maf_shadow', 'maf_canary'] as const)(
+    'continues to delegate %s mode to TypeScript runtime while no MAF client exists',
+    async (mode) => {
+      const typescriptRuntime = {
+        processMessage: vi.fn().mockResolvedValue(RESULT),
+      } as unknown as TypeScriptAgentRuntime;
+      const router = new AgentRuntimeRouter(typescriptRuntime, {
+        evaluateMode: () => ({ mode, decisionSource: 'typescript_default' }),
+      });
+
+      await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+      expect(typescriptRuntime.processMessage).toHaveBeenCalledTimes(1);
+      expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+    },
+  );
+
   it.each([
     ['typescript', 'typescript_default'],
     ['maf_disabled', 'global_kill_switch'],

@@ -37,6 +37,23 @@ export interface RecordActionEnvelopesParams {
   actions: RuntimeActionProposal[];
 }
 
+export interface FindAttemptByDurableKeyParams {
+  tenantId: string;
+  requestId: string;
+  eventId: string;
+  messageId: string;
+  runtimeAttempt: number;
+}
+
+export interface RuntimeFallbackAttemptState {
+  id: string;
+  traceId: string;
+  runtimeMode: string;
+  runtimeAttempt: number;
+  phase: string;
+  failureReason: string | null;
+}
+
 @Injectable()
 export class RuntimeLedgerRepository {
   constructor(private readonly db: Pick<DatabaseService, 'client'>) {}
@@ -91,6 +108,31 @@ export class RuntimeLedgerRepository {
     }
 
     return existingAttempt;
+  }
+
+  async findAttemptByDurableKey(params: FindAttemptByDurableKeyParams): Promise<RuntimeFallbackAttemptState | null> {
+    const [attempt] = await this.db.client
+      .select({
+        id: runtimeAttempts.id,
+        traceId: runtimeAttempts.traceId,
+        runtimeMode: runtimeAttempts.runtimeMode,
+        runtimeAttempt: runtimeAttempts.runtimeAttempt,
+        phase: runtimeAttempts.phase,
+        failureReason: runtimeAttempts.failureReason,
+      })
+      .from(runtimeAttempts)
+      .where(
+        and(
+          eq(runtimeAttempts.tenantId, params.tenantId),
+          eq(runtimeAttempts.requestId, params.requestId),
+          eq(runtimeAttempts.eventId, params.eventId),
+          eq(runtimeAttempts.messageId, params.messageId),
+          eq(runtimeAttempts.runtimeAttempt, params.runtimeAttempt),
+        ),
+      )
+      .limit(1);
+
+    return attempt ?? null;
   }
 
   async transitionAttemptPhase(params: TransitionAttemptPhaseParams): Promise<DbRuntimeAttempt> {

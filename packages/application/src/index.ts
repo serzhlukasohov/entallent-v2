@@ -29,6 +29,8 @@ export { ConversationOrchestrator } from './use-cases/conversation-orchestrator'
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
 export type { AgentRuntimeDecision, AgentRuntimeDecisionSource, AgentRuntimeMode, AgentRuntimeModeEvaluationResult, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions } from './use-cases/agent-runtime-router';
+export { RuntimeFallbackBlockedError, classifyRuntimeFallbackBarrier, executeRuntimeFallbackIfAllowed } from './use-cases/runtime-fallback-barrier';
+export type { RuntimeFallbackBarrierAttemptState, RuntimeFallbackBarrierDecision, RuntimeFallbackBarrierPhase, RuntimeFallbackBarrierReasonCode, RuntimeFallbackBarrierStatus } from './use-cases/runtime-fallback-barrier';
 export { AgentRuntimeModeResolver } from './use-cases/agent-runtime-mode-resolver';
 export type { RuntimeControlFlagPort } from './use-cases/agent-runtime-mode-resolver';
 export { TypeScriptAgentRuntime } from './use-cases/typescript-agent-runtime';
