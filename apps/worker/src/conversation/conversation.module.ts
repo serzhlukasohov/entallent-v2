@@ -92,7 +92,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         const logger = createLogger(AgentRuntimeRouter.name);
         const modeResolver = new AgentRuntimeModeResolver(runtimeControls);
         return new AgentRuntimeRouter(typeScriptRuntime, {
-          evaluateMode: (request) => modeResolver.resolve(request),
+          evaluateMode: (request) => modeResolver.resolveDecision(request),
           logger: {
             info: (message, context) => logger.info(message, context),
             warn: (message, context) => logger.warn(message, context),

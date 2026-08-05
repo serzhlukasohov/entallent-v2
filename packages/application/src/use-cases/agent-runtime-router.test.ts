@@ -75,16 +75,21 @@ describe('AgentRuntimeRouter', () => {
     expect(typescriptRuntime.processMessage).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       'Agent runtime mode evaluation failed; falling back to TypeScript runtime',
-      expect.objectContaining({ traceId: 'trace-1' }),
+      {
+        traceId: 'trace-1',
+        fallbackReason: 'runtime_mode_evaluation_failed',
+      },
     );
+    expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith('Agent runtime decision resolved', {
       traceId: 'trace-1',
       tenantId: 'tenant-1',
       userId: 'user-1',
       mode: 'typescript',
       decisionSource: 'evaluation_failure',
-      fallbackReason: 'flag store unavailable',
+      fallbackReason: 'runtime_mode_evaluation_failed',
     });
+    expect(logger.info).toHaveBeenCalledTimes(1);
   });
 
   it('still fails closed when recording the warning throws', async () => {
@@ -178,6 +183,69 @@ describe('AgentRuntimeRouter', () => {
     expect(payload).not.toHaveProperty('responseText');
     expect(payload).not.toHaveProperty('classification');
     expect(payload).not.toHaveProperty('risk');
+  });
+
+  it('keeps fallback decision and warning payloads limited to non-content fields', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => {
+        throw new Error('raw user text: hello from message');
+      },
+      logger,
+    });
+
+    await router.processMessage(REQUEST);
+
+    const decisionPayload = logger.info.mock.calls[0]?.[1];
+    const warningPayload = logger.warn.mock.calls[0]?.[1];
+    expect(decisionPayload).toEqual({
+      traceId: 'trace-1',
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      mode: 'typescript',
+      decisionSource: 'evaluation_failure',
+      fallbackReason: 'runtime_mode_evaluation_failed',
+    });
+    expect(warningPayload).toEqual({
+      traceId: 'trace-1',
+      fallbackReason: 'runtime_mode_evaluation_failed',
+    });
+    expect(JSON.stringify(decisionPayload)).not.toContain('hello from message');
+    expect(JSON.stringify(warningPayload)).not.toContain('hello from message');
+  });
+
+  it.each([
+    null,
+    undefined,
+    {},
+    { mode: 'maf_shadow' },
+    { decisionSource: 'shadow_flag' },
+    { mode: 'invalid_mode', decisionSource: 'shadow_flag' },
+    { mode: 'maf_shadow', decisionSource: 'invalid_source' },
+  ])('fails closed when the evaluator returns a malformed decision: %j', async (malformedDecision) => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => malformedDecision as never,
+      logger,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(logger.info).toHaveBeenCalledWith('Agent runtime decision resolved', {
+      traceId: 'trace-1',
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      mode: 'typescript',
+      decisionSource: 'evaluation_failure',
+      fallbackReason: 'runtime_mode_evaluation_failed',
+    });
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
   });
 
   it('still delegates when runtime decision logging throws', async () => {

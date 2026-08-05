@@ -49,12 +49,12 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     try {
       const decision = normalizeRuntimeDecision(await this.evaluateMode(request));
       this.logRuntimeDecision(request, decision);
-    } catch (error) {
-      this.warnEvaluationFailure(request, error);
+    } catch {
+      this.warnEvaluationFailure(request);
       this.logRuntimeDecision(request, {
         mode: 'typescript',
         decisionSource: 'evaluation_failure',
-        fallbackReason: error instanceof Error ? error.message : String(error),
+        fallbackReason: RUNTIME_MODE_EVALUATION_FAILED_REASON,
       });
     }
 
@@ -69,18 +69,18 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
         userId: request.userId,
         mode: decision.mode,
         decisionSource: decision.decisionSource,
-        ...(decision.fallbackReason ? { fallbackReason: decision.fallbackReason } : {}),
+        ...(decision.fallbackReason !== undefined ? { fallbackReason: decision.fallbackReason } : {}),
       });
     } catch {
       // Runtime execution must not depend on observability working.
     }
   }
 
-  private warnEvaluationFailure(request: ProcessMessageRequest, error: unknown): void {
+  private warnEvaluationFailure(request: ProcessMessageRequest): void {
     try {
       this.logger?.warn('Agent runtime mode evaluation failed; falling back to TypeScript runtime', {
         traceId: request.traceId,
-        error: error instanceof Error ? error.message : String(error),
+        fallbackReason: RUNTIME_MODE_EVALUATION_FAILED_REASON,
       });
     } catch {
       // Fallback to TypeScript must not depend on observability working.
@@ -88,15 +88,19 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
   }
 }
 
-function normalizeRuntimeDecision(result: AgentRuntimeModeEvaluationResult): AgentRuntimeDecision {
-  if (typeof result !== 'string') {
+function normalizeRuntimeDecision(result: unknown): AgentRuntimeDecision {
+  if (isAgentRuntimeMode(result)) {
+    return {
+      mode: result,
+      decisionSource: legacyDecisionSourceByMode[result],
+    };
+  }
+
+  if (isAgentRuntimeDecision(result)) {
     return result;
   }
 
-  return {
-    mode: result,
-    decisionSource: legacyDecisionSourceByMode[result],
-  };
+  throw new Error('invalid_runtime_decision');
 }
 
 const legacyDecisionSourceByMode: Record<AgentRuntimeMode, AgentRuntimeDecisionSource> = {
@@ -105,3 +109,33 @@ const legacyDecisionSourceByMode: Record<AgentRuntimeMode, AgentRuntimeDecisionS
   maf_shadow: 'shadow_flag',
   maf_canary: 'canary_flag',
 };
+
+const runtimeModes = new Set<unknown>(Object.keys(legacyDecisionSourceByMode));
+
+function isAgentRuntimeMode(value: unknown): value is AgentRuntimeMode {
+  return runtimeModes.has(value);
+}
+
+function isAgentRuntimeDecision(value: unknown): value is AgentRuntimeDecision {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<AgentRuntimeDecision>;
+  return isAgentRuntimeMode(candidate.mode) && isAgentRuntimeDecisionSource(candidate.decisionSource);
+}
+
+function isAgentRuntimeDecisionSource(value: unknown): value is AgentRuntimeDecisionSource {
+  return runtimeDecisionSources.has(value);
+}
+
+const runtimeDecisionSources = new Set<unknown>([
+  'typescript_default',
+  'global_kill_switch',
+  'tenant_user_denylist',
+  'shadow_flag',
+  'canary_flag',
+  'evaluation_failure',
+]);
+
+const RUNTIME_MODE_EVALUATION_FAILED_REASON = 'runtime_mode_evaluation_failed';

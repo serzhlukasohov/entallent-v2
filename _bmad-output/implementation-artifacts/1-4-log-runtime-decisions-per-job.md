@@ -4,7 +4,7 @@ baseline_commit: fbe6ef5eb851c2583259d322018f4b9f0fe04558
 
 # Story 1.4: Log Runtime Decisions Per Job
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -50,6 +50,13 @@ so that rollout behavior can be audited before shadow and canary modes.
   - [x] `pnpm --filter @entalent/application build`
   - [x] `pnpm --filter @entalent/worker typecheck`
   - [x] Touched-file eslint for updated application and worker files.
+
+### Review Findings
+
+- [x] [Review][Patch] Sanitize runtime evaluation error values before logging fallback decisions or warnings [packages/application/src/use-cases/agent-runtime-router.ts:57]
+- [x] [Review][Patch] Preserve resolver compatibility by adding a decision-returning API instead of changing `resolve()` callers directly [packages/application/src/use-cases/agent-runtime-mode-resolver.ts:14]
+- [x] [Review][Patch] Validate malformed evaluator decision objects before writing audit fields [packages/application/src/use-cases/agent-runtime-router.ts:91]
+- [x] [Review][Patch] Remove unrelated completion note from the story record [_bmad-output/implementation-artifacts/1-4-log-runtime-decisions-per-job.md:146]
 
 ## Dev Notes
 
@@ -140,15 +147,21 @@ Codex GPT-5
 - Verification: `pnpm --filter @entalent/worker typecheck` passed when run after application build completed.
 - Verification: `pnpm exec eslint packages/application/src/use-cases/agent-runtime-router.ts packages/application/src/use-cases/agent-runtime-router.test.ts packages/application/src/use-cases/agent-runtime-mode-resolver.ts packages/application/src/use-cases/agent-runtime-mode-resolver.test.ts packages/application/src/index.ts apps/worker/src/conversation/conversation.module.ts` passed.
 - Regression: `pnpm test` passed with 15 successful turbo tasks.
+- Review fixes: `pnpm --filter @entalent/application test -- agent-runtime` passed with 28 tests.
+- Review fixes: `pnpm --filter @entalent/application typecheck` passed.
+- Review fixes: `pnpm --filter @entalent/application build` passed.
+- Review fixes: `pnpm --filter @entalent/worker typecheck` passed.
+- Review fixes: touched-file eslint passed for updated application and worker files.
+- Review fixes regression: `pnpm test` passed with 15 successful turbo tasks.
 
 ### Completion Notes List
 
-- Ultimate context engine analysis completed - comprehensive developer guide created.
 - Added framework-neutral runtime decision types with explicit decision sources and optional fallback reason.
 - Updated `AgentRuntimeModeResolver` to return decision objects while preserving Story 1.3 precedence and fail-closed propagation.
 - Added structured decision logging in `AgentRuntimeRouter`, including TypeScript fallback decision logging on evaluation failure and guarded logger calls.
 - Rewired worker composition to use `createLogger(AgentRuntimeRouter.name)` with structured context fields instead of JSON stringified context.
 - Added focused tests for mode/source mappings, fallback logging, no-content payload keys, logger failure tolerance, and legacy string evaluator normalization.
+- Resolved review findings by sanitizing fallback log values, restoring `resolve()` mode compatibility, adding `resolveDecision()`, validating evaluator outputs, and cleaning the story record.
 
 ### File List
 
@@ -165,3 +178,4 @@ Codex GPT-5
 
 - 2026-08-05: Created Story 1.4 and marked ready for dev.
 - 2026-08-05: Implemented structured runtime decision logging and marked ready for review.
+- 2026-08-05: Resolved code review findings and marked done.

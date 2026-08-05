@@ -22,10 +22,16 @@ function flagReader(enabledKeys: string[] = [], denied = false): RuntimeControlF
 }
 
 describe('AgentRuntimeModeResolver', () => {
+  it('keeps resolve compatible by returning only the runtime mode', async () => {
+    const resolver = new AgentRuntimeModeResolver(flagReader());
+
+    await expect(resolver.resolve(REQUEST)).resolves.toBe('typescript');
+  });
+
   it('defaults to TypeScript when no runtime flags are enabled', async () => {
     const resolver = new AgentRuntimeModeResolver(flagReader());
 
-    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
       mode: 'typescript',
       decisionSource: 'typescript_default',
     });
@@ -40,7 +46,7 @@ describe('AgentRuntimeModeResolver', () => {
       ]),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
       mode: 'maf_disabled',
       decisionSource: 'global_kill_switch',
     });
@@ -57,7 +63,7 @@ describe('AgentRuntimeModeResolver', () => {
       ),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
       mode: 'typescript',
       decisionSource: 'tenant_user_denylist',
     });
@@ -71,7 +77,7 @@ describe('AgentRuntimeModeResolver', () => {
       ]),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
       mode: 'maf_shadow',
       decisionSource: 'shadow_flag',
     });
@@ -82,7 +88,7 @@ describe('AgentRuntimeModeResolver', () => {
       flagReader([RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY]),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
       mode: 'maf_canary',
       decisionSource: 'canary_flag',
     });
@@ -94,6 +100,6 @@ describe('AgentRuntimeModeResolver', () => {
       isUserDenylisted: vi.fn().mockResolvedValue(false),
     });
 
-    await expect(resolver.resolve(REQUEST)).rejects.toThrow('flag store unavailable');
+    await expect(resolver.resolveDecision(REQUEST)).rejects.toThrow('flag store unavailable');
   });
 });
