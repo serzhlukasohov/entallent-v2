@@ -149,8 +149,8 @@ FR11: Epic 2 - TypeScript remains first-slice side-effect executor.
 FR12: Epic 2 - Canonical action envelope is defined.
 FR13: Epic 2 - Runtime attempt/action ledger is introduced.
 FR14: Epic 2 - Fallback barrier is enforced from ledger state.
-FR15: Epic 3 - Shadow mode executes candidate runtime without user-facing replies.
-FR16: Epic 3 - Shadow diagnostics are recorded canonically.
+FR15: Epic 5 - Shadow mode executes candidate runtime without user-facing replies.
+FR16: Epic 3 and Epic 5 - Shadow diagnostics are recorded canonically and populated by candidate integration.
 FR17: Epic 6 - Canary is blocked by baseline gates.
 FR18: Epic 3 - Migration baseline scenarios are added.
 FR19: Epic 4 - Python tools use scoped service auth.
@@ -164,7 +164,7 @@ FR26: Epic 1 - Existing TypeScript transport, queues, and first-slice ownership 
 FR27: Epic 6 - Safety behavior is regression-gated before rollout.
 FR28: Epic 6 - Privacy and manager analytics behavior are regression-gated before rollout.
 FR29: Epic 6 - Consent behavior is regression-gated before rollout.
-FR30: Epic 3 - Trace linkage and runtime observability are preserved in shadow diagnostics.
+FR30: Epic 3 and Epic 5 - Trace linkage and runtime observability are preserved in shadow diagnostics.
 
 ## Epic List
 
@@ -178,7 +178,7 @@ Engineers can connect TypeScript and Python through one validated runtime contra
 
 ### Epic 3: Baseline And Shadow Comparison
 Product and engineering can compare the current runtime against MAF candidates on real and simulated turns without changing user-facing Slack behavior.
-**FRs covered:** FR15, FR16, FR18, FR30.
+**FRs covered:** FR16, FR17, FR18, FR27, FR28, FR29, FR30.
 
 ### Epic 4: Deployable Python Agent Service Foundation
 The platform can run a secure, deployable Python/FastAPI MAF service with scoped internal tool access, durable session/checkpoint storage, and production-ready health/readiness surfaces.
@@ -186,7 +186,7 @@ The platform can run a secure, deployable Python/FastAPI MAF service with scoped
 
 ### Epic 5: MAF Conversation Workflow Candidate
 The MAF runtime can process one inbound conversation turn behind the HTTP client and return structured reply, risk, memory, action, and diagnostics output while TypeScript still owns side effects.
-**FRs covered:** FR3, FR8, FR11.
+**FRs covered:** FR3, FR7, FR8, FR11, FR15, FR16, FR19, FR20, FR26, FR27, FR30.
 
 ### Epic 6: Canary Readiness And Rollout Gates
 The team can decide whether MAF is safe to expose to users using regression gates, safety/privacy/consent preservation checks, and staged rollout controls.
@@ -428,27 +428,7 @@ So that current and candidate runtimes can be compared consistently.
 **When** diagnostics are stored
 **Then** the configured redaction policy is applied before persistence.
 
-### Story 3.3: Run MAF Candidate In Shadow Mode
-
-As an operator,
-I want MAF to run in shadow mode while TypeScript remains user-facing,
-So that production-like comparisons can be collected without user exposure.
-
-**Requirements covered:** FR15, FR16.
-
-**Acceptance Criteria:**
-
-**Given** runtime mode resolves to `maf_shadow`
-**When** a conversation job is processed
-**Then** TypeScript runtime sends the Slack-visible reply
-**And** MAF candidate runs asynchronously or non-blockingly for diagnostics.
-
-**Given** MAF candidate execution fails in shadow mode
-**When** TypeScript user-facing execution succeeds
-**Then** the user still receives the TypeScript reply
-**And** the candidate failure is recorded without triggering duplicate side effects.
-
-### Story 3.4: Report Shadow Comparison Readiness
+### Story 3.3: Report Shadow Comparison Readiness
 
 As a product reviewer,
 I want a summarized shadow comparison report,
