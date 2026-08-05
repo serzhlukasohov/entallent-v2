@@ -4,7 +4,7 @@ baseline_commit: 5df402c4f567fcd8a70a563912aff017f53ddcae
 
 # Story 1.2: Add Runtime Router With TypeScript Default
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -111,6 +111,7 @@ Codex GPT-5
 - Full package lint note: `pnpm --filter @entalent/application lint` is blocked by pre-existing `no-explicit-any` errors in older tests; `pnpm --filter @entalent/worker lint` passes with one pre-existing `no-console` warning in `apps/worker/src/main.ts`.
 - RED review follow-up: `pnpm --filter @entalent/application test -- agent-runtime-router` failed when `logger.warn` threw before fallback.
 - GREEN review follow-up: `pnpm --filter @entalent/application test -- agent-runtime-router`, touched-file eslint, `pnpm --filter @entalent/application test`, `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/application build`, and `pnpm --filter @entalent/worker typecheck` passed.
+- Repeat code review: Blind Hunter clean; future-mode concern dismissed as documented architecture convention outside Story 1.2 routing scope; never-settling async evaluator concern deferred to Story 1.3 control-flag work. `pnpm --filter @entalent/application test -- agent-runtime-router` and `pnpm --filter @entalent/worker typecheck` passed.
 
 ### Implementation Plan
 
@@ -139,3 +140,4 @@ Codex GPT-5
 
 - 2026-08-05: Implemented Story 1.2 and marked ready for review.
 - 2026-08-05: Addressed code review finding for runtime evaluation warning logging.
+- 2026-08-05: Repeat code review passed; Story 1.2 marked done.
