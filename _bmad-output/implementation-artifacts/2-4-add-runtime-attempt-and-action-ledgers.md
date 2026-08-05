@@ -1,6 +1,10 @@
+---
+baseline_commit: 5249c1478b17459db17871cd8a440bd75a55a53c
+---
+
 # Story 2.4: Add Runtime Attempt And Action Ledgers
 
-Status: ready-for-dev
+Status: review
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.4
 
@@ -20,44 +24,44 @@ so that fallback decisions are based on durable state rather than process-local 
 
 ## Tasks / Subtasks
 
-- [ ] Add persisted runtime ledger schema. (AC: 1, 2, 4)
-  - [ ] Add Drizzle schema files under `packages/database/src/schema/` for runtime attempts and runtime actions, following existing table-per-file patterns.
-  - [ ] Export the new schema from `packages/database/src/schema/index.ts` so `@entalent/database` consumers can import it.
-  - [ ] Generate or add a Drizzle migration under `packages/database/migrations/` plus matching migration metadata.
-  - [ ] Use Postgres durable state, not Redis TTL state, for the side-effect barrier foundation.
-  - [ ] Include tenant scoping and references to existing durable IDs where available: `tenant_id`, request ID, event ID, `messages.id`, runtime attempt number, trace ID, runtime mode, and phase.
-  - [ ] Add indexes for lookup by trace ID, message ID, request/event ID, and attempt phase.
-  - [ ] Add uniqueness for the idempotency scope that prevents duplicate attempt rows for the same request/event/message/runtime-attempt combination.
-- [ ] Model action ledger rows from the canonical action envelope. (AC: 2, 3, 4)
-  - [ ] Store action rows linked to a runtime attempt row.
-  - [ ] Persist `actionId`, `aggregateType`, `actionType`, `idempotencyKey`, `payload`, `validationResult`, `executionStatus`, and `commitMarker`.
-  - [ ] Keep payload, validation result, and commit marker JSON-compatible with `packages/contracts/runtime/openapi.json` and `packages/contracts/src/runtime-contract.ts`.
-  - [ ] Add uniqueness for action idempotency within the attempt and tenant scope.
-  - [ ] Do not introduce generic action execution blobs beyond the canonical envelope fields.
-- [ ] Add a worker-side repository for ledger writes. (AC: 1, 2, 3, 4)
-  - [ ] Add a Nest-compatible repository under `apps/worker/src/conversation/` or a clearly named subfolder near runtime orchestration code.
-  - [ ] Provide methods to create or upsert a started attempt, transition an attempt phase, record candidate receipt, record action envelopes, mark actions committed, mark reply committed, and mark failed.
-  - [ ] Make repository methods idempotent for retry-safe writes.
-  - [ ] Register the repository in `apps/worker/src/conversation/conversation.module.ts` only if needed by this story's worker recording path.
-- [ ] Record attempt start without changing runtime routing behavior. (AC: 1, 5)
-  - [ ] If integrating into `ConversationProcessor`, record the started attempt before calling `AGENT_RUNTIME_PORT`.
-  - [ ] Derive runtime attempt number from BullMQ job attempt state consistently and document the mapping in code/tests.
-  - [ ] Preserve current `AgentRuntimeRouter` behavior: it still delegates to `TypeScriptAgentRuntime` for every mode until later stories add a MAF client.
-  - [ ] Do not enforce the fallback barrier in this story; Story 2.5 owns fallback decisions from ledger state.
-- [ ] Add focused tests. (AC: 1, 2, 3, 4, 5)
-  - [ ] Add database integration coverage for schema constraints, uniqueness, attempt phase updates, and action row persistence.
-  - [ ] Add worker repository unit or integration coverage for idempotent upserts and phase transitions.
-  - [ ] Add a guard test or diff-level assertion where practical that no action execution/domain write is triggered by recording action envelopes.
-  - [ ] Preserve existing runtime router tests and add only scoped tests if any behavior is touched.
-- [ ] Run and record verification. (AC: 1-5)
-  - [ ] Run `pnpm --filter @entalent/database typecheck`.
-  - [ ] Run `pnpm --filter @entalent/database test:integration` if a test database is available.
-  - [ ] Run `pnpm --filter @entalent/database lint`.
-  - [ ] Run `pnpm --filter @entalent/database build`.
-  - [ ] Run `pnpm --filter @entalent/worker typecheck`.
-  - [ ] Run `pnpm --filter @entalent/worker test` or targeted worker tests.
-  - [ ] Run `pnpm test`.
-  - [ ] Run `git diff --check`.
+- [x] Add persisted runtime ledger schema. (AC: 1, 2, 4)
+  - [x] Add Drizzle schema files under `packages/database/src/schema/` for runtime attempts and runtime actions, following existing table-per-file patterns.
+  - [x] Export the new schema from `packages/database/src/schema/index.ts` so `@entalent/database` consumers can import it.
+  - [x] Generate or add a Drizzle migration under `packages/database/migrations/` plus matching migration metadata.
+  - [x] Use Postgres durable state, not Redis TTL state, for the side-effect barrier foundation.
+  - [x] Include tenant scoping and references to existing durable IDs where available: `tenant_id`, request ID, event ID, `messages.id`, runtime attempt number, trace ID, runtime mode, and phase.
+  - [x] Add indexes for lookup by trace ID, message ID, request/event ID, and attempt phase.
+  - [x] Add uniqueness for the idempotency scope that prevents duplicate attempt rows for the same request/event/message/runtime-attempt combination.
+- [x] Model action ledger rows from the canonical action envelope. (AC: 2, 3, 4)
+  - [x] Store action rows linked to a runtime attempt row.
+  - [x] Persist `actionId`, `aggregateType`, `actionType`, `idempotencyKey`, `payload`, `validationResult`, `executionStatus`, and `commitMarker`.
+  - [x] Keep payload, validation result, and commit marker JSON-compatible with `packages/contracts/runtime/openapi.json` and `packages/contracts/src/runtime-contract.ts`.
+  - [x] Add uniqueness for action idempotency within the attempt and tenant scope.
+  - [x] Do not introduce generic action execution blobs beyond the canonical envelope fields.
+- [x] Add a worker-side repository for ledger writes. (AC: 1, 2, 3, 4)
+  - [x] Add a Nest-compatible repository under `apps/worker/src/conversation/` or a clearly named subfolder near runtime orchestration code.
+  - [x] Provide methods to create or upsert a started attempt, transition an attempt phase, record candidate receipt, record action envelopes, mark actions committed, mark reply committed, and mark failed.
+  - [x] Make repository methods idempotent for retry-safe writes.
+  - [x] Register the repository in `apps/worker/src/conversation/conversation.module.ts` only if needed by this story's worker recording path.
+- [x] Record attempt start without changing runtime routing behavior. (AC: 1, 5)
+  - [x] If integrating into `ConversationProcessor`, record the started attempt before calling `AGENT_RUNTIME_PORT`.
+  - [x] Derive runtime attempt number from BullMQ job attempt state consistently and document the mapping in code/tests.
+  - [x] Preserve current `AgentRuntimeRouter` behavior: it still delegates to `TypeScriptAgentRuntime` for every mode until later stories add a MAF client.
+  - [x] Do not enforce the fallback barrier in this story; Story 2.5 owns fallback decisions from ledger state.
+- [x] Add focused tests. (AC: 1, 2, 3, 4, 5)
+  - [x] Add database integration coverage for schema constraints, uniqueness, attempt phase updates, and action row persistence.
+  - [x] Add worker repository unit or integration coverage for idempotent upserts and phase transitions.
+  - [x] Add a guard test or diff-level assertion where practical that no action execution/domain write is triggered by recording action envelopes.
+  - [x] Preserve existing runtime router tests and add only scoped tests if any behavior is touched.
+- [x] Run and record verification. (AC: 1-5)
+  - [x] Run `pnpm --filter @entalent/database typecheck`.
+  - [x] Run `pnpm --filter @entalent/database test:integration` if a test database is available.
+  - [x] Run `pnpm --filter @entalent/database lint`.
+  - [x] Run `pnpm --filter @entalent/database build`.
+  - [x] Run `pnpm --filter @entalent/worker typecheck`.
+  - [x] Run `pnpm --filter @entalent/worker test` or targeted worker tests.
+  - [x] Run `pnpm test`.
+  - [x] Run `git diff --check`.
 
 ## Dev Notes
 
@@ -165,12 +169,53 @@ GPT-5 Codex
 
 ### Debug Log References
 
+- Started implementation from baseline `5249c1478b17459db17871cd8a440bd75a55a53c`.
+- RED: `pnpm --filter @entalent/worker test -- runtime-ledger.repository.test.ts` failed while `RuntimeLedgerRepository` did not exist.
+- RED: `pnpm --filter @entalent/worker typecheck` failed while package exports and canonical action DTO usage were incomplete.
+- GREEN: `pnpm --filter @entalent/worker test -- runtime-ledger.repository.test.ts` passed with 11 tests.
+- Verification: `pnpm --filter @entalent/worker test` passed with 19 tests.
+- Verification: `pnpm --filter @entalent/database typecheck` passed.
+- Verification: `pnpm --filter @entalent/database test:integration` ran and skipped 13 tests because `DATABASE_URL` is not set in this local environment.
+- Verification: `pnpm --filter @entalent/database lint` passed with existing warning-only console findings.
+- Verification: `pnpm --filter @entalent/database build` passed.
+- Verification: `pnpm --filter @entalent/worker typecheck` passed.
+- Verification: `pnpm --filter @entalent/worker lint` passed with one existing warning-only console finding.
+- Verification: `pnpm --filter @entalent/worker build` passed.
+- Verification: `pnpm --filter @entalent/api typecheck` and `pnpm --filter @entalent/api build` passed after queue payload changes.
+- Verification: `pnpm --filter @entalent/api lint` passed with existing warning-only console findings.
+- Full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: `git diff --check` passed.
+
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- Added persisted Postgres/Drizzle runtime attempt and action ledger schema with indexes, foreign keys, and durable uniqueness.
+- Added worker runtime ledger repository with idempotent attempt/action writes, phase transitions, and action lifecycle guardrails.
+- Inbound conversation jobs now carry request/event IDs, and `ConversationProcessor` records a started ledger attempt before invoking the existing TypeScript runtime path.
+- Runtime attempt numbers are one-based from BullMQ `attemptsMade + 1`.
+- No fallback barrier enforcement, action executor, domain write path, queued side effect, MAF client, Python service, FastAPI route, MAF workflow, or production MAF routing behavior was added.
 
 ### File List
+
+- `_bmad-output/implementation-artifacts/2-4-add-runtime-attempt-and-action-ledgers.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `apps/api/src/channel/slack-ingest.service.ts`
+- `apps/api/src/dev/dev-simulate.controller.ts`
+- `apps/api/src/queue/queue.types.ts`
+- `apps/worker/src/conversation/conversation.module.ts`
+- `apps/worker/src/conversation/conversation.processor.test.ts`
+- `apps/worker/src/conversation/conversation.processor.ts`
+- `apps/worker/src/conversation/runtime-ledger.repository.test.ts`
+- `apps/worker/src/conversation/runtime-ledger.repository.ts`
+- `packages/database/migrations/0006_runtime_ledgers.sql`
+- `packages/database/migrations/meta/0006_snapshot.json`
+- `packages/database/migrations/meta/_journal.json`
+- `packages/database/src/__tests__/runtime-ledger.integration.test.ts`
+- `packages/database/src/schema/index.ts`
+- `packages/database/src/schema/runtime-actions.ts`
+- `packages/database/src/schema/runtime-attempts.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 2.4 developer context from Epic 2, architecture spine, runtime contract, database/worker patterns, and Story 2.3 review learnings.
+- 2026-08-05: Implemented runtime attempt/action ledgers, worker recording path, focused tests, and verification for Story 2.4.

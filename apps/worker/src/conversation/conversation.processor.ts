@@ -7,9 +7,12 @@ import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/applicati
 import { tenants } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
+import { RuntimeLedgerRepository } from './runtime-ledger.repository';
 import { DatabaseService } from '../database/database.service';
 
 export type ConversationJob = {
+  requestId: string;
+  eventId: string;
   messageId: string;
   conversationId: string;
   userId: string;
@@ -19,7 +22,7 @@ export type ConversationJob = {
   traceId: string;
 };
 
-export type CheckInJob = Omit<ConversationJob, 'messageId'>;
+export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;
 
 const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { engagementUnlockDays: 14, ignoreWindowHours: 48 };
 
@@ -32,6 +35,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly agentRuntime: AgentRuntimePort,
     private readonly checkInUseCase: ProactiveCheckInUseCase,
     private readonly llmRunRepo: LlmRunRepository,
+    private readonly runtimeLedgerRepo: RuntimeLedgerRepository,
     private readonly db: DatabaseService,
   ) {
     super();
@@ -94,6 +98,16 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     let status: 'success' | 'error' = 'success';
 
     try {
+      await this.runtimeLedgerRepo.recordStartedAttempt({
+        tenantId: job.data.tenantId,
+        requestId: job.data.requestId,
+        eventId: job.data.eventId,
+        messageId: job.data.messageId,
+        runtimeAttempt: runtimeAttemptNumberFromJob(job),
+        traceId: job.data.traceId,
+        runtimeMode: 'typescript',
+      });
+
       const result = await this.agentRuntime.processMessage({
         messageId: job.data.messageId,
         conversationId: job.data.conversationId,
@@ -127,4 +141,8 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         });
     }
   }
+}
+
+export function runtimeAttemptNumberFromJob(job: Pick<Job, 'attemptsMade'>): number {
+  return job.attemptsMade + 1;
 }

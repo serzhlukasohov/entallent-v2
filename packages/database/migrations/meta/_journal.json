@@ -43,6 +43,13 @@
       "when": 1785679485458,
       "tag": "0005_concerned_supernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785937787097,
+      "tag": "0006_runtime_ledgers",
+      "breakpoints": true
     }
   ]
 }

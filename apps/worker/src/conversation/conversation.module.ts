@@ -15,6 +15,7 @@ import { ConversationRepository } from './repositories/conversation.repository';
 import { OutboxService } from './outbox.service';
 import { AiService } from './ai.service';
 import { LlmRunRepository } from './llm-run.repository';
+import { RuntimeLedgerRepository } from './runtime-ledger.repository';
 import { DatabaseModule } from '../database/database.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SurveyModule } from '../survey/survey.module';
@@ -122,6 +123,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     },
     ConversationProcessor,
     LlmRunRepository,
+    RuntimeLedgerRepository,
   ],
 })
 export class ConversationModule {}

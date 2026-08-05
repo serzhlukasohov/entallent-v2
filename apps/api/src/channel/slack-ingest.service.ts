@@ -46,6 +46,7 @@ export class SlackIngestService {
       if (rawEvent?.['bot_id'] || rawEvent?.['subtype'] === 'bot_message') continue;
 
       const payload = event.payload;
+      const requestId = randomUUID();
       const traceId = randomUUID();
 
       const { userId } = await this.ingestion.findOrCreateUser({
@@ -74,6 +75,8 @@ export class SlackIngestService {
       });
 
       await this.conversationQueue.add('process', {
+        requestId,
+        eventId: eventId ?? String(rawEvent?.['ts'] ?? requestId),
         messageId,
         conversationId,
         userId,
