@@ -188,10 +188,22 @@ function hasRuntimeLedgerFields<T extends {
   );
 }
 
-function toRuntimeFailureReason(error: unknown): string {
-  if (error instanceof Error && error.message.trim() !== '') {
-    return error.message.slice(0, 200);
+export function toRuntimeFailureReason(error: unknown): string {
+  if (error instanceof Error && runtimeFailureReasonCodes.has(error.message)) {
+    return error.message;
   }
 
   return 'runtime_failed';
 }
+
+const runtimeFailureReasonCodes = new Set<string>([
+  'fallback_barrier_unknown',
+  'fallback_closed_after_actions_committed',
+  'fallback_closed_after_reply_committed',
+  'runtime_dependency_failed',
+  'runtime_duplicate_request',
+  'runtime_timeout',
+  'runtime_unavailable',
+  'runtime_unsafe_partial_result',
+  'runtime_validation_error',
+]);

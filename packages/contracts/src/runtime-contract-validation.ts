@@ -39,7 +39,16 @@ export function validateRuntimeContract({
     );
   }
 
-  return validateSchema(schema, value, '$', schemas, 0);
+  const result = validateSchema(schema, value, '$', schemas, 0);
+  if (!result.ok) {
+    return result;
+  }
+
+  if (schemaName === 'RuntimeResult') {
+    return validateRuntimeResultSemantics(value);
+  }
+
+  return result;
 }
 
 export function validateRuntimeProcessMessageRequest(
@@ -228,6 +237,34 @@ function validateObject(
     if (!result.ok) {
       return result;
     }
+  }
+
+  return { ok: true };
+}
+
+function validateRuntimeResultSemantics(value: unknown): RuntimeContractValidationResult {
+  if (!isRecord(value) || !isRecord(value.diagnostics)) {
+    return { ok: true };
+  }
+
+  const diagnostics = value.diagnostics;
+  const retryCount = diagnostics.retryCount;
+  const modelRetryCount = diagnostics.modelRetryCount;
+  const toolRetryCount = diagnostics.toolRetryCount;
+  const httpRetryCount = diagnostics.httpRetryCount;
+
+  if (
+    typeof retryCount === 'number' &&
+    typeof modelRetryCount === 'number' &&
+    typeof toolRetryCount === 'number' &&
+    typeof httpRetryCount === 'number' &&
+    retryCount !== modelRetryCount + toolRetryCount + httpRetryCount
+  ) {
+    return fail(
+      '$.diagnostics.retryCount',
+      DEFAULT_ERROR_CATEGORY,
+      'retryCount must equal modelRetryCount + toolRetryCount + httpRetryCount',
+    );
   }
 
   return { ok: true };

@@ -4,7 +4,7 @@ baseline_commit: c9102339d6b6553b8cd4c4b5e45472cc3484a419
 
 # Story 2.6: Define Runtime Retry Budget And Error Mapping
 
-Status: review
+Status: done
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.6
 
@@ -60,6 +60,19 @@ so that BullMQ, HTTP, Python workflow, model calls, and tool calls do not multip
   - [x] Run `pnpm --filter @entalent/database test:integration` if `DATABASE_URL` is available; otherwise record the skip reason.
   - [x] Run `pnpm test`.
   - [x] Run `git diff --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Runtime retryability ignored idempotency for unavailable and timeout failures [packages/application/src/use-cases/runtime-error-classifier.ts:115]
+- [x] [Review][Patch] Runtime classification could use a stale fallback barrier runtime attempt [packages/application/src/use-cases/runtime-error-classifier.ts:64]
+- [x] [Review][Patch] Runtime classification silently overwrote stale retry diagnostic identifiers [packages/application/src/use-cases/runtime-error-classifier.ts:79]
+- [x] [Review][Patch] Fallback allowed trusted `allowed` without requiring a fully open barrier state [packages/application/src/use-cases/runtime-error-classifier.ts:66]
+- [x] [Review][Patch] Retry total could disagree with model/tool/http retry counters [packages/application/src/use-cases/runtime-error-classifier.ts:99]
+- [x] [Review][Patch] Contract validators did not enforce retry total equality [packages/contracts/runtime/openapi.json:779]
+- [x] [Review][Patch] Statusless or transient runtime HTTP failures could map to unsafe partial result [packages/application/src/use-cases/runtime-error-classifier.ts:127]
+- [x] [Review][Patch] Runtime error code and HTTP status could contradict each other [packages/application/src/use-cases/runtime-error-classifier.ts:61]
+- [x] [Review][Patch] Runtime failure recording could persist raw error messages as ledger failure reasons [apps/worker/src/conversation/conversation.module.ts:191]
+- [x] [Review][Defer] `ProcessMessageRequest` still keeps `requestId`, `eventId`, and `runtimeAttempt` optional [packages/application/src/ports/agent-runtime.port.ts:9] — deferred, pre-existing compatibility shim
 
 ## Dev Notes
 
@@ -186,17 +199,36 @@ GPT-5 Codex
 - RED: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts` failed while `runtime-error-classifier.ts` did not exist.
 - GREEN: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts` passed after adding the classifier.
 - RED/GREEN: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts` initially failed because worker consumed stale `@entalent/application/dist`; after `pnpm --filter @entalent/application build`, the test passed with 16 tests.
-- Verification: `pnpm --filter @entalent/contracts test` passed with 57 TypeScript tests and Python fixture validation.
-- Verification: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts runtime-fallback-barrier.test.ts agent-runtime-router.test.ts` passed with 66 tests.
-- Verification: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts runtime-ledger.repository.test.ts conversation.processor.test.ts` passed with 37 tests.
-- Verification: `pnpm --filter @entalent/application test` passed with 179 tests.
-- Verification: `pnpm --filter @entalent/worker test` passed with 44 tests.
+- Verification: `pnpm --filter @entalent/contracts test` passed with 58 TypeScript tests and Python fixture validation.
+- Verification: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts runtime-fallback-barrier.test.ts agent-runtime-router.test.ts` passed with 78 tests.
+- Verification: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts conversation.module.test.ts runtime-ledger.repository.test.ts conversation.processor.test.ts` passed with 42 tests.
+- Verification: `pnpm --filter @entalent/application test` passed with 191 tests.
+- Verification: `pnpm --filter @entalent/worker test` passed with 49 tests.
 - Verification: `pnpm --filter @entalent/application build` passed.
 - Verification: `pnpm --filter @entalent/worker build` passed.
 - Verification: `pnpm --filter @entalent/database test:integration` ran and skipped 14 tests because `DATABASE_URL` is not set in this local environment.
 - Verification: targeted eslint for changed application and worker files passed.
 - Full regression: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: `git diff --check` passed.
+- BMAD code review found 9 patch findings, 1 deferred finding, 0 decision findings, and 1 dismissed schema-scope finding.
+- Review fix: runtime retryability for unavailable, timeout, and dependency failures now requires explicit idempotency.
+- Review fix: classifier rejects stale barrier runtime attempts and stale retry diagnostic trace/runtime attempt identifiers.
+- Review fix: fallback is allowed only when the durable barrier decision is fully open.
+- Review fix: retry totals must equal model + tool + HTTP retry counters in the application normalizer and in both TypeScript/Python runtime contract validators.
+- Review fix: missing error source now fails explicitly; no-response unavailable failures must be explicit, and common transient statuses no longer collapse into `unsafe_partial_result`.
+- Review fix: classifier rejects contradictory error-code/HTTP-status combinations.
+- Review fix: worker ledger failure reasons now use an allowlist of stable reason codes instead of raw error messages.
+- Review verification: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts runtime-fallback-barrier.test.ts agent-runtime-router.test.ts` passed with 78 tests.
+- Review verification: `pnpm --filter @entalent/contracts test` passed with 58 TypeScript tests and Python fixture validation.
+- Review verification: `pnpm --filter @entalent/application build` passed.
+- Review verification: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts conversation.module.test.ts runtime-ledger.repository.test.ts conversation.processor.test.ts` passed with 42 tests.
+- Review verification: `pnpm --filter @entalent/application test` passed with 191 tests.
+- Review verification: `pnpm --filter @entalent/worker test` passed with 49 tests.
+- Review verification: `pnpm --filter @entalent/worker build` passed.
+- Review verification: `pnpm --filter @entalent/database test:integration` ran and skipped 14 tests because `DATABASE_URL` is not set in this local environment.
+- Review verification: targeted eslint for changed application, contracts, and worker files passed.
+- Review full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Review verification: `git diff --check` passed.
 
 ### Completion Notes List
 
@@ -207,12 +239,16 @@ GPT-5 Codex
 - Extended canonical runtime diagnostics with `runtimeAttempt`, `retryCount`, `modelRetryCount`, `toolRetryCount`, and `httpRetryCount` in OpenAPI, TypeScript DTOs, shared fixtures, and the Python validator baseline.
 - Added worker-side `RuntimeFallbackBarrierService.classifyRuntimeErrorForRequest` as the future HTTP-failure seam that consumes the durable fallback barrier without adding a MAF client or production MAF route.
 - Preserved one-based BullMQ `runtimeAttempt` ownership and did not add any separate whole-job retry counter, Python retry loop, HTTP client, service scaffold, side-effect executor, queued side effect, database migration, or shadow diagnostics store.
+- Resolved BMAD code-review findings by tightening classifier invariants, adding cross-language retry-total validation, and sanitizing persisted ledger failure reasons.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/2-6-define-runtime-retry-budget-and-error-mapping.md`
+- `_bmad-output/implementation-artifacts/deferred-work.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 - `_bmad-output/specs/spec-maf-runtime-migration/runtime-contract.md`
+- `apps/worker/src/conversation/conversation.module.test.ts`
+- `apps/worker/src/conversation/conversation.module.ts`
 - `apps/worker/src/conversation/runtime-fallback-barrier.service.test.ts`
 - `apps/worker/src/conversation/runtime-fallback-barrier.service.ts`
 - `packages/application/src/index.ts`
@@ -233,6 +269,7 @@ GPT-5 Codex
 - `packages/contracts/runtime/fixtures/invalid/malformed-action-execution-status.json`
 - `packages/contracts/runtime/fixtures/invalid/malformed-action-validation-result.json`
 - `packages/contracts/runtime/fixtures/invalid/malformed-runtime-retry-diagnostics.json`
+- `packages/contracts/runtime/fixtures/invalid/mismatched-runtime-retry-diagnostics.json`
 - `packages/contracts/runtime/fixtures/invalid/missing-action-envelope-idempotency-key.json`
 - `packages/contracts/runtime/fixtures/invalid/missing-action-envelope-payload.json`
 - `packages/contracts/runtime/fixtures/invalid/missing-runtime-attempt-diagnostics.json`
@@ -243,8 +280,11 @@ GPT-5 Codex
 - `packages/contracts/runtime/openapi.json`
 - `packages/contracts/src/runtime-contract.test.ts`
 - `packages/contracts/src/runtime-contract.ts`
+- `packages/contracts/src/runtime-contract-validation.ts`
+- `packages/contracts/runtime/validate_fixtures.py`
 
 ### Change Log
 
 - 2026-08-05: Created Story 2.6 developer context from Epic 2, architecture spine, runtime contract, existing contract/router/worker code, and Story 2.5 review learnings.
 - 2026-08-05: Implemented runtime retry diagnostics contract, runtime error classifier, worker classification seam, tests, and verification for Story 2.6.
+- 2026-08-05: Resolved BMAD code-review findings for retry/error classification, cross-language retry diagnostics validation, and stable ledger failure reasons.

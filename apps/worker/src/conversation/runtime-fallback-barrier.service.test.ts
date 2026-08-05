@@ -224,6 +224,7 @@ describe('RuntimeFallbackBarrierService', () => {
       service.classifyRuntimeErrorForRequest(REQUEST, {
         errorCode: 'runtime_timeout',
         httpStatus: 504,
+        idempotent: true,
         retryDiagnostics: {
           traceId: 'trace-1',
           runtimeAttempt: 1,
@@ -268,6 +269,7 @@ describe('RuntimeFallbackBarrierService', () => {
         service.classifyRuntimeErrorForRequest(REQUEST, {
           errorCode: 'runtime_timeout',
           httpStatus: 504,
+          idempotent: true,
         }),
       ).resolves.toMatchObject({
         errorCategory: 'timeout',

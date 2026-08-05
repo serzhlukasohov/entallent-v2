@@ -62,7 +62,14 @@ def validate_runtime_contract(
     if not isinstance(schema, dict):
         return fail("$schema", DEFAULT_ERROR_CATEGORY, f"Missing schema: {schema_name}")
 
-    return validate_schema(schema, value, "$", schemas, 0)
+    result = validate_schema(schema, value, "$", schemas, 0)
+    if not result["ok"]:
+        return result
+
+    if schema_name == "RuntimeResult":
+        return validate_runtime_result_semantics(value)
+
+    return result
 
 
 def validate_schema(
@@ -189,6 +196,35 @@ def validate_object(
         result = validate_action_lifecycle(schema, value, path)
         if not result["ok"]:
             return result
+
+    return {"ok": True}
+
+
+def validate_runtime_result_semantics(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"ok": True}
+
+    diagnostics = value.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        return {"ok": True}
+
+    retry_count = diagnostics.get("retryCount")
+    model_retry_count = diagnostics.get("modelRetryCount")
+    tool_retry_count = diagnostics.get("toolRetryCount")
+    http_retry_count = diagnostics.get("httpRetryCount")
+
+    if (
+        isinstance(retry_count, int)
+        and isinstance(model_retry_count, int)
+        and isinstance(tool_retry_count, int)
+        and isinstance(http_retry_count, int)
+        and retry_count != model_retry_count + tool_retry_count + http_retry_count
+    ):
+        return fail(
+            "$.diagnostics.retryCount",
+            DEFAULT_ERROR_CATEGORY,
+            "retryCount must equal modelRetryCount + toolRetryCount + httpRetryCount",
+        )
 
     return {"ok": True}
 
