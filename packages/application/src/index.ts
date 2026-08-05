@@ -18,7 +18,8 @@ export { DEFAULT_PULSE_CONFIG } from './ports/pulse-backlog.repository.port';
 export type { RiskSignalRepositoryPort, SaveRiskSignalParams } from './ports/risk-signal.repository.port';
 export type { AuditLogPort, AppendAuditLogParams } from './ports/audit-log.port';
 export type { FeatureFlagPort, FeatureFlagContext, FeatureFlagKey } from './ports/feature-flag.port';
-export { FEATURE_FLAGS } from './ports/feature-flag.port';
+export type { RuntimeControlFlagKey } from './ports/feature-flag.port';
+export { FEATURE_FLAGS, RUNTIME_CONTROL_FLAGS } from './ports/feature-flag.port';
 export type { EscalationPort, EscalationEvent } from './ports/escalation.port';
 export type { EncryptionPort } from './ports/encryption.port';
 export type { DataDeletionRepositoryPort } from './ports/data-deletion.repository.port';
@@ -28,6 +29,8 @@ export { ConversationOrchestrator } from './use-cases/conversation-orchestrator'
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
 export type { AgentRuntimeMode, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions } from './use-cases/agent-runtime-router';
+export { AgentRuntimeModeResolver } from './use-cases/agent-runtime-mode-resolver';
+export type { RuntimeControlFlagPort } from './use-cases/agent-runtime-mode-resolver';
 export { TypeScriptAgentRuntime } from './use-cases/typescript-agent-runtime';
 export { ProactiveCheckInUseCase } from './use-cases/proactive-check-in.use-case';
 export type { ProactiveCheckInInput, ProactiveCheckInResult } from './use-cases/proactive-check-in.use-case';

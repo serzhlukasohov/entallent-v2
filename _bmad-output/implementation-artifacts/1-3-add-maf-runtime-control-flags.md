@@ -4,7 +4,7 @@ baseline_commit: ad89c16f9e468a6699925d4722106da881e954c2
 
 # Story 1.3: Add MAF Runtime Control Flags
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -21,37 +21,37 @@ so that MAF can be disabled globally or scoped by tenant/user before rollout.
 
 ## Tasks / Subtasks
 
-- [ ] Define runtime control flag contract in `packages/application` (AC: 1, 2)
-  - [ ] Add explicit runtime flag keys for global disable, shadow mode, canary mode, and user denylist.
-  - [ ] Keep key names aligned with architecture mode names: `maf_runtime_disabled`, `maf_runtime_shadow`, `maf_runtime_canary`, and `maf_runtime_user_denylist`.
-  - [ ] Add a framework-neutral port or reader type for runtime control evaluation; do not import NestJS, Drizzle, worker modules, or database schema into `packages/application`.
-- [ ] Add a runtime mode resolver/evaluator in `packages/application` (AC: 1, 2)
-  - [ ] Evaluate mode per `ProcessMessageRequest`, never at process start.
-  - [ ] Apply precedence exactly: global kill switch, tenant/user denylist, shadow mode, canary mode, TypeScript default.
-  - [ ] Return `maf_disabled` for global kill-switch matches.
-  - [ ] Return a TypeScript-only mode for tenant/user denylist matches before considering shadow or canary.
-  - [ ] Treat any flag/read failure as fail-closed TypeScript-only by throwing to the router or by returning a documented TypeScript fallback that preserves the existing warning path.
-- [ ] Rewire `AgentRuntimeRouter` to consume the resolver while preserving current behavior (AC: 1, 2)
-  - [ ] Keep `TypeScriptAgentRuntime` as the only invoked runtime in this story.
-  - [ ] Ensure `typescript`, `maf_disabled`, shadow, and canary decisions cannot call a missing MAF client.
-  - [ ] Preserve the Story 1.2 warning behavior when evaluation fails, including `traceId` and no message text.
-- [ ] Add worker adapter wiring for runtime controls (AC: 1, 2)
-  - [ ] Reuse the existing `feature_flags` table and `FeatureFlagModule` patterns.
-  - [ ] Inject the existing `FeatureFlagRepository` where boolean flag checks are enough.
-  - [ ] Add a small worker-side adapter only if user-denylist metadata requires reading `feature_flags.metadata`.
-  - [ ] Do not add a migration unless the existing `feature_flags.metadata` JSONB field cannot represent user denylist rules.
-- [ ] Expose runtime flag keys to admin surfaces (AC: 1, 2)
-  - [ ] Extend `FEATURE_FLAGS` so `apps/api/src/admin/feature-flags.controller.ts` returns runtime keys in `knownKeys`.
-  - [ ] Do not seed MAF runtime flags as enabled by default; MAF must remain disabled unless an operator explicitly enables a runtime control row.
-- [ ] Add focused tests (AC: 1, 2)
-  - [ ] Unit-test resolver precedence: kill switch beats everything, denylist beats shadow/canary, shadow beats canary, canary beats default, unknown/disabled flags default to TypeScript.
-  - [ ] Unit-test router fallback remains TypeScript-only for `maf_disabled`.
-  - [ ] Add worker adapter tests if metadata-based user denylist parsing is implemented.
-- [ ] Run verification commands (AC: 1, 2)
-  - [ ] `pnpm --filter @entalent/application test -- agent-runtime`
-  - [ ] `pnpm --filter @entalent/application typecheck`
-  - [ ] `pnpm --filter @entalent/worker typecheck`
-  - [ ] `pnpm --filter @entalent/api typecheck` if `FEATURE_FLAGS` changes affect admin API compilation.
+- [x] Define runtime control flag contract in `packages/application` (AC: 1, 2)
+  - [x] Add explicit runtime flag keys for global disable, shadow mode, canary mode, and user denylist.
+  - [x] Keep key names aligned with architecture mode names: `maf_runtime_disabled`, `maf_runtime_shadow`, `maf_runtime_canary`, and `maf_runtime_user_denylist`.
+  - [x] Add a framework-neutral port or reader type for runtime control evaluation; do not import NestJS, Drizzle, worker modules, or database schema into `packages/application`.
+- [x] Add a runtime mode resolver/evaluator in `packages/application` (AC: 1, 2)
+  - [x] Evaluate mode per `ProcessMessageRequest`, never at process start.
+  - [x] Apply precedence exactly: global kill switch, tenant/user denylist, shadow mode, canary mode, TypeScript default.
+  - [x] Return `maf_disabled` for global kill-switch matches.
+  - [x] Return a TypeScript-only mode for tenant/user denylist matches before considering shadow or canary.
+  - [x] Treat any flag/read failure as fail-closed TypeScript-only by throwing to the router or by returning a documented TypeScript fallback that preserves the existing warning path.
+- [x] Rewire `AgentRuntimeRouter` to consume the resolver while preserving current behavior (AC: 1, 2)
+  - [x] Keep `TypeScriptAgentRuntime` as the only invoked runtime in this story.
+  - [x] Ensure `typescript`, `maf_disabled`, shadow, and canary decisions cannot call a missing MAF client.
+  - [x] Preserve the Story 1.2 warning behavior when evaluation fails, including `traceId` and no message text.
+- [x] Add worker adapter wiring for runtime controls (AC: 1, 2)
+  - [x] Reuse the existing `feature_flags` table and `FeatureFlagModule` patterns.
+  - [x] Inject the existing `FeatureFlagRepository` where boolean flag checks are enough.
+  - [x] Add a small worker-side adapter only if user-denylist metadata requires reading `feature_flags.metadata`.
+  - [x] Do not add a migration unless the existing `feature_flags.metadata` JSONB field cannot represent user denylist rules.
+- [x] Expose runtime flag keys to admin surfaces (AC: 1, 2)
+  - [x] Extend `FEATURE_FLAGS` so `apps/api/src/admin/feature-flags.controller.ts` returns runtime keys in `knownKeys`.
+  - [x] Do not seed MAF runtime flags as enabled by default; MAF must remain disabled unless an operator explicitly enables a runtime control row.
+- [x] Add focused tests (AC: 1, 2)
+  - [x] Unit-test resolver precedence: kill switch beats everything, denylist beats shadow/canary, shadow beats canary, canary beats default, unknown/disabled flags default to TypeScript.
+  - [x] Unit-test router fallback remains TypeScript-only for `maf_disabled`.
+  - [x] Add worker adapter tests if metadata-based user denylist parsing is implemented.
+- [x] Run verification commands (AC: 1, 2)
+  - [x] `pnpm --filter @entalent/application test -- agent-runtime`
+  - [x] `pnpm --filter @entalent/application typecheck`
+  - [x] `pnpm --filter @entalent/worker typecheck`
+  - [x] `pnpm --filter @entalent/api typecheck` if `FEATURE_FLAGS` changes affect admin API compilation.
 
 ## Dev Notes
 
@@ -140,15 +140,36 @@ Codex GPT-5
 
 ### Debug Log References
 
+- RED: `pnpm --filter @entalent/application test -- agent-runtime` failed because `agent-runtime-mode-resolver` did not exist.
+- GREEN: `pnpm --filter @entalent/application test -- agent-runtime` passed after adding the resolver and router coverage.
+- Worker adapter: `pnpm --filter @entalent/worker test -- runtime-control` passed with metadata denylist and kill-switch precedence coverage.
+- Typecheck: `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/worker typecheck`, and `pnpm --filter @entalent/api typecheck` passed.
+- Scope lint: touched-file eslint passed in `packages/application` and `apps/worker`.
+- Regression: `pnpm test` passed across the workspace.
+
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- Implemented MAF runtime control flag keys and exported them through `@entalent/application`.
+- Added `AgentRuntimeModeResolver` with per-job precedence for global disable, denylist, shadow, canary, and TypeScript default.
+- Wired the worker runtime router to evaluate mode through a runtime-control repository while still invoking only `TypeScriptAgentRuntime`.
+- Added metadata-aware denylist parsing and global kill-switch semantics that cannot be overridden by a tenant row.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/1-3-add-maf-runtime-control-flags.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `packages/application/src/ports/feature-flag.port.ts`
+- `packages/application/src/use-cases/agent-runtime-mode-resolver.ts`
+- `packages/application/src/use-cases/agent-runtime-mode-resolver.test.ts`
+- `packages/application/src/use-cases/agent-runtime-router.test.ts`
+- `packages/application/src/index.ts`
+- `apps/worker/src/conversation/conversation.module.ts`
+- `apps/worker/src/feature-flags/feature-flag.module.ts`
+- `apps/worker/src/feature-flags/runtime-control-flag.repository.ts`
+- `apps/worker/src/feature-flags/runtime-control-flag.repository.test.ts`
 
 ## Change Log
 
 - 2026-08-05: Created Story 1.3 and marked ready for dev.
+- 2026-08-05: Implemented Story 1.3 and marked ready for review.

@@ -2,6 +2,7 @@ import { Logger, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import {
   AGENT_RUNTIME_PORT,
+  AgentRuntimeModeResolver,
   AgentRuntimeRouter,
   ConversationOrchestrator,
   ProactiveCheckInUseCase,
@@ -20,6 +21,7 @@ import { StyleModule } from '../style/style.module';
 import { SafetyModule } from '../safety/safety.module';
 import { FeatureFlagModule } from '../feature-flags/feature-flag.module';
 import { FeatureFlagRepository } from '../feature-flags/feature-flag.repository';
+import { RuntimeControlFlagRepository } from '../feature-flags/runtime-control-flag.repository';
 import { MemoryRepository } from '../memory/repositories/memory.repository';
 import { SurveyRepository } from '../survey/repositories/survey.repository';
 import { RiskSignalRepository } from '../safety/repositories/risk-signal.repository';
@@ -85,15 +87,17 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     },
     {
       provide: AGENT_RUNTIME_PORT,
-      useFactory: (typeScriptRuntime: TypeScriptAgentRuntime) => {
+      useFactory: (typeScriptRuntime: TypeScriptAgentRuntime, runtimeControls: RuntimeControlFlagRepository) => {
         const logger = new Logger(AgentRuntimeRouter.name);
+        const modeResolver = new AgentRuntimeModeResolver(runtimeControls);
         return new AgentRuntimeRouter(typeScriptRuntime, {
+          evaluateMode: (request) => modeResolver.resolve(request),
           logger: {
             warn: (message, context) => logger.warn(context ? `${message} ${JSON.stringify(context)}` : message),
           },
         });
       },
-      inject: [TypeScriptAgentRuntime],
+      inject: [TypeScriptAgentRuntime, RuntimeControlFlagRepository],
     },
     {
       provide: ProactiveCheckInUseCase,

@@ -98,4 +98,18 @@ describe('AgentRuntimeRouter', () => {
     expect(typescriptRuntime.processMessage).toHaveBeenCalledTimes(1);
     expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
   });
+
+  it('keeps maf_disabled as a TypeScript-only path until a MAF runtime exists', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => 'maf_disabled',
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledTimes(1);
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
 });
