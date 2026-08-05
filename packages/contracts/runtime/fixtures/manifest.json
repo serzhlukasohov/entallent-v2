@@ -124,6 +124,16 @@
     },
     {
       "schemaName": "RuntimeResult",
+      "path": "invalid/malformed-runtime-retry-diagnostics.json",
+      "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/missing-runtime-attempt-diagnostics.json",
+      "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
       "path": "invalid/invalid-risk-confidence.json",
       "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
     },

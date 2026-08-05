@@ -1,0 +1,20 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response.",
+    "mode": "supportive"
+  },
+  "memoryCandidates": [],
+  "proposedActions": [],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-malformed-retry-diagnostics",
+    "runtimeVersion": "maf-contract-fixture",
+    "runtimeAttempt": 1,
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42,
+    "retryCount": -1,
+    "modelRetryCount": 0,
+    "toolRetryCount": 0,
+    "httpRetryCount": 0
+  }
+}

@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import {
+  classifyRuntimeError,
   classifyRuntimeFallbackBarrier,
   executeRuntimeFallbackIfAllowed,
   type ProcessMessageRequest,
+  type RuntimeErrorClassification,
+  type RuntimeErrorInput,
   type RuntimeFallbackBarrierDecision,
 } from '@entalent/application';
 import { createLogger } from '@entalent/observability';
@@ -17,6 +20,27 @@ export class RuntimeFallbackBarrierService {
   async executeFallbackIfAllowed<T>(request: ProcessMessageRequest, fallback: () => Promise<T> | T): Promise<T> {
     const decision = await this.classifyForRequest(request);
     return executeRuntimeFallbackIfAllowed({ decision, fallback });
+  }
+
+  async classifyRuntimeErrorForRequest(
+    request: ProcessMessageRequest,
+    error: Omit<RuntimeErrorInput, 'traceId' | 'runtimeAttempt' | 'barrierDecision'>,
+  ): Promise<RuntimeErrorClassification> {
+    if (
+      typeof request.runtimeAttempt !== 'number' ||
+      !Number.isInteger(request.runtimeAttempt) ||
+      request.runtimeAttempt < 1
+    ) {
+      throw new Error('runtime_error_classification_missing_runtime_attempt');
+    }
+
+    const decision = await this.classifyForRequest(request);
+    return classifyRuntimeError({
+      ...error,
+      traceId: request.traceId,
+      runtimeAttempt: request.runtimeAttempt,
+      barrierDecision: decision,
+    });
   }
 
   async classifyForRequest(request: ProcessMessageRequest): Promise<RuntimeFallbackBarrierDecision> {

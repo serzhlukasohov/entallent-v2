@@ -208,4 +208,92 @@ describe('RuntimeFallbackBarrierService', () => {
 
     expect(fallback).toHaveBeenCalledTimes(1);
   });
+
+  it('classifies a future runtime HTTP failure with the open durable barrier decision', async () => {
+    const ledger = createLedger({
+      id: 'attempt-1',
+      traceId: 'trace-1',
+      runtimeMode: 'maf_shadow',
+      runtimeAttempt: 1,
+      phase: 'started',
+      failureReason: null,
+    });
+    const service = new RuntimeFallbackBarrierService(ledger as RuntimeLedgerRepository);
+
+    await expect(
+      service.classifyRuntimeErrorForRequest(REQUEST, {
+        errorCode: 'runtime_timeout',
+        httpStatus: 504,
+        retryDiagnostics: {
+          traceId: 'trace-1',
+          runtimeAttempt: 1,
+          httpRetryCount: 1,
+        },
+      }),
+    ).resolves.toMatchObject({
+      errorCode: 'runtime_timeout',
+      httpStatus: 504,
+      errorCategory: 'timeout',
+      retryable: true,
+      fallbackAllowed: true,
+      barrierStatus: 'open',
+      barrierReasonCode: 'fallback_open_before_side_effect',
+      runtimeAttempt: 1,
+      diagnostics: {
+        traceId: 'trace-1',
+        runtimeAttempt: 1,
+        retryCount: 1,
+        httpRetryCount: 1,
+      },
+    });
+  });
+
+  it.each([
+    ['closed', 'actions_committed', 'fallback_closed_after_actions_committed'],
+    ['unknown', 'bad_phase', 'fallback_barrier_unknown'],
+  ] as const)(
+    'classifies a future runtime HTTP failure with fallbackAllowed false when the barrier is %s',
+    async (_status, phase, reasonCode) => {
+      const ledger = createLedger({
+        id: 'attempt-1',
+        traceId: 'trace-1',
+        runtimeMode: 'maf_shadow',
+        runtimeAttempt: 1,
+        phase,
+        failureReason: null,
+      });
+      const service = new RuntimeFallbackBarrierService(ledger as RuntimeLedgerRepository);
+
+      await expect(
+        service.classifyRuntimeErrorForRequest(REQUEST, {
+          errorCode: 'runtime_timeout',
+          httpStatus: 504,
+        }),
+      ).resolves.toMatchObject({
+        errorCategory: 'timeout',
+        retryable: true,
+        fallbackAllowed: false,
+        barrierReasonCode: reasonCode,
+      });
+    },
+  );
+
+  it('does not fabricate a runtime attempt when classifying a future runtime HTTP failure', async () => {
+    const ledger = createLedger(null);
+    const service = new RuntimeFallbackBarrierService(ledger as RuntimeLedgerRepository);
+
+    await expect(
+      service.classifyRuntimeErrorForRequest(
+        {
+          ...REQUEST,
+          runtimeAttempt: undefined,
+        },
+        {
+          errorCode: 'runtime_timeout',
+          httpStatus: 504,
+        },
+      ),
+    ).rejects.toThrow('runtime_error_classification_missing_runtime_attempt');
+    expect(ledger.findAttemptByDurableKey).not.toHaveBeenCalled();
+  });
 });

@@ -214,9 +214,14 @@ export type RuntimeCommittedActionCommitMarker = {
 export type RuntimeDiagnostics = {
   traceId: string;
   runtimeVersion: string;
+  runtimeAttempt: number;
   modelCalls: number;
   toolCalls: number;
   latencyMs: number;
+  retryCount: number;
+  modelRetryCount: number;
+  toolRetryCount: number;
+  httpRetryCount: number;
 };
 
 export type RuntimeErrorCategory =

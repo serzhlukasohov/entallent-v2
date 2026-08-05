@@ -742,9 +742,14 @@
         "required": [
           "traceId",
           "runtimeVersion",
+          "runtimeAttempt",
           "modelCalls",
           "toolCalls",
-          "latencyMs"
+          "latencyMs",
+          "retryCount",
+          "modelRetryCount",
+          "toolRetryCount",
+          "httpRetryCount"
         ],
         "properties": {
           "traceId": {
@@ -755,6 +760,10 @@
             "type": "string",
             "minLength": 1
           },
+          "runtimeAttempt": {
+            "type": "integer",
+            "minimum": 1
+          },
           "modelCalls": {
             "type": "integer",
             "minimum": 0
@@ -764,6 +773,22 @@
             "minimum": 0
           },
           "latencyMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "modelRetryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolRetryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "httpRetryCount": {
             "type": "integer",
             "minimum": 0
           }

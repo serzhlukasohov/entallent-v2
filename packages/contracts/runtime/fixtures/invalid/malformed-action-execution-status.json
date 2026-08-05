@@ -23,8 +23,13 @@
   "diagnostics": {
     "traceId": "trace-runtime-contract-malformed-execution",
     "runtimeVersion": "maf-contract-fixture",
+    "runtimeAttempt": 1,
     "modelCalls": 1,
     "toolCalls": 0,
-    "latencyMs": 42
+    "latencyMs": 42,
+    "retryCount": 0,
+    "modelRetryCount": 0,
+    "toolRetryCount": 0,
+    "httpRetryCount": 0
   }
 }

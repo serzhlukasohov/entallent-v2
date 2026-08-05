@@ -31,6 +31,8 @@ export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
 export type { AgentRuntimeDecision, AgentRuntimeDecisionSource, AgentRuntimeFallbackExecutor, AgentRuntimeMode, AgentRuntimeModeEvaluationResult, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions } from './use-cases/agent-runtime-router';
 export { RuntimeFallbackBlockedError, classifyRuntimeFallbackBarrier, executeRuntimeFallbackIfAllowed } from './use-cases/runtime-fallback-barrier';
 export type { RuntimeFallbackBarrierAttemptState, RuntimeFallbackBarrierDecision, RuntimeFallbackBarrierPhase, RuntimeFallbackBarrierReasonCode, RuntimeFallbackBarrierStatus } from './use-cases/runtime-fallback-barrier';
+export { classifyRuntimeError, normalizeRuntimeRetryDiagnostics } from './use-cases/runtime-error-classifier';
+export type { RuntimeErrorClassification, RuntimeErrorCode, RuntimeErrorInput, RuntimeErrorReasonCode, RuntimeRetryDiagnostics, RuntimeRetryDiagnosticsInput } from './use-cases/runtime-error-classifier';
 export { AgentRuntimeModeResolver } from './use-cases/agent-runtime-mode-resolver';
 export type { RuntimeControlFlagPort } from './use-cases/agent-runtime-mode-resolver';
 export { TypeScriptAgentRuntime } from './use-cases/typescript-agent-runtime';

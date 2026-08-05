@@ -4,7 +4,7 @@ baseline_commit: c9102339d6b6553b8cd4c4b5e45472cc3484a419
 
 # Story 2.6: Define Runtime Retry Budget And Error Mapping
 
-Status: ready-for-dev
+Status: review
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.6
 
@@ -24,42 +24,42 @@ so that BullMQ, HTTP, Python workflow, model calls, and tool calls do not multip
 
 ## Tasks / Subtasks
 
-- [ ] Add a reusable runtime error classifier. (AC: 1, 4)
-  - [ ] Add a pure, framework-neutral classifier near the runtime router code, for example `packages/application/src/use-cases/runtime-error-classifier.ts`.
-  - [ ] Return a stable classification shape with `errorCode`, `httpStatus`, `errorCategory`, `retryable`, `fallbackAllowed`, `barrierStatus`, `reasonCode`, `runtimeAttempt`, `traceId`, and redacted diagnostic fields.
-  - [ ] Map HTTP/runtime failures to the existing contract categories: `unavailable`, `validation_error`, `timeout`, `duplicate_request`, `dependency_failed`, and `unsafe_partial_result`.
-  - [ ] Apply the Story 2.5 fallback barrier decision before setting `fallbackAllowed`; closed and unknown barriers must force `fallbackAllowed: false`.
-  - [ ] Keep the classifier independent of Nest, BullMQ, Drizzle, Python, FastAPI, MAF, and transport-specific exception classes. Adapters may translate concrete exceptions before calling the pure classifier.
-- [ ] Define the shared retry budget model. (AC: 1, 2, 3)
-  - [ ] Use the existing one-based `runtimeAttempt` propagated from `ConversationProcessor.runtimeAttemptNumberFromJob(job)` as the only whole-job attempt number.
-  - [ ] Define diagnostic counters for runtime-internal retries: at minimum total `retryCount`, `modelRetryCount`, `toolRetryCount`, and `httpRetryCount`.
-  - [ ] Do not add separate whole-job retry counters in Python, HTTP, or the runtime router.
-  - [ ] Document or encode that HTTP retry is allowed only for idempotent unavailable failures before side effects, and only within the current runtime attempt.
-  - [ ] Preserve worker ownership of whole-job retries; do not change BullMQ attempt configuration unless the change is explicitly required and tested.
-- [ ] Extend the canonical runtime contract if needed. (AC: 2)
-  - [ ] Update `packages/contracts/runtime/openapi.json` first because OpenAPI 3.1 is the canonical runtime schema source.
-  - [ ] Keep TypeScript and Python validators aligned with the OpenAPI schema in `packages/contracts/src/runtime-contract.ts`, `packages/contracts/src/runtime-contract-validation.ts`, and `packages/contracts/runtime/validate_fixtures.py`.
-  - [ ] Update shared fixtures and `packages/contracts/runtime/fixtures/manifest.json` so valid runtime results include retry diagnostics and invalid results reject malformed retry/attempt values.
-  - [ ] Preserve synthetic fixture data only; do not add real Slack IDs, user text, workspace IDs, or production event IDs.
-- [ ] Wire classification to the existing TypeScript-side control points without adding a MAF client. (AC: 1, 3, 4, 5)
-  - [ ] Reuse `AgentRuntimeRouter.executeTypeScriptFallback` and `RuntimeFallbackBarrierService`; do not create a second fallback path.
-  - [ ] Add adapter tests or helper seams that simulate a future runtime HTTP failure and prove the classifier consumes the barrier decision.
-  - [ ] Record runtime retry/error diagnostics in the current attempt ledger where the existing schema supports it. If the existing ledger cannot store structured diagnostics without a migration, store a stable failure reason now and explicitly leave full shadow diagnostics persistence to Story 3.2.
-  - [ ] Do not introduce production routing to MAF. While no client exists, `typescript`, `maf_disabled`, `maf_shadow`, and `maf_canary` must still delegate to `TypeScriptAgentRuntime` as they do now.
-- [ ] Add focused tests. (AC: 1-5)
-  - [ ] Add classifier table tests for every error category, representative HTTP statuses, retryable true/false cases, and fallback barrier open/closed/unknown decisions.
-  - [ ] Add contract fixture tests proving TypeScript and Python validators both accept valid retry diagnostics and reject invalid retry counters or missing runtime attempt diagnostics if required by the schema.
-  - [ ] Add worker/application tests proving BullMQ `attemptsMade` maps to one-based `runtimeAttempt` and no additional whole-job attempt counter is introduced.
-  - [ ] Add regression tests proving current TypeScript-only router behavior is unchanged while no MAF HTTP client exists.
-- [ ] Run and record verification. (AC: 1-5)
-  - [ ] Run `pnpm --filter @entalent/contracts test`.
-  - [ ] Run `pnpm --filter @entalent/application test`.
-  - [ ] Run `pnpm --filter @entalent/worker test`.
-  - [ ] Run `pnpm --filter @entalent/application build`.
-  - [ ] Run `pnpm --filter @entalent/worker build`.
-  - [ ] Run `pnpm --filter @entalent/database test:integration` if `DATABASE_URL` is available; otherwise record the skip reason.
-  - [ ] Run `pnpm test`.
-  - [ ] Run `git diff --check`.
+- [x] Add a reusable runtime error classifier. (AC: 1, 4)
+  - [x] Add a pure, framework-neutral classifier near the runtime router code, for example `packages/application/src/use-cases/runtime-error-classifier.ts`.
+  - [x] Return a stable classification shape with `errorCode`, `httpStatus`, `errorCategory`, `retryable`, `fallbackAllowed`, `barrierStatus`, `reasonCode`, `runtimeAttempt`, `traceId`, and redacted diagnostic fields.
+  - [x] Map HTTP/runtime failures to the existing contract categories: `unavailable`, `validation_error`, `timeout`, `duplicate_request`, `dependency_failed`, and `unsafe_partial_result`.
+  - [x] Apply the Story 2.5 fallback barrier decision before setting `fallbackAllowed`; closed and unknown barriers must force `fallbackAllowed: false`.
+  - [x] Keep the classifier independent of Nest, BullMQ, Drizzle, Python, FastAPI, MAF, and transport-specific exception classes. Adapters may translate concrete exceptions before calling the pure classifier.
+- [x] Define the shared retry budget model. (AC: 1, 2, 3)
+  - [x] Use the existing one-based `runtimeAttempt` propagated from `ConversationProcessor.runtimeAttemptNumberFromJob(job)` as the only whole-job attempt number.
+  - [x] Define diagnostic counters for runtime-internal retries: at minimum total `retryCount`, `modelRetryCount`, `toolRetryCount`, and `httpRetryCount`.
+  - [x] Do not add separate whole-job retry counters in Python, HTTP, or the runtime router.
+  - [x] Document or encode that HTTP retry is allowed only for idempotent unavailable failures before side effects, and only within the current runtime attempt.
+  - [x] Preserve worker ownership of whole-job retries; do not change BullMQ attempt configuration unless the change is explicitly required and tested.
+- [x] Extend the canonical runtime contract if needed. (AC: 2)
+  - [x] Update `packages/contracts/runtime/openapi.json` first because OpenAPI 3.1 is the canonical runtime schema source.
+  - [x] Keep TypeScript and Python validators aligned with the OpenAPI schema in `packages/contracts/src/runtime-contract.ts`, `packages/contracts/src/runtime-contract-validation.ts`, and `packages/contracts/runtime/validate_fixtures.py`.
+  - [x] Update shared fixtures and `packages/contracts/runtime/fixtures/manifest.json` so valid runtime results include retry diagnostics and invalid results reject malformed retry/attempt values.
+  - [x] Preserve synthetic fixture data only; do not add real Slack IDs, user text, workspace IDs, or production event IDs.
+- [x] Wire classification to the existing TypeScript-side control points without adding a MAF client. (AC: 1, 3, 4, 5)
+  - [x] Reuse `AgentRuntimeRouter.executeTypeScriptFallback` and `RuntimeFallbackBarrierService`; do not create a second fallback path.
+  - [x] Add adapter tests or helper seams that simulate a future runtime HTTP failure and prove the classifier consumes the barrier decision.
+  - [x] Record runtime retry/error diagnostics in the current attempt ledger where the existing schema supports it. If the existing ledger cannot store structured diagnostics without a migration, store a stable failure reason now and explicitly leave full shadow diagnostics persistence to Story 3.2.
+  - [x] Do not introduce production routing to MAF. While no client exists, `typescript`, `maf_disabled`, `maf_shadow`, and `maf_canary` must still delegate to `TypeScriptAgentRuntime` as they do now.
+- [x] Add focused tests. (AC: 1-5)
+  - [x] Add classifier table tests for every error category, representative HTTP statuses, retryable true/false cases, and fallback barrier open/closed/unknown decisions.
+  - [x] Add contract fixture tests proving TypeScript and Python validators both accept valid retry diagnostics and reject invalid retry counters or missing runtime attempt diagnostics if required by the schema.
+  - [x] Add worker/application tests proving BullMQ `attemptsMade` maps to one-based `runtimeAttempt` and no additional whole-job attempt counter is introduced.
+  - [x] Add regression tests proving current TypeScript-only router behavior is unchanged while no MAF HTTP client exists.
+- [x] Run and record verification. (AC: 1-5)
+  - [x] Run `pnpm --filter @entalent/contracts test`.
+  - [x] Run `pnpm --filter @entalent/application test`.
+  - [x] Run `pnpm --filter @entalent/worker test`.
+  - [x] Run `pnpm --filter @entalent/application build`.
+  - [x] Run `pnpm --filter @entalent/worker build`.
+  - [x] Run `pnpm --filter @entalent/database test:integration` if `DATABASE_URL` is available; otherwise record the skip reason.
+  - [x] Run `pnpm test`.
+  - [x] Run `git diff --check`.
 
 ## Dev Notes
 
@@ -182,18 +182,69 @@ GPT-5 Codex
 - Story created from sprint backlog after Story 2.5 was marked done at commit `c9102339d6b6553b8cd4c4b5e45472cc3484a419`.
 - Loaded BMAD create-story workflow, config, sprint status, Epic 2 Story 2.6 requirements, architecture spine AD-17/error convention, runtime contract, current contract types, router, worker wiring, fallback barrier, and previous Story 2.5 review notes.
 - No `project-context.md` or UX artifact was found; this story is backend/runtime control-plane and contract work.
+- Started implementation from baseline `c9102339d6b6553b8cd4c4b5e45472cc3484a419`.
+- RED: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts` failed while `runtime-error-classifier.ts` did not exist.
+- GREEN: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts` passed after adding the classifier.
+- RED/GREEN: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts` initially failed because worker consumed stale `@entalent/application/dist`; after `pnpm --filter @entalent/application build`, the test passed with 16 tests.
+- Verification: `pnpm --filter @entalent/contracts test` passed with 57 TypeScript tests and Python fixture validation.
+- Verification: `pnpm --filter @entalent/application test -- runtime-error-classifier.test.ts runtime-fallback-barrier.test.ts agent-runtime-router.test.ts` passed with 66 tests.
+- Verification: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts runtime-ledger.repository.test.ts conversation.processor.test.ts` passed with 37 tests.
+- Verification: `pnpm --filter @entalent/application test` passed with 179 tests.
+- Verification: `pnpm --filter @entalent/worker test` passed with 44 tests.
+- Verification: `pnpm --filter @entalent/application build` passed.
+- Verification: `pnpm --filter @entalent/worker build` passed.
+- Verification: `pnpm --filter @entalent/database test:integration` ran and skipped 14 tests because `DATABASE_URL` is not set in this local environment.
+- Verification: targeted eslint for changed application and worker files passed.
+- Full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: `git diff --check` passed.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
 - Story 2.6 is ready for dev-story execution.
 - Guardrails explicitly prevent early `agent-service`, `MafAgentRuntimeClient`, FastAPI route, MAF workflow, retry-loop, side-effect executor, production routing, and shadow diagnostics persistence work.
+- Added a pure runtime error classifier with stable error codes, HTTP status mapping, retryable/fallback decisions, barrier status, runtime attempt, and redacted retry diagnostics.
+- Extended canonical runtime diagnostics with `runtimeAttempt`, `retryCount`, `modelRetryCount`, `toolRetryCount`, and `httpRetryCount` in OpenAPI, TypeScript DTOs, shared fixtures, and the Python validator baseline.
+- Added worker-side `RuntimeFallbackBarrierService.classifyRuntimeErrorForRequest` as the future HTTP-failure seam that consumes the durable fallback barrier without adding a MAF client or production MAF route.
+- Preserved one-based BullMQ `runtimeAttempt` ownership and did not add any separate whole-job retry counter, Python retry loop, HTTP client, service scaffold, side-effect executor, queued side effect, database migration, or shadow diagnostics store.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/2-6-define-runtime-retry-budget-and-error-mapping.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `_bmad-output/specs/spec-maf-runtime-migration/runtime-contract.md`
+- `apps/worker/src/conversation/runtime-fallback-barrier.service.test.ts`
+- `apps/worker/src/conversation/runtime-fallback-barrier.service.ts`
+- `packages/application/src/index.ts`
+- `packages/application/src/use-cases/runtime-error-classifier.test.ts`
+- `packages/application/src/use-cases/runtime-error-classifier.ts`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-commit-marker-date-time.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-commit-marker-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-envelope-action-type.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-envelope-aggregate-type.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-json-value-depth.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-lifecycle-committed-without-marker.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-lifecycle-invalid-committed.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-proposal-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-risk-confidence.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-schedule-follow-up-action-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-update-goal-action-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/malformed-action-envelope-payload.json`
+- `packages/contracts/runtime/fixtures/invalid/malformed-action-execution-status.json`
+- `packages/contracts/runtime/fixtures/invalid/malformed-action-validation-result.json`
+- `packages/contracts/runtime/fixtures/invalid/malformed-runtime-retry-diagnostics.json`
+- `packages/contracts/runtime/fixtures/invalid/missing-action-envelope-idempotency-key.json`
+- `packages/contracts/runtime/fixtures/invalid/missing-action-envelope-payload.json`
+- `packages/contracts/runtime/fixtures/invalid/missing-runtime-attempt-diagnostics.json`
+- `packages/contracts/runtime/fixtures/manifest.json`
+- `packages/contracts/runtime/fixtures/valid/runtime-result-committed-action.json`
+- `packages/contracts/runtime/fixtures/valid/runtime-result-validation-failed-action.json`
+- `packages/contracts/runtime/fixtures/valid/runtime-result.json`
+- `packages/contracts/runtime/openapi.json`
+- `packages/contracts/src/runtime-contract.test.ts`
+- `packages/contracts/src/runtime-contract.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 2.6 developer context from Epic 2, architecture spine, runtime contract, existing contract/router/worker code, and Story 2.5 review learnings.
+- 2026-08-05: Implemented runtime retry diagnostics contract, runtime error classifier, worker classification seam, tests, and verification for Story 2.6.

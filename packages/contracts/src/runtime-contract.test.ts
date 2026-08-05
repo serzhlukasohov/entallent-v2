@@ -53,6 +53,11 @@ describe('Runtime contract DTO exports', () => {
 
     expect(request.context.recentTurns[0]?.role).toBe('user');
     expect(result.diagnostics.runtimeVersion).toBe('maf-contract-fixture');
+    expect(result.diagnostics.runtimeAttempt).toBe(1);
+    expect(result.diagnostics.retryCount).toBe(0);
+    expect(result.diagnostics.modelRetryCount).toBe(0);
+    expect(result.diagnostics.toolRetryCount).toBe(0);
+    expect(result.diagnostics.httpRetryCount).toBe(0);
     expect(action.actionType).toBe('save_memory');
     expect(action.validationResult.status).toBe('pending');
     expect(action.executionStatus).toBe('not_started');
