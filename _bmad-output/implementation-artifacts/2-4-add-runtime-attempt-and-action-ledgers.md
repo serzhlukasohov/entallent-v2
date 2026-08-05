@@ -4,7 +4,7 @@ baseline_commit: 5249c1478b17459db17871cd8a440bd75a55a53c
 
 # Story 2.4: Add Runtime Attempt And Action Ledgers
 
-Status: review
+Status: done
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.4
 
@@ -62,6 +62,17 @@ so that fallback decisions are based on durable state rather than process-local 
   - [x] Run `pnpm --filter @entalent/worker test` or targeted worker tests.
   - [x] Run `pnpm test`.
   - [x] Run `git diff --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Duplicate started-attempt upsert can rewind durable phase state [apps/worker/src/conversation/runtime-ledger.repository.ts:60]
+- [x] [Review][Patch] Runtime failures are not persisted as failed attempts [apps/worker/src/conversation/conversation.processor.ts:124]
+- [x] [Review][Patch] Phase transitions can regress terminal attempt states [apps/worker/src/conversation/runtime-ledger.repository.ts:85]
+- [x] [Review][Patch] Runtime mode ledger is hardcoded to TypeScript before router mode resolution [apps/worker/src/conversation/conversation.processor.ts:101]
+- [x] [Review][Patch] Action idempotency upsert handles only one of two unique action constraints [apps/worker/src/conversation/runtime-ledger.repository.ts:163]
+- [x] [Review][Patch] Multi-action ledger writes are not atomic [apps/worker/src/conversation/runtime-ledger.repository.ts:145]
+- [x] [Review][Patch] Action ledger rows can cross tenant scope through mismatched attempt IDs [packages/database/src/schema/runtime-actions.ts:17]
+- [x] [Review][Patch] Ledger persistence can store malformed action fields outside canonical validation [apps/worker/src/conversation/runtime-ledger.repository.ts:147]
 
 ## Dev Notes
 
@@ -185,6 +196,24 @@ GPT-5 Codex
 - Verification: `pnpm --filter @entalent/api lint` passed with existing warning-only console findings.
 - Full regression: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: `git diff --check` passed.
+- BMAD code review found 8 patch findings, 0 decision findings, 0 deferred findings, and 1 dismissed finding outside this story's durable-attempt scope.
+- Review fix: `recordStartedAttempt` now uses conflict-do-nothing plus durable-key lookup so duplicate starts do not rewind phase or failure state.
+- Review fix: runtime decisions and runtime failures are recorded from `AgentRuntimeRouter` callbacks after exact mode resolution.
+- Review fix: attempt phase transitions are monotonic and terminal phases cannot regress.
+- Review fix: action envelope writes are tenant-scoped, atomic, idempotent by action ID or idempotency key, and validated against canonical runtime action shape before persistence.
+- Review fix: migration `0007_runtime_ledger_checks.sql` adds database-level enum-like checks for runtime attempt and action ledger columns.
+- Review verification: `pnpm --filter @entalent/application test` passed with 136 tests.
+- Review verification: `pnpm --filter @entalent/worker test` passed with 25 tests.
+- Review verification: `pnpm --filter @entalent/database build` passed.
+- Review verification: `pnpm --filter @entalent/api typecheck` passed.
+- Review verification: `pnpm --filter @entalent/application build` passed.
+- Review verification: `pnpm --filter @entalent/database lint` passed with existing warning-only console findings.
+- Review verification: `pnpm --filter @entalent/worker lint` passed with one existing warning-only console finding.
+- Review verification: `pnpm --filter @entalent/api lint` passed with existing warning-only console findings.
+- Review verification: `pnpm --filter @entalent/database test:integration` ran and skipped 14 tests because `DATABASE_URL` is not set in this local environment.
+- Review verification: `pnpm --filter @entalent/worker build`, `pnpm --filter @entalent/api build`, and `pnpm --filter @entalent/database typecheck` passed.
+- Review full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Review verification: `git diff --check` passed.
 
 ### Completion Notes List
 
@@ -193,6 +222,8 @@ GPT-5 Codex
 - Added worker runtime ledger repository with idempotent attempt/action writes, phase transitions, and action lifecycle guardrails.
 - Inbound conversation jobs now carry request/event IDs, and `ConversationProcessor` records a started ledger attempt before invoking the existing TypeScript runtime path.
 - Runtime attempt numbers are one-based from BullMQ `attemptsMade + 1`.
+- BMAD review findings resolved: exact resolved runtime mode and runtime failures are persisted through router callbacks, duplicate started attempts no longer rewind durable state, phase transitions are monotonic, action writes are atomic and tenant-scoped, and ledger payloads are canonical validated before persistence.
+- Added database check constraints for runtime ledger enum-like columns in migration `0007_runtime_ledger_checks.sql`.
 - No fallback barrier enforcement, action executor, domain write path, queued side effect, MAF client, Python service, FastAPI route, MAF workflow, or production MAF routing behavior was added.
 
 ### File List
@@ -207,8 +238,13 @@ GPT-5 Codex
 - `apps/worker/src/conversation/conversation.processor.ts`
 - `apps/worker/src/conversation/runtime-ledger.repository.test.ts`
 - `apps/worker/src/conversation/runtime-ledger.repository.ts`
+- `packages/application/src/ports/agent-runtime.port.ts`
+- `packages/application/src/use-cases/agent-runtime-router.test.ts`
+- `packages/application/src/use-cases/agent-runtime-router.ts`
 - `packages/database/migrations/0006_runtime_ledgers.sql`
+- `packages/database/migrations/0007_runtime_ledger_checks.sql`
 - `packages/database/migrations/meta/0006_snapshot.json`
+- `packages/database/migrations/meta/0007_snapshot.json`
 - `packages/database/migrations/meta/_journal.json`
 - `packages/database/src/__tests__/runtime-ledger.integration.test.ts`
 - `packages/database/src/schema/index.ts`
@@ -219,3 +255,4 @@ GPT-5 Codex
 
 - 2026-08-05: Created Story 2.4 developer context from Epic 2, architecture spine, runtime contract, database/worker patterns, and Story 2.3 review learnings.
 - 2026-08-05: Implemented runtime attempt/action ledgers, worker recording path, focused tests, and verification for Story 2.4.
+- 2026-08-05: Resolved BMAD code-review findings and marked Story 2.4 done.

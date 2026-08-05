@@ -6,7 +6,9 @@ import {
   timestamp,
   index,
   unique,
+  check,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
 import { runtimeAttempts } from './runtime-attempts';
 
@@ -43,6 +45,18 @@ export const runtimeActions = pgTable(
     tenantActionIdx: index('runtime_actions_tenant_action_idx').on(t.tenantId, t.actionType),
     attemptIdx: index('runtime_actions_attempt_id_idx').on(t.runtimeAttemptId),
     idempotencyIdx: index('runtime_actions_idempotency_key_idx').on(t.idempotencyKey),
+    aggregateTypeCheck: check(
+      'runtime_actions_aggregate_type_check',
+      sql`${t.aggregateType} in ('memory', 'follow_up', 'goal')`,
+    ),
+    actionTypeCheck: check(
+      'runtime_actions_action_type_check',
+      sql`${t.actionType} in ('save_memory', 'schedule_follow_up', 'update_goal')`,
+    ),
+    executionStatusCheck: check(
+      'runtime_actions_execution_status_check',
+      sql`${t.executionStatus} in ('not_started', 'blocked', 'committed', 'failed')`,
+    ),
   }),
 );
 

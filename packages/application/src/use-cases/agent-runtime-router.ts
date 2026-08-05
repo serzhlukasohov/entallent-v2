@@ -28,13 +28,28 @@ export interface AgentRuntimeRouterLogger {
   warn(message: string, context?: Record<string, unknown>): void;
 }
 
+export type AgentRuntimeDecisionRecorder = (
+  request: ProcessMessageRequest,
+  decision: AgentRuntimeDecision,
+) => void | Promise<void>;
+
+export type AgentRuntimeFailureRecorder = (
+  request: ProcessMessageRequest,
+  decision: AgentRuntimeDecision,
+  error: unknown,
+) => void | Promise<void>;
+
 export interface AgentRuntimeRouterOptions {
   evaluateMode?: AgentRuntimeModeEvaluator;
+  recordDecision?: AgentRuntimeDecisionRecorder;
+  recordFailure?: AgentRuntimeFailureRecorder;
   logger?: AgentRuntimeRouterLogger;
 }
 
 export class AgentRuntimeRouter implements AgentRuntimePort {
   private readonly evaluateMode: AgentRuntimeModeEvaluator;
+  private readonly recordDecision?: AgentRuntimeDecisionRecorder;
+  private readonly recordFailure?: AgentRuntimeFailureRecorder;
   private readonly logger?: AgentRuntimeRouterLogger;
 
   constructor(
@@ -42,23 +57,34 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     options: AgentRuntimeRouterOptions = {},
   ) {
     this.evaluateMode = options.evaluateMode ?? (() => 'typescript');
+    this.recordDecision = options.recordDecision;
+    this.recordFailure = options.recordFailure;
     this.logger = options.logger;
   }
 
   async processMessage(request: ProcessMessageRequest): Promise<ProcessMessageResult> {
+    let decision: AgentRuntimeDecision;
     try {
-      const decision = normalizeRuntimeDecision(await this.evaluateMode(request));
+      decision = normalizeRuntimeDecision(await this.evaluateMode(request));
       this.logRuntimeDecision(request, decision);
     } catch {
       this.warnEvaluationFailure(request);
-      this.logRuntimeDecision(request, {
+      decision = {
         mode: 'typescript',
         decisionSource: 'evaluation_failure',
         fallbackReason: RUNTIME_MODE_EVALUATION_FAILED_REASON,
-      });
+      };
+      this.logRuntimeDecision(request, decision);
     }
 
-    return this.typeScriptRuntime.processMessage(request);
+    await this.recordDecision?.(request, decision);
+
+    try {
+      return await this.typeScriptRuntime.processMessage(request);
+    } catch (error) {
+      await this.recordFailure?.(request, decision, error);
+      throw error;
+    }
   }
 
   private logRuntimeDecision(request: ProcessMessageRequest, decision: AgentRuntimeDecision): void {

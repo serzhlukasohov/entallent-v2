@@ -7,6 +7,9 @@ import type {
 export const AGENT_RUNTIME_PORT = Symbol('AGENT_RUNTIME_PORT');
 
 export interface ProcessMessageRequest {
+  requestId?: string;
+  eventId?: string;
+  runtimeAttempt?: number;
   messageId: string;
   conversationId: string;
   userId: string;

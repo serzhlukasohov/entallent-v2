@@ -1,0 +1,5 @@
+ALTER TABLE "runtime_attempts" ADD CONSTRAINT "runtime_attempts_runtime_mode_check" CHECK ("runtime_attempts"."runtime_mode" in ('typescript', 'maf_shadow', 'maf_canary', 'maf_disabled'));--> statement-breakpoint
+ALTER TABLE "runtime_attempts" ADD CONSTRAINT "runtime_attempts_phase_check" CHECK ("runtime_attempts"."phase" in ('started', 'candidate_received', 'actions_validated', 'actions_committed', 'reply_committed', 'failed'));--> statement-breakpoint
+ALTER TABLE "runtime_actions" ADD CONSTRAINT "runtime_actions_aggregate_type_check" CHECK ("runtime_actions"."aggregate_type" in ('memory', 'follow_up', 'goal'));--> statement-breakpoint
+ALTER TABLE "runtime_actions" ADD CONSTRAINT "runtime_actions_action_type_check" CHECK ("runtime_actions"."action_type" in ('save_memory', 'schedule_follow_up', 'update_goal'));--> statement-breakpoint
+ALTER TABLE "runtime_actions" ADD CONSTRAINT "runtime_actions_execution_status_check" CHECK ("runtime_actions"."execution_status" in ('not_started', 'blocked', 'committed', 'failed'));

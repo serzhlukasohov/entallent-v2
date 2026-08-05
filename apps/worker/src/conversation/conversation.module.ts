@@ -89,18 +89,53 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     },
     {
       provide: AGENT_RUNTIME_PORT,
-      useFactory: (typeScriptRuntime: TypeScriptAgentRuntime, runtimeControls: RuntimeControlFlagRepository) => {
+      useFactory: (
+        typeScriptRuntime: TypeScriptAgentRuntime,
+        runtimeControls: RuntimeControlFlagRepository,
+        runtimeLedger: RuntimeLedgerRepository,
+      ) => {
         const logger = createLogger(AgentRuntimeRouter.name);
         const modeResolver = new AgentRuntimeModeResolver(runtimeControls);
         return new AgentRuntimeRouter(typeScriptRuntime, {
           evaluateMode: (request) => modeResolver.resolveDecision(request),
+          recordDecision: async (request, decision) => {
+            if (!hasRuntimeLedgerFields(request)) {
+              return;
+            }
+
+            await runtimeLedger.recordStartedAttempt({
+              tenantId: request.tenantId,
+              requestId: request.requestId,
+              eventId: request.eventId,
+              messageId: request.messageId,
+              runtimeAttempt: request.runtimeAttempt,
+              traceId: request.traceId,
+              runtimeMode: decision.mode,
+            });
+          },
+          recordFailure: async (request, decision, error) => {
+            if (!hasRuntimeLedgerFields(request)) {
+              return;
+            }
+
+            const attempt = await runtimeLedger.recordStartedAttempt({
+              tenantId: request.tenantId,
+              requestId: request.requestId,
+              eventId: request.eventId,
+              messageId: request.messageId,
+              runtimeAttempt: request.runtimeAttempt,
+              traceId: request.traceId,
+              runtimeMode: decision.mode,
+            });
+            await runtimeLedger.markFailed(attempt.id, toRuntimeFailureReason(error));
+          },
           logger: {
             info: (message, context) => logger.info(message, context),
             warn: (message, context) => logger.warn(message, context),
           },
         });
       },
-      inject: [TypeScriptAgentRuntime, RuntimeControlFlagRepository],
+      inject: [TypeScriptAgentRuntime, RuntimeControlFlagRepository, RuntimeLedgerRepository],
     },
     {
       provide: ProactiveCheckInUseCase,
@@ -127,3 +162,27 @@ import { QUEUE_NAMES } from '../queue/queue.module';
   ],
 })
 export class ConversationModule {}
+
+function hasRuntimeLedgerFields<T extends {
+  requestId?: string;
+  eventId?: string;
+  runtimeAttempt?: number;
+}>(request: T): request is T & {
+  requestId: string;
+  eventId: string;
+  runtimeAttempt: number;
+} {
+  return (
+    typeof request.requestId === 'string' &&
+    typeof request.eventId === 'string' &&
+    typeof request.runtimeAttempt === 'number'
+  );
+}
+
+function toRuntimeFailureReason(error: unknown): string {
+  if (error instanceof Error && error.message.trim() !== '') {
+    return error.message.slice(0, 200);
+  }
+
+  return 'runtime_failed';
+}

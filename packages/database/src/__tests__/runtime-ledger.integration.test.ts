@@ -170,11 +170,9 @@ describeIntegration('Runtime ledger schema (integration)', () => {
         actionType: 'save_memory',
         idempotencyKey: 'action:runtime-ledger-save-memory',
         payload: {
-          memoryText: 'Synthetic memory.',
-          confidence: 0.8,
-          source: 'conversation',
+          memoryCandidateId: 'memory-candidate-runtime-ledger',
         },
-        validationResult: { status: 'valid' },
+        validationResult: { status: 'valid', reasonCodes: [] },
         executionStatus: 'not_started',
         commitMarker: null,
       })
@@ -200,11 +198,9 @@ describeIntegration('Runtime ledger schema (integration)', () => {
         actionType: 'save_memory',
         idempotencyKey: 'action:runtime-ledger-save-memory',
         payload: {
-          memoryText: 'Synthetic memory duplicate.',
-          confidence: 0.8,
-          source: 'conversation',
+          memoryCandidateId: 'memory-candidate-runtime-ledger-duplicate',
         },
-        validationResult: { status: 'valid' },
+        validationResult: { status: 'valid', reasonCodes: [] },
         executionStatus: 'not_started',
         commitMarker: null,
       }),
@@ -221,5 +217,39 @@ describeIntegration('Runtime ledger schema (integration)', () => {
       );
 
     expect(rows).toHaveLength(1);
+  });
+
+  it('rejects invalid durable ledger enum-like values', async () => {
+    const { db } = getTestDb();
+
+    await expect(
+      db.insert(runtimeAttempts).values({
+        tenantId,
+        requestId: 'request-runtime-ledger-invalid-phase',
+        eventId: 'event-runtime-ledger-invalid-phase',
+        messageId,
+        runtimeAttempt: 1,
+        traceId: 'trace-runtime-ledger-invalid-phase',
+        runtimeMode: 'maf_shadow',
+        phase: 'invalid_phase',
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      db.insert(runtimeActions).values({
+        tenantId,
+        runtimeAttemptId: attemptId,
+        actionId: 'action-runtime-ledger-invalid-type',
+        aggregateType: 'memory',
+        actionType: 'invalid_action',
+        idempotencyKey: 'action:runtime-ledger-invalid-type',
+        payload: {
+          memoryCandidateId: 'memory-candidate-runtime-ledger-invalid',
+        },
+        validationResult: { status: 'valid', reasonCodes: [] },
+        executionStatus: 'not_started',
+        commitMarker: null,
+      }),
+    ).rejects.toThrow();
   });
 });

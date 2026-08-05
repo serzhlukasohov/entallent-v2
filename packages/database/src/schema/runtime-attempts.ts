@@ -6,7 +6,9 @@ import {
   timestamp,
   index,
   unique,
+  check,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
 import { messages } from './messages';
 
@@ -42,6 +44,14 @@ export const runtimeAttempts = pgTable(
     messageIdx: index('runtime_attempts_message_id_idx').on(t.messageId),
     requestEventIdx: index('runtime_attempts_request_event_idx').on(t.requestId, t.eventId),
     phaseIdx: index('runtime_attempts_phase_idx').on(t.phase),
+    runtimeModeCheck: check(
+      'runtime_attempts_runtime_mode_check',
+      sql`${t.runtimeMode} in ('typescript', 'maf_shadow', 'maf_canary', 'maf_disabled')`,
+    ),
+    phaseCheck: check(
+      'runtime_attempts_phase_check',
+      sql`${t.phase} in ('started', 'candidate_received', 'actions_validated', 'actions_committed', 'reply_committed', 'failed')`,
+    ),
   }),
 );
 

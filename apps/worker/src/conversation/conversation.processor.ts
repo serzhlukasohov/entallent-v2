@@ -7,7 +7,6 @@ import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/applicati
 import { tenants } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
-import { RuntimeLedgerRepository } from './runtime-ledger.repository';
 import { DatabaseService } from '../database/database.service';
 
 export type ConversationJob = {
@@ -35,7 +34,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly agentRuntime: AgentRuntimePort,
     private readonly checkInUseCase: ProactiveCheckInUseCase,
     private readonly llmRunRepo: LlmRunRepository,
-    private readonly runtimeLedgerRepo: RuntimeLedgerRepository,
     private readonly db: DatabaseService,
   ) {
     super();
@@ -98,17 +96,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     let status: 'success' | 'error' = 'success';
 
     try {
-      await this.runtimeLedgerRepo.recordStartedAttempt({
-        tenantId: job.data.tenantId,
+      const result = await this.agentRuntime.processMessage({
         requestId: job.data.requestId,
         eventId: job.data.eventId,
-        messageId: job.data.messageId,
         runtimeAttempt: runtimeAttemptNumberFromJob(job),
-        traceId: job.data.traceId,
-        runtimeMode: 'typescript',
-      });
-
-      const result = await this.agentRuntime.processMessage({
         messageId: job.data.messageId,
         conversationId: job.data.conversationId,
         userId: job.data.userId,

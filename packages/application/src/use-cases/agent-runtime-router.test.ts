@@ -5,6 +5,9 @@ import type { AgentRuntimeMode } from './agent-runtime-router';
 import type { TypeScriptAgentRuntime } from './typescript-agent-runtime';
 
 const REQUEST: ProcessMessageRequest = {
+  requestId: 'request-1',
+  eventId: 'event-1',
+  runtimeAttempt: 1,
   messageId: 'msg-1',
   conversationId: 'conv-1',
   userId: 'user-1',
@@ -288,5 +291,56 @@ describe('AgentRuntimeRouter', () => {
       mode,
       decisionSource,
     }));
+  });
+
+  it('records the resolved runtime decision before delegating to the TypeScript runtime', async () => {
+    const callOrder: string[] = [];
+    const typescriptRuntime = {
+      processMessage: vi.fn(async () => {
+        callOrder.push('runtime');
+        return RESULT;
+      }),
+    } as unknown as TypeScriptAgentRuntime;
+    const recordDecision = vi.fn(async () => {
+      callOrder.push('ledger');
+    });
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      recordDecision,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(recordDecision).toHaveBeenCalledWith(REQUEST, {
+      mode: 'maf_shadow',
+      decisionSource: 'shadow_flag',
+    });
+    expect(callOrder).toEqual(['ledger', 'runtime']);
+  });
+
+  it('records runtime failure after a started decision has been persisted', async () => {
+    const runtimeError = new Error('runtime failed');
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockRejectedValue(runtimeError),
+    } as unknown as TypeScriptAgentRuntime;
+    const recordDecision = vi.fn(async () => undefined);
+    const recordFailure = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      recordDecision,
+      recordFailure,
+    });
+
+    await expect(router.processMessage(REQUEST)).rejects.toThrow(runtimeError);
+
+    expect(recordDecision).toHaveBeenCalledTimes(1);
+    expect(recordFailure).toHaveBeenCalledWith(
+      REQUEST,
+      {
+        mode: 'maf_shadow',
+        decisionSource: 'shadow_flag',
+      },
+      runtimeError,
+    );
   });
 });

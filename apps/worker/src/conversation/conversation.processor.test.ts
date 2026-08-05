@@ -46,19 +46,9 @@ const runtimeResult = {
 };
 
 describe('ConversationProcessor runtime ledger recording', () => {
-  it('records a started runtime attempt before invoking the agent runtime', async () => {
-    const callOrder: string[] = [];
+  it('passes durable runtime attempt metadata to the agent runtime', async () => {
     const agentRuntime = {
-      processMessage: vi.fn(async () => {
-        callOrder.push('runtime');
-        return runtimeResult;
-      }),
-    };
-    const runtimeLedgerRepo = {
-      recordStartedAttempt: vi.fn(async () => {
-        callOrder.push('ledger');
-        return { id: 'attempt-1' };
-      }),
+      processMessage: vi.fn(async () => runtimeResult),
     };
     const llmRunRepo = {
       record: vi.fn(async () => undefined),
@@ -67,7 +57,6 @@ describe('ConversationProcessor runtime ledger recording', () => {
       agentRuntime as never,
       {} as never,
       llmRunRepo as never,
-      runtimeLedgerRepo as never,
       {} as never,
     );
 
@@ -78,16 +67,10 @@ describe('ConversationProcessor runtime ledger recording', () => {
       data: jobData,
     } as Job<ConversationJob>);
 
-    expect(runtimeLedgerRepo.recordStartedAttempt).toHaveBeenCalledWith({
-      tenantId: 'tenant-1',
+    expect(agentRuntime.processMessage).toHaveBeenCalledWith({
       requestId: 'request-1',
       eventId: 'event-1',
-      messageId: 'message-1',
       runtimeAttempt: 1,
-      traceId: 'trace-1',
-      runtimeMode: 'typescript',
-    });
-    expect(agentRuntime.processMessage).toHaveBeenCalledWith({
       messageId: 'message-1',
       conversationId: 'conversation-1',
       userId: 'user-1',
@@ -96,6 +79,5 @@ describe('ConversationProcessor runtime ledger recording', () => {
       externalConversationId: 'channel-1',
       traceId: 'trace-1',
     });
-    expect(callOrder).toEqual(['ledger', 'runtime']);
   });
 });
