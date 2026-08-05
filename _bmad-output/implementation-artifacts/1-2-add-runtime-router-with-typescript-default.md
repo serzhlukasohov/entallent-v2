@@ -4,7 +4,7 @@ baseline_commit: 5df402c4f567fcd8a70a563912aff017f53ddcae
 
 # Story 1.2: Add Runtime Router With TypeScript Default
 
-Status: review
+Status: in-progress
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -37,6 +37,10 @@ so that runtime mode can be evaluated per job without changing worker processors
   - [x] `pnpm --filter @entalent/application test`
   - [x] `pnpm --filter @entalent/application typecheck`
   - [x] `pnpm --filter @entalent/worker typecheck`
+
+### Review Findings
+
+- [ ] [Review][Patch] Runtime evaluation failures can fall back without the required warning [`packages/application/src/use-cases/agent-runtime-router.ts:33`]
 
 ## Dev Notes
 
