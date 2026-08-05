@@ -50,7 +50,7 @@ export class RuntimeFallbackBlockedError extends Error {
 export function classifyRuntimeFallbackBarrier(
   attempt: RuntimeFallbackBarrierAttemptState | null | undefined,
 ): RuntimeFallbackBarrierDecision {
-  if (!attempt || !isRuntimeFallbackBarrierPhase(attempt.phase)) {
+  if (!attempt || !isMafRuntimeMode(attempt.runtimeMode) || !isRuntimeFallbackBarrierPhase(attempt.phase)) {
     return {
       allowed: false,
       barrierStatus: 'unknown',
@@ -122,3 +122,7 @@ const runtimeFallbackBarrierPhases = new Set<unknown>([
   'reply_committed',
   'failed',
 ]);
+
+function isMafRuntimeMode(value: unknown): boolean {
+  return value === 'maf_shadow' || value === 'maf_canary';
+}

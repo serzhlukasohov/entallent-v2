@@ -75,6 +75,29 @@ describe('classifyRuntimeFallbackBarrier', () => {
     },
   );
 
+  it.each(['typescript', 'maf_disabled', 'unknown_mode'] as const)(
+    'returns unknown instead of opening fallback for non-MAF runtime mode %s',
+    (runtimeMode) => {
+      expect(
+        classifyRuntimeFallbackBarrier({
+          id: 'attempt-1',
+          traceId: 'trace-1',
+          runtimeAttempt: 1,
+          runtimeMode,
+          phase: 'started',
+          failureReason: null,
+        }),
+      ).toEqual({
+        allowed: false,
+        barrierStatus: 'unknown',
+        reasonCode: 'fallback_barrier_unknown',
+        phase: undefined,
+        traceId: 'trace-1',
+        runtimeAttempt: 1,
+      });
+    },
+  );
+
   it('returns an explicit unknown decision when the attempt is missing', () => {
     expect(classifyRuntimeFallbackBarrier(null)).toEqual({
       allowed: false,

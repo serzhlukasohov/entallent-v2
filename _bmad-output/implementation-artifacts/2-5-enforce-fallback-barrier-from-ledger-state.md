@@ -1,10 +1,10 @@
 ---
-baseline_commit: d6a809a51d2eb57f3cd59c34f0e3e4abca296e7a
+baseline_commit: d6a809a34f3e9c0c96857e48178936989ca71be4
 ---
 
 # Story 2.5: Enforce Fallback Barrier From Ledger State
 
-Status: review
+Status: done
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.5
 
@@ -59,6 +59,13 @@ so that retries cannot duplicate replies, memories, or follow-ups.
   - [x] Run `pnpm --filter @entalent/database test:integration` if `DATABASE_URL` is available; otherwise record the skip reason.
   - [x] Run `pnpm test`.
   - [x] Run `git diff --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Fallback guard is not wired to the runtime router fallback hook [packages/application/src/use-cases/agent-runtime-router.ts:80]
+- [x] [Review][Patch] Missing durable metadata is converted into fabricated lookup keys [apps/worker/src/conversation/runtime-fallback-barrier.service.ts:24]
+- [x] [Review][Patch] Fallback classifier ignores runtime mode [packages/application/src/use-cases/runtime-fallback-barrier.ts:53]
+- [x] [Review][Patch] Story baseline commit does not resolve as a full SHA [_bmad-output/implementation-artifacts/2-5-enforce-fallback-barrier-from-ledger-state.md:2]
 
 ## Dev Notes
 
@@ -156,7 +163,7 @@ GPT-5 Codex
 - Story created from sprint backlog after Story 2.4 was marked done at commit `d6a809a`.
 - Loaded BMAD create-story workflow, config, epics, architecture spine, runtime contract, and previous Story 2.4 review notes.
 - No `project-context.md` or UX artifact was found; this story is backend/runtime control-plane work.
-- Started implementation from baseline `d6a809a51d2eb57f3cd59c34f0e3e4abca296e7a`.
+- Started implementation from baseline `d6a809a34f3e9c0c96857e48178936989ca71be4`.
 - RED: `pnpm --filter @entalent/application test -- runtime-fallback-barrier.test.ts` failed while the classifier module did not exist.
 - GREEN: `pnpm --filter @entalent/application test -- runtime-fallback-barrier.test.ts` passed with 15 tests.
 - RED: `pnpm --filter @entalent/worker test -- runtime-ledger.repository.test.ts` failed while durable-key fallback lookup did not exist.
@@ -172,6 +179,20 @@ GPT-5 Codex
 - Note: full `pnpm --filter @entalent/application lint` still fails on pre-existing `no-explicit-any` errors in unrelated older test files; no current Story 2.5 files are affected.
 - Full regression: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: `git diff --check` passed.
+- BMAD code review found 4 patch findings, 0 decision findings, 0 deferred findings, and 1 dismissed future concurrency finding outside this story's implemented MAF/action execution surface.
+- Review fix: added router-owned `executeTypeScriptFallback` hook and wired the worker router provider to `RuntimeFallbackBarrierService`.
+- Review fix: missing `requestId`, `eventId`, or one-based `runtimeAttempt` now returns explicit `unknown` without querying synthetic durable keys.
+- Review fix: fallback classifier now treats non-MAF runtime modes as `unknown` instead of opening MAF-to-TypeScript fallback.
+- Review fix: corrected Story 2.5 `baseline_commit` to the resolvable full commit `d6a809a34f3e9c0c96857e48178936989ca71be4`.
+- Review verification: `pnpm --filter @entalent/application test -- runtime-fallback-barrier.test.ts agent-runtime-router.test.ts` passed with 47 tests.
+- Review verification: `pnpm --filter @entalent/application build` passed.
+- Review verification: `pnpm --filter @entalent/worker test -- runtime-fallback-barrier.service.test.ts runtime-ledger.repository.test.ts` passed with 32 tests.
+- Review verification: `pnpm --filter @entalent/application test` passed with 160 tests.
+- Review verification: `pnpm --filter @entalent/worker test` passed with 40 tests.
+- Review verification: `pnpm --filter @entalent/worker build` passed.
+- Review verification: targeted eslint for changed application and worker files passed.
+- Review full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Review verification: `git diff --check` passed.
 
 ### Completion Notes List
 
@@ -181,6 +202,7 @@ GPT-5 Codex
 - Added tenant-scoped durable runtime attempt lookup for fallback classification without mutating ledger phase.
 - Added `RuntimeFallbackBarrierService` as the worker-side adapter around the repository and registered it in `ConversationModule`.
 - Preserved current router behavior: all runtime modes still delegate to `TypeScriptAgentRuntime` while no MAF client exists.
+- BMAD review findings resolved: future MAF fallback is now structurally routed through the router fallback hook, malformed durable metadata cannot produce a synthetic lookup, non-MAF runtime modes cannot open the MAF fallback barrier, and the baseline commit is resolvable.
 - No `MafAgentRuntimeClient`, `agent-service`, FastAPI route, Python workflow, action executor, queued side effect, or production MAF routing behavior was added.
 
 ### File List
@@ -201,3 +223,4 @@ GPT-5 Codex
 
 - 2026-08-05: Created Story 2.5 developer context from Epic 2, architecture spine, runtime contract, and Story 2.4 review learnings.
 - 2026-08-05: Implemented fallback barrier classifier, durable ledger lookup, worker adapter, tests, and verification for Story 2.5.
+- 2026-08-05: Resolved BMAD code-review findings and marked Story 2.5 done.

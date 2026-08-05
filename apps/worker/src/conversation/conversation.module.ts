@@ -94,6 +94,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         typeScriptRuntime: TypeScriptAgentRuntime,
         runtimeControls: RuntimeControlFlagRepository,
         runtimeLedger: RuntimeLedgerRepository,
+        runtimeFallbackBarrier: RuntimeFallbackBarrierService,
       ) => {
         const logger = createLogger(AgentRuntimeRouter.name);
         const modeResolver = new AgentRuntimeModeResolver(runtimeControls);
@@ -130,13 +131,19 @@ import { QUEUE_NAMES } from '../queue/queue.module';
             });
             await runtimeLedger.markFailed(attempt.id, toRuntimeFailureReason(error));
           },
+          executeFallback: (request, fallback) => runtimeFallbackBarrier.executeFallbackIfAllowed(request, fallback),
           logger: {
             info: (message, context) => logger.info(message, context),
             warn: (message, context) => logger.warn(message, context),
           },
         });
       },
-      inject: [TypeScriptAgentRuntime, RuntimeControlFlagRepository, RuntimeLedgerRepository],
+      inject: [
+        TypeScriptAgentRuntime,
+        RuntimeControlFlagRepository,
+        RuntimeLedgerRepository,
+        RuntimeFallbackBarrierService,
+      ],
     },
     {
       provide: ProactiveCheckInUseCase,

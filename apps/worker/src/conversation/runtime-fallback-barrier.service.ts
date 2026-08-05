@@ -20,13 +20,26 @@ export class RuntimeFallbackBarrierService {
   }
 
   async classifyForRequest(request: ProcessMessageRequest): Promise<RuntimeFallbackBarrierDecision> {
+    if (!hasRuntimeFallbackLedgerFields(request)) {
+      const decision: RuntimeFallbackBarrierDecision = {
+        allowed: false,
+        barrierStatus: 'unknown',
+        reasonCode: 'fallback_barrier_unknown',
+        phase: undefined,
+        traceId: request.traceId,
+        runtimeAttempt: request.runtimeAttempt,
+      };
+      this.logDecision(request, decision);
+      return decision;
+    }
+
     try {
       const attempt = await this.runtimeLedger.findAttemptByDurableKey({
         tenantId: request.tenantId,
-        requestId: request.requestId ?? '',
-        eventId: request.eventId ?? '',
+        requestId: request.requestId,
+        eventId: request.eventId,
         messageId: request.messageId,
-        runtimeAttempt: request.runtimeAttempt ?? 0,
+        runtimeAttempt: request.runtimeAttempt,
       });
       const decision = classifyRuntimeFallbackBarrier(attempt);
       this.logDecision(request, decision);
@@ -60,4 +73,20 @@ export class RuntimeFallbackBarrierService {
       // Fallback decisions must not depend on observability working.
     }
   }
+}
+
+function hasRuntimeFallbackLedgerFields(request: ProcessMessageRequest): request is ProcessMessageRequest & {
+  requestId: string;
+  eventId: string;
+  runtimeAttempt: number;
+} {
+  return (
+    typeof request.requestId === 'string' &&
+    request.requestId !== '' &&
+    typeof request.eventId === 'string' &&
+    request.eventId !== '' &&
+    typeof request.runtimeAttempt === 'number' &&
+    Number.isInteger(request.runtimeAttempt) &&
+    request.runtimeAttempt > 0
+  );
 }

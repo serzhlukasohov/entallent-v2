@@ -39,10 +39,16 @@ export type AgentRuntimeFailureRecorder = (
   error: unknown,
 ) => void | Promise<void>;
 
+export type AgentRuntimeFallbackExecutor = <T>(
+  request: ProcessMessageRequest,
+  fallback: () => Promise<T> | T,
+) => Promise<T>;
+
 export interface AgentRuntimeRouterOptions {
   evaluateMode?: AgentRuntimeModeEvaluator;
   recordDecision?: AgentRuntimeDecisionRecorder;
   recordFailure?: AgentRuntimeFailureRecorder;
+  executeFallback?: AgentRuntimeFallbackExecutor;
   logger?: AgentRuntimeRouterLogger;
 }
 
@@ -50,6 +56,7 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
   private readonly evaluateMode: AgentRuntimeModeEvaluator;
   private readonly recordDecision?: AgentRuntimeDecisionRecorder;
   private readonly recordFailure?: AgentRuntimeFailureRecorder;
+  private readonly executeFallback?: AgentRuntimeFallbackExecutor;
   private readonly logger?: AgentRuntimeRouterLogger;
 
   constructor(
@@ -59,6 +66,7 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     this.evaluateMode = options.evaluateMode ?? (() => 'typescript');
     this.recordDecision = options.recordDecision;
     this.recordFailure = options.recordFailure;
+    this.executeFallback = options.executeFallback;
     this.logger = options.logger;
   }
 
@@ -85,6 +93,14 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
       await this.recordFailure?.(request, decision, error);
       throw error;
     }
+  }
+
+  async executeTypeScriptFallback<T>(request: ProcessMessageRequest, fallback: () => Promise<T> | T): Promise<T> {
+    if (this.executeFallback) {
+      return this.executeFallback(request, fallback);
+    }
+
+    return fallback();
   }
 
   private logRuntimeDecision(request: ProcessMessageRequest, decision: AgentRuntimeDecision): void {

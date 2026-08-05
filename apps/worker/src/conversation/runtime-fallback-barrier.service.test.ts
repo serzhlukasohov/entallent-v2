@@ -107,6 +107,51 @@ describe('RuntimeFallbackBarrierService', () => {
     });
   });
 
+  it.each([
+    [{ requestId: undefined }, 'requestId'],
+    [{ eventId: undefined }, 'eventId'],
+    [{ runtimeAttempt: undefined }, 'runtimeAttempt'],
+    [{ runtimeAttempt: 0 }, 'runtimeAttempt'],
+  ] as const)('returns unknown without lookup when durable request metadata is missing: %s', async (override) => {
+    const ledger = createLedger({
+      id: 'attempt-1',
+      traceId: 'trace-1',
+      runtimeMode: 'maf_shadow',
+      runtimeAttempt: 1,
+      phase: 'started',
+      failureReason: null,
+    });
+    const service = new RuntimeFallbackBarrierService(ledger as RuntimeLedgerRepository);
+
+    await expect(service.classifyForRequest({ ...REQUEST, ...override })).resolves.toMatchObject({
+      allowed: false,
+      barrierStatus: 'unknown',
+      reasonCode: 'fallback_barrier_unknown',
+    });
+    expect(ledger.findAttemptByDurableKey).not.toHaveBeenCalled();
+  });
+
+  it('returns unknown for non-MAF runtime modes even when the phase is open', async () => {
+    const ledger = createLedger({
+      id: 'attempt-1',
+      traceId: 'trace-1',
+      runtimeMode: 'typescript',
+      runtimeAttempt: 1,
+      phase: 'started',
+      failureReason: null,
+    });
+    const service = new RuntimeFallbackBarrierService(ledger as RuntimeLedgerRepository);
+
+    await expect(service.classifyForRequest(REQUEST)).resolves.toEqual({
+      allowed: false,
+      barrierStatus: 'unknown',
+      reasonCode: 'fallback_barrier_unknown',
+      phase: undefined,
+      traceId: 'trace-1',
+      runtimeAttempt: 1,
+    });
+  });
+
   it('returns unknown when durable lookup fails', async () => {
     const ledger = {
       findAttemptByDurableKey: vi.fn().mockRejectedValue(new Error('database unavailable')),

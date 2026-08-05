@@ -147,6 +147,36 @@ describe('AgentRuntimeRouter', () => {
     },
   );
 
+  it('executes TypeScript fallback directly when no fallback guard is configured', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const fallback = vi.fn().mockResolvedValue(RESULT);
+    const router = new AgentRuntimeRouter(typescriptRuntime);
+
+    await expect(router.executeTypeScriptFallback(REQUEST, fallback)).resolves.toBe(RESULT);
+
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes future TypeScript fallback through the configured fallback guard', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const fallback = vi.fn().mockResolvedValue(RESULT);
+    const executeFallback = vi.fn().mockRejectedValue(new Error('fallback_closed_after_actions_committed'));
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      executeFallback,
+    });
+
+    await expect(router.executeTypeScriptFallback(REQUEST, fallback)).rejects.toThrow(
+      'fallback_closed_after_actions_committed',
+    );
+
+    expect(executeFallback).toHaveBeenCalledWith(REQUEST, fallback);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['typescript', 'typescript_default'],
     ['maf_disabled', 'global_kill_switch'],
