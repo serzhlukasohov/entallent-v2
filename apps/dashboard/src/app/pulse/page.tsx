@@ -3,6 +3,7 @@ import { Nav } from '../components/Nav';
 import { fetchApi, TENANT_ID } from '../lib';
 import type { PulseOverviewResponse } from '../types';
 import { DevControls } from './DevControls';
+import { devControlsEnabled } from './dev-controls-gate';
 
 const GROUP_LABELS: Record<string, string> = {
   autonomy: 'Autonomy',
@@ -38,6 +39,7 @@ function assessmentColor(status: string | null): string {
 }
 
 export default async function PulsePage() {
+  const showDevControls = devControlsEnabled();
   const data = await fetchApi<PulseOverviewResponse>(
     `/admin/pulse/overview?tenantId=${TENANT_ID}`,
     0,
@@ -187,7 +189,7 @@ export default async function PulsePage() {
               </div>
 
               {/* Dev controls */}
-              <DevControls userId={emp.userId} tenantId={data.tenantId} />
+              {showDevControls && <DevControls userId={emp.userId} tenantId={data.tenantId} />}
             </div>
           ))}
         </div>

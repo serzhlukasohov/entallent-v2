@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { FollowUpExecutionUseCase } from './follow-up-execution.use-case';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
 import type { FollowUpContextPort, FollowUpContextData } from '../ports/follow-up-context.port';
@@ -110,6 +110,15 @@ function makeOutbox(): OutboxPort {
 const baseInput = { scheduledActionId: 'action-1', tenantId: 't-1', userId: 'u-1' };
 
 describe('FollowUpExecutionUseCase — policy decisions', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-02T12:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('returns skip when action is not found', async () => {
     const uc = new FollowUpExecutionUseCase(makeRepo(null), makeContextPort(makeContext()), makeConversationRepo(), makeOutbox(), makeAi());
     const result = await uc.execute(baseInput);

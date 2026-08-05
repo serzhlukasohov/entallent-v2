@@ -1,11 +1,16 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { devControlsEnabled } from './dev-controls-gate';
 
 const API_BASE = process.env.API_INTERNAL_URL ?? 'http://localhost:3000/api/v1';
 const API_KEY = process.env.ADMIN_API_KEY ?? '';
 
 async function devPost(path: string, body: unknown) {
+  if (!devControlsEnabled()) {
+    throw new Error('Dev controls are disabled');
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },

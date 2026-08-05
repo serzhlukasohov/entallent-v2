@@ -1,10 +1,11 @@
-import { Controller, Post, Get, Body, Param, HttpCode, Logger, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Post, Get, Body, Param, HttpCode, Logger, Query, UseGuards } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 import { eq, and, desc, isNull, ne, asc, inArray, max as sqlMax } from 'drizzle-orm';
 import { IngestionService } from '../channel/ingestion.service';
 import { DatabaseService } from '../database/database.service';
+import { ApiKeyGuard } from '../auth/api-key.guard';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { messages, memoryItems, scheduledActions, surveyEvidence, surveyAssessments, surveyGroupStates, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
@@ -18,8 +19,16 @@ interface SimulateMessageDto {
   conversationId?: string;
 }
 
+interface ForceCheckInDto {
+  userIds?: string[];
+  tenantId: string;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 // Only available in development — not imported in production AppModule.
 @Controller('dev')
+@UseGuards(ApiKeyGuard)
 export class DevSimulateController {
   private readonly logger = new Logger(DevSimulateController.name);
 
@@ -371,7 +380,19 @@ export class DevSimulateController {
    */
   @Post('force-checkin')
   @HttpCode(202)
-  async forceCheckIn(@Body() body: { userIds?: string[]; tenantId?: string }): Promise<{ enqueued: number; users: string[] }> {
+  async forceCheckIn(@Body() body: ForceCheckInDto | null | undefined): Promise<{ enqueued: number; users: string[] }> {
+    const tenantId = typeof body?.tenantId === 'string' ? body.tenantId.trim() : '';
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+    if (!UUID_PATTERN.test(tenantId)) {
+      throw new BadRequestException('tenantId must be a UUID');
+    }
+    const requestedUserIds = body?.userIds;
+    if (requestedUserIds !== undefined && (!Array.isArray(requestedUserIds) || requestedUserIds.some((id) => typeof id !== 'string'))) {
+      throw new BadRequestException('userIds must be an array of strings');
+    }
+
     const rows = await this.db.client
       .select({
         userId: conversations.userId,
@@ -393,7 +414,7 @@ export class DevSimulateController {
       .where(
         and(
           eq(conversations.status, 'active'),
-          body.tenantId ? eq(conversations.tenantId, body.tenantId) : undefined,
+          eq(conversations.tenantId, tenantId),
         ),
       )
       .orderBy(desc(conversations.createdAt));
@@ -401,7 +422,7 @@ export class DevSimulateController {
     // Pick the most recent conversation per user, optionally filtered to requested userIds
     const seen = new Set<string>();
     const candidates = rows.filter((r) => {
-      if (body.userIds && !body.userIds.includes(r.userId)) return false;
+      if (requestedUserIds && !requestedUserIds.includes(r.userId)) return false;
       if (seen.has(r.userId)) return false;
       seen.add(r.userId);
       return true;

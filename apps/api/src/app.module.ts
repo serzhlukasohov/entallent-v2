@@ -8,8 +8,9 @@ import { ChannelModule } from './channel/channel.module';
 import { UsersModule } from './users/users.module';
 import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
+import { shouldMountDevModule } from './dev/dev-endpoints';
 
-const isDev = process.env['NODE_ENV'] !== 'production' || process.env['ENABLE_DEV_ENDPOINTS'] === 'true';
+const mountDevModule = shouldMountDevModule();
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ const isDev = process.env['NODE_ENV'] !== 'production' || process.env['ENABLE_DE
     ChannelModule,
     UsersModule,
     AdminModule,
-    ...(isDev ? [DevModule] : []),
+    ...(mountDevModule ? [DevModule] : []),
   ],
 })
 export class AppModule {}

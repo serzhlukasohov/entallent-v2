@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { DevSimulateController } from './dev-simulate.controller';
 import { ChannelModule } from '../channel/channel.module';
 import { DatabaseModule } from '../database/database.module';
+import { ApiKeyGuard } from '../auth/api-key.guard';
 import { QUEUE_NAMES } from '../queue/queue.module';
 
 @Module({
@@ -15,5 +16,6 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     ),
   ],
   controllers: [DevSimulateController],
+  providers: [ApiKeyGuard],
 })
 export class DevModule {}

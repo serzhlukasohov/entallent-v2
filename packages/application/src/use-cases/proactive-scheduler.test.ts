@@ -32,6 +32,15 @@ function makeQueue(): CheckInEnqueuePort & { enqueueCheckIn: ReturnType<typeof v
 }
 
 describe('ProactiveSchedulerUseCase', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-02T12:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('enqueues a check-in for each eligible candidate', async () => {
     const repo = makeRepo([makeCandidate({ userId: 'u-1' }), makeCandidate({ userId: 'u-2' })]);
     const queue = makeQueue();
@@ -64,7 +73,6 @@ describe('ProactiveSchedulerUseCase', () => {
 
   it('skips candidates currently in quiet hours', async () => {
     // Force "now" to 23:00 UTC so a 22–8 quiet window is active
-    vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T23:00:00Z'));
 
     const repo = makeRepo([
@@ -116,7 +124,6 @@ describe('ProactiveSchedulerUseCase', () => {
 
   describe('quietHoursEnabled bypass', () => {
     beforeEach(() => {
-      vi.useFakeTimers();
       // 03:00 UTC — inside the default 22–08 quiet window for a UTC user
       vi.setSystemTime(new Date('2026-08-02T03:00:00Z'));
     });
