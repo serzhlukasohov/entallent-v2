@@ -16,6 +16,8 @@ interface GateScenario {
   file: string;
   hardPasses: number;
   judgePasses: number;
+  migrationCases?: string[];
+  manualReviewRequired?: boolean;
 }
 
 interface SampleResult {
@@ -38,6 +40,8 @@ interface ScenarioSummary {
   id: string;
   name: string;
   file: string;
+  migrationCases: string[];
+  manualReviewRequired: boolean;
   status: 'passed' | 'failed';
   requiredHardPasses: number;
   requiredJudgePasses: number;
@@ -66,6 +70,10 @@ interface GateSummary {
   config: {
     runs: number;
     infraRetries: number;
+  };
+  manualReview: {
+    requiredScenarioIds: string[];
+    requiredCaseIds: string[];
   };
   scenarios: ScenarioSummary[];
 }
@@ -124,6 +132,8 @@ async function main(): Promise<void> {
       id: scenario.id,
       name: scenario.name,
       file: scenario.file,
+      migrationCases: scenario.migrationCases ?? [],
+      manualReviewRequired: scenario.manualReviewRequired === true,
       status,
       requiredHardPasses,
       requiredJudgePasses,
@@ -150,6 +160,18 @@ async function main(): Promise<void> {
     config: {
       runs,
       infraRetries: config.infraRetries,
+    },
+    manualReview: {
+      requiredScenarioIds: scenarios
+        .filter((scenario) => scenario.manualReviewRequired)
+        .map((scenario) => scenario.id),
+      requiredCaseIds: [
+        ...new Set(
+          scenarios
+            .filter((scenario) => scenario.manualReviewRequired)
+            .flatMap((scenario) => scenario.migrationCases),
+        ),
+      ],
     },
     scenarios,
   };
@@ -354,6 +376,18 @@ function buildSummaryMarkdown(summary: GateSummary): string {
       (scenario) =>
         `| ${scenario.name} | ${scenario.hardPasses}/${summary.config.runs} need ${scenario.requiredHardPasses} | ${scenario.judgePasses}/${summary.config.runs} need ${scenario.requiredJudgePasses} | ${scenario.infraFailures} | ${scenario.status.toUpperCase()} |`,
     ),
+    '',
+    '## Manual review required',
+    '',
+    summary.manualReview.requiredScenarioIds.length === 0
+      ? 'none'
+      : summary.manualReview.requiredScenarioIds
+          .map((scenarioId) => {
+            const scenario = summary.scenarios.find((entry) => entry.id === scenarioId);
+            const cases = scenario?.migrationCases.join(', ') || 'unmapped';
+            return `- ${scenario?.name ?? scenarioId}: ${cases}`;
+          })
+          .join('\n'),
     '',
     '## Samples',
     '',

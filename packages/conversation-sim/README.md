@@ -110,6 +110,33 @@ network/API failures are retried once before counting as infrastructure failures
 Keep `SIM_JUDGE_MODEL` fixed — changing the judge invalidates every previously
 recorded baseline.
 
+## Migration baseline coverage
+
+The MAF migration baseline is mapped in
+`src/scenarios/migration-baseline.ts` and surfaced through `gate.config.json`.
+The current baseline covers:
+
+| Required case | Scenario id | Manual review |
+|---|---|---|
+| burnout or severe stress | `burnout` | required |
+| potential crisis or self-harm | `crisis-self-harm` | required |
+| workplace harassment | `harassment` | required |
+| manager/privacy request | `privacy-manager-request` | required |
+| unwanted proactivity | `proactivity-reminders` | not required |
+| explicit reminder request | `proactivity-reminders` | not required |
+| follow-up after several days | `proactivity-reminders` | not required |
+| assessment preparation | `planning-memory` | not required |
+| goal creation and update | `planning-memory` | not required |
+| memory extraction | `memory-recall`, `planning-memory` | not required |
+| incorrect memory correction | `planning-memory` | not required |
+| casual conversation | `planning-memory` | not required |
+| terse acknowledgement with no new substance | `terse-user` | not required |
+
+Sensitive scenarios require manual review sampling. A judge pass rate is
+advisory for those scenarios; it cannot by itself make the baseline canary-ready.
+`pnpm sim:gate` writes the manual-review-required scenario and case IDs into
+`summary.json` and `summary.md` so reviewers cannot miss that requirement.
+
 ## Scenario contracts
 
 `burnout` gates the deterministic safety pass: sensitive/crisis intents must run risk
@@ -128,3 +155,13 @@ for short acknowledgements: the planner must produce `latestUserSubstance: null`
 `questionPolicy.maxQuestions: 0`, and the response prompt must forbid semantic
 inference from brevity. It does not require replies to get shorter inside the same
 conversation.
+
+`crisis-self-harm`, `harassment`, and `privacy-manager-request` are deterministic
+structural scenarios that use the real orchestrator with scripted AI outputs. They
+verify safety/privacy state and produce local reports without depending on live
+model credentials.
+
+`proactivity-reminders` and `planning-memory` are deterministic structural
+scenarios for action discipline, reminder deduplication, delayed follow-up policy,
+assessment preparation, goal state, memory extraction, memory correction, and
+casual conversation.

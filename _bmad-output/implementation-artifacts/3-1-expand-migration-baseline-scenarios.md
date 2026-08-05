@@ -4,7 +4,7 @@ baseline_commit: 57bea23526c53b6ba54a607178287f6bb710b0da
 
 # Story 3.1: Expand Migration Baseline Scenarios
 
-Status: ready-for-dev
+Status: review
 Epic: 3 - Baseline And Shadow Comparison
 Story ID: 3.1
 
@@ -22,46 +22,46 @@ so that MAF can be judged against current behavior before rollout.
 
 ## Tasks / Subtasks
 
-- [ ] Inventory and encode baseline coverage. (AC: 1, 2)
-  - [ ] Treat `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` as the migration baseline source to update.
-  - [ ] Preserve existing `packages/conversation-sim` scenarios: `burnout`, `memory-recall`, and `terse-user`.
-  - [ ] Add an inspectable coverage list or manifest that maps every required migration case to one or more scenario files.
-  - [ ] Mark sensitive cases explicitly: self-harm/crisis, harassment, privacy/manager request, and severe stress/burnout.
-  - [ ] Keep scenario data synthetic; do not use real Slack text, workspace IDs, user names from production, manager names, tenant IDs, or incident details.
-- [ ] Expand `packages/conversation-sim` scenarios for required cases. (AC: 1)
-  - [ ] Add or update scenario tests under `packages/conversation-sim/src/scenarios/`.
-  - [ ] Cover burnout/severe stress without weakening the existing `burnout.sim.test.ts` deterministic safety pass.
-  - [ ] Add crisis/self-harm coverage that asserts risk detection runs and survey/proactive behavior is blocked.
-  - [ ] Add harassment coverage that asserts sensitive handling and no performance/goal/survey pivot.
-  - [ ] Add manager/privacy request coverage that asserts individual raw conversation content is not exposed or summarized for a manager.
-  - [ ] Add unwanted proactivity coverage that checks the coach does not invent outreach, reminders, or follow-ups when the user did not ask.
-  - [ ] Add explicit reminder coverage that checks reminder intent and due time are recognized without creating duplicate scheduled actions.
-  - [ ] Add delayed follow-up coverage that checks follow-up behavior remains policy-bound and does not fire during active risk or blocked proactive states.
-  - [ ] Add assessment preparation coverage that helps the user prepare without turning the reply into a manager-facing performance assessment.
-  - [ ] Add goal creation and goal update coverage through memory/goal proposal observability already available in the harness.
-  - [ ] Add memory extraction and incorrect memory correction coverage using `harness.memoryItems` and repository state, not only judge wording.
-  - [ ] Add casual conversation coverage that stays light, non-invasive, and avoids unnecessary survey/goal steering.
-  - [ ] Preserve terse acknowledgement coverage in `terse-user.sim.test.ts`.
-- [ ] Make manual review impossible to skip for sensitive scenarios. (AC: 2)
-  - [ ] Extend `gate.config.json`, a new typed scenario manifest, or the gate summary shape with `manualReviewRequired` metadata for sensitive cases.
-  - [ ] Update `packages/conversation-sim/src/gate/run-gate.ts` so gate output surfaces manual-review-required scenarios separately from hard and judge pass rates.
-  - [ ] Ensure sensitive scenarios cannot be represented as canary-ready by judge pass rate alone; manual review must be visible as a required follow-up or blocking status.
-  - [ ] Keep the current N-run aggregation behavior and `SIM_GATE_RUNS` override compatible.
-- [ ] Extend deterministic assertions where judge wording is not enough. (AC: 1, 2)
-  - [ ] Reuse `packages/conversation-sim/src/harness/assertions.ts` for hard invariants.
-  - [ ] Preserve existing checks for reflective openers, too many questions, crisis survey blocking, long crisis replies, and repeated questions.
-  - [ ] Add focused deterministic checks only where state is observable, for example risk mode, `requiresSafetyCheck`, `surveyAllowed`, risk flags, memory items, goal records, scheduled action rows, or outbox payloads.
-  - [ ] Do not make brittle assertions on exact generated prose unless the behavior cannot be verified structurally.
-- [ ] Update docs and gate configuration. (AC: 1, 2)
-  - [ ] Update `packages/conversation-sim/README.md` with the expanded migration baseline list and manual-review rule.
-  - [ ] Update `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` so it reflects the implemented scenario coverage and manual-review semantics.
-  - [ ] Update `packages/conversation-sim/gate.config.json` for new scenarios without weakening current thresholds for existing scenarios unless the story documents why.
-- [ ] Run and record verification. (AC: 1-3)
-  - [ ] Run `pnpm --filter @entalent/conversation-sim typecheck`.
-  - [ ] Run `pnpm --filter @entalent/conversation-sim lint`.
-  - [ ] Run targeted scenario tests for new or changed scenario files when model credentials are available.
-  - [ ] Run `SIM_GATE_RUNS=1 pnpm --filter @entalent/conversation-sim sim:gate` when model credentials are available; if credentials are absent, record the exact skip reason.
-  - [ ] Run `git diff --check`.
+- [x] Inventory and encode baseline coverage. (AC: 1, 2)
+  - [x] Treat `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` as the migration baseline source to update.
+  - [x] Preserve existing `packages/conversation-sim` scenarios: `burnout`, `memory-recall`, and `terse-user`.
+  - [x] Add an inspectable coverage list or manifest that maps every required migration case to one or more scenario files.
+  - [x] Mark sensitive cases explicitly: self-harm/crisis, harassment, privacy/manager request, and severe stress/burnout.
+  - [x] Keep scenario data synthetic; do not use real Slack text, workspace IDs, user names from production, manager names, tenant IDs, or incident details.
+- [x] Expand `packages/conversation-sim` scenarios for required cases. (AC: 1)
+  - [x] Add or update scenario tests under `packages/conversation-sim/src/scenarios/`.
+  - [x] Cover burnout/severe stress without weakening the existing `burnout.sim.test.ts` deterministic safety pass.
+  - [x] Add crisis/self-harm coverage that asserts risk detection runs and survey/proactive behavior is blocked.
+  - [x] Add harassment coverage that asserts sensitive handling and no performance/goal/survey pivot.
+  - [x] Add manager/privacy request coverage that asserts individual raw conversation content is not exposed or summarized for a manager.
+  - [x] Add unwanted proactivity coverage that checks the coach does not invent outreach, reminders, or follow-ups when the user did not ask.
+  - [x] Add explicit reminder coverage that checks reminder intent and due time are recognized without creating duplicate scheduled actions.
+  - [x] Add delayed follow-up coverage that checks follow-up behavior remains policy-bound and does not fire during active risk or blocked proactive states.
+  - [x] Add assessment preparation coverage that helps the user prepare without turning the reply into a manager-facing performance assessment.
+  - [x] Add goal creation and goal update coverage through memory/goal proposal observability already available in the harness.
+  - [x] Add memory extraction and incorrect memory correction coverage using `harness.memoryItems` and repository state, not only judge wording.
+  - [x] Add casual conversation coverage that stays light, non-invasive, and avoids unnecessary survey/goal steering.
+  - [x] Preserve terse acknowledgement coverage in `terse-user.sim.test.ts`.
+- [x] Make manual review impossible to skip for sensitive scenarios. (AC: 2)
+  - [x] Extend `gate.config.json`, a new typed scenario manifest, or the gate summary shape with `manualReviewRequired` metadata for sensitive cases.
+  - [x] Update `packages/conversation-sim/src/gate/run-gate.ts` so gate output surfaces manual-review-required scenarios separately from hard and judge pass rates.
+  - [x] Ensure sensitive scenarios cannot be represented as canary-ready by judge pass rate alone; manual review must be visible as a required follow-up or blocking status.
+  - [x] Keep the current N-run aggregation behavior and `SIM_GATE_RUNS` override compatible.
+- [x] Extend deterministic assertions where judge wording is not enough. (AC: 1, 2)
+  - [x] Reuse `packages/conversation-sim/src/harness/assertions.ts` for hard invariants.
+  - [x] Preserve existing checks for reflective openers, too many questions, crisis survey blocking, long crisis replies, and repeated questions.
+  - [x] Add focused deterministic checks only where state is observable, for example risk mode, `requiresSafetyCheck`, `surveyAllowed`, risk flags, memory items, goal records, scheduled action rows, or outbox payloads.
+  - [x] Do not make brittle assertions on exact generated prose unless the behavior cannot be verified structurally.
+- [x] Update docs and gate configuration. (AC: 1, 2)
+  - [x] Update `packages/conversation-sim/README.md` with the expanded migration baseline list and manual-review rule.
+  - [x] Update `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` so it reflects the implemented scenario coverage and manual-review semantics.
+  - [x] Update `packages/conversation-sim/gate.config.json` for new scenarios without weakening current thresholds for existing scenarios unless the story documents why.
+- [x] Run and record verification. (AC: 1-3)
+  - [x] Run `pnpm --filter @entalent/conversation-sim typecheck`.
+  - [x] Run `pnpm --filter @entalent/conversation-sim lint`.
+  - [x] Run targeted scenario tests for new or changed scenario files when model credentials are available.
+  - [x] Run `SIM_GATE_RUNS=1 pnpm --filter @entalent/conversation-sim sim:gate` when model credentials are available; if credentials are absent, record the exact skip reason.
+  - [x] Run `git diff --check`.
 
 ## Dev Notes
 
@@ -195,18 +195,49 @@ GPT-5 Codex
 - Story created from sprint backlog after Epic 2 retrospective was completed at commit `57bea23526c53b6ba54a607178287f6bb710b0da`.
 - Loaded BMAD create-story workflow, config, sprint status, Epic 3 Story 3.1 requirements, architecture spine, SPEC, validation baseline, conversation-sim package, current scenarios, gate runner, report writer, harness, and Epic 2 retrospective.
 - No `project-context.md` or UX artifact was found; this story is backend/runtime evaluation work.
+- Started dev-story implementation from baseline `57bea23526c53b6ba54a607178287f6bb710b0da`.
+- RED: `pnpm --filter @entalent/conversation-sim sim -- src/scenarios/migration-baseline.test.ts` accidentally ran all live scenarios because the package script inserted an extra `--`; existing live scenarios failed on network/model endpoint DNS (`ENOTFOUND app.langwatch.ai` and `ENOTFOUND ai-people-manager.cognitiveservices.azure.com`).
+- RED: targeted deterministic scenarios initially failed because sensitive classifications still exposed `surveyAllowed: true` and delayed follow-up hit local quiet hours before active-risk policy.
+- GREEN: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/migration-baseline.sim.test.ts src/scenarios/crisis-self-harm.sim.test.ts src/scenarios/harassment.sim.test.ts src/scenarios/privacy-manager-request.sim.test.ts src/scenarios/proactivity-reminders.sim.test.ts src/scenarios/planning-memory.sim.test.ts` passed with 12 tests.
+- Verification: `pnpm --filter @entalent/conversation-sim typecheck` passed.
+- Verification: `pnpm --filter @entalent/conversation-sim lint` passed.
+- Verification: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: `git diff --check` passed.
+- Live gate note: `SIM_GATE_RUNS=1 pnpm --filter @entalent/conversation-sim sim:gate` was not used as a green verification in this sandbox because live model/LangWatch network endpoints are unavailable, as shown by the earlier `ENOTFOUND` failures.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
-- Story 3.1 is ready for dev-story execution.
+- Story 3.1 implementation is ready for BMAD code review.
 - Guardrails explicitly prevent early `agent-service`, `MafAgentRuntimeClient`, FastAPI route, MAF workflow, production routing, and shadow diagnostics persistence work.
+- Added a typed migration baseline manifest that maps all required cases to scenario IDs and marks sensitive cases as manual-review-required.
+- Extended gate config and gate summaries with migration case metadata and manual-review-required scenario/case lists.
+- Added deterministic structural scenarios for crisis/self-harm, harassment, privacy/manager request, unwanted proactivity, explicit reminder deduplication, delayed follow-up active-risk policy, assessment preparation, goal state, memory extraction/correction, and casual conversation.
+- Preserved existing live baseline scenarios for burnout, memory recall, and terse-user coverage.
+- Updated validation-baseline and conversation-sim README documentation.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/3-1-expand-migration-baseline-scenarios.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md`
+- `packages/conversation-sim/README.md`
+- `packages/conversation-sim/gate.config.json`
+- `packages/conversation-sim/src/fakes/repositories.ts`
+- `packages/conversation-sim/src/fakes/scripted-ai.ts`
+- `packages/conversation-sim/src/gate/run-gate.ts`
+- `packages/conversation-sim/src/harness/assertions.ts`
+- `packages/conversation-sim/src/harness/coach-harness.ts`
+- `packages/conversation-sim/src/scenarios/baseline-test-helpers.ts`
+- `packages/conversation-sim/src/scenarios/crisis-self-harm.sim.test.ts`
+- `packages/conversation-sim/src/scenarios/harassment.sim.test.ts`
+- `packages/conversation-sim/src/scenarios/migration-baseline.sim.test.ts`
+- `packages/conversation-sim/src/scenarios/migration-baseline.ts`
+- `packages/conversation-sim/src/scenarios/planning-memory.sim.test.ts`
+- `packages/conversation-sim/src/scenarios/privacy-manager-request.sim.test.ts`
+- `packages/conversation-sim/src/scenarios/proactivity-reminders.sim.test.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 3.1 developer context from Epic 3, validation baseline, architecture spine, conversation-sim harness, and Epic 2 retrospective learnings.
+- 2026-08-05: Implemented expanded migration baseline scenarios, manual-review gate metadata, docs, and verification for Story 3.1.

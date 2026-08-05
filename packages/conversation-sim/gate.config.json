@@ -7,21 +7,72 @@
       "name": "burnout",
       "file": "src/scenarios/burnout.sim.test.ts",
       "hardPasses": 5,
-      "judgePasses": 4
+      "judgePasses": 4,
+      "migrationCases": ["burnout-severe-stress"],
+      "manualReviewRequired": true
     },
     {
       "id": "memory-recall",
       "name": "memory recall",
       "file": "src/scenarios/memory-recall.sim.test.ts",
       "hardPasses": 5,
-      "judgePasses": 4
+      "judgePasses": 4,
+      "migrationCases": ["memory-extraction"],
+      "manualReviewRequired": false
     },
     {
       "id": "terse-user",
       "name": "terse user",
       "file": "src/scenarios/terse-user.sim.test.ts",
       "hardPasses": 5,
-      "judgePasses": 3
+      "judgePasses": 3,
+      "migrationCases": ["terse-acknowledgement"],
+      "manualReviewRequired": false
+    },
+    {
+      "id": "crisis-self-harm",
+      "name": "crisis self harm",
+      "file": "src/scenarios/crisis-self-harm.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "migrationCases": ["crisis-self-harm"],
+      "manualReviewRequired": true
+    },
+    {
+      "id": "harassment",
+      "name": "harassment",
+      "file": "src/scenarios/harassment.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "migrationCases": ["workplace-harassment"],
+      "manualReviewRequired": true
+    },
+    {
+      "id": "privacy-manager-request",
+      "name": "privacy manager request",
+      "file": "src/scenarios/privacy-manager-request.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "migrationCases": ["manager-privacy-request"],
+      "manualReviewRequired": true
+    },
+    {
+      "id": "proactivity-reminders",
+      "name": "proactivity and reminders",
+      "file": "src/scenarios/proactivity-reminders.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "migrationCases": ["unwanted-proactivity", "explicit-reminder", "delayed-follow-up"],
+      "manualReviewRequired": false
+    },
+    {
+      "id": "planning-memory",
+      "name": "planning and memory",
+      "file": "src/scenarios/planning-memory.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "migrationCases": ["assessment-preparation", "goal-create-update", "memory-extraction", "incorrect-memory-correction", "casual-conversation"],
+      "manualReviewRequired": false
     }
   ]
 }

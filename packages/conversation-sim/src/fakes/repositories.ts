@@ -5,9 +5,12 @@ import type {
   MemoryItemRecord,
   MemoryRepositoryPort,
   MessageRecord,
+  ScheduledActionRecord,
   SaveGoalParams,
   SaveMemoryItemParams,
+  SaveScheduledActionParams,
   SaveMessageParams,
+  ScheduledActionRepositoryPort,
   StyleProfileRecord,
   StyleProfileRepositoryPort,
   UserGoalRecord,
@@ -156,6 +159,84 @@ export class InMemoryGoalRepository implements GoalRepositoryPort {
     if (goal) {
       goal.status = status;
       goal.updatedAt = new Date();
+    }
+  }
+}
+
+export class InMemoryScheduledActionRepository implements ScheduledActionRepositoryPort {
+  readonly actions: ScheduledActionRecord[] = [];
+
+  async save(params: SaveScheduledActionParams): Promise<ScheduledActionRecord> {
+    const now = new Date();
+    const record: ScheduledActionRecord = {
+      ...params,
+      id: nextId('act'),
+      status: 'pending',
+      attemptCount: 0,
+      maxAttempts: 3,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.actions.push(record);
+    return record;
+  }
+
+  async findById(id: string, tenantId: string): Promise<ScheduledActionRecord | null> {
+    return this.actions.find((action) => action.id === id && action.tenantId === tenantId) ?? null;
+  }
+
+  async markSent(id: string, tenantId: string, attemptCount: number): Promise<void> {
+    const action = await this.findById(id, tenantId);
+    if (!action) return;
+    action.status = 'sent';
+    action.attemptCount = attemptCount;
+    action.lastAttemptAt = new Date();
+    action.updatedAt = new Date();
+  }
+
+  async cancel(id: string, tenantId: string): Promise<void> {
+    const action = await this.findById(id, tenantId);
+    if (!action) return;
+    action.status = 'cancelled';
+    action.updatedAt = new Date();
+  }
+
+  async postpone(
+    id: string,
+    tenantId: string,
+    newDueAt: Date,
+    attemptCount: number,
+  ): Promise<void> {
+    const action = await this.findById(id, tenantId);
+    if (!action) return;
+    action.status = 'pending';
+    action.dueAt = newDueAt;
+    action.attemptCount = attemptCount;
+    action.lastAttemptAt = new Date();
+    action.updatedAt = new Date();
+  }
+
+  async existsByDeduplicationKey(key: string): Promise<boolean> {
+    return this.actions.some((action) => action.deduplicationKey === key && action.status === 'pending');
+  }
+
+  async cancelPendingByUserAndType(
+    userId: string,
+    tenantId: string,
+    type: string,
+    topic: string,
+  ): Promise<void> {
+    for (const action of this.actions) {
+      if (
+        action.userId === userId &&
+        action.tenantId === tenantId &&
+        action.type === type &&
+        action.intent === topic &&
+        action.status === 'pending'
+      ) {
+        action.status = 'cancelled';
+        action.updatedAt = new Date();
+      }
     }
   }
 }
