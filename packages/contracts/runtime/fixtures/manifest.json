@@ -9,6 +9,10 @@
       "path": "valid/runtime-result.json"
     },
     {
+      "schemaName": "RuntimeResult",
+      "path": "valid/runtime-result-validation-failed-action.json"
+    },
+    {
       "schemaName": "RuntimeErrorResponse",
       "path": "valid/runtime-error-response.json"
     }
@@ -47,6 +51,41 @@
     {
       "schemaName": "RuntimeResult",
       "path": "invalid/invalid-update-goal-action-shape.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/missing-action-envelope-idempotency-key.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/invalid-action-envelope-aggregate-type.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/missing-action-envelope-payload.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/malformed-action-envelope-payload.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/malformed-action-validation-result.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/malformed-action-execution-status.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/invalid-action-commit-marker-shape.json",
       "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
     },
     {

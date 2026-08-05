@@ -118,24 +118,42 @@ export type ProcessMessageResult = {
   proposedActions: Array<
     | {
         actionId: string;
-        type: "save_memory";
+        aggregateType: "memory";
+        actionType: "save_memory";
         idempotencyKey: string;
-        memoryCandidateId: string;
+        payload: {
+          memoryCandidateId: string;
+        };
+        validationResult: ActionValidationResult;
+        executionStatus: ActionExecutionStatus;
+        commitMarker: ActionCommitMarker;
       }
     | {
         actionId: string;
-        type: "schedule_follow_up";
+        aggregateType: "follow_up";
+        actionType: "schedule_follow_up";
         idempotencyKey: string;
-        executeAt: string;
-        intent: string;
-        deduplicationKey: string;
+        payload: {
+          executeAt: string;
+          intent: string;
+          deduplicationKey: string;
+        };
+        validationResult: ActionValidationResult;
+        executionStatus: ActionExecutionStatus;
+        commitMarker: ActionCommitMarker;
       }
     | {
         actionId: string;
-        type: "update_goal";
+        aggregateType: "goal";
+        actionType: "update_goal";
         idempotencyKey: string;
-        goalId?: string;
-        changes: Record<string, unknown>;
+        payload: {
+          goalId?: string;
+          changes: Record<string, unknown>;
+        };
+        validationResult: ActionValidationResult;
+        executionStatus: ActionExecutionStatus;
+        commitMarker: ActionCommitMarker;
       }
   >;
 
@@ -147,6 +165,23 @@ export type ProcessMessageResult = {
     latencyMs: number;
   };
 };
+
+type ActionValidationResult = {
+  status: "pending" | "valid" | "invalid";
+  reasonCodes: string[];
+  message?: string;
+};
+
+type ActionExecutionStatus =
+  | "not_started"
+  | "blocked"
+  | "committed"
+  | "failed";
+
+type ActionCommitMarker = {
+  committedAt: string;
+  referenceId: string;
+} | null;
 ```
 
 ## Runtime Error Response
@@ -169,7 +204,7 @@ export type RuntimeErrorResponse = {
 
 ## Side-Effect Rule
 
-The Python service returns proposals. TypeScript validates and executes them through existing domain policies and repositories.
+The Python service returns proposals. TypeScript validates and executes them through existing domain policies and repositories. The action envelope can represent validation-failed or blocked actions with `commitMarker: null`; ledger persistence and actual action execution are separate later slices.
 
 ```text
 MAF proposes -> TypeScript validates -> TypeScript writes -> queues emit side effects

@@ -26,28 +26,55 @@
   "proposedActions": [
     {
       "actionId": "save-memory-demo",
-      "type": "save_memory",
+      "aggregateType": "memory",
+      "actionType": "save_memory",
       "idempotencyKey": "action:save-memory-demo",
-      "memoryCandidateId": "memory-candidate-demo"
+      "payload": {
+        "memoryCandidateId": "memory-candidate-demo"
+      },
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
     },
     {
       "actionId": "schedule-follow-up-demo",
-      "type": "schedule_follow_up",
+      "aggregateType": "follow_up",
+      "actionType": "schedule_follow_up",
       "idempotencyKey": "action:schedule-follow-up-demo",
-      "executeAt": "2026-08-06T11:58:01Z",
-      "intent": "check in later",
-      "deduplicationKey": "followup:demo"
+      "payload": {
+        "executeAt": "2026-08-06T11:58:01Z",
+        "intent": "check in later",
+        "deduplicationKey": "followup:demo"
+      },
+      "validationResult": {
+        "status": "valid",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
     },
     {
       "actionId": "update-goal-demo",
-      "type": "update_goal",
+      "aggregateType": "goal",
+      "actionType": "update_goal",
       "idempotencyKey": "action:update-goal-demo",
-      "goalId": "77777777-7777-4777-8777-777777777777",
-      "changes": {
-        "status": "active",
-        "priority": 2,
-        "blocked": false
-      }
+      "payload": {
+        "goalId": "77777777-7777-4777-8777-777777777777",
+        "changes": {
+          "status": "active",
+          "priority": 2,
+          "blocked": false
+        }
+      },
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
     }
   ],
   "diagnostics": {

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type {
+  RuntimeActionProposal,
   RuntimeErrorResponse,
   RuntimeProcessMessageRequest,
   RuntimeResult,
@@ -48,9 +49,14 @@ describe('Runtime contract DTO exports', () => {
       fallbackAllowed: true,
       message: 'Synthetic runtime timeout.',
     };
+    const action: RuntimeActionProposal = result.proposedActions[0]!;
 
     expect(request.context.recentTurns[0]?.role).toBe('user');
     expect(result.diagnostics.runtimeVersion).toBe('maf-contract-fixture');
+    expect(action.actionType).toBe('save_memory');
+    expect(action.validationResult.status).toBe('pending');
+    expect(action.executionStatus).toBe('not_started');
+    expect(action.commitMarker).toBeNull();
     expect(error.errorCategory).toBe('timeout');
   });
 });

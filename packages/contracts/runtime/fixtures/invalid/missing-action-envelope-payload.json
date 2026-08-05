@@ -1,0 +1,27 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "save-memory-demo",
+      "aggregateType": "memory",
+      "actionType": "save_memory",
+      "idempotencyKey": "action:save-memory-demo",
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-missing-payload",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

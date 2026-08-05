@@ -1,0 +1,33 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response with rejected proposal."
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "blocked-follow-up-demo",
+      "aggregateType": "follow_up",
+      "actionType": "schedule_follow_up",
+      "idempotencyKey": "action:blocked-follow-up-demo",
+      "payload": {
+        "executeAt": "2026-08-06T11:58:01Z",
+        "intent": "check in later",
+        "deduplicationKey": "followup:blocked-demo"
+      },
+      "validationResult": {
+        "status": "invalid",
+        "reasonCodes": ["QUIET_HOURS_BLOCKED"],
+        "message": "Synthetic validation failure."
+      },
+      "executionStatus": "blocked",
+      "commitMarker": null
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-validation-failed-action",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

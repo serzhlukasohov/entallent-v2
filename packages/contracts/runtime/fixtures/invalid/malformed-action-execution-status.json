@@ -1,0 +1,30 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "save-memory-demo",
+      "aggregateType": "memory",
+      "actionType": "save_memory",
+      "idempotencyKey": "action:save-memory-demo",
+      "payload": {
+        "memoryCandidateId": "memory-candidate-demo"
+      },
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "started",
+      "commitMarker": null
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-malformed-execution",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

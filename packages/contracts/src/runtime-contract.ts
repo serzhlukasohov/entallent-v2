@@ -103,33 +103,81 @@ export type RuntimeMemoryCandidate = {
 };
 
 export type RuntimeActionProposal =
-  | RuntimeSaveMemoryActionProposal
-  | RuntimeScheduleFollowUpActionProposal
-  | RuntimeUpdateGoalActionProposal;
+  | RuntimeSaveMemoryActionEnvelope
+  | RuntimeScheduleFollowUpActionEnvelope
+  | RuntimeUpdateGoalActionEnvelope;
 
-export type RuntimeSaveMemoryActionProposal = {
+export type RuntimeActionEnvelopeBase<
+  AggregateType extends RuntimeActionAggregateType,
+  ActionType extends RuntimeActionType,
+  Payload extends RuntimeJsonValue,
+> = {
   actionId: string;
-  type: 'save_memory';
+  aggregateType: AggregateType;
+  actionType: ActionType;
   idempotencyKey: string;
+  payload: Payload;
+  validationResult: RuntimeActionValidationResult;
+  executionStatus: RuntimeActionExecutionStatus;
+  commitMarker: RuntimeActionCommitMarker;
+};
+
+export type RuntimeActionAggregateType = 'memory' | 'follow_up' | 'goal';
+
+export type RuntimeActionType =
+  | 'save_memory'
+  | 'schedule_follow_up'
+  | 'update_goal';
+
+export type RuntimeSaveMemoryActionEnvelope = RuntimeActionEnvelopeBase<
+  'memory',
+  'save_memory',
+  RuntimeSaveMemoryActionPayload
+>;
+
+export type RuntimeScheduleFollowUpActionEnvelope = RuntimeActionEnvelopeBase<
+  'follow_up',
+  'schedule_follow_up',
+  RuntimeScheduleFollowUpActionPayload
+>;
+
+export type RuntimeUpdateGoalActionEnvelope = RuntimeActionEnvelopeBase<
+  'goal',
+  'update_goal',
+  RuntimeUpdateGoalActionPayload
+>;
+
+export type RuntimeSaveMemoryActionPayload = {
   memoryCandidateId: string;
 };
 
-export type RuntimeScheduleFollowUpActionProposal = {
-  actionId: string;
-  type: 'schedule_follow_up';
-  idempotencyKey: string;
+export type RuntimeScheduleFollowUpActionPayload = {
   executeAt: string;
   intent: string;
   deduplicationKey: string;
 };
 
-export type RuntimeUpdateGoalActionProposal = {
-  actionId: string;
-  type: 'update_goal';
-  idempotencyKey: string;
+export type RuntimeUpdateGoalActionPayload = {
   goalId?: string;
   changes: { [key: string]: RuntimeJsonValue };
 };
+
+export type RuntimeActionValidationResult = {
+  status: 'pending' | 'valid' | 'invalid';
+  reasonCodes: string[];
+  message?: string;
+};
+
+export type RuntimeActionExecutionStatus =
+  | 'not_started'
+  | 'blocked'
+  | 'committed'
+  | 'failed';
+
+export type RuntimeActionCommitMarker = {
+  committedAt: string;
+  referenceId: string;
+} | null;
 
 export type RuntimeDiagnostics = {
   traceId: string;

@@ -426,28 +426,42 @@
       "RuntimeActionProposal": {
         "oneOf": [
           {
-            "$ref": "#/components/schemas/SaveMemoryActionProposal"
+            "$ref": "#/components/schemas/SaveMemoryActionEnvelope"
           },
           {
-            "$ref": "#/components/schemas/ScheduleFollowUpActionProposal"
+            "$ref": "#/components/schemas/ScheduleFollowUpActionEnvelope"
           },
           {
-            "$ref": "#/components/schemas/UpdateGoalActionProposal"
+            "$ref": "#/components/schemas/UpdateGoalActionEnvelope"
           }
         ],
         "x-error-category": "ACTION_PROPOSAL_INVALID"
       },
-      "SaveMemoryActionProposal": {
+      "SaveMemoryActionEnvelope": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actionId", "type", "idempotencyKey", "memoryCandidateId"],
+        "required": [
+          "actionId",
+          "aggregateType",
+          "actionType",
+          "idempotencyKey",
+          "payload",
+          "validationResult",
+          "executionStatus",
+          "commitMarker"
+        ],
         "properties": {
           "actionId": {
             "type": "string",
             "minLength": 1,
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
-          "type": {
+          "aggregateType": {
+            "type": "string",
+            "enum": ["memory"],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "actionType": {
             "type": "string",
             "enum": ["save_memory"],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
@@ -457,23 +471,36 @@
             "minLength": 1,
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
-          "memoryCandidateId": {
-            "type": "string",
-            "minLength": 1,
+          "payload": {
+            "$ref": "#/components/schemas/SaveMemoryActionPayload",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "validationResult": {
+            "$ref": "#/components/schemas/ActionValidationResult",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "executionStatus": {
+            "$ref": "#/components/schemas/ActionExecutionStatus",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "commitMarker": {
+            "$ref": "#/components/schemas/ActionCommitMarker",
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           }
         }
       },
-      "ScheduleFollowUpActionProposal": {
+      "ScheduleFollowUpActionEnvelope": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "actionId",
-          "type",
+          "aggregateType",
+          "actionType",
           "idempotencyKey",
-          "executeAt",
-          "intent",
-          "deduplicationKey"
+          "payload",
+          "validationResult",
+          "executionStatus",
+          "commitMarker"
         ],
         "properties": {
           "actionId": {
@@ -481,7 +508,12 @@
             "minLength": 1,
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
-          "type": {
+          "aggregateType": {
+            "type": "string",
+            "enum": ["follow_up"],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "actionType": {
             "type": "string",
             "enum": ["schedule_follow_up"],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
@@ -491,6 +523,94 @@
             "minLength": 1,
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
+          "payload": {
+            "$ref": "#/components/schemas/ScheduleFollowUpActionPayload",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "validationResult": {
+            "$ref": "#/components/schemas/ActionValidationResult",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "executionStatus": {
+            "$ref": "#/components/schemas/ActionExecutionStatus",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "commitMarker": {
+            "$ref": "#/components/schemas/ActionCommitMarker",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        }
+      },
+      "UpdateGoalActionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actionId",
+          "aggregateType",
+          "actionType",
+          "idempotencyKey",
+          "payload",
+          "validationResult",
+          "executionStatus",
+          "commitMarker"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "aggregateType": {
+            "type": "string",
+            "enum": ["goal"],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "actionType": {
+            "type": "string",
+            "enum": ["update_goal"],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/UpdateGoalActionPayload",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "validationResult": {
+            "$ref": "#/components/schemas/ActionValidationResult",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "executionStatus": {
+            "$ref": "#/components/schemas/ActionExecutionStatus",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "commitMarker": {
+            "$ref": "#/components/schemas/ActionCommitMarker",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        }
+      },
+      "SaveMemoryActionPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["memoryCandidateId"],
+        "properties": {
+          "memoryCandidateId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ScheduleFollowUpActionPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["executeAt", "intent", "deduplicationKey"],
+        "properties": {
           "executeAt": {
             "type": "string",
             "format": "date-time",
@@ -506,28 +626,14 @@
             "minLength": 1,
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           }
-        }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
       },
-      "UpdateGoalActionProposal": {
+      "UpdateGoalActionPayload": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actionId", "type", "idempotencyKey", "changes"],
+        "required": ["changes"],
         "properties": {
-          "actionId": {
-            "type": "string",
-            "minLength": 1,
-            "x-error-category": "ACTION_PROPOSAL_INVALID"
-          },
-          "type": {
-            "type": "string",
-            "enum": ["update_goal"],
-            "x-error-category": "ACTION_PROPOSAL_INVALID"
-          },
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "x-error-category": "ACTION_PROPOSAL_INVALID"
-          },
           "goalId": {
             "type": "string",
             "format": "uuid",
@@ -535,9 +641,94 @@
           },
           "changes": {
             "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimeJsonValue"
+            },
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           }
-        }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ActionValidationResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "reasonCodes"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["pending", "valid", "invalid"],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "reasonCodes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "x-error-category": "ACTION_PROPOSAL_INVALID"
+            },
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ActionExecutionStatus": {
+        "type": "string",
+        "enum": ["not_started", "blocked", "committed", "failed"],
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ActionCommitMarker": {
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "required": ["committedAt", "referenceId"],
+        "properties": {
+          "committedAt": {
+            "type": "string",
+            "format": "date-time",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "referenceId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "RuntimeJsonValue": {
+        "oneOf": [
+          {
+            "type": ["string", "null"],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "number",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "boolean",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeJsonValue"
+            },
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimeJsonValue"
+            },
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        ],
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
       },
       "RuntimeDiagnostics": {
         "type": "object",
