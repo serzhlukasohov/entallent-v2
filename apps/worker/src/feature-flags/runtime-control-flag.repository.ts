@@ -12,6 +12,7 @@ import { FeatureFlagRepository } from './feature-flag.repository';
 
 type FeatureFlagRow = typeof featureFlags.$inferSelect;
 type RuntimeControlFlagState = Pick<FeatureFlagRow, 'tenantId' | 'enabled'>;
+type RuntimeControlDenylistState = Pick<FeatureFlagRow, 'enabled' | 'metadata'>;
 
 const USER_DENYLIST_METADATA_KEYS = ['userIds', 'denylistedUserIds', 'users'];
 
@@ -33,13 +34,7 @@ export class RuntimeControlFlagRepository implements RuntimeControlFlagPort {
 
   async isUserDenylisted(context: FeatureFlagContext): Promise<boolean> {
     const rows = await this.findScopedFlags(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_USER_DENYLIST, context);
-    const flag = findEffectiveFlag(rows, context.tenantId);
-
-    if (!flag || !flag.enabled) {
-      return false;
-    }
-
-    return runtimeControlMetadataDeniesUser(flag.metadata, context.userId);
+    return runtimeControlRowsDenylistUser(rows, context.userId);
   }
 
   private async findScopedFlags(
@@ -62,8 +57,8 @@ export function runtimeControlRowsEnableKillSwitch(rows: RuntimeControlFlagState
   return rows.some((row) => row.enabled && (row.tenantId === null || row.tenantId === tenantId));
 }
 
-function findEffectiveFlag(rows: FeatureFlagRow[], tenantId: string): FeatureFlagRow | null {
-  return rows.find((row) => row.tenantId === tenantId) ?? rows.find((row) => row.tenantId === null) ?? null;
+export function runtimeControlRowsDenylistUser(rows: RuntimeControlDenylistState[], userId?: string): boolean {
+  return rows.some((row) => row.enabled && runtimeControlMetadataDeniesUser(row.metadata, userId));
 }
 
 export function runtimeControlMetadataDeniesUser(metadata: unknown, userId?: string): boolean {

@@ -76,6 +76,7 @@ describe('AgentRuntimeModeResolver', () => {
   it('propagates flag failures so the router can fail closed with warning context', async () => {
     const resolver = new AgentRuntimeModeResolver({
       isEnabled: vi.fn().mockRejectedValue(new Error('flag store unavailable')),
+      isUserDenylisted: vi.fn().mockResolvedValue(false),
     });
 
     await expect(resolver.resolve(REQUEST)).rejects.toThrow('flag store unavailable');

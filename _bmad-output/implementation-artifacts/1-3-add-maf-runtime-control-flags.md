@@ -4,7 +4,7 @@ baseline_commit: ad89c16f9e468a6699925d4722106da881e954c2
 
 # Story 1.3: Add MAF Runtime Control Flags
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -52,6 +52,11 @@ so that MAF can be disabled globally or scoped by tenant/user before rollout.
   - [x] `pnpm --filter @entalent/application typecheck`
   - [x] `pnpm --filter @entalent/worker typecheck`
   - [x] `pnpm --filter @entalent/api typecheck` if `FEATURE_FLAGS` changes affect admin API compilation.
+
+### Review Findings
+
+- [x] [Review][Patch] Runtime denylist contract can degrade into a broad boolean flag [`packages/application/src/use-cases/agent-runtime-mode-resolver.ts:36`]
+- [x] [Review][Patch] User denylist evaluation can skip matching global or duplicate enabled rows [`apps/worker/src/feature-flags/runtime-control-flag.repository.ts:35`]
 
 ## Dev Notes
 
@@ -146,6 +151,8 @@ Codex GPT-5
 - Typecheck: `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/worker typecheck`, and `pnpm --filter @entalent/api typecheck` passed.
 - Scope lint: touched-file eslint passed in `packages/application` and `apps/worker`.
 - Regression: `pnpm test` passed across the workspace.
+- Review follow-up RED: `pnpm --filter @entalent/worker test -- runtime-control` failed before adding denylist-row helper.
+- Review follow-up GREEN: `pnpm --filter @entalent/application test -- agent-runtime`, `pnpm --filter @entalent/worker test -- runtime-control`, `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/worker typecheck`, `pnpm --filter @entalent/api typecheck`, touched-file eslint, and `pnpm test` passed.
 
 ### Completion Notes List
 
@@ -154,6 +161,7 @@ Codex GPT-5
 - Added `AgentRuntimeModeResolver` with per-job precedence for global disable, denylist, shadow, canary, and TypeScript default.
 - Wired the worker runtime router to evaluate mode through a runtime-control repository while still invoking only `TypeScriptAgentRuntime`.
 - Added metadata-aware denylist parsing and global kill-switch semantics that cannot be overridden by a tenant row.
+- Resolved code review findings by requiring an explicit denylist reader and evaluating denylist against every matching enabled row.
 
 ### File List
 
@@ -173,3 +181,4 @@ Codex GPT-5
 
 - 2026-08-05: Created Story 1.3 and marked ready for dev.
 - 2026-08-05: Implemented Story 1.3 and marked ready for review.
+- 2026-08-05: Addressed code review findings and marked Story 1.3 done.

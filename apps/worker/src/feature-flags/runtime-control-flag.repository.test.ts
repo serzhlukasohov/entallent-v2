@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { runtimeControlMetadataDeniesUser, runtimeControlRowsEnableKillSwitch } from './runtime-control-flag.repository';
+import {
+  runtimeControlMetadataDeniesUser,
+  runtimeControlRowsDenylistUser,
+  runtimeControlRowsEnableKillSwitch,
+} from './runtime-control-flag.repository';
 
 describe('runtimeControlMetadataDeniesUser', () => {
   it('denies all users when no user list is configured for an enabled denylist flag', () => {
@@ -33,5 +37,31 @@ describe('runtimeControlRowsEnableKillSwitch', () => {
   it('allows a scoped tenant kill switch without disabling other tenants', () => {
     expect(runtimeControlRowsEnableKillSwitch([{ tenantId: 'tenant-1', enabled: true }], 'tenant-1')).toBe(true);
     expect(runtimeControlRowsEnableKillSwitch([{ tenantId: 'tenant-1', enabled: true }], 'tenant-2')).toBe(false);
+  });
+});
+
+describe('runtimeControlRowsDenylistUser', () => {
+  it('keeps a global denylist effective even when a tenant row is disabled', () => {
+    expect(
+      runtimeControlRowsDenylistUser(
+        [
+          { enabled: true, metadata: { userIds: ['user-1'] } },
+          { enabled: false, metadata: { userIds: ['user-2'] } },
+        ],
+        'user-1',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not let duplicate disabled rows hide an enabled matching denylist row', () => {
+    expect(
+      runtimeControlRowsDenylistUser(
+        [
+          { enabled: false, metadata: { userIds: ['user-1'] } },
+          { enabled: true, metadata: { userIds: ['user-1'] } },
+        ],
+        'user-1',
+      ),
+    ).toBe(true);
   });
 });

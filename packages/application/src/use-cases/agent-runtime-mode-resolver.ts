@@ -5,7 +5,7 @@ import type { AgentRuntimeMode } from './agent-runtime-router';
 
 export interface RuntimeControlFlagPort {
   isEnabled(key: RuntimeControlFlagKey, context: FeatureFlagContext): Promise<boolean>;
-  isUserDenylisted?(context: FeatureFlagContext): Promise<boolean>;
+  isUserDenylisted(context: FeatureFlagContext): Promise<boolean>;
 }
 
 export class AgentRuntimeModeResolver {
@@ -34,11 +34,7 @@ export class AgentRuntimeModeResolver {
   }
 
   private async isDenylisted(context: FeatureFlagContext): Promise<boolean> {
-    if (this.runtimeControls.isUserDenylisted) {
-      return this.runtimeControls.isUserDenylisted(context);
-    }
-
-    return this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_USER_DENYLIST, context);
+    return this.runtimeControls.isUserDenylisted(context);
   }
 }
 
