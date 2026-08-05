@@ -26,6 +26,8 @@ export type { StyleProfileRepositoryPort } from './ports/style-profile.repositor
 export type { ConversationRecord, MessageRecord, WorkspaceConnectionRecord, ChannelAccountRecord, MemoryItemRecord, UserGoalRecord, UserRecord, ScheduledActionRecord, SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord, RiskSignalRecord, SurveyGroupStateRecord, TeamRecord, TeamMembershipRecord, StyleProfileRecord, StyleDimensions, StylePhrase } from './types/records';
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
+export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
+export type { AgentRuntimeMode, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions } from './use-cases/agent-runtime-router';
 export { TypeScriptAgentRuntime } from './use-cases/typescript-agent-runtime';
 export { ProactiveCheckInUseCase } from './use-cases/proactive-check-in.use-case';
 export type { ProactiveCheckInInput, ProactiveCheckInResult } from './use-cases/proactive-check-in.use-case';

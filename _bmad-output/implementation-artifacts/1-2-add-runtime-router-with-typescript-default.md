@@ -1,6 +1,10 @@
+---
+baseline_commit: 5df402c4f567fcd8a70a563912aff017f53ddcae
+---
+
 # Story 1.2: Add Runtime Router With TypeScript Default
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -17,22 +21,22 @@ so that runtime mode can be evaluated per job without changing worker processors
 
 ## Tasks / Subtasks
 
-- [ ] Add `AgentRuntimeRouter` in `packages/application/src/use-cases/agent-runtime-router.ts` (AC: 1, 2)
-  - [ ] Implement `AgentRuntimePort` and accept a `TypeScriptAgentRuntime` dependency.
-  - [ ] Resolve runtime mode per `processMessage` call, not at process start.
-  - [ ] Default to `typescript` and delegate to `TypeScriptAgentRuntime.processMessage(request)`.
-  - [ ] Wrap mode evaluation so unexpected errors fail closed to TypeScript.
-- [ ] Add unit coverage for router behavior in `packages/application/src/use-cases/agent-runtime-router.test.ts` (AC: 1, 2)
-  - [ ] Verify default processing calls TypeScript runtime exactly once and returns its result.
-  - [ ] Verify an injected/evaluated failure logs or reports a warning containing `traceId` and still calls TypeScript.
-- [ ] Export the router from `packages/application/src/index.ts` (AC: 1)
-- [ ] Rewire `apps/worker/src/conversation/conversation.module.ts` so `AGENT_RUNTIME_PORT` resolves to `AgentRuntimeRouter` (AC: 1)
-  - [ ] Provide `TypeScriptAgentRuntime` as its own injectable/factory provider.
-  - [ ] Keep `ConversationProcessor` unchanged; it must continue injecting only `AGENT_RUNTIME_PORT`.
-- [ ] Update verification commands (AC: 1, 2)
-  - [ ] `pnpm --filter @entalent/application test`
-  - [ ] `pnpm --filter @entalent/application typecheck`
-  - [ ] `pnpm --filter @entalent/worker typecheck`
+- [x] Add `AgentRuntimeRouter` in `packages/application/src/use-cases/agent-runtime-router.ts` (AC: 1, 2)
+  - [x] Implement `AgentRuntimePort` and accept a `TypeScriptAgentRuntime` dependency.
+  - [x] Resolve runtime mode per `processMessage` call, not at process start.
+  - [x] Default to `typescript` and delegate to `TypeScriptAgentRuntime.processMessage(request)`.
+  - [x] Wrap mode evaluation so unexpected errors fail closed to TypeScript.
+- [x] Add unit coverage for router behavior in `packages/application/src/use-cases/agent-runtime-router.test.ts` (AC: 1, 2)
+  - [x] Verify default processing calls TypeScript runtime exactly once and returns its result.
+  - [x] Verify an injected/evaluated failure logs or reports a warning containing `traceId` and still calls TypeScript.
+- [x] Export the router from `packages/application/src/index.ts` (AC: 1)
+- [x] Rewire `apps/worker/src/conversation/conversation.module.ts` so `AGENT_RUNTIME_PORT` resolves to `AgentRuntimeRouter` (AC: 1)
+  - [x] Provide `TypeScriptAgentRuntime` as its own injectable/factory provider.
+  - [x] Keep `ConversationProcessor` unchanged; it must continue injecting only `AGENT_RUNTIME_PORT`.
+- [x] Update verification commands (AC: 1, 2)
+  - [x] `pnpm --filter @entalent/application test`
+  - [x] `pnpm --filter @entalent/application typecheck`
+  - [x] `pnpm --filter @entalent/worker typecheck`
 
 ## Dev Notes
 
@@ -96,8 +100,34 @@ Codex GPT-5
 
 ### Debug Log References
 
+- RED: `pnpm --filter @entalent/application test -- agent-runtime-router` failed because `./agent-runtime-router` did not exist.
+- GREEN: `pnpm --filter @entalent/application test -- agent-runtime-router` passed after adding the router.
+- Regression: `pnpm --filter @entalent/application test`, `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/application build`, and `pnpm --filter @entalent/worker typecheck` passed.
+- Scope lint: `pnpm exec eslint src/use-cases/agent-runtime-router.ts src/use-cases/agent-runtime-router.test.ts src/index.ts` passed in `packages/application`; `pnpm exec eslint src/conversation/conversation.module.ts` passed in `apps/worker`.
+- Full package lint note: `pnpm --filter @entalent/application lint` is blocked by pre-existing `no-explicit-any` errors in older tests; `pnpm --filter @entalent/worker lint` passes with one pre-existing `no-console` warning in `apps/worker/src/main.ts`.
+
+### Implementation Plan
+
+- Add a framework-neutral application-layer router that implements `AgentRuntimePort`.
+- Keep the first routing decision intentionally narrow: default and fail-closed paths both delegate to `TypeScriptAgentRuntime`.
+- Compose the router in `ConversationModule` so `ConversationProcessor` remains unchanged behind `AGENT_RUNTIME_PORT`.
+
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- Implemented `AgentRuntimeRouter` with per-call mode evaluation, TypeScript default delegation, and fail-closed warning behavior including `traceId`.
+- Rewired worker DI so `AGENT_RUNTIME_PORT` now resolves to the router and the router delegates to a separate `TypeScriptAgentRuntime` provider.
+- Added focused Vitest coverage for default delegation and evaluation-failure fallback.
 
 ### File List
+
+- `packages/application/src/use-cases/agent-runtime-router.ts`
+- `packages/application/src/use-cases/agent-runtime-router.test.ts`
+- `packages/application/src/index.ts`
+- `apps/worker/src/conversation/conversation.module.ts`
+- `_bmad-output/implementation-artifacts/1-2-add-runtime-router-with-typescript-default.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+
+## Change Log
+
+- 2026-08-05: Implemented Story 1.2 and marked ready for review.

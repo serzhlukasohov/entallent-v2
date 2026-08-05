@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import {
   AGENT_RUNTIME_PORT,
+  AgentRuntimeRouter,
   ConversationOrchestrator,
   ProactiveCheckInUseCase,
   PulseBacklogService,
@@ -78,9 +79,14 @@ import { QUEUE_NAMES } from '../queue/queue.module';
       ],
     },
     {
-      provide: AGENT_RUNTIME_PORT,
+      provide: TypeScriptAgentRuntime,
       useFactory: (orchestrator: ConversationOrchestrator) => new TypeScriptAgentRuntime(orchestrator),
       inject: [ConversationOrchestrator],
+    },
+    {
+      provide: AGENT_RUNTIME_PORT,
+      useFactory: (typeScriptRuntime: TypeScriptAgentRuntime) => new AgentRuntimeRouter(typeScriptRuntime),
+      inject: [TypeScriptAgentRuntime],
     },
     {
       provide: ProactiveCheckInUseCase,
