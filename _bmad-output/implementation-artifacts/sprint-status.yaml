@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-08-05T11:50:18Z
+# last_updated: 2026-08-05T11:55:34Z
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-05T11:50:18Z
+last_updated: 2026-08-05T11:55:34Z
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -55,8 +55,8 @@ development_status:
   1-4-log-runtime-decisions-per-job: done
   epic-1-retrospective: done
 
-  epic-2: backlog
-  2-1-choose-canonical-runtime-schema-source: backlog
+  epic-2: in-progress
+  2-1-choose-canonical-runtime-schema-source: ready-for-dev
   2-2-define-runtime-request-and-result-contract: backlog
   2-3-define-canonical-action-envelope: backlog
   2-4-add-runtime-attempt-and-action-ledgers: backlog
