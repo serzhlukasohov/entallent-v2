@@ -130,7 +130,7 @@ flowchart LR
 
 - **Binds:** CAP-1, CAP-2, CAP-3
 - **Prevents:** TypeScript and Python implementing incompatible request/result shapes while both remain JSON-compatible.
-- **Rule:** Before any `MafAgentRuntimeClient` or Python runtime endpoint code is added, the team must choose one canonical schema source for the HTTP contract. TypeScript and Python validators must be generated from that source or proven with shared contract fixtures in CI.
+- **Rule:** The canonical source for the first runtime HTTP contract slice is neutral OpenAPI 3.1 at `packages/contracts/runtime/openapi.json`. TypeScript and Python validators must consume that source and prove parity with shared fixtures before any `MafAgentRuntimeClient` or Python runtime endpoint code is added.
 
 ### AD-15 - Attempt And Action Ledgers Define The Side-Effect Barrier
 
@@ -171,6 +171,7 @@ flowchart LR
 | Python service folder | `agent-service/` at repo root |
 | Python package namespace | `agent_service` |
 | Runtime request/result | JSON-compatible, framework-neutral, validated at both TypeScript client and Python API boundary |
+| Runtime schema source | Neutral OpenAPI 3.1 in `packages/contracts/runtime/openapi.json`, proven by shared TS/Python fixtures |
 | Runtime modes | `typescript`, `maf_shadow`, `maf_canary`, `maf_disabled` |
 | Runtime selection owner | `AgentRuntimeRouter` behind `AGENT_RUNTIME_PORT` |
 | Action envelope | `actionId`, aggregate type, payload, validation result, execution status, commit marker, idempotency key |

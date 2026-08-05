@@ -1,0 +1,34 @@
+{
+  "valid": [
+    {
+      "schemaName": "RuntimeProcessMessageRequest",
+      "path": "valid/process-message-request.json"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "valid/runtime-result.json"
+    }
+  ],
+  "invalid": [
+    {
+      "schemaName": "RuntimeProcessMessageRequest",
+      "path": "invalid/missing-idempotency-key.json",
+      "expectedErrorCategory": "IDEMPOTENCY_KEY_INVALID"
+    },
+    {
+      "schemaName": "RuntimeProcessMessageRequest",
+      "path": "invalid/malformed-session-identity.json",
+      "expectedErrorCategory": "SESSION_IDENTITY_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/invalid-action-proposal-shape.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/invalid-fallback-error-category.json",
+      "expectedErrorCategory": "RUNTIME_ERROR_CATEGORY_INVALID"
+    }
+  ]
+}

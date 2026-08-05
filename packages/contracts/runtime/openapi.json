@@ -1,0 +1,340 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "enTalent MAF Runtime Contract",
+    "version": "0.1.0"
+  },
+  "x-canonical-schema-source": {
+    "source": "neutral-openapi-3.1",
+    "decision": "Runtime HTTP contracts are owned by this OpenAPI 3.1 artifact. TypeScript and Python validators consume this artifact and shared fixtures; neither language-owned model is canonical.",
+    "architectureDecision": "AD-14"
+  },
+  "paths": {
+    "/runtime/process-message": {
+      "post": {
+        "operationId": "processRuntimeMessage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeProcessMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Runtime candidate result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RuntimeProcessMessageRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "eventId",
+          "traceId",
+          "idempotencyKey",
+          "runtimeAttempt",
+          "tenant",
+          "user",
+          "conversation",
+          "message",
+          "context"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "eventId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "pattern": "^runtime:[a-z0-9-]+:[a-z0-9-]+:[0-9]+$",
+            "x-error-category": "IDEMPOTENCY_KEY_INVALID"
+          },
+          "runtimeAttempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/RuntimeTenant"
+          },
+          "user": {
+            "$ref": "#/components/schemas/RuntimeUser"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/RuntimeConversation"
+          },
+          "message": {
+            "$ref": "#/components/schemas/RuntimeMessage"
+          },
+          "context": {
+            "$ref": "#/components/schemas/RuntimeContext"
+          }
+        }
+      },
+      "RuntimeTenant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workspaceId", "organizationId"],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organizationId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "RuntimeUser": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["internalUserId", "externalUserId"],
+        "properties": {
+          "internalUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "externalUserId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "RuntimeConversation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel", "externalConversationId", "sessionKey"],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": ["slack"]
+          },
+          "externalConversationId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "SESSION_IDENTITY_INVALID"
+          },
+          "sessionKey": {
+            "type": "string",
+            "pattern": "^[^:]+:[^:]+:[^:]+:[^:]+$",
+            "x-error-category": "SESSION_IDENTITY_INVALID"
+          },
+          "threadTs": {
+            "type": ["string", "null"],
+            "minLength": 1
+          }
+        }
+      },
+      "RuntimeMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["messageId", "externalMessageId", "text", "sentAt"],
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "externalMessageId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "locale": {
+            "type": ["string", "null"],
+            "minLength": 2
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RuntimeContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runtimeMode", "allowSideEffects", "featureFlags"],
+        "properties": {
+          "runtimeMode": {
+            "type": "string",
+            "enum": ["disabled", "shadow", "canary", "primary"]
+          },
+          "allowSideEffects": {
+            "type": "boolean"
+          },
+          "featureFlags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "RuntimeResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "runtimeAttempt",
+          "status",
+          "reply",
+          "riskAssessment",
+          "memoryCandidates",
+          "proposedActions",
+          "diagnostics"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runtimeAttempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "success",
+              "retryable_error",
+              "non_retryable_error",
+              "safety_blocked"
+            ]
+          },
+          "reply": {
+            "$ref": "#/components/schemas/RuntimeReply"
+          },
+          "riskAssessment": {
+            "$ref": "#/components/schemas/RuntimeRiskAssessment"
+          },
+          "memoryCandidates": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "proposedActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeActionProposal"
+            }
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/RuntimeDiagnostics"
+          }
+        }
+      },
+      "RuntimeReply": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "shouldSend"],
+        "properties": {
+          "text": {
+            "type": ["string", "null"]
+          },
+          "shouldSend": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RuntimeRiskAssessment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "categories"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["none", "low", "medium", "high", "critical"]
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RuntimeActionProposal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "idempotencyKey", "payload"],
+        "x-error-category": "ACTION_PROPOSAL_INVALID",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "message.send",
+              "memory.propose",
+              "followup.schedule",
+              "survey.evidence.record"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "payload": {
+            "type": "object",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        }
+      },
+      "RuntimeDiagnostics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resultReasonCode", "errorCategory"],
+        "properties": {
+          "resultReasonCode": {
+            "type": "string",
+            "enum": [
+              "MAF_SUCCESS",
+              "MAF_RETRYABLE_ERROR",
+              "MAF_NON_RETRYABLE_ERROR",
+              "MAF_SAFETY_BLOCKED"
+            ]
+          },
+          "errorCategory": {
+            "type": ["string", "null"],
+            "enum": [
+              "runtime_unavailable",
+              "timeout",
+              "validation_error",
+              "safety_blocked",
+              "unknown",
+              null
+            ],
+            "x-error-category": "RUNTIME_ERROR_CATEGORY_INVALID"
+          }
+        }
+      }
+    }
+  }
+}

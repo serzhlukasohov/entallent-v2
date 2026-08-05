@@ -1,6 +1,10 @@
+---
+baseline_commit: a2280dd675def9d717f453e28398465c4cb7c2ed
+---
+
 # Story 2.1: Choose Canonical Runtime Schema Source
 
-Status: ready-for-dev
+Status: review
 Epic: 2 - Contract, Ledgers, And Fallback Safety
 Story ID: 2.1
 Baseline commit: db9aad327a294324bc1081211d5a0d11ac97d41e
@@ -18,28 +22,28 @@ so TypeScript and Python cannot drift.
 
 ## Tasks
 
-- [ ] Record the canonical schema-source decision. (AC: 1)
-  - [ ] Evaluate TypeScript Zod, Python Pydantic, and neutral OpenAPI against AD-14, AD-2, AD-3, AD-4, and the target runtime contract.
-  - [ ] Use neutral OpenAPI 3.1 as the default decision unless implementation discovers a concrete blocker.
-  - [ ] If a blocker is found, document the tradeoff and explicitly choose the next-best source instead of leaving the decision implicit.
-  - [ ] Update `_bmad-output/specs/spec-maf-runtime-migration/runtime-contract.md` with the chosen schema-source rule and generation/validation responsibilities.
-  - [ ] Add a short decision note under `_bmad-output/planning-artifacts/architecture/architecture-enTalentNew-2026-08-05/` if AD-14 needs clarification beyond its current wording.
-- [ ] Seed shared runtime contract artifacts. (AC: 2)
-  - [ ] Add the canonical schema artifact under `packages/contracts/runtime/`.
-  - [ ] Add shared valid and invalid runtime HTTP contract fixtures under `packages/contracts/runtime/fixtures/`.
-  - [ ] Keep fixture data synthetic; do not use real Slack IDs, user content, workspace IDs, or production event IDs.
-  - [ ] Cover at minimum: valid process-message request, valid runtime result, missing idempotency key, malformed session identity, invalid side-effect proposal shape, and invalid fallback/error category.
-- [ ] Add TypeScript validation coverage. (AC: 2)
-  - [ ] Validate fixtures from the canonical schema artifact without changing the existing `AgentRuntimePort` shim.
-  - [ ] Assert accepted fixtures pass and rejected fixtures return stable error categories.
-  - [ ] Keep existing package exports backward compatible.
-- [ ] Add Python validation coverage. (AC: 2)
-  - [ ] Add the smallest Python validator harness needed to prove parity against the same fixture files.
-  - [ ] Do not scaffold `agent-service`, FastAPI routes, MAF workflows, or runtime execution in this story.
-  - [ ] Assert accepted fixtures pass and rejected fixtures map to the same error categories as TypeScript.
-- [ ] Update verification and status notes. (AC: 1, 2)
-  - [ ] Document exact commands used for TypeScript and Python validation.
-  - [ ] If a new dependency is required, justify why existing repo tooling cannot provide the validator safely.
+- [x] Record the canonical schema-source decision. (AC: 1)
+  - [x] Evaluate TypeScript Zod, Python Pydantic, and neutral OpenAPI against AD-14, AD-2, AD-3, AD-4, and the target runtime contract.
+  - [x] Use neutral OpenAPI 3.1 as the default decision unless implementation discovers a concrete blocker.
+  - [x] If a blocker is found, document the tradeoff and explicitly choose the next-best source instead of leaving the decision implicit.
+  - [x] Update `_bmad-output/specs/spec-maf-runtime-migration/runtime-contract.md` with the chosen schema-source rule and generation/validation responsibilities.
+  - [x] Add a short decision note under `_bmad-output/planning-artifacts/architecture/architecture-enTalentNew-2026-08-05/` if AD-14 needs clarification beyond its current wording.
+- [x] Seed shared runtime contract artifacts. (AC: 2)
+  - [x] Add the canonical schema artifact under `packages/contracts/runtime/`.
+  - [x] Add shared valid and invalid runtime HTTP contract fixtures under `packages/contracts/runtime/fixtures/`.
+  - [x] Keep fixture data synthetic; do not use real Slack IDs, user content, workspace IDs, or production event IDs.
+  - [x] Cover at minimum: valid process-message request, valid runtime result, missing idempotency key, malformed session identity, invalid side-effect proposal shape, and invalid fallback/error category.
+- [x] Add TypeScript validation coverage. (AC: 2)
+  - [x] Validate fixtures from the canonical schema artifact without changing the existing `AgentRuntimePort` shim.
+  - [x] Assert accepted fixtures pass and rejected fixtures return stable error categories.
+  - [x] Keep existing package exports backward compatible.
+- [x] Add Python validation coverage. (AC: 2)
+  - [x] Add the smallest Python validator harness needed to prove parity against the same fixture files.
+  - [x] Do not scaffold `agent-service`, FastAPI routes, MAF workflows, or runtime execution in this story.
+  - [x] Assert accepted fixtures pass and rejected fixtures map to the same error categories as TypeScript.
+- [x] Update verification and status notes. (AC: 1, 2)
+  - [x] Document exact commands used for TypeScript and Python validation.
+  - [x] If a new dependency is required, justify why existing repo tooling cannot provide the validator safely.
 
 ## Dev Notes
 
@@ -105,8 +109,46 @@ Rationale:
 
 ### Completion Notes
 
-- Pending implementation.
+- Chose neutral OpenAPI 3.1 as the canonical runtime HTTP schema source and recorded that decision in the runtime contract companion and AD-14.
+- Added `packages/contracts/runtime/openapi.json` plus shared valid/invalid fixture files and manifest.
+- Added TypeScript fixture validation coverage and a minimal exported validator that consumes the canonical schema artifact.
+- Added a dependency-free Python fixture validator that consumes the same schema artifact and manifest.
+- No `agent-service`, FastAPI endpoint, MAF workflow, `MafAgentRuntimeClient`, ledgers, or production routing behavior were added.
+- No new dependencies were required.
 
 ### Debug Log
 
-- Pending implementation.
+- RED: `pnpm --filter @entalent/contracts test -- src/runtime-contract.test.ts` failed because `runtime-contract-validation` was not implemented yet.
+- GREEN: `pnpm --filter @entalent/contracts test -- src/runtime-contract.test.ts` passed with 6 runtime fixture tests.
+- Verification: `pnpm --filter @entalent/contracts test:runtime-contract` passed.
+- Verification: `pnpm --filter @entalent/contracts test:runtime-contract:python` passed.
+- Verification: `pnpm --filter @entalent/contracts typecheck` passed.
+- Verification: `pnpm --filter @entalent/contracts test` passed with 32 tests.
+- Verification: `pnpm --filter @entalent/contracts lint` passed.
+- Verification: `pnpm --filter @entalent/contracts build` passed.
+- Full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: `git diff --check` passed.
+
+### File List
+
+- `_bmad-output/implementation-artifacts/2-1-choose-canonical-runtime-schema-source.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `_bmad-output/planning-artifacts/architecture/architecture-enTalentNew-2026-08-05/ARCHITECTURE-SPINE.md`
+- `_bmad-output/specs/spec-maf-runtime-migration/runtime-contract.md`
+- `packages/contracts/package.json`
+- `packages/contracts/runtime/openapi.json`
+- `packages/contracts/runtime/validate_fixtures.py`
+- `packages/contracts/runtime/fixtures/manifest.json`
+- `packages/contracts/runtime/fixtures/valid/process-message-request.json`
+- `packages/contracts/runtime/fixtures/valid/runtime-result.json`
+- `packages/contracts/runtime/fixtures/invalid/missing-idempotency-key.json`
+- `packages/contracts/runtime/fixtures/invalid/malformed-session-identity.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-proposal-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-fallback-error-category.json`
+- `packages/contracts/src/index.ts`
+- `packages/contracts/src/runtime-contract-validation.ts`
+- `packages/contracts/src/runtime-contract.test.ts`
+
+### Change Log
+
+- 2026-08-05: Implemented Story 2.1 canonical runtime schema source and TS/Python fixture parity validation.

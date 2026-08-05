@@ -6,6 +6,18 @@ The first code boundary introduced in this branch keeps the existing `Orchestrat
 
 The richer contract below is the target HTTP contract for `MafAgentRuntimeClient` and the Python service.
 
+## Canonical Schema Source
+
+The canonical schema source for the runtime HTTP contract is neutral OpenAPI 3.1 in `packages/contracts/runtime/openapi.json`.
+
+TypeScript Zod and Python Pydantic models may be generated from, checked against, or manually aligned to this OpenAPI artifact, but they are not the source of truth. The shared fixture manifest in `packages/contracts/runtime/fixtures/manifest.json` defines the cross-language contract acceptance baseline:
+
+- valid fixtures must pass TypeScript and Python validation;
+- invalid fixtures must fail in both validators with equivalent stable error categories;
+- fixture data must stay synthetic and must not include real Slack IDs, user text, workspace IDs, or production event IDs.
+
+This resolves AD-14 for the first MAF runtime contract slice without introducing `MafAgentRuntimeClient`, `agent-service`, FastAPI routes, or MAF workflow code.
+
 ## TypeScript Boundary
 
 ```ts

@@ -16,6 +16,8 @@
     "dev": "tsup src/index.ts --format cjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:runtime-contract": "vitest run src/runtime-contract.test.ts",
+    "test:runtime-contract:python": "python3 runtime/validate_fixtures.py",
     "lint": "eslint \"src/**/*.ts\"",
     "clean": "rm -rf dist"
   },
