@@ -1,4 +1,6 @@
 export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, MemoryContext, ResponseContext, ReplyBrief, ReplyPlan, SurveyQuestionForEvaluation } from './ports/ai-provider.port';
+export type { AgentRuntimePort, ProcessMessageInput, ProcessMessageRequest, ProcessMessageResult } from './ports/agent-runtime.port';
+export { AGENT_RUNTIME_PORT } from './ports/agent-runtime.port';
 export type { ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
 export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, IngestMessageResult } from './ports/ingestion.repository.port';
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';
@@ -24,6 +26,7 @@ export type { StyleProfileRepositoryPort } from './ports/style-profile.repositor
 export type { ConversationRecord, MessageRecord, WorkspaceConnectionRecord, ChannelAccountRecord, MemoryItemRecord, UserGoalRecord, UserRecord, ScheduledActionRecord, SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord, RiskSignalRecord, SurveyGroupStateRecord, TeamRecord, TeamMembershipRecord, StyleProfileRecord, StyleDimensions, StylePhrase } from './types/records';
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
+export { TypeScriptAgentRuntime } from './use-cases/typescript-agent-runtime';
 export { ProactiveCheckInUseCase } from './use-cases/proactive-check-in.use-case';
 export type { ProactiveCheckInInput, ProactiveCheckInResult } from './use-cases/proactive-check-in.use-case';
 export { ProactiveSchedulerUseCase } from './use-cases/proactive-scheduler.use-case';

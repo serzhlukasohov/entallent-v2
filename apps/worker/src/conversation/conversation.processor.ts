@@ -1,9 +1,9 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger, OnApplicationShutdown } from '@nestjs/common';
+import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { eq } from 'drizzle-orm';
-import { ConversationOrchestrator, ProactiveCheckInUseCase } from '@entalent/application';
-import type { ProactivePulseConfig } from '@entalent/application';
+import { AGENT_RUNTIME_PORT, ProactiveCheckInUseCase } from '@entalent/application';
+import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/application';
 import { tenants } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
@@ -28,7 +28,8 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
   private readonly logger = new Logger(ConversationProcessor.name);
 
   constructor(
-    private readonly orchestrator: ConversationOrchestrator,
+    @Inject(AGENT_RUNTIME_PORT)
+    private readonly agentRuntime: AgentRuntimePort,
     private readonly checkInUseCase: ProactiveCheckInUseCase,
     private readonly llmRunRepo: LlmRunRepository,
     private readonly db: DatabaseService,
@@ -93,7 +94,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     let status: 'success' | 'error' = 'success';
 
     try {
-      const result = await this.orchestrator.orchestrate({
+      const result = await this.agentRuntime.processMessage({
         messageId: job.data.messageId,
         conversationId: job.data.conversationId,
         userId: job.data.userId,

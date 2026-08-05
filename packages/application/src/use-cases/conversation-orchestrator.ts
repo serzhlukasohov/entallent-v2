@@ -22,24 +22,13 @@ import type { SurveyQuestionRecord } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isSessionStart } from '../utils/session';
+import type {
+  ProcessMessageRequest,
+  ProcessMessageResult,
+} from '../ports/agent-runtime.port';
 
-export interface OrchestrateInput {
-  messageId: string;
-  conversationId: string;
-  userId: string;
-  tenantId: string;
-  externalWorkspaceId: string;
-  externalConversationId: string;
-  traceId: string;
-}
-
-export interface OrchestrateResult {
-  outboundMessageId: string;
-  responseText: string;
-  mode: ConversationMode;
-  classification: SituationClassification;
-  risk: RiskDetection;
-}
+export type OrchestrateInput = ProcessMessageRequest;
+export type OrchestrateResult = ProcessMessageResult;
 
 const TZ_REFRESH_DAYS = 30;
 

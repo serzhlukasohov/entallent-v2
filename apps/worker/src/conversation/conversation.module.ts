@@ -1,6 +1,12 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { ConversationOrchestrator, ProactiveCheckInUseCase, PulseBacklogService } from '@entalent/application';
+import {
+  AGENT_RUNTIME_PORT,
+  ConversationOrchestrator,
+  ProactiveCheckInUseCase,
+  PulseBacklogService,
+  TypeScriptAgentRuntime,
+} from '@entalent/application';
 import { ConversationProcessor } from './conversation.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
 import { OutboxService } from './outbox.service';
@@ -70,6 +76,11 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         PulseBacklogService,
         StyleProfileRepository,
       ],
+    },
+    {
+      provide: AGENT_RUNTIME_PORT,
+      useFactory: (orchestrator: ConversationOrchestrator) => new TypeScriptAgentRuntime(orchestrator),
+      inject: [ConversationOrchestrator],
     },
     {
       provide: ProactiveCheckInUseCase,
