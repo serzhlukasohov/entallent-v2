@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-08-05T20:12:55Z
+# last_updated: 2026-08-05T20:24:59Z
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-05T20:12:55Z
+last_updated: 2026-08-05T20:24:59Z
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -62,7 +62,7 @@ development_status:
   2-4-add-runtime-attempt-and-action-ledgers: done
   2-5-enforce-fallback-barrier-from-ledger-state: done
   2-6-define-runtime-retry-budget-and-error-mapping: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   epic-3: backlog
   3-1-expand-migration-baseline-scenarios: backlog
@@ -97,16 +97,32 @@ action_items:
   - epic: 1
     action: "Require a dedicated story artifact before dev starts for every remaining MAF migration story."
     owner: "Amelia / Developer"
-    status: open
+    status: done
   - epic: 1
     action: "Keep runtime logs privacy-reviewed with stable reason codes and explicit payload allowlists."
     owner: "Amelia / Developer"
-    status: open
+    status: in-progress
   - epic: 1
     action: "Run dependent package verification sequentially when a build cleans an upstream dist directory."
     owner: "Amelia / Developer"
-    status: open
+    status: done
   - epic: 1
     action: "Use compatibility-preserving APIs when enriching runtime control contracts."
     owner: "Winston / Architect"
+    status: done
+  - epic: 2
+    action: "Keep cross-language semantic invariants paired with invalid fixtures whenever the runtime contract changes."
+    owner: "Amelia / Developer"
+    status: open
+  - epic: 2
+    action: "Resolve the strict runtime-boundary request shape before wiring a real MAF HTTP client."
+    owner: "Winston / Architect"
+    status: open
+  - epic: 2
+    action: "Encode manual-review requirements in the migration baseline for sensitive scenarios."
+    owner: "John / Product Manager"
+    status: open
+  - epic: 2
+    action: "Carry Epic 2 stable reason-code and redaction rules into the shadow diagnostics record."
+    owner: "Amelia / Developer"
     status: open
