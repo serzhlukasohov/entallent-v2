@@ -4,7 +4,7 @@ baseline_commit: 8cacbfe089f8784ad3da34d3c370eb70a9a39c10
 
 # Story 3.3: Report Shadow Comparison Readiness
 
-Status: ready-for-dev
+Status: review
 Epic: 3 - Baseline And Shadow Comparison
 Story ID: 3.3
 
@@ -23,43 +23,43 @@ so that the team can decide when MAF is ready for canary.
 
 ## Tasks / Subtasks
 
-- [ ] Define the shadow readiness report contract. (AC: 1, 2, 3)
-  - [ ] Add a stable TypeScript report model near the worker conversation runtime code, not in shared domain contracts.
-  - [ ] Include report metadata: generated time, tenant ID, optional time window, diagnostic count, runtime versions, scenario IDs, migration case IDs, and trace IDs.
-  - [ ] Include status values such as `ready`, `blocked`, `manual_review_required`, and `insufficient_data`; do not reuse `passed` when manual review remains open.
-  - [ ] Include machine-readable reason codes for all blockers and warnings.
-- [ ] Add a read-only reporter over existing diagnostics. (AC: 1, 2, 3)
-  - [ ] Read from `runtime_shadow_diagnostics`; do not create a new diagnostics table.
-  - [ ] Group records by baseline scenario/case identifiers from redacted diagnostic metadata, for example `validationDetails.scenarioId` and `validationDetails.migrationCaseIds`.
-  - [ ] Treat missing or unmapped baseline case coverage as `insufficient_data` or `blocked`, not as ready.
-  - [ ] Summarize quality and validation using existing stable fields: `validationStatus`, `validationDetails.reasonCodes`, redaction status, and runtime version.
-  - [ ] Summarize risk parity from `riskComparison`, with critical risk false negatives as a hard blocker.
-  - [ ] Summarize memory/action differences from `memoryComparison` and `actionComparison`, with duplicate action proposals as a hard blocker.
-  - [ ] Summarize latency, model-call count, tool-call count, retry count, and estimated cost with count, mean, max, and p95 where enough samples exist.
-- [ ] Integrate conversation-sim gate summary as rollout context. (AC: 2, 3)
-  - [ ] Reuse `packages/conversation-sim` gate summary shape instead of inventing a second baseline gate format.
-  - [ ] Accept a parsed `summary.json` object or path as input to the reporter if file access is needed.
-  - [ ] Preserve Story 3.1 semantics: `manual_review_required` is not canary-ready even when automated thresholds pass.
-  - [ ] Surface `manualReview.requiredScenarioIds` and `manualReview.requiredCaseIds` in the readiness report.
-- [ ] Keep reports privacy-safe. (AC: 1, 4)
-  - [ ] Never include raw response text, raw model prompts, provider responses, risk evidence snippets, memory content, action payload contents, tenant/workspace/user names, or provider stack traces.
-  - [ ] Report only redacted diagnostics, stable digests, IDs, counts, reason codes, statuses, and aggregate metrics.
-  - [ ] Treat `redactionStatus = rejected` or unsafe/unexpected diagnostic payload shape as a readiness blocker.
-- [ ] Add focused tests. (AC: 1, 2, 3, 4)
-  - [ ] Unit-test aggregation from synthetic diagnostics records.
-  - [ ] Unit-test `ready`, `blocked`, `manual_review_required`, and `insufficient_data` status precedence.
-  - [ ] Unit-test blockers for critical risk false negatives, duplicate action proposals, validation failures, redaction rejection, and missing baseline case coverage.
-  - [ ] Unit-test that report serialization does not include raw diagnostic text.
-  - [ ] Add a scope regression assertion that no `agent-service`, `MafAgentRuntimeClient`, production shadow execution, canary routing, or UI files were introduced.
-- [ ] Update implementation docs and sprint tracking. (AC: 1-4)
-  - [ ] Document the report shape, status precedence, blocker reason codes, and out-of-scope runtime wiring in this story's Dev Agent Record.
-  - [ ] Update `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` only if report semantics clarify the baseline gate; do not rewrite Story 3.1 coverage.
-  - [ ] Update `sprint-status.yaml` from `ready-for-dev` to `in-progress` during dev-story and to `review` when complete.
-- [ ] Run and record verification. (AC: 1-4)
-  - [ ] Run targeted unit tests for the new readiness reporter.
-  - [ ] Run `pnpm --filter @entalent/worker test`.
-  - [ ] Run `pnpm test`.
-  - [ ] Run `git diff --check`.
+- [x] Define the shadow readiness report contract. (AC: 1, 2, 3)
+  - [x] Add a stable TypeScript report model near the worker conversation runtime code, not in shared domain contracts.
+  - [x] Include report metadata: generated time, tenant ID, optional time window, diagnostic count, runtime versions, scenario IDs, migration case IDs, and trace IDs.
+  - [x] Include status values such as `ready`, `blocked`, `manual_review_required`, and `insufficient_data`; do not reuse `passed` when manual review remains open.
+  - [x] Include machine-readable reason codes for all blockers and warnings.
+- [x] Add a read-only reporter over existing diagnostics. (AC: 1, 2, 3)
+  - [x] Read from `runtime_shadow_diagnostics`; do not create a new diagnostics table.
+  - [x] Group records by baseline scenario/case identifiers from redacted diagnostic metadata, for example `validationDetails.scenarioId` and `validationDetails.migrationCaseIds`.
+  - [x] Treat missing or unmapped baseline case coverage as `insufficient_data` or `blocked`, not as ready.
+  - [x] Summarize quality and validation using existing stable fields: `validationStatus`, `validationDetails.reasonCodes`, redaction status, and runtime version.
+  - [x] Summarize risk parity from `riskComparison`, with critical risk false negatives as a hard blocker.
+  - [x] Summarize memory/action differences from `memoryComparison` and `actionComparison`, with duplicate action proposals as a hard blocker.
+  - [x] Summarize latency, model-call count, tool-call count, retry count, and estimated cost with count, mean, max, and p95 where enough samples exist.
+- [x] Integrate conversation-sim gate summary as rollout context. (AC: 2, 3)
+  - [x] Reuse `packages/conversation-sim` gate summary shape instead of inventing a second baseline gate format.
+  - [x] Accept a parsed `summary.json` object or path as input to the reporter if file access is needed.
+  - [x] Preserve Story 3.1 semantics: `manual_review_required` is not canary-ready even when automated thresholds pass.
+  - [x] Surface `manualReview.requiredScenarioIds` and `manualReview.requiredCaseIds` in the readiness report.
+- [x] Keep reports privacy-safe. (AC: 1, 4)
+  - [x] Never include raw response text, raw model prompts, provider responses, risk evidence snippets, memory content, action payload contents, tenant/workspace/user names, or provider stack traces.
+  - [x] Report only redacted diagnostics, stable digests, IDs, counts, reason codes, statuses, and aggregate metrics.
+  - [x] Treat `redactionStatus = rejected` or unsafe/unexpected diagnostic payload shape as a readiness blocker.
+- [x] Add focused tests. (AC: 1, 2, 3, 4)
+  - [x] Unit-test aggregation from synthetic diagnostics records.
+  - [x] Unit-test `ready`, `blocked`, `manual_review_required`, and `insufficient_data` status precedence.
+  - [x] Unit-test blockers for critical risk false negatives, duplicate action proposals, validation failures, redaction rejection, and missing baseline case coverage.
+  - [x] Unit-test that report serialization does not include raw diagnostic text.
+  - [x] Add a scope regression assertion that no `agent-service`, `MafAgentRuntimeClient`, production shadow execution, canary routing, or UI files were introduced.
+- [x] Update implementation docs and sprint tracking. (AC: 1-4)
+  - [x] Document the report shape, status precedence, blocker reason codes, and out-of-scope runtime wiring in this story's Dev Agent Record.
+  - [x] Update `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` only if report semantics clarify the baseline gate; do not rewrite Story 3.1 coverage.
+  - [x] Update `sprint-status.yaml` from `ready-for-dev` to `in-progress` during dev-story and to `review` when complete.
+- [x] Run and record verification. (AC: 1-4)
+  - [x] Run targeted unit tests for the new readiness reporter.
+  - [x] Run `pnpm --filter @entalent/worker test`.
+  - [x] Run `pnpm test`.
+  - [x] Run `git diff --check`.
 
 ## Dev Notes
 
@@ -185,17 +185,36 @@ GPT-5 Codex
 - Story created from sprint backlog after Story 3.2 was completed and reviewed at commit `8cacbfe089f8784ad3da34d3c370eb70a9a39c10`.
 - Loaded BMAD create-story workflow, config, sprint status, Epic 3 Story 3.3 requirements, architecture spine, SPEC, validation baseline, Story 3.1, Story 3.2, conversation-sim gate/report code, diagnostics schema, and recent git history.
 - No `project-context.md` or UX artifact was found; this story is backend/runtime evaluation reporting work.
+- Started dev-story implementation from baseline `8cacbfe089f8784ad3da34d3c370eb70a9a39c10`.
+- RED: `pnpm --filter @entalent/worker test -- shadow-readiness-report.service.test.ts` failed because `shadow-readiness-report.service` did not exist.
+- GREEN: `pnpm --filter @entalent/worker test -- shadow-readiness-report.service.test.ts` passed with 7 tests after adding the readiness report builder/service.
+- Verification: `pnpm --filter @entalent/worker build` passed.
+- Verification: `pnpm --filter @entalent/worker test -- conversation.module.test.ts` passed with 5 tests.
+- Verification: `pnpm --filter @entalent/worker test` passed with 62 tests.
+- Verification: `pnpm --filter @entalent/worker lint` passed with one existing warning in `apps/worker/src/main.ts`.
+- Verification: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: `git diff --check` passed.
+- Verification: scope check found no `agent-service`, MAF client, FastAPI, or production shadow execution wiring.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
 - Guardrails explicitly prevent early `agent-service`, `MafAgentRuntimeClient`, FastAPI route, MAF workflow, production shadow execution, canary routing, UI work, and user-facing runtime behavior changes.
+- Added a read-only `ShadowReadinessReportService` that selects tenant-scoped diagnostics from `runtime_shadow_diagnostics` and builds a privacy-safe readiness report.
+- Added a pure `buildShadowReadinessReport` contract with status precedence for `blocked`, `manual_review_required`, `insufficient_data`, and `ready`.
+- Added hard blockers for baseline gate failure, critical risk false negatives, duplicate action proposals, validation failure, comparison failure, and redaction rejection.
+- Added report summaries for quality, risk parity, memory/action differences, latency, model-call count, tool-call count, retry count, estimated cost, runtime versions, scenario IDs, migration case IDs, and trace IDs.
+- Added synthetic unit tests proving status precedence, blocker reason codes, missing baseline coverage, manual review handling, privacy-safe serialization, and read-only diagnostics loading.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/3-3-report-shadow-comparison-readiness.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `apps/worker/src/conversation/conversation.module.ts`
+- `apps/worker/src/conversation/shadow-readiness-report.service.ts`
+- `apps/worker/src/conversation/shadow-readiness-report.service.test.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 3.3 developer context from Epic 3, architecture spine, SPEC, validation baseline, Story 3.1 lessons, Story 3.2 diagnostics/redaction lessons, and existing conversation-sim gate/report formats.
+- 2026-08-05: Implemented read-only shadow readiness report service, privacy-safe aggregation contract, status/blocker semantics, tests, and verification for Story 3.3.
