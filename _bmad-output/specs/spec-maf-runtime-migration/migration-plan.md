@@ -30,7 +30,7 @@ The first phase keeps TypeScript as the transport, queue, policy, and persistenc
 
 ## Phase 2: Python Service Skeleton
 
-- Add an `agent-service/` workspace with Python 3.12, FastAPI, Pydantic, pytest, ruff, pyright or mypy, and OpenTelemetry.
+- Add an `agent-service/` workspace with Python 3.13.x, FastAPI, Pydantic, pytest, ruff, pyright or mypy, and OpenTelemetry.
 - Expose `POST /runtime/process-message`.
 - Validate request/response schemas at the API boundary.
 - Pass W3C trace context from TypeScript into Python.
