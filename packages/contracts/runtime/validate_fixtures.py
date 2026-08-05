@@ -69,6 +69,9 @@ def validate_schema(
     path: str,
     schemas: dict[str, Any],
 ) -> dict[str, Any]:
+    if isinstance(schema.get("oneOf"), list):
+        return validate_one_of(schema, value, path, schemas)
+
     ref = schema.get("$ref")
     if isinstance(ref, str):
         resolved = resolve_ref(ref, schemas)
@@ -91,8 +94,34 @@ def validate_schema(
         return validate_string(schema, value, path)
     if schema_type == "integer":
         return validate_integer(schema, value, path)
+    if schema_type == "number":
+        return validate_number(schema, value, path)
 
     return {"ok": True}
+
+
+def validate_one_of(
+    schema: dict[str, Any],
+    value: Any,
+    path: str,
+    schemas: dict[str, Any],
+) -> dict[str, Any]:
+    candidates = schema.get("oneOf")
+    if not isinstance(candidates, list):
+        return {"ok": True}
+
+    match_count = 0
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        result = validate_schema(candidate, value, path, schemas)
+        if result["ok"]:
+            match_count += 1
+
+    if match_count == 1:
+        return {"ok": True}
+
+    return fail(path, error_category(schema), "Expected exactly one matching oneOf schema")
 
 
 def validate_object(
@@ -199,6 +228,25 @@ def validate_integer(schema: dict[str, Any], value: Any, path: str) -> dict[str,
     if isinstance(minimum, int) and value < minimum:
         return fail(path, error_category(schema), "Integer is below minimum")
 
+    maximum = schema.get("maximum")
+    if isinstance(maximum, int) and value > maximum:
+        return fail(path, error_category(schema), "Integer is above maximum")
+
+    return {"ok": True}
+
+
+def validate_number(schema: dict[str, Any], value: Any, path: str) -> dict[str, Any]:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return fail(path, error_category(schema), "Expected number")
+
+    minimum = schema.get("minimum")
+    if isinstance(minimum, int | float) and value < minimum:
+        return fail(path, error_category(schema), "Number is below minimum")
+
+    maximum = schema.get("maximum")
+    if isinstance(maximum, int | float) and value > maximum:
+        return fail(path, error_category(schema), "Number is above maximum")
+
     return {"ok": True}
 
 
@@ -270,6 +318,15 @@ def is_uuid(value: str) -> bool:
 
 
 def is_date_time(value: str) -> bool:
+    if (
+        re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+            value,
+        )
+        is None
+    ):
+        return False
+
     try:
         datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:

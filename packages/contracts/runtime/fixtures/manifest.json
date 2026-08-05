@@ -21,12 +21,17 @@
       "expectedErrorCategory": "SESSION_IDENTITY_INVALID"
     },
     {
+      "schemaName": "RuntimeProcessMessageRequest",
+      "path": "invalid/malformed-message-created-at.json",
+      "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
+    },
+    {
       "schemaName": "RuntimeResult",
       "path": "invalid/invalid-action-proposal-shape.json",
       "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
     },
     {
-      "schemaName": "RuntimeResult",
+      "schemaName": "RuntimeErrorResponse",
       "path": "invalid/invalid-fallback-error-category.json",
       "expectedErrorCategory": "RUNTIME_ERROR_CATEGORY_INVALID"
     }

@@ -1,28 +1,41 @@
 {
-  "requestId": "11111111-1111-4111-8111-111111111111",
-  "runtimeAttempt": 1,
-  "status": "success",
   "reply": {
     "text": "Synthetic runtime response.",
-    "shouldSend": true
+    "mode": "supportive"
   },
   "riskAssessment": {
+    "type": null,
     "severity": "none",
-    "categories": []
+    "confidence": 0.97,
+    "evidence": [],
+    "immediateResponseRequired": false,
+    "escalationRecommended": false,
+    "surveyMustBeBlocked": false,
+    "proactiveMessagesMustBePaused": false
   },
-  "memoryCandidates": [],
+  "memoryCandidates": [
+    {
+      "actionId": "memory-candidate-demo",
+      "type": "preference",
+      "content": "Synthetic memory candidate.",
+      "confidence": 0.82,
+      "sensitivity": "normal",
+      "sourceMessageIds": ["44444444-4444-4444-8444-444444444444"]
+    }
+  ],
   "proposedActions": [
     {
-      "type": "message.send",
-      "idempotencyKey": "action:tenant-demo:message-demo:send",
-      "payload": {
-        "channel": "slack",
-        "text": "Synthetic runtime response."
-      }
+      "actionId": "save-memory-demo",
+      "type": "save_memory",
+      "idempotencyKey": "action:save-memory-demo",
+      "memoryCandidateId": "memory-candidate-demo"
     }
   ],
   "diagnostics": {
-    "resultReasonCode": "MAF_SUCCESS",
-    "errorCategory": null
+    "traceId": "trace-runtime-contract-valid-result",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
   }
 }

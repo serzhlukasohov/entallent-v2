@@ -42,6 +42,10 @@ function validateSchema(
   path: string,
   schemas: Record<string, unknown>,
 ): RuntimeContractValidationResult {
+  if (Array.isArray(schema.oneOf)) {
+    return validateOneOf(schema, value, path, schemas);
+  }
+
   const ref = typeof schema.$ref === 'string' ? schema.$ref : null;
   if (ref) {
     const resolved = resolveRef(ref, schemas);
@@ -76,7 +80,41 @@ function validateSchema(
     return validateInteger(schema, value, path);
   }
 
+  if (schemaType === 'number') {
+    return validateNumber(schema, value, path);
+  }
+
   return { ok: true };
+}
+
+function validateOneOf(
+  schema: JsonObject,
+  value: unknown,
+  path: string,
+  schemas: Record<string, unknown>,
+): RuntimeContractValidationResult {
+  const candidates = schema.oneOf;
+  if (!Array.isArray(candidates)) {
+    return { ok: true };
+  }
+
+  let matchCount = 0;
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+
+    const result = validateSchema(candidate, value, path, schemas);
+    if (result.ok) {
+      matchCount += 1;
+    }
+  }
+
+  if (matchCount === 1) {
+    return { ok: true };
+  }
+
+  return fail(path, errorCategory(schema), 'Expected exactly one matching oneOf schema');
 }
 
 function validateObject(
@@ -195,7 +233,7 @@ function validateString(
     return fail(path, errorCategory(schema), 'String is not a UUID');
   }
 
-  if (schema.format === 'date-time' && Number.isNaN(Date.parse(value))) {
+  if (schema.format === 'date-time' && !isDateTime(value)) {
     return fail(path, errorCategory(schema), 'String is not a date-time');
   }
 
@@ -213,6 +251,30 @@ function validateInteger(
 
   if (typeof schema.minimum === 'number' && value < schema.minimum) {
     return fail(path, errorCategory(schema), 'Integer is below minimum');
+  }
+
+  if (typeof schema.maximum === 'number' && value > schema.maximum) {
+    return fail(path, errorCategory(schema), 'Integer is above maximum');
+  }
+
+  return { ok: true };
+}
+
+function validateNumber(
+  schema: JsonObject,
+  value: unknown,
+  path: string,
+): RuntimeContractValidationResult {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fail(path, errorCategory(schema), 'Expected number');
+  }
+
+  if (typeof schema.minimum === 'number' && value < schema.minimum) {
+    return fail(path, errorCategory(schema), 'Number is below minimum');
+  }
+
+  if (typeof schema.maximum === 'number' && value > schema.maximum) {
+    return fail(path, errorCategory(schema), 'Number is above maximum');
   }
 
   return { ok: true };
@@ -270,6 +332,10 @@ function matchesType(schemaType: string, value: unknown): boolean {
     return Number.isInteger(value);
   }
 
+  if (schemaType === 'number') {
+    return typeof value === 'number' && Number.isFinite(value);
+  }
+
   if (schemaType === 'array') {
     return Array.isArray(value);
   }
@@ -311,5 +377,13 @@ function isRecord(value: unknown): value is JsonObject {
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value,
+  );
+}
+
+function isDateTime(value: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value,
+    ) && !Number.isNaN(Date.parse(value))
   );
 }

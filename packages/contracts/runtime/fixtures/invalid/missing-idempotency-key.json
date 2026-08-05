@@ -4,31 +4,28 @@
   "traceId": "trace-runtime-contract-missing-idempotency",
   "runtimeAttempt": 1,
   "tenant": {
-    "workspaceId": "workspace-demo",
-    "organizationId": "org-demo"
+    "id": "tenant-demo",
+    "workspaceId": "workspace-demo"
   },
   "user": {
-    "internalUserId": "33333333-3333-4333-8333-333333333333",
-    "externalUserId": "external-user-demo"
+    "id": "33333333-3333-4333-8333-333333333333"
   },
   "conversation": {
+    "id": "55555555-5555-4555-8555-555555555555",
     "channel": "slack",
+    "externalWorkspaceId": "workspace-demo",
     "externalConversationId": "conversation-demo",
-    "sessionKey": "workspace-demo:external-user-demo:conversation-demo:thread-demo",
-    "threadTs": "thread-demo"
+    "threadId": "thread-demo",
+    "sessionKey": "workspace-demo:user-demo:conversation-demo:thread-demo"
   },
   "message": {
-    "messageId": "44444444-4444-4444-8444-444444444444",
-    "externalMessageId": "message-demo",
+    "id": "44444444-4444-4444-8444-444444444444",
     "text": "Synthetic message for runtime contract validation.",
-    "locale": "en",
-    "sentAt": "2026-08-05T11:58:01Z"
+    "createdAt": "2026-08-05T11:58:01Z"
   },
   "context": {
-    "runtimeMode": "shadow",
-    "allowSideEffects": false,
-    "featureFlags": {
-      "mafRuntimeEnabled": false
-    }
+    "recentTurns": [],
+    "memoryItems": [],
+    "goals": []
   }
 }

@@ -4,7 +4,7 @@ baseline_commit: a2280dd675def9d717f453e28398465c4cb7c2ed
 
 # Story 2.1: Choose Canonical Runtime Schema Source
 
-Status: review
+Status: done
 Epic: 2 - Contract, Ledgers, And Fallback Safety
 Story ID: 2.1
 Baseline commit: db9aad327a294324bc1081211d5a0d11ac97d41e
@@ -113,6 +113,7 @@ Rationale:
 - Added `packages/contracts/runtime/openapi.json` plus shared valid/invalid fixture files and manifest.
 - Added TypeScript fixture validation coverage and a minimal exported validator that consumes the canonical schema artifact.
 - Added a dependency-free Python fixture validator that consumes the same schema artifact and manifest.
+- Code review aligned the canonical OpenAPI schema with the runtime contract companion, moved runtime error categories to a dedicated HTTP error response schema, tightened shared date-time validation, and added Python parity to the standard package test path.
 - No `agent-service`, FastAPI endpoint, MAF workflow, `MafAgentRuntimeClient`, ledgers, or production routing behavior were added.
 - No new dependencies were required.
 
@@ -128,6 +129,14 @@ Rationale:
 - Verification: `pnpm --filter @entalent/contracts build` passed.
 - Full regression: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: `git diff --check` passed.
+- Review verification: `pnpm --filter @entalent/contracts test:runtime-contract` passed with 7 runtime fixture tests.
+- Review verification: `pnpm --filter @entalent/contracts test:runtime-contract:python` passed.
+- Review verification: `pnpm --filter @entalent/contracts typecheck` passed.
+- Review verification: `pnpm --filter @entalent/contracts test` passed with 33 TypeScript tests plus Python fixture validation.
+- Review verification: `pnpm --filter @entalent/contracts lint` passed.
+- Review verification: `pnpm --filter @entalent/contracts build` passed.
+- Review full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Review verification: `git diff --check` passed.
 
 ### File List
 
@@ -143,12 +152,21 @@ Rationale:
 - `packages/contracts/runtime/fixtures/valid/runtime-result.json`
 - `packages/contracts/runtime/fixtures/invalid/missing-idempotency-key.json`
 - `packages/contracts/runtime/fixtures/invalid/malformed-session-identity.json`
+- `packages/contracts/runtime/fixtures/invalid/malformed-message-created-at.json`
 - `packages/contracts/runtime/fixtures/invalid/invalid-action-proposal-shape.json`
 - `packages/contracts/runtime/fixtures/invalid/invalid-fallback-error-category.json`
 - `packages/contracts/src/index.ts`
 - `packages/contracts/src/runtime-contract-validation.ts`
 - `packages/contracts/src/runtime-contract.test.ts`
 
+### Review Findings
+
+- [x] [Review][Patch] Canonical OpenAPI schema diverges from the runtime contract companion [`packages/contracts/runtime/openapi.json:43`]
+- [x] [Review][Patch] Runtime error category schema does not match the architecture error taxonomy [`packages/contracts/runtime/openapi.json:324`]
+- [x] [Review][Patch] Date-time validation accepts non-RFC3339 date-only or timezone-less strings [`packages/contracts/src/runtime-contract-validation.ts:198`]
+- [x] [Review][Patch] Python fixture parity is not part of the standard package test path [`packages/contracts/package.json:18`]
+
 ### Change Log
 
 - 2026-08-05: Implemented Story 2.1 canonical runtime schema source and TS/Python fixture parity validation.
+- 2026-08-05: Resolved BMAD code review findings and marked Story 2.1 done.

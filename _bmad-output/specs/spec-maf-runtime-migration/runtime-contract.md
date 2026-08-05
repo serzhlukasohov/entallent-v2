@@ -35,6 +35,7 @@ export type ProcessMessageRequest = {
   requestId: string;
   eventId: string;
   traceId: string;
+  idempotencyKey: string;
   runtimeAttempt: number;
 
   tenant: {
@@ -55,6 +56,7 @@ export type ProcessMessageRequest = {
     externalWorkspaceId: string;
     externalConversationId: string;
     threadId?: string;
+    sessionKey: string;
   };
 
   message: {
@@ -117,11 +119,13 @@ export type ProcessMessageResult = {
     | {
         actionId: string;
         type: "save_memory";
+        idempotencyKey: string;
         memoryCandidateId: string;
       }
     | {
         actionId: string;
         type: "schedule_follow_up";
+        idempotencyKey: string;
         executeAt: string;
         intent: string;
         deduplicationKey: string;
@@ -129,6 +133,7 @@ export type ProcessMessageResult = {
     | {
         actionId: string;
         type: "update_goal";
+        idempotencyKey: string;
         goalId?: string;
         changes: Record<string, unknown>;
       }
@@ -141,6 +146,24 @@ export type ProcessMessageResult = {
     toolCalls: number;
     latencyMs: number;
   };
+};
+```
+
+## Runtime Error Response
+
+```ts
+export type RuntimeErrorResponse = {
+  traceId: string;
+  errorCategory:
+    | "unavailable"
+    | "validation_error"
+    | "timeout"
+    | "duplicate_request"
+    | "dependency_failed"
+    | "unsafe_partial_result";
+  retryable: boolean;
+  fallbackAllowed: boolean;
+  message: string;
 };
 ```
 

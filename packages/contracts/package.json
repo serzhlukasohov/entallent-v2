@@ -15,7 +15,7 @@
     "build": "tsup src/index.ts --format cjs --dts --clean",
     "dev": "tsup src/index.ts --format cjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && pnpm run test:runtime-contract:python",
     "test:runtime-contract": "vitest run src/runtime-contract.test.ts",
     "test:runtime-contract:python": "python3 runtime/validate_fixtures.py",
     "lint": "eslint \"src/**/*.ts\"",

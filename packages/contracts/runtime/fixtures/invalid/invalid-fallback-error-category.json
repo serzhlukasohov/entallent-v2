@@ -1,19 +1,7 @@
 {
-  "requestId": "11111111-1111-4111-8111-111111111111",
-  "runtimeAttempt": 1,
-  "status": "retryable_error",
-  "reply": {
-    "text": null,
-    "shouldSend": false
-  },
-  "riskAssessment": {
-    "severity": "none",
-    "categories": []
-  },
-  "memoryCandidates": [],
-  "proposedActions": [],
-  "diagnostics": {
-    "resultReasonCode": "MAF_RETRYABLE_ERROR",
-    "errorCategory": "fallback_mystery"
-  }
+  "traceId": "trace-runtime-contract-invalid-error",
+  "errorCategory": "fallback_mystery",
+  "retryable": true,
+  "fallbackAllowed": true,
+  "message": "Synthetic runtime error."
 }

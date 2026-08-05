@@ -1,26 +1,30 @@
 {
-  "requestId": "11111111-1111-4111-8111-111111111111",
-  "runtimeAttempt": 1,
-  "status": "success",
   "reply": {
-    "text": "Synthetic runtime response.",
-    "shouldSend": true
+    "text": "Synthetic runtime response."
   },
   "riskAssessment": {
+    "type": null,
     "severity": "none",
-    "categories": []
+    "confidence": 0.97,
+    "evidence": [],
+    "immediateResponseRequired": false,
+    "escalationRecommended": false,
+    "surveyMustBeBlocked": false,
+    "proactiveMessagesMustBePaused": false
   },
   "memoryCandidates": [],
   "proposedActions": [
     {
-      "type": "database.write",
-      "payload": {
-        "table": "messages"
-      }
+      "actionId": "bad-action-demo",
+      "type": "save_memory",
+      "idempotencyKey": "action:bad-action-demo"
     }
   ],
   "diagnostics": {
-    "resultReasonCode": "MAF_SUCCESS",
-    "errorCategory": null
+    "traceId": "trace-runtime-contract-invalid-action",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
   }
 }

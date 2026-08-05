@@ -1,7 +1,7 @@
 {
   "requestId": "11111111-1111-4111-8111-111111111111",
   "eventId": "22222222-2222-4222-8222-222222222222",
-  "traceId": "trace-runtime-contract-bad-session",
+  "traceId": "trace-runtime-contract-bad-date-time",
   "idempotencyKey": "runtime:workspace-demo:user-demo:conversation-demo:thread-demo:1",
   "runtimeAttempt": 1,
   "tenant": {
@@ -15,14 +15,14 @@
     "id": "55555555-5555-4555-8555-555555555555",
     "channel": "slack",
     "externalWorkspaceId": "workspace-demo",
-    "externalConversationId": "",
+    "externalConversationId": "conversation-demo",
     "threadId": "thread-demo",
-    "sessionKey": "user-demo"
+    "sessionKey": "workspace-demo:user-demo:conversation-demo:thread-demo"
   },
   "message": {
     "id": "44444444-4444-4444-8444-444444444444",
     "text": "Synthetic message for runtime contract validation.",
-    "createdAt": "2026-08-05T11:58:01Z"
+    "createdAt": "2026-08-05"
   },
   "context": {
     "recentTurns": [],
