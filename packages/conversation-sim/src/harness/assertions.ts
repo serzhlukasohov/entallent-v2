@@ -81,8 +81,14 @@ export function findBaselineCoverageGaps(
   scenarios: BaselineScenarioConfig[],
 ): string[] {
   const gaps: string[] = [];
+  const caseIds = cases.map((baselineCase) => baselineCase.id);
+  const caseIdSet = new Set(caseIds);
   const configuredCaseIds = new Set(scenarios.flatMap((scenario) => scenario.migrationCases ?? []));
   const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
+
+  if (caseIds.length !== caseIdSet.size) {
+    gaps.push('migration baseline manifest contains duplicate case IDs');
+  }
 
   for (const baselineCase of cases) {
     if (!configuredCaseIds.has(baselineCase.id)) {
@@ -102,6 +108,11 @@ export function findBaselineCoverageGaps(
       if (!hasManualReviewScenario) {
         gaps.push(`${baselineCase.id}: sensitive case lacks manualReviewRequired gate metadata`);
       }
+    }
+  }
+  for (const configuredCaseId of configuredCaseIds) {
+    if (!caseIdSet.has(configuredCaseId as MigrationBaselineCase['id'])) {
+      gaps.push(`${configuredCaseId}: gate config references unknown migration case`);
     }
   }
 

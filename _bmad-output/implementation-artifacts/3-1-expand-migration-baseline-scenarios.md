@@ -4,7 +4,7 @@ baseline_commit: 57bea23526c53b6ba54a607178287f6bb710b0da
 
 # Story 3.1: Expand Migration Baseline Scenarios
 
-Status: review
+Status: done
 Epic: 3 - Baseline And Shadow Comparison
 Story ID: 3.1
 
@@ -62,6 +62,13 @@ so that MAF can be judged against current behavior before rollout.
   - [x] Run targeted scenario tests for new or changed scenario files when model credentials are available.
   - [x] Run `SIM_GATE_RUNS=1 pnpm --filter @entalent/conversation-sim sim:gate` when model credentials are available; if credentials are absent, record the exact skip reason.
   - [x] Run `git diff --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Manual-review-required scenarios could still produce overall gate `passed` status [packages/conversation-sim/src/gate/run-gate.ts].
+- [x] [Review][Patch] Deterministic-only scenario reports were counted as LLM judge passes [packages/conversation-sim/src/scenarios/baseline-test-helpers.ts].
+- [x] [Review][Patch] Required migration case list was derived from the manifest it was supposed to verify [packages/conversation-sim/src/scenarios/migration-baseline.ts].
+- [x] [Review][Patch] Delayed follow-up coverage missed the disabled-proactivity branch and did not emit a policy report artifact [packages/conversation-sim/src/scenarios/proactivity-reminders.sim.test.ts].
 
 ## Dev Notes
 
@@ -204,6 +211,9 @@ GPT-5 Codex
 - Verification: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: `git diff --check` passed.
 - Live gate note: `SIM_GATE_RUNS=1 pnpm --filter @entalent/conversation-sim sim:gate` was not used as a green verification in this sandbox because live model/LangWatch network endpoints are unavailable, as shown by the earlier `ENOTFOUND` failures.
+- BMAD code review found four patch findings: manual review did not block `summary.status`, deterministic reports could be counted as LLM judge passes, required case coverage was self-referential, and delayed follow-up lacked disabled-proactivity coverage/reporting.
+- Review fix: gate status now uses `manual_review_required` for passing automated thresholds with pending manual review; deterministic-only reports mark `judge.evaluated=false`; deterministic gate entries use `judgePasses: 0`; required case IDs are independent of the manifest; delayed follow-up covers both active-risk postpone and disabled-proactivity cancel branches.
+- Review verification: `pnpm --filter @entalent/conversation-sim typecheck`, `pnpm --filter @entalent/conversation-sim lint`, targeted deterministic scenario tests, `pnpm test`, YAML parse, and `git diff --check` passed after fixes. Targeted deterministic suite passed 13 tests across 6 scenario files.
 
 ### Completion Notes List
 
@@ -228,6 +238,7 @@ GPT-5 Codex
 - `packages/conversation-sim/src/gate/run-gate.ts`
 - `packages/conversation-sim/src/harness/assertions.ts`
 - `packages/conversation-sim/src/harness/coach-harness.ts`
+- `packages/conversation-sim/src/harness/report.ts`
 - `packages/conversation-sim/src/scenarios/baseline-test-helpers.ts`
 - `packages/conversation-sim/src/scenarios/crisis-self-harm.sim.test.ts`
 - `packages/conversation-sim/src/scenarios/harassment.sim.test.ts`
@@ -241,3 +252,4 @@ GPT-5 Codex
 
 - 2026-08-05: Created Story 3.1 developer context from Epic 3, validation baseline, architecture spine, conversation-sim harness, and Epic 2 retrospective learnings.
 - 2026-08-05: Implemented expanded migration baseline scenarios, manual-review gate metadata, docs, and verification for Story 3.1.
+- 2026-08-05: Resolved BMAD code review findings for manual-review blocking status, deterministic judge semantics, independent coverage source, and disabled-proactivity follow-up coverage.

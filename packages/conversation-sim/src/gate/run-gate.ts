@@ -36,13 +36,15 @@ interface SampleResult {
   failureReason: string | null;
 }
 
+type GateStatus = 'passed' | 'failed' | 'manual_review_required';
+
 interface ScenarioSummary {
   id: string;
   name: string;
   file: string;
   migrationCases: string[];
   manualReviewRequired: boolean;
-  status: 'passed' | 'failed';
+  status: GateStatus;
   requiredHardPasses: number;
   requiredJudgePasses: number;
   hardPasses: number;
@@ -56,7 +58,7 @@ interface GateSummary {
   schemaVersion: 1;
   gateId: string;
   runAt: string;
-  status: 'passed' | 'failed';
+  status: GateStatus;
   git: {
     sha: string | null;
     dirty: boolean;
@@ -121,12 +123,16 @@ async function main(): Promise<void> {
     const judgePasses = samples.filter((sample) => sample.judgePassed).length;
     const infraFailures = samples.filter((sample) => sample.status === 'infra_failed').length;
     const hardFailures = samples.filter((sample) => sample.status === 'hard_failed').length;
-    const status =
+    const thresholdStatus =
       hardPasses >= requiredHardPasses &&
       judgePasses >= requiredJudgePasses &&
       infraFailures === 0
         ? 'passed'
         : 'failed';
+    const status =
+      thresholdStatus === 'passed' && scenario.manualReviewRequired
+        ? 'manual_review_required'
+        : thresholdStatus;
 
     scenarios.push({
       id: scenario.id,
@@ -149,7 +155,7 @@ async function main(): Promise<void> {
     schemaVersion: 1,
     gateId,
     runAt: new Date().toISOString(),
-    status: scenarios.every((scenario) => scenario.status === 'passed') ? 'passed' : 'failed',
+    status: summarizeGateStatus(scenarios),
     git,
     models: {
       coachBalanced: process.env.OPENAI_MODEL_BALANCED ?? null,
@@ -242,10 +248,17 @@ function runSample(args: {
   const reports = readReports(args.reportDir, args.gateId, args.runId);
   const reportFiles = reports.map((report) => `${report.scenarioSlug}-${slugify(args.runId)}.json`);
   const hardPassed = command.status === 0 && reports.length > 0;
-  const judgePassed = reports.length > 0 && reports.every((report) => report.judge.passed);
-  const judgeFailures = reports
+  const evaluatedJudgeReports = reports.filter((report) => report.judge.evaluated !== false);
+  const judgeRequired = args.scenario.judgePasses > 0;
+  const judgePassed = judgeRequired
+    ? evaluatedJudgeReports.length > 0 && evaluatedJudgeReports.every((report) => report.judge.passed)
+    : true;
+  const judgeFailures = evaluatedJudgeReports
     .filter((report) => !report.judge.passed)
     .map((report) => `${report.scenarioName}: ${report.judge.reasoning ?? 'judge failed without reasoning'}`);
+  if (judgeRequired && evaluatedJudgeReports.length === 0) {
+    judgeFailures.push('No evaluated LLM judge report was produced for a scenario with judgePasses > 0.');
+  }
   const failureReason = buildFailureReason(command.status, output, reports);
   const infraFailed = command.status !== 0 && looksLikeInfraFailure(output);
   const status =
@@ -304,6 +317,14 @@ function readRunsOverride(defaultRuns: number): number {
     throw new Error(`SIM_GATE_RUNS must be a positive integer, received ${value}.`);
   }
   return parsed;
+}
+
+function summarizeGateStatus(scenarios: ScenarioSummary[]): GateStatus {
+  if (scenarios.some((scenario) => scenario.status === 'failed')) return 'failed';
+  if (scenarios.some((scenario) => scenario.status === 'manual_review_required')) {
+    return 'manual_review_required';
+  }
+  return 'passed';
 }
 
 function scaleThreshold(configuredThreshold: number, configuredRuns: number, actualRuns: number): number {

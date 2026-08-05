@@ -22,6 +22,7 @@ export interface ScenarioRunReport {
     azureTestingDeployment: string | null;
   };
   judge: {
+    evaluated: boolean;
     passed: boolean;
     metCriteria: string[];
     unmetCriteria: string[];
@@ -64,8 +65,13 @@ export async function reportRun(
   name: string,
   harness: CoachHarness,
   result: ScenarioResult,
+  judgeEvaluated = true,
 ): Promise<void> {
-  const data = await buildReportData(name, harness, result);
+  const data = await buildReportData(name, harness, result, judgeEvaluated);
+  writeScenarioRunReport(data);
+}
+
+export function writeScenarioRunReport(data: ScenarioRunReport): void {
   const report = buildMarkdownReport(data);
   console.log(`\n${report}`);
 
@@ -80,6 +86,7 @@ async function buildReportData(
   name: string,
   harness: CoachHarness,
   result: ScenarioResult,
+  judgeEvaluated: boolean,
 ): Promise<ScenarioRunReport> {
   const violations = findViolations(harness);
   const profile = await harness.styleProfile();
@@ -99,6 +106,7 @@ async function buildReportData(
       azureTestingDeployment: process.env.AZURE_OPENAI_TESTING_DEPLOYMENT ?? null,
     },
     judge: {
+      evaluated: judgeEvaluated,
       passed: result.success,
       metCriteria: result.metCriteria,
       unmetCriteria: result.unmetCriteria,
@@ -141,13 +149,14 @@ async function buildReportData(
 function buildMarkdownReport(data: ScenarioRunReport): string {
   const lengths = data.turns.map((turn) => turn.responseLength);
   const gateLine = data.gateId ? `Gate ${data.gateId} · sample ${data.gateRunId ?? 'unknown'}` : '';
+  const judgeVerdict = data.judge.evaluated ? (data.judge.passed ? 'PASS' : 'FAIL') : 'NOT RUN';
   const sections = [
     `# ${data.scenarioName}`,
-    `Run at ${data.runAt} · ${data.turns.length} turns · judge verdict: ${data.judge.passed ? 'PASS' : 'FAIL'}`,
+    `Run at ${data.runAt} · ${data.turns.length} turns · judge verdict: ${judgeVerdict}`,
     ...(gateLine ? [gateLine] : []),
     '',
     '## Judge',
-    ...data.judge.metCriteria.map((c) => `- met: ${c}`),
+    ...(data.judge.evaluated ? data.judge.metCriteria.map((c) => `- met: ${c}`) : ['not run']),
     ...data.judge.unmetCriteria.map((c) => `- UNMET: ${c}`),
     data.judge.reasoning ? `\n${data.judge.reasoning}` : '',
     '',

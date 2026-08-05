@@ -8,7 +8,11 @@ import { describe, expect, it } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
 import { InMemoryConversationRepository, InMemoryScheduledActionRepository } from '../fakes/repositories';
 import { ScriptedAiProvider, makeClassification, makeRisk } from '../fakes/scripted-ai';
-import { expectNoDeterministicViolations, reportDeterministicRun } from './baseline-test-helpers';
+import {
+  expectNoDeterministicViolations,
+  reportDeterministicPolicyRun,
+  reportDeterministicRun,
+} from './baseline-test-helpers';
 
 describe('migration baseline: proactivity and reminders', () => {
   it('does not invent reminders or follow-ups when the user did not ask', async () => {
@@ -99,6 +103,7 @@ describe('migration baseline: proactivity and reminders', () => {
       cancellationConditions: [],
       sourceMessageIds: ['msg-1'],
     });
+    const outbox = new RecordingOutbox();
     const useCase = new FollowUpExecutionUseCase(
       scheduledActions,
       new StaticFollowUpContext({ hasActiveHighRisk: true }),
@@ -111,7 +116,7 @@ describe('migration baseline: proactivity and reminders', () => {
         status: 'active',
         userTimezone: 'Europe/Berlin',
       }),
-      new RecordingOutbox(),
+      outbox,
       new ScriptedAiProvider({ risks: [makeRisk()] }),
     );
 
@@ -124,6 +129,85 @@ describe('migration baseline: proactivity and reminders', () => {
     expect(decision).toEqual({ decision: 'postpone', reason: 'active_risk_signal' });
     expect(scheduledActions.actions[0]?.status).toBe('pending');
     expect(scheduledActions.actions[0]?.attemptCount).toBe(1);
+    expect(outbox.sentMessages).toHaveLength(0);
+    reportDeterministicPolicyRun('delayed follow-up active risk', [
+      {
+        rule: 'active-risk-postpones-follow-up',
+        passed: decision.decision === 'postpone' && decision.reason === 'active_risk_signal',
+        detail: `expected active_risk_signal postpone, got ${decision.decision}:${decision.reason}`,
+      },
+      {
+        rule: 'active-risk-sends-no-follow-up',
+        passed: outbox.sentMessages.length === 0,
+        detail: `expected no outbox sends, got ${outbox.sentMessages.length}`,
+      },
+    ]);
+  });
+
+  it('cancels delayed follow-up execution when proactive messaging is disabled', async () => {
+    const scheduledActions = new InMemoryScheduledActionRepository();
+    const action = await scheduledActions.save({
+      tenantId: 'sim-tenant',
+      userId: 'sim-user',
+      conversationId: 'sim-conversation',
+      type: 'follow_up',
+      intent: 'check in about the project decision',
+      context: {
+        channelType: 'sim',
+        externalConversationId: 'sim-channel',
+        originalReason: 'Synthetic follow-up',
+        messageStrategy: 'Ask whether the decision got easier.',
+      },
+      dueAt: new Date(Date.now() - 1000),
+      timezone: 'America/New_York',
+      cancellationConditions: [],
+      sourceMessageIds: ['msg-1'],
+    });
+    const outbox = new RecordingOutbox();
+    const useCase = new FollowUpExecutionUseCase(
+      scheduledActions,
+      new StaticFollowUpContext({
+        user: {
+          proactiveMessagingEnabled: false,
+          timezone: 'America/New_York',
+          quietHours: { enabled: false },
+          preferredName: 'Ira',
+        },
+      }),
+      new InMemoryConversationRepository({
+        id: 'sim-conversation',
+        tenantId: 'sim-tenant',
+        userId: 'sim-user',
+        channelType: 'sim',
+        externalConversationId: 'sim-channel',
+        status: 'active',
+        userTimezone: 'Europe/Berlin',
+      }),
+      outbox,
+      new ScriptedAiProvider({ risks: [makeRisk()] }),
+    );
+
+    const decision = await useCase.execute({
+      scheduledActionId: action.id,
+      tenantId: 'sim-tenant',
+      userId: 'sim-user',
+    });
+
+    expect(decision).toEqual({ decision: 'cancel', reason: 'proactive_disabled' });
+    expect(scheduledActions.actions[0]?.status).toBe('cancelled');
+    expect(outbox.sentMessages).toHaveLength(0);
+    reportDeterministicPolicyRun('delayed follow-up proactive disabled', [
+      {
+        rule: 'disabled-proactivity-cancels-follow-up',
+        passed: decision.decision === 'cancel' && decision.reason === 'proactive_disabled',
+        detail: `expected proactive_disabled cancel, got ${decision.decision}:${decision.reason}`,
+      },
+      {
+        rule: 'disabled-proactivity-sends-no-follow-up',
+        passed: outbox.sentMessages.length === 0,
+        detail: `expected no outbox sends, got ${outbox.sentMessages.length}`,
+      },
+    ]);
   });
 });
 

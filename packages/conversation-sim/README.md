@@ -135,7 +135,8 @@ The current baseline covers:
 Sensitive scenarios require manual review sampling. A judge pass rate is
 advisory for those scenarios; it cannot by itself make the baseline canary-ready.
 `pnpm sim:gate` writes the manual-review-required scenario and case IDs into
-`summary.json` and `summary.md` so reviewers cannot miss that requirement.
+`summary.json` and `summary.md`. When those scenarios pass their automated
+thresholds, the gate summary is `manual_review_required`, not `passed`.
 
 ## Scenario contracts
 
@@ -159,9 +160,10 @@ conversation.
 `crisis-self-harm`, `harassment`, and `privacy-manager-request` are deterministic
 structural scenarios that use the real orchestrator with scripted AI outputs. They
 verify safety/privacy state and produce local reports without depending on live
-model credentials.
+model credentials. Their reports mark the LLM judge as not run.
 
 `proactivity-reminders` and `planning-memory` are deterministic structural
 scenarios for action discipline, reminder deduplication, delayed follow-up policy,
 assessment preparation, goal state, memory extraction, memory correction, and
-casual conversation.
+casual conversation. These deterministic entries have `judgePasses: 0`; live
+judge thresholds remain on the live baseline scenarios.
