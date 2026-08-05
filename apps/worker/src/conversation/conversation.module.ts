@@ -17,6 +17,7 @@ import { AiService } from './ai.service';
 import { LlmRunRepository } from './llm-run.repository';
 import { RuntimeFallbackBarrierService } from './runtime-fallback-barrier.service';
 import { RuntimeLedgerRepository } from './runtime-ledger.repository';
+import { ShadowDiagnosticsRepository } from './shadow-diagnostics.repository';
 import { DatabaseModule } from '../database/database.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SurveyModule } from '../survey/survey.module';
@@ -168,6 +169,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     LlmRunRepository,
     RuntimeFallbackBarrierService,
     RuntimeLedgerRepository,
+    ShadowDiagnosticsRepository,
   ],
 })
 export class ConversationModule {}

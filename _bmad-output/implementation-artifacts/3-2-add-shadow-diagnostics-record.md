@@ -4,7 +4,7 @@ baseline_commit: c14a9e35c3f3e8a18d94d3aa723146bca9e939e6
 
 # Story 3.2: Add Shadow Diagnostics Record
 
-Status: ready-for-dev
+Status: review
 Epic: 3 - Baseline And Shadow Comparison
 Story ID: 3.2
 
@@ -22,44 +22,44 @@ so that current and candidate runtimes can be compared consistently.
 
 ## Tasks / Subtasks
 
-- [ ] Define the canonical shadow diagnostics schema. (AC: 1, 2)
-  - [ ] Add a TypeScript-owned database schema file under `packages/database/src/schema/` for one canonical shadow diagnostics table.
-  - [ ] Reference `tenants`, `messages`, and `runtime_attempts` with tenant-scoped cascade behavior matching the existing runtime ledger tables.
-  - [ ] Include durable identifiers and query fields: `tenantId`, `messageId`, `runtimeAttemptId`, `runtimeMode`, `traceId`, `validationStatus`, `redactionStatus`, and `runtimeVersion`.
-  - [ ] Include JSONB comparison fields for current result, candidate result, risk comparison, memory comparison, action comparison, and validation details.
-  - [ ] Include numeric metric fields for latency milliseconds, model-call count, tool-call count, retry count, and estimated cost.
-  - [ ] Add indexes needed for Story 3.3 reporting: tenant + created date, trace ID, message ID, runtime attempt ID, validation status, and redaction status.
-  - [ ] Add enum-like check constraints for validation status and redaction status.
-- [ ] Add a migration for the new diagnostics table. (AC: 1)
-  - [ ] Add the next migration SQL file under `packages/database/migrations/` using the existing migration style.
-  - [ ] Keep migration names, constraint names, indexes, foreign keys, and `IF NOT EXISTS` patterns consistent with `0006_runtime_ledgers.sql` and `0007_runtime_ledger_checks.sql`.
-  - [ ] Update Drizzle migration metadata if using `drizzle-kit generate`; otherwise keep manual SQL and schema definitions aligned.
-- [ ] Add a worker-side repository for diagnostics persistence. (AC: 1, 2)
-  - [ ] Add a repository near `apps/worker/src/conversation/runtime-ledger.repository.ts` or extend that module only if the API remains cohesive.
-  - [ ] Require an existing runtime attempt before inserting diagnostics; do not create attempts implicitly.
-  - [ ] Persist diagnostics idempotently for the same runtime attempt and runtime version, or document and enforce the chosen uniqueness rule in code and schema.
-  - [ ] Return stable typed records to callers; do not expose Drizzle internals outside the repository boundary.
-- [ ] Enforce redaction before persistence. (AC: 2)
-  - [ ] Reject or redact raw user message text, model prompts, risk evidence, memory content, action payload contents, and raw provider errors before database writes.
-  - [ ] Use stable reason codes and redaction metadata instead of persisting provider text or sensitive evidence.
-  - [ ] Store enough redacted comparison structure for later reporting without retaining the sensitive source text.
-  - [ ] Make the redaction policy testable as a pure helper or repository guard.
-- [ ] Add focused tests. (AC: 1, 2, 3)
-  - [ ] Add unit tests for repository persistence, idempotency/uniqueness, required fields, and redaction failures or transformations.
-  - [ ] Add or extend database integration tests so the table persists valid records and rejects invalid enum-like values.
-  - [ ] Add negative tests proving raw message text, risk evidence, memory content, action payload contents, and raw provider errors cannot be stored unredacted.
-  - [ ] Add scope regression checks or assertions that no `agent-service`, `MafAgentRuntimeClient`, production shadow execution, or UI files were introduced.
-- [ ] Update implementation docs and sprint tracking. (AC: 1-3)
-  - [ ] Document the diagnostics record shape, redaction policy, and out-of-scope runtime execution wiring in this story's Dev Agent Record.
-  - [ ] Keep `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` unchanged unless diagnostics reporting semantics actually change.
-  - [ ] Update `sprint-status.yaml` from `ready-for-dev` to `in-progress` during dev-story and to `review` when complete.
-- [ ] Run and record verification. (AC: 1-3)
-  - [ ] Run `pnpm --filter @entalent/database typecheck`.
-  - [ ] Run `pnpm --filter @entalent/database lint`.
-  - [ ] Run `pnpm --filter @entalent/worker test`.
-  - [ ] Run targeted database integration tests if `DATABASE_URL` is available; if absent, record the exact skip reason.
-  - [ ] Run `pnpm test`.
-  - [ ] Run `git diff --check`.
+- [x] Define the canonical shadow diagnostics schema. (AC: 1, 2)
+  - [x] Add a TypeScript-owned database schema file under `packages/database/src/schema/` for one canonical shadow diagnostics table.
+  - [x] Reference `tenants`, `messages`, and `runtime_attempts` with tenant-scoped cascade behavior matching the existing runtime ledger tables.
+  - [x] Include durable identifiers and query fields: `tenantId`, `messageId`, `runtimeAttemptId`, `runtimeMode`, `traceId`, `validationStatus`, `redactionStatus`, and `runtimeVersion`.
+  - [x] Include JSONB comparison fields for current result, candidate result, risk comparison, memory comparison, action comparison, and validation details.
+  - [x] Include numeric metric fields for latency milliseconds, model-call count, tool-call count, retry count, and estimated cost.
+  - [x] Add indexes needed for Story 3.3 reporting: tenant + created date, trace ID, message ID, runtime attempt ID, validation status, and redaction status.
+  - [x] Add enum-like check constraints for validation status and redaction status.
+- [x] Add a migration for the new diagnostics table. (AC: 1)
+  - [x] Add the next migration SQL file under `packages/database/migrations/` using the existing migration style.
+  - [x] Keep migration names, constraint names, indexes, foreign keys, and `IF NOT EXISTS` patterns consistent with `0006_runtime_ledgers.sql` and `0007_runtime_ledger_checks.sql`.
+  - [x] Update Drizzle migration metadata if using `drizzle-kit generate`; otherwise keep manual SQL and schema definitions aligned.
+- [x] Add a worker-side repository for diagnostics persistence. (AC: 1, 2)
+  - [x] Add a repository near `apps/worker/src/conversation/runtime-ledger.repository.ts` or extend that module only if the API remains cohesive.
+  - [x] Require an existing runtime attempt before inserting diagnostics; do not create attempts implicitly.
+  - [x] Persist diagnostics idempotently for the same runtime attempt and runtime version, or document and enforce the chosen uniqueness rule in code and schema.
+  - [x] Return stable typed records to callers; do not expose Drizzle internals outside the repository boundary.
+- [x] Enforce redaction before persistence. (AC: 2)
+  - [x] Reject or redact raw user message text, model prompts, risk evidence, memory content, action payload contents, and raw provider errors before database writes.
+  - [x] Use stable reason codes and redaction metadata instead of persisting provider text or sensitive evidence.
+  - [x] Store enough redacted comparison structure for later reporting without retaining the sensitive source text.
+  - [x] Make the redaction policy testable as a pure helper or repository guard.
+- [x] Add focused tests. (AC: 1, 2, 3)
+  - [x] Add unit tests for repository persistence, idempotency/uniqueness, required fields, and redaction failures or transformations.
+  - [x] Add or extend database integration tests so the table persists valid records and rejects invalid enum-like values.
+  - [x] Add negative tests proving raw message text, risk evidence, memory content, action payload contents, and raw provider errors cannot be stored unredacted.
+  - [x] Add scope regression checks or assertions that no `agent-service`, `MafAgentRuntimeClient`, production shadow execution, or UI files were introduced.
+- [x] Update implementation docs and sprint tracking. (AC: 1-3)
+  - [x] Document the diagnostics record shape, redaction policy, and out-of-scope runtime execution wiring in this story's Dev Agent Record.
+  - [x] Keep `_bmad-output/specs/spec-maf-runtime-migration/validation-baseline.md` unchanged unless diagnostics reporting semantics actually change.
+  - [x] Update `sprint-status.yaml` from `ready-for-dev` to `in-progress` during dev-story and to `review` when complete.
+- [x] Run and record verification. (AC: 1-3)
+  - [x] Run `pnpm --filter @entalent/database typecheck`.
+  - [x] Run `pnpm --filter @entalent/database lint`.
+  - [x] Run `pnpm --filter @entalent/worker test`.
+  - [x] Run targeted database integration tests if `DATABASE_URL` is available; if absent, record the exact skip reason.
+  - [x] Run `pnpm test`.
+  - [x] Run `git diff --check`.
 
 ## Dev Notes
 
@@ -173,17 +173,41 @@ GPT-5 Codex
 - Story created from sprint backlog after Story 3.1 was completed and reviewed at commit `c14a9e35c3f3e8a18d94d3aa723146bca9e939e6`.
 - Loaded BMAD create-story workflow, config, sprint status, Epic 3 Story 3.2 requirements, architecture spine, SPEC, Epic 2 retrospective, Story 3.1 completion notes, runtime ledger schemas, migrations, repository, and tests.
 - No `project-context.md` or UX artifact was found; this story is backend/runtime persistence work.
+- Started dev-story implementation from baseline `c14a9e35c3f3e8a18d94d3aa723146bca9e939e6`.
+- RED: `pnpm --filter @entalent/worker test -- shadow-diagnostics.repository.test.ts` failed because `shadow-diagnostics.repository` did not exist.
+- GREEN: `pnpm --filter @entalent/worker test -- shadow-diagnostics.repository.test.ts` passed after adding the repository and schema export.
+- Verification: `pnpm --filter @entalent/database typecheck` passed.
+- Verification: `pnpm --filter @entalent/database lint` passed with existing console warnings in `migrate.ts` and `seed.ts`.
+- Verification: `pnpm --filter @entalent/database test:integration` passed with 16 skipped tests because `DATABASE_URL` is absent.
+- Verification: `pnpm --filter @entalent/worker test` passed with 53 tests.
+- Verification: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: scope check found no `agent-service`, MAF client, FastAPI, or production shadow execution wiring.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
 - Guardrails explicitly prevent early `agent-service`, `MafAgentRuntimeClient`, FastAPI route, MAF workflow, production shadow execution, canary routing, UI work, and user-facing runtime behavior changes.
+- Added `runtime_shadow_diagnostics` as the TypeScript-owned canonical shadow diagnostics table linked to tenants, messages, and runtime attempts.
+- Added migration `0008_runtime_shadow_diagnostics.sql` and exported the schema from `@entalent/database`.
+- Added `ShadowDiagnosticsRepository` with tenant-scoped runtime-attempt lookup, attempt/runtime-version upsert, metric validation, JSON validation, and redaction-before-write.
+- Added redaction reason metadata for raw text, model prompt/provider response, risk evidence, memory content, action payload, and provider error fields.
+- Added worker unit tests, database integration coverage, and out-of-scope file assertions.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/3-2-add-shadow-diagnostics-record.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `apps/worker/src/conversation/conversation.module.ts`
+- `apps/worker/src/conversation/shadow-diagnostics.repository.ts`
+- `apps/worker/src/conversation/shadow-diagnostics.repository.test.ts`
+- `packages/database/migrations/0008_runtime_shadow_diagnostics.sql`
+- `packages/database/migrations/meta/_journal.json`
+- `packages/database/src/__tests__/runtime-ledger.integration.test.ts`
+- `packages/database/src/schema/index.ts`
+- `packages/database/src/schema/runtime-shadow-diagnostics.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 3.2 developer context from Epic 3, architecture spine, SPEC, Epic 2 retrospective, Story 3.1 learnings, and existing runtime ledger persistence patterns.
+- 2026-08-05: Started Story 3.2 dev-story implementation.
+- 2026-08-05: Implemented canonical shadow diagnostics schema, migration, repository, redaction guard, tests, and verification for Story 3.2.

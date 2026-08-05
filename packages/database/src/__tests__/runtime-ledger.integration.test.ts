@@ -13,6 +13,7 @@ import {
   messages,
   runtimeActions,
   runtimeAttempts,
+  runtimeShadowDiagnostics,
 } from '../schema';
 
 describeIntegration('Runtime ledger schema (integration)', () => {
@@ -249,6 +250,126 @@ describeIntegration('Runtime ledger schema (integration)', () => {
         validationResult: { status: 'valid', reasonCodes: [] },
         executionStatus: 'not_started',
         commitMarker: null,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('persists one shadow diagnostics record per runtime attempt and runtime version', async () => {
+    const { db } = getTestDb();
+
+    const [diagnostics] = await db
+      .insert(runtimeShadowDiagnostics)
+      .values({
+        tenantId,
+        messageId,
+        runtimeAttemptId: attemptId,
+        runtimeMode: 'maf_shadow',
+        traceId: 'trace-runtime-ledger-integration',
+        runtimeVersion: 'ts-runtime@integration',
+        validationStatus: 'valid',
+        redactionStatus: 'redacted',
+        currentResult: { replyDigest: 'sha256:current', riskSeverity: 'none' },
+        candidateResult: { replyDigest: 'sha256:candidate', riskSeverity: 'none' },
+        riskComparison: { status: 'same' },
+        memoryComparison: { status: 'same' },
+        actionComparison: { status: 'same' },
+        validationDetails: { reasonCodes: [] },
+        redactionDetails: { reasonCodes: ['raw_text_redacted'] },
+        latencyMs: 125,
+        modelCallCount: 2,
+        toolCallCount: 1,
+        retryCount: 0,
+        estimatedCost: '0.000420',
+      })
+      .returning();
+
+    expect(diagnostics).toMatchObject({
+      tenantId,
+      messageId,
+      runtimeAttemptId: attemptId,
+      runtimeMode: 'maf_shadow',
+      traceId: 'trace-runtime-ledger-integration',
+      runtimeVersion: 'ts-runtime@integration',
+      validationStatus: 'valid',
+      redactionStatus: 'redacted',
+    });
+
+    await expect(
+      db.insert(runtimeShadowDiagnostics).values({
+        tenantId,
+        messageId,
+        runtimeAttemptId: attemptId,
+        runtimeMode: 'maf_shadow',
+        traceId: 'trace-runtime-ledger-integration',
+        runtimeVersion: 'ts-runtime@integration',
+        validationStatus: 'valid',
+        redactionStatus: 'redacted',
+        currentResult: { replyDigest: 'sha256:current-duplicate' },
+        candidateResult: { replyDigest: 'sha256:candidate-duplicate' },
+        riskComparison: { status: 'same' },
+        memoryComparison: { status: 'same' },
+        actionComparison: { status: 'same' },
+        validationDetails: { reasonCodes: [] },
+        redactionDetails: { reasonCodes: ['raw_text_redacted'] },
+        latencyMs: 125,
+        modelCallCount: 2,
+        toolCallCount: 1,
+        retryCount: 0,
+        estimatedCost: '0.000420',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects invalid shadow diagnostics enum-like values', async () => {
+    const { db } = getTestDb();
+
+    await expect(
+      db.insert(runtimeShadowDiagnostics).values({
+        tenantId,
+        messageId,
+        runtimeAttemptId: attemptId,
+        runtimeMode: 'maf_shadow',
+        traceId: 'trace-runtime-ledger-invalid-diagnostics',
+        runtimeVersion: 'ts-runtime@invalid-validation-status',
+        validationStatus: 'unknown',
+        redactionStatus: 'redacted',
+        currentResult: {},
+        candidateResult: {},
+        riskComparison: {},
+        memoryComparison: {},
+        actionComparison: {},
+        validationDetails: {},
+        redactionDetails: {},
+        latencyMs: 1,
+        modelCallCount: 0,
+        toolCallCount: 0,
+        retryCount: 0,
+        estimatedCost: '0.000000',
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      db.insert(runtimeShadowDiagnostics).values({
+        tenantId,
+        messageId,
+        runtimeAttemptId: attemptId,
+        runtimeMode: 'maf_shadow',
+        traceId: 'trace-runtime-ledger-invalid-redaction',
+        runtimeVersion: 'ts-runtime@invalid-redaction-status',
+        validationStatus: 'valid',
+        redactionStatus: 'leaked',
+        currentResult: {},
+        candidateResult: {},
+        riskComparison: {},
+        memoryComparison: {},
+        actionComparison: {},
+        validationDetails: {},
+        redactionDetails: {},
+        latencyMs: 1,
+        modelCallCount: 0,
+        toolCallCount: 0,
+        retryCount: 0,
+        estimatedCost: '0.000000',
       }),
     ).rejects.toThrow();
   });
