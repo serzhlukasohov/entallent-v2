@@ -1,0 +1,24 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "riskAssessment": {
+    "type": "burnout_signal",
+    "severity": "medium",
+    "confidence": 1.2,
+    "evidence": ["Synthetic evidence."],
+    "immediateResponseRequired": false,
+    "escalationRecommended": false,
+    "surveyMustBeBlocked": false,
+    "proactiveMessagesMustBePaused": false
+  },
+  "memoryCandidates": [],
+  "proposedActions": [],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-invalid-risk",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

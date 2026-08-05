@@ -1,0 +1,32 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "riskAssessment": {
+    "type": null,
+    "severity": "none",
+    "confidence": 0.97,
+    "evidence": [],
+    "immediateResponseRequired": false,
+    "escalationRecommended": false,
+    "surveyMustBeBlocked": false,
+    "proactiveMessagesMustBePaused": false
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "schedule-follow-up-demo",
+      "type": "schedule_follow_up",
+      "idempotencyKey": "action:schedule-follow-up-demo",
+      "intent": "check in later",
+      "deduplicationKey": "followup:demo"
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-invalid-followup",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

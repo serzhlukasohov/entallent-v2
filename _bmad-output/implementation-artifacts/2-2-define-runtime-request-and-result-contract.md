@@ -1,10 +1,10 @@
 ---
-baseline_commit: a6862758552a14c5553fcfcc486b275cfb21a4ef
+baseline_commit: 47a8314f4ede97d75a4fa31a20a3a95f3516e297
 ---
 
 # Story 2.2: Define Runtime Request And Result Contract
 
-Status: ready-for-dev
+Status: done
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.2
 
@@ -24,35 +24,40 @@ so `MafAgentRuntimeClient` and `agent-service` can integrate safely later.
 
 ## Tasks / Subtasks
 
-- [ ] Add framework-neutral TypeScript DTO exports. (AC: 1)
-  - [ ] Add `packages/contracts/src/runtime-contract.ts` or an equivalent local module for runtime HTTP DTO types.
-  - [ ] Include `RuntimeProcessMessageRequest`, `RuntimeResult`, and `RuntimeErrorResponse`.
-  - [ ] Keep the types JSON-compatible and free of MAF, FastAPI, OpenAI, LangChain, NestJS, and application-layer imports.
-  - [ ] Export the DTOs from `packages/contracts/src/index.ts` without removing existing exports.
-- [ ] Add named TypeScript validation helpers. (AC: 2)
-  - [ ] Keep `packages/contracts/runtime/openapi.json` as the canonical source of truth.
-  - [ ] Add named wrappers such as `validateRuntimeProcessMessageRequest`, `validateRuntimeResult`, and `validateRuntimeErrorResponse` that call the existing OpenAPI-backed validator by schema name.
-  - [ ] Preserve the generic `validateRuntimeContract` API for fixture harnesses and future schema checks.
-  - [ ] Do not replace the canonical OpenAPI artifact with Zod as the source of truth.
-- [ ] Expand shared contract fixtures. (AC: 2, 3)
-  - [ ] Add at least one valid runtime error response fixture.
-  - [ ] Add invalid fixtures that prove required request fields, result diagnostics, risk assessment bounds, action-specific required fields, runtime error taxonomy, and RFC3339 `date-time` validation.
-  - [ ] Keep all fixture data synthetic; do not use real Slack IDs, user text, workspace IDs, tenant IDs, or production event IDs.
-  - [ ] Update `packages/contracts/runtime/fixtures/manifest.json` so TypeScript and Python consume the same cases.
-- [ ] Keep the OpenAPI/documentation contract coherent. (AC: 4)
-  - [ ] Verify request fields include request ID, event ID, trace ID, idempotency key, runtime attempt, tenant, user, scoped conversation/session identity, message, and context.
-  - [ ] Verify result fields include reply, optional risk assessment, memory candidates, proposed actions, diagnostics trace ID, runtime version, model-call count, tool-call count, and latency.
-  - [ ] Verify runtime error response categories match the architecture convention: `unavailable`, `validation_error`, `timeout`, `duplicate_request`, `dependency_failed`, and `unsafe_partial_result`, with `retryable` and `fallbackAllowed` booleans.
-  - [ ] If any field name changes, update both `runtime-contract.md` and `openapi.json` in the same change.
-- [ ] Update verification and story status notes. (AC: 1-5)
-  - [ ] Run `pnpm --filter @entalent/contracts test:runtime-contract`.
-  - [ ] Run `pnpm --filter @entalent/contracts test:runtime-contract:python`.
-  - [ ] Run `pnpm --filter @entalent/contracts typecheck`.
-  - [ ] Run `pnpm --filter @entalent/contracts test`.
-  - [ ] Run `pnpm --filter @entalent/contracts lint`.
-  - [ ] Run `pnpm --filter @entalent/contracts build`.
-  - [ ] Run `pnpm test`.
-  - [ ] Run `git diff --check`.
+- [x] Add framework-neutral TypeScript DTO exports. (AC: 1)
+  - [x] Add `packages/contracts/src/runtime-contract.ts` or an equivalent local module for runtime HTTP DTO types.
+  - [x] Include `RuntimeProcessMessageRequest`, `RuntimeResult`, and `RuntimeErrorResponse`.
+  - [x] Keep the types JSON-compatible and free of MAF, FastAPI, OpenAI, LangChain, NestJS, and application-layer imports.
+  - [x] Export the DTOs from `packages/contracts/src/index.ts` without removing existing exports.
+- [x] Add named TypeScript validation helpers. (AC: 2)
+  - [x] Keep `packages/contracts/runtime/openapi.json` as the canonical source of truth.
+  - [x] Add named wrappers such as `validateRuntimeProcessMessageRequest`, `validateRuntimeResult`, and `validateRuntimeErrorResponse` that call the existing OpenAPI-backed validator by schema name.
+  - [x] Preserve the generic `validateRuntimeContract` API for fixture harnesses and future schema checks.
+  - [x] Do not replace the canonical OpenAPI artifact with Zod as the source of truth.
+- [x] Expand shared contract fixtures. (AC: 2, 3)
+  - [x] Add at least one valid runtime error response fixture.
+  - [x] Add invalid fixtures that prove required request fields, result diagnostics, risk assessment bounds, action-specific required fields, runtime error taxonomy, and RFC3339 `date-time` validation.
+  - [x] Keep all fixture data synthetic; do not use real Slack IDs, user text, workspace IDs, tenant IDs, or production event IDs.
+  - [x] Update `packages/contracts/runtime/fixtures/manifest.json` so TypeScript and Python consume the same cases.
+- [x] Keep the OpenAPI/documentation contract coherent. (AC: 4)
+  - [x] Verify request fields include request ID, event ID, trace ID, idempotency key, runtime attempt, tenant, user, scoped conversation/session identity, message, and context.
+  - [x] Verify result fields include reply, optional risk assessment, memory candidates, proposed actions, diagnostics trace ID, runtime version, model-call count, tool-call count, and latency.
+  - [x] Verify runtime error response categories match the architecture convention: `unavailable`, `validation_error`, `timeout`, `duplicate_request`, `dependency_failed`, and `unsafe_partial_result`, with `retryable` and `fallbackAllowed` booleans.
+  - [x] If any field name changes, update both `runtime-contract.md` and `openapi.json` in the same change.
+- [x] Update verification and story status notes. (AC: 1-5)
+  - [x] Run `pnpm --filter @entalent/contracts test:runtime-contract`.
+  - [x] Run `pnpm --filter @entalent/contracts test:runtime-contract:python`.
+  - [x] Run `pnpm --filter @entalent/contracts typecheck`.
+  - [x] Run `pnpm --filter @entalent/contracts test`.
+  - [x] Run `pnpm --filter @entalent/contracts lint`.
+  - [x] Run `pnpm --filter @entalent/contracts build`.
+  - [x] Run `pnpm test`.
+  - [x] Run `git diff --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Strict TypeScript `date-time` validation accepted impossible calendar dates [packages/contracts/src/runtime-contract-validation.ts:415]
+- [x] [Review][Patch] Shared action subtype fixtures did not cover valid `schedule_follow_up`/`update_goal` branches or malformed `update_goal` required fields [packages/contracts/runtime/fixtures/manifest.json:37]
 
 ## Dev Notes
 
@@ -132,20 +137,58 @@ so `MafAgentRuntimeClient` and `agent-service` can integrate safely later.
 
 ### Agent Model Used
 
-TBD
+GPT-5 Codex
 
 ### Debug Log References
 
-TBD
+- RED: `pnpm --filter @entalent/contracts typecheck` failed because runtime DTO types were not exported.
+- GREEN: `pnpm --filter @entalent/contracts typecheck` passed after adding framework-neutral runtime DTO exports.
+- GREEN: `pnpm --filter @entalent/contracts test:runtime-contract` passed with DTO export coverage.
+- RED: `pnpm --filter @entalent/contracts typecheck` failed because named runtime validator helpers were not exported.
+- GREEN: `pnpm --filter @entalent/contracts typecheck` passed after adding named OpenAPI-backed validator helpers.
+- GREEN: `pnpm --filter @entalent/contracts test:runtime-contract` passed with named validator coverage.
+- RED: `pnpm --filter @entalent/contracts test:runtime-contract` and `test:runtime-contract:python` failed after adding manifest entries for missing expanded fixtures.
+- GREEN: `pnpm --filter @entalent/contracts test:runtime-contract` passed with 13 fixture/helper tests.
+- GREEN: `pnpm --filter @entalent/contracts test:runtime-contract:python` passed against the same fixture manifest.
+- Verification: OpenAPI required request/result fields and runtime error taxonomy were inspected against `runtime-contract.md` and `ARCHITECTURE-SPINE.md`.
+- Verification: `pnpm --filter @entalent/contracts test:runtime-contract` passed with 13 runtime contract tests.
+- Verification: `pnpm --filter @entalent/contracts test:runtime-contract:python` passed.
+- Verification: `pnpm --filter @entalent/contracts typecheck` passed.
+- Verification: `pnpm --filter @entalent/contracts test` passed with 39 TypeScript tests plus Python fixture validation.
+- Verification: `pnpm --filter @entalent/contracts lint` passed.
+- Verification: `pnpm --filter @entalent/contracts build` passed.
+- Full regression: `pnpm test` passed with 15 successful turbo tasks.
+- Verification: `git diff --check` passed.
+- Review fix: `pnpm --filter @entalent/contracts test:runtime-contract` passed with 15 runtime contract tests after tightening date-time parity and action subtype fixtures.
+- Review fix: `pnpm --filter @entalent/contracts test:runtime-contract:python` passed against the same fixture manifest after review fixes.
+- Review verification: `pnpm --filter @entalent/contracts typecheck`, `pnpm --filter @entalent/contracts test`, `pnpm --filter @entalent/contracts lint`, `pnpm --filter @entalent/contracts build`, `pnpm test`, and `git diff --check` passed after review fixes.
 
 ### Completion Notes List
 
-TBD
+- Added framework-neutral TypeScript runtime DTO types for request, result, action proposals, diagnostics, and runtime error response.
+- Added named TypeScript validator helpers for runtime request, result, and error response schemas while preserving the generic OpenAPI-backed validator.
+- Expanded shared runtime fixtures with a valid error response and invalid cases for action-specific required fields, missing result diagnostics, risk confidence bounds, runtime error taxonomy, and RFC3339 date-time validation.
+- Verified OpenAPI, runtime companion documentation, and architecture error taxonomy remain coherent without adding out-of-scope service/client scaffolding.
+- Completed required verification and moved Story 2.2 to review.
 
 ### File List
 
-TBD
+- `packages/contracts/src/index.ts`
+- `_bmad-output/implementation-artifacts/2-2-define-runtime-request-and-result-contract.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `packages/contracts/runtime/fixtures/invalid/invalid-risk-confidence.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-schedule-follow-up-action-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-update-goal-action-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/impossible-message-created-at.json`
+- `packages/contracts/runtime/fixtures/invalid/missing-result-diagnostics.json`
+- `packages/contracts/runtime/fixtures/manifest.json`
+- `packages/contracts/runtime/fixtures/valid/runtime-error-response.json`
+- `packages/contracts/src/runtime-contract.ts`
+- `packages/contracts/src/runtime-contract.test.ts`
+- `packages/contracts/src/runtime-contract-validation.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 2.2 developer context from Epic 2, runtime contract, architecture spine, and Story 2.1 review learnings.
+- 2026-08-05: Implemented runtime DTO exports, named validators, expanded fixtures, and verification for Story 2.2.
+- 2026-08-05: Resolved BMAD review findings and marked Story 2.2 done.

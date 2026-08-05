@@ -1,0 +1,31 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "riskAssessment": {
+    "type": null,
+    "severity": "none",
+    "confidence": 0.97,
+    "evidence": [],
+    "immediateResponseRequired": false,
+    "escalationRecommended": false,
+    "surveyMustBeBlocked": false,
+    "proactiveMessagesMustBePaused": false
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "update-goal-demo",
+      "type": "update_goal",
+      "idempotencyKey": "action:update-goal-demo",
+      "goalId": "77777777-7777-4777-8777-777777777777"
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-invalid-update-goal",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

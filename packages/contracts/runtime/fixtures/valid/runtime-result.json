@@ -29,6 +29,25 @@
       "type": "save_memory",
       "idempotencyKey": "action:save-memory-demo",
       "memoryCandidateId": "memory-candidate-demo"
+    },
+    {
+      "actionId": "schedule-follow-up-demo",
+      "type": "schedule_follow_up",
+      "idempotencyKey": "action:schedule-follow-up-demo",
+      "executeAt": "2026-08-06T11:58:01Z",
+      "intent": "check in later",
+      "deduplicationKey": "followup:demo"
+    },
+    {
+      "actionId": "update-goal-demo",
+      "type": "update_goal",
+      "idempotencyKey": "action:update-goal-demo",
+      "goalId": "77777777-7777-4777-8777-777777777777",
+      "changes": {
+        "status": "active",
+        "priority": 2,
+        "blocked": false
+      }
     }
   ],
   "diagnostics": {

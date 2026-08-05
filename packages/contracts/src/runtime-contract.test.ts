@@ -1,7 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { validateRuntimeContract } from './runtime-contract-validation';
+import type {
+  RuntimeErrorResponse,
+  RuntimeProcessMessageRequest,
+  RuntimeResult,
+} from './index';
+import {
+  validateRuntimeContract,
+  validateRuntimeErrorResponse,
+  validateRuntimeProcessMessageRequest,
+  validateRuntimeResult,
+} from './runtime-contract-validation';
 
 type ValidFixture = {
   schemaName: string;
@@ -25,7 +35,56 @@ function readJson(relativePath: string): unknown {
   return JSON.parse(readFileSync(join(runtimeRoot, relativePath), 'utf8'));
 }
 
+describe('Runtime contract DTO exports', () => {
+  it('exposes framework-neutral request, result, and error DTO types', () => {
+    const request = readJson(
+      'fixtures/valid/process-message-request.json',
+    ) as RuntimeProcessMessageRequest;
+    const result = readJson('fixtures/valid/runtime-result.json') as RuntimeResult;
+    const error: RuntimeErrorResponse = {
+      traceId: 'trace-runtime-contract-valid-error',
+      errorCategory: 'timeout',
+      retryable: true,
+      fallbackAllowed: true,
+      message: 'Synthetic runtime timeout.',
+    };
+
+    expect(request.context.recentTurns[0]?.role).toBe('user');
+    expect(result.diagnostics.runtimeVersion).toBe('maf-contract-fixture');
+    expect(error.errorCategory).toBe('timeout');
+  });
+});
+
 describe('Runtime contract fixtures', () => {
+  it('validates named runtime contract schemas through OpenAPI', () => {
+    expect(
+      validateRuntimeProcessMessageRequest({
+        schemaDocument,
+        value: readJson('fixtures/valid/process-message-request.json'),
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      validateRuntimeResult({
+        schemaDocument,
+        value: readJson('fixtures/valid/runtime-result.json'),
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      validateRuntimeErrorResponse({
+        schemaDocument,
+        value: {
+          traceId: 'trace-runtime-contract-valid-error',
+          errorCategory: 'timeout',
+          retryable: true,
+          fallbackAllowed: true,
+          message: 'Synthetic runtime timeout.',
+        },
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it.each(manifest.valid)('accepts valid $path', (fixture) => {
     const result = validateRuntimeContract({
       schemaDocument,

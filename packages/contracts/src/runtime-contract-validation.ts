@@ -13,6 +13,11 @@ export type ValidateRuntimeContractInput = {
   value: unknown;
 };
 
+export type ValidateNamedRuntimeContractInput = Omit<
+  ValidateRuntimeContractInput,
+  'schemaName'
+>;
+
 type JsonObject = Record<string, unknown>;
 
 const DEFAULT_ERROR_CATEGORY = 'CONTRACT_SCHEMA_INVALID';
@@ -34,6 +39,33 @@ export function validateRuntimeContract({
   }
 
   return validateSchema(schema, value, '$', schemas);
+}
+
+export function validateRuntimeProcessMessageRequest(
+  input: ValidateNamedRuntimeContractInput,
+): RuntimeContractValidationResult {
+  return validateRuntimeContract({
+    ...input,
+    schemaName: 'RuntimeProcessMessageRequest',
+  });
+}
+
+export function validateRuntimeResult(
+  input: ValidateNamedRuntimeContractInput,
+): RuntimeContractValidationResult {
+  return validateRuntimeContract({
+    ...input,
+    schemaName: 'RuntimeResult',
+  });
+}
+
+export function validateRuntimeErrorResponse(
+  input: ValidateNamedRuntimeContractInput,
+): RuntimeContractValidationResult {
+  return validateRuntimeContract({
+    ...input,
+    schemaName: 'RuntimeErrorResponse',
+  });
 }
 
 function validateSchema(
@@ -381,9 +413,49 @@ function isUuid(value: string): boolean {
 }
 
 function isDateTime(value: string): boolean {
-  return (
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$/.exec(
       value,
-    ) && !Number.isNaN(Date.parse(value))
-  );
+    );
+
+  if (!match) {
+    return false;
+  }
+
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const second = Number(secondRaw);
+  const offsetHour = match[9] ? Number(match[9]) : 0;
+  const offsetMinute = match[10] ? Number(match[10]) : 0;
+
+  if (
+    year < 1 ||
+    month < 1 ||
+    month > 12 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    return false;
+  }
+
+  return day >= 1 && day <= daysInMonth(year, month);
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    return isLeapYear(year) ? 29 : 28;
+  }
+
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }

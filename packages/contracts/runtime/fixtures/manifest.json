@@ -7,6 +7,10 @@
     {
       "schemaName": "RuntimeResult",
       "path": "valid/runtime-result.json"
+    },
+    {
+      "schemaName": "RuntimeErrorResponse",
+      "path": "valid/runtime-error-response.json"
     }
   ],
   "invalid": [
@@ -26,9 +30,34 @@
       "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
     },
     {
+      "schemaName": "RuntimeProcessMessageRequest",
+      "path": "invalid/impossible-message-created-at.json",
+      "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
+    },
+    {
       "schemaName": "RuntimeResult",
       "path": "invalid/invalid-action-proposal-shape.json",
       "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/invalid-schedule-follow-up-action-shape.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/invalid-update-goal-action-shape.json",
+      "expectedErrorCategory": "ACTION_PROPOSAL_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/missing-result-diagnostics.json",
+      "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
+    },
+    {
+      "schemaName": "RuntimeResult",
+      "path": "invalid/invalid-risk-confidence.json",
+      "expectedErrorCategory": "CONTRACT_SCHEMA_INVALID"
     },
     {
       "schemaName": "RuntimeErrorResponse",
