@@ -77,4 +77,25 @@ describe('AgentRuntimeRouter', () => {
       expect.objectContaining({ traceId: 'trace-1' }),
     );
   });
+
+  it('still fails closed when recording the warning throws', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => {
+        throw new Error('flag store unavailable');
+      },
+      logger: {
+        warn: () => {
+          throw new Error('logger unavailable');
+        },
+      },
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledTimes(1);
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
 });

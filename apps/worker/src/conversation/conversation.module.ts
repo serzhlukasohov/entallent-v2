@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import {
   AGENT_RUNTIME_PORT,
@@ -85,7 +85,14 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     },
     {
       provide: AGENT_RUNTIME_PORT,
-      useFactory: (typeScriptRuntime: TypeScriptAgentRuntime) => new AgentRuntimeRouter(typeScriptRuntime),
+      useFactory: (typeScriptRuntime: TypeScriptAgentRuntime) => {
+        const logger = new Logger(AgentRuntimeRouter.name);
+        return new AgentRuntimeRouter(typeScriptRuntime, {
+          logger: {
+            warn: (message, context) => logger.warn(context ? `${message} ${JSON.stringify(context)}` : message),
+          },
+        });
+      },
       inject: [TypeScriptAgentRuntime],
     },
     {

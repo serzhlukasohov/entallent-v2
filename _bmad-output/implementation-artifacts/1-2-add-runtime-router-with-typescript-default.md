@@ -4,7 +4,7 @@ baseline_commit: 5df402c4f567fcd8a70a563912aff017f53ddcae
 
 # Story 1.2: Add Runtime Router With TypeScript Default
 
-Status: in-progress
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -40,7 +40,7 @@ so that runtime mode can be evaluated per job without changing worker processors
 
 ### Review Findings
 
-- [ ] [Review][Patch] Runtime evaluation failures can fall back without the required warning [`packages/application/src/use-cases/agent-runtime-router.ts:33`]
+- [x] [Review][Patch] Runtime evaluation failures can fall back without the required warning [`packages/application/src/use-cases/agent-runtime-router.ts:33`]
 
 ## Dev Notes
 
@@ -109,6 +109,8 @@ Codex GPT-5
 - Regression: `pnpm --filter @entalent/application test`, `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/application build`, and `pnpm --filter @entalent/worker typecheck` passed.
 - Scope lint: `pnpm exec eslint src/use-cases/agent-runtime-router.ts src/use-cases/agent-runtime-router.test.ts src/index.ts` passed in `packages/application`; `pnpm exec eslint src/conversation/conversation.module.ts` passed in `apps/worker`.
 - Full package lint note: `pnpm --filter @entalent/application lint` is blocked by pre-existing `no-explicit-any` errors in older tests; `pnpm --filter @entalent/worker lint` passes with one pre-existing `no-console` warning in `apps/worker/src/main.ts`.
+- RED review follow-up: `pnpm --filter @entalent/application test -- agent-runtime-router` failed when `logger.warn` threw before fallback.
+- GREEN review follow-up: `pnpm --filter @entalent/application test -- agent-runtime-router`, touched-file eslint, `pnpm --filter @entalent/application test`, `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/application build`, and `pnpm --filter @entalent/worker typecheck` passed.
 
 ### Implementation Plan
 
@@ -122,6 +124,7 @@ Codex GPT-5
 - Implemented `AgentRuntimeRouter` with per-call mode evaluation, TypeScript default delegation, and fail-closed warning behavior including `traceId`.
 - Rewired worker DI so `AGENT_RUNTIME_PORT` now resolves to the router and the router delegates to a separate `TypeScriptAgentRuntime` provider.
 - Added focused Vitest coverage for default delegation and evaluation-failure fallback.
+- Resolved review finding: worker now wires a real warning logger into the router, and logger failures cannot block fallback to TypeScript.
 
 ### File List
 
@@ -135,3 +138,4 @@ Codex GPT-5
 ## Change Log
 
 - 2026-08-05: Implemented Story 1.2 and marked ready for review.
+- 2026-08-05: Addressed code review finding for runtime evaluation warning logging.

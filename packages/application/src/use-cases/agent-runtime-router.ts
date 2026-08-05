@@ -30,12 +30,20 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     try {
       await this.evaluateMode(request);
     } catch (error) {
+      this.warnEvaluationFailure(request, error);
+    }
+
+    return this.typeScriptRuntime.processMessage(request);
+  }
+
+  private warnEvaluationFailure(request: ProcessMessageRequest, error: unknown): void {
+    try {
       this.logger?.warn('Agent runtime mode evaluation failed; falling back to TypeScript runtime', {
         traceId: request.traceId,
         error: error instanceof Error ? error.message : String(error),
       });
+    } catch {
+      // Fallback to TypeScript must not depend on observability working.
     }
-
-    return this.typeScriptRuntime.processMessage(request);
   }
 }
