@@ -1,0 +1,32 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "deep-goal-demo",
+      "aggregateType": "goal",
+      "actionType": "update_goal",
+      "idempotencyKey": "action:deep-goal-demo",
+      "payload": {
+        "changes": {
+          "deep": [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+        }
+      },
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-json-depth",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

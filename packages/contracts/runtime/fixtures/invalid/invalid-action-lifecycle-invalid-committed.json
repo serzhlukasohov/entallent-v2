@@ -1,0 +1,33 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "invalid-committed-memory-demo",
+      "aggregateType": "memory",
+      "actionType": "save_memory",
+      "idempotencyKey": "action:invalid-committed-memory-demo",
+      "payload": {
+        "memoryCandidateId": "memory-candidate-demo"
+      },
+      "validationResult": {
+        "status": "invalid",
+        "reasonCodes": ["POLICY_REJECTED"]
+      },
+      "executionStatus": "committed",
+      "commitMarker": {
+        "committedAt": "2026-08-06T12:00:00Z",
+        "referenceId": "memory:invalid-committed-memory-demo"
+      }
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-invalid-committed",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

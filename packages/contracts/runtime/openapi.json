@@ -440,6 +440,8 @@
       "SaveMemoryActionEnvelope": {
         "type": "object",
         "additionalProperties": false,
+        "x-action-lifecycle": true,
+        "x-error-category": "ACTION_PROPOSAL_INVALID",
         "required": [
           "actionId",
           "aggregateType",
@@ -492,6 +494,8 @@
       "ScheduleFollowUpActionEnvelope": {
         "type": "object",
         "additionalProperties": false,
+        "x-action-lifecycle": true,
+        "x-error-category": "ACTION_PROPOSAL_INVALID",
         "required": [
           "actionId",
           "aggregateType",
@@ -544,6 +548,8 @@
       "UpdateGoalActionEnvelope": {
         "type": "object",
         "additionalProperties": false,
+        "x-action-lifecycle": true,
+        "x-error-category": "ACTION_PROPOSAL_INVALID",
         "required": [
           "actionId",
           "aggregateType",

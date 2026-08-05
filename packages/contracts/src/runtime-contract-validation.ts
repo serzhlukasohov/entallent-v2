@@ -21,6 +21,7 @@ export type ValidateNamedRuntimeContractInput = Omit<
 type JsonObject = Record<string, unknown>;
 
 const DEFAULT_ERROR_CATEGORY = 'CONTRACT_SCHEMA_INVALID';
+const MAX_SCHEMA_DEPTH = 64;
 
 export function validateRuntimeContract({
   schemaDocument,
@@ -38,7 +39,7 @@ export function validateRuntimeContract({
     );
   }
 
-  return validateSchema(schema, value, '$', schemas);
+  return validateSchema(schema, value, '$', schemas, 0);
 }
 
 export function validateRuntimeProcessMessageRequest(
@@ -73,9 +74,14 @@ function validateSchema(
   value: unknown,
   path: string,
   schemas: Record<string, unknown>,
+  depth: number,
 ): RuntimeContractValidationResult {
+  if (depth > MAX_SCHEMA_DEPTH) {
+    return fail(path, errorCategory(schema), 'Maximum schema depth exceeded');
+  }
+
   if (Array.isArray(schema.oneOf)) {
-    return validateOneOf(schema, value, path, schemas);
+    return validateOneOf(schema, value, path, schemas, depth + 1);
   }
 
   const ref = typeof schema.$ref === 'string' ? schema.$ref : null;
@@ -84,7 +90,7 @@ function validateSchema(
     if (!resolved) {
       return fail(path, errorCategory(schema), `Unresolvable schema ref: ${ref}`);
     }
-    return validateSchema(resolved, value, path, schemas);
+    return validateSchema(resolved, value, path, schemas, depth + 1);
   }
 
   if (allowsNull(schema) && value === null) {
@@ -97,11 +103,11 @@ function validateSchema(
   }
 
   if (schemaType === 'object') {
-    return validateObject(schema, value, path, schemas);
+    return validateObject(schema, value, path, schemas, depth + 1);
   }
 
   if (schemaType === 'array') {
-    return validateArray(schema, value, path, schemas);
+    return validateArray(schema, value, path, schemas, depth + 1);
   }
 
   if (schemaType === 'string') {
@@ -124,6 +130,7 @@ function validateOneOf(
   value: unknown,
   path: string,
   schemas: Record<string, unknown>,
+  depth: number,
 ): RuntimeContractValidationResult {
   const candidates = schema.oneOf;
   if (!Array.isArray(candidates)) {
@@ -136,7 +143,7 @@ function validateOneOf(
       continue;
     }
 
-    const result = validateSchema(candidate, value, path, schemas);
+    const result = validateSchema(candidate, value, path, schemas, depth + 1);
     if (result.ok) {
       matchCount += 1;
     }
@@ -154,6 +161,7 @@ function validateObject(
   value: unknown,
   path: string,
   schemas: Record<string, unknown>,
+  depth: number,
 ): RuntimeContractValidationResult {
   if (!isRecord(value)) {
     return fail(path, errorCategory(schema), 'Expected object');
@@ -193,6 +201,7 @@ function validateObject(
           propertyValue,
           `${path}.${key}`,
           schemas,
+          depth + 1,
         );
         if (!result.ok) {
           return result;
@@ -206,11 +215,63 @@ function validateObject(
       propertyValue,
       `${path}.${key}`,
       schemas,
+      depth + 1,
     );
 
     if (!result.ok) {
       return result;
     }
+  }
+
+  if (schema['x-action-lifecycle'] === true) {
+    const result = validateActionLifecycle(schema, value, path);
+    if (!result.ok) {
+      return result;
+    }
+  }
+
+  return { ok: true };
+}
+
+function validateActionLifecycle(
+  schema: JsonObject,
+  value: JsonObject,
+  path: string,
+): RuntimeContractValidationResult {
+  const validationResult = value.validationResult;
+  const validationStatus = isRecord(validationResult)
+    ? validationResult.status
+    : null;
+  const executionStatus = value.executionStatus;
+  const commitMarker = value.commitMarker;
+  const category = errorCategory(schema);
+
+  if (executionStatus === 'committed') {
+    if (validationStatus !== 'valid') {
+      return fail(
+        `${path}.validationResult.status`,
+        category,
+        'Committed action must have a valid validation result',
+      );
+    }
+
+    if (!isRecord(commitMarker)) {
+      return fail(
+        `${path}.commitMarker`,
+        category,
+        'Committed action must include a commit marker',
+      );
+    }
+
+    return { ok: true };
+  }
+
+  if (commitMarker !== null) {
+    return fail(
+      `${path}.commitMarker`,
+      category,
+      'Uncommitted action must not include a commit marker',
+    );
   }
 
   return { ok: true };
@@ -221,6 +282,7 @@ function validateArray(
   value: unknown,
   path: string,
   schemas: Record<string, unknown>,
+  depth: number,
 ): RuntimeContractValidationResult {
   if (!Array.isArray(value)) {
     return fail(path, errorCategory(schema), 'Expected array');
@@ -231,7 +293,13 @@ function validateArray(
   }
 
   for (const [index, item] of value.entries()) {
-    const result = validateSchema(schema.items, item, `${path}[${index}]`, schemas);
+    const result = validateSchema(
+      schema.items,
+      item,
+      `${path}[${index}]`,
+      schemas,
+      depth + 1,
+    );
     if (!result.ok) {
       return result;
     }
@@ -343,7 +411,10 @@ function propertySchema(
 }
 
 function allowsNull(schema: JsonObject): boolean {
-  return Array.isArray(schema.type) && schema.type.includes('null');
+  return (
+    schema.type === 'null' ||
+    (Array.isArray(schema.type) && schema.type.includes('null'))
+  );
 }
 
 function firstNonNullType(schema: JsonObject): string | null {
@@ -360,6 +431,10 @@ function firstNonNullType(schema: JsonObject): string | null {
 }
 
 function matchesType(schemaType: string, value: unknown): boolean {
+  if (schemaType === 'null') {
+    return value === null;
+  }
+
   if (schemaType === 'integer') {
     return Number.isInteger(value);
   }

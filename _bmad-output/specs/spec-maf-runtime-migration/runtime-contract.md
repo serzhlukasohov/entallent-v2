@@ -149,7 +149,7 @@ export type ProcessMessageResult = {
         idempotencyKey: string;
         payload: {
           goalId?: string;
-          changes: Record<string, unknown>;
+          changes: Record<string, RuntimeJsonValue>;
         };
         validationResult: ActionValidationResult;
         executionStatus: ActionExecutionStatus;
@@ -182,6 +182,14 @@ type ActionCommitMarker = {
   committedAt: string;
   referenceId: string;
 } | null;
+
+type RuntimeJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | RuntimeJsonValue[]
+  | { [key: string]: RuntimeJsonValue };
 ```
 
 ## Runtime Error Response
@@ -204,7 +212,7 @@ export type RuntimeErrorResponse = {
 
 ## Side-Effect Rule
 
-The Python service returns proposals. TypeScript validates and executes them through existing domain policies and repositories. The action envelope can represent validation-failed or blocked actions with `commitMarker: null`; ledger persistence and actual action execution are separate later slices.
+The Python service returns proposals. TypeScript validates and executes them through existing domain policies and repositories. The action envelope can represent validation-failed or blocked actions with `commitMarker: null`; ledger persistence and actual action execution are separate later slices. `executionStatus: "committed"` requires `validationResult.status: "valid"` and a non-null `commitMarker`; uncommitted statuses require `commitMarker: null`.
 
 ```text
 MAF proposes -> TypeScript validates -> TypeScript writes -> queues emit side effects

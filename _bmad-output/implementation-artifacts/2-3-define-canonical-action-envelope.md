@@ -4,7 +4,7 @@ baseline_commit: 818491cc17a42ae0338733f432e8e2ba3c79ce4e
 
 # Story 2.3: Define Canonical Action Envelope
 
-Status: review
+Status: done
 Epic: 2 - Contract, Ledger, And Side-Effect Safety
 Story ID: 2.3
 
@@ -57,6 +57,16 @@ so TypeScript can validate and execute MAF proposals without ambiguous side effe
   - [x] Run `pnpm --filter @entalent/contracts build`.
   - [x] Run `pnpm test`.
   - [x] Run `git diff --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Action lifecycle fields allowed contradictory committed and uncommitted side-effect states [packages/contracts/runtime/openapi.json:652]
+- [x] [Review][Patch] Runtime contract documentation described goal changes as arbitrary unknown values instead of JSON values [_bmad-output/specs/spec-maf-runtime-migration/runtime-contract.md:150]
+- [x] [Review][Patch] Shared fixtures did not pin invalid `actionType` parity [packages/contracts/runtime/fixtures/manifest.json:61]
+- [x] [Review][Patch] Recursive JSON value validation had no depth guard [packages/contracts/src/runtime-contract-validation.ts:71]
+- [x] [Review][Patch] Python number validation accepted non-finite JSON numbers [packages/contracts/runtime/validate_fixtures.py:238]
+- [x] [Review][Patch] Shared fixtures did not cover valid non-null commit marker objects [packages/contracts/runtime/fixtures/manifest.json:2]
+- [x] [Review][Patch] Commit marker date-time validation fixture was masked by a missing required property [packages/contracts/runtime/fixtures/invalid/invalid-action-commit-marker-shape.json:20]
 
 ## Dev Notes
 
@@ -166,6 +176,9 @@ GPT-5 Codex
 - Verification: `pnpm --filter @entalent/contracts build` passed.
 - Full regression: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: `git diff --check` passed.
+- Review fix: `pnpm --filter @entalent/contracts test:runtime-contract` passed with 29 runtime contract tests after lifecycle, JSON-depth, and fixture hardening.
+- Review fix: `pnpm --filter @entalent/contracts test:runtime-contract:python` passed against the same fixture manifest.
+- Review verification: `pnpm --filter @entalent/contracts typecheck`, `pnpm --filter @entalent/contracts test`, `pnpm --filter @entalent/contracts lint`, `pnpm --filter @entalent/contracts build`, `pnpm test`, and `git diff --check` passed after review fixes.
 
 ### Completion Notes List
 
@@ -182,20 +195,29 @@ GPT-5 Codex
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 - `_bmad-output/specs/spec-maf-runtime-migration/runtime-contract.md`
 - `packages/contracts/runtime/fixtures/invalid/invalid-action-commit-marker-shape.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-commit-marker-date-time.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-envelope-action-type.json`
 - `packages/contracts/runtime/fixtures/invalid/invalid-action-envelope-aggregate-type.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-json-value-depth.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-lifecycle-committed-without-marker.json`
+- `packages/contracts/runtime/fixtures/invalid/invalid-action-lifecycle-invalid-committed.json`
 - `packages/contracts/runtime/fixtures/invalid/malformed-action-envelope-payload.json`
 - `packages/contracts/runtime/fixtures/invalid/malformed-action-execution-status.json`
 - `packages/contracts/runtime/fixtures/invalid/malformed-action-validation-result.json`
 - `packages/contracts/runtime/fixtures/invalid/missing-action-envelope-idempotency-key.json`
 - `packages/contracts/runtime/fixtures/invalid/missing-action-envelope-payload.json`
 - `packages/contracts/runtime/fixtures/manifest.json`
+- `packages/contracts/runtime/fixtures/valid/runtime-result-committed-action.json`
 - `packages/contracts/runtime/fixtures/valid/runtime-result-validation-failed-action.json`
 - `packages/contracts/runtime/fixtures/valid/runtime-result.json`
 - `packages/contracts/runtime/openapi.json`
+- `packages/contracts/runtime/validate_fixtures.py`
 - `packages/contracts/src/runtime-contract.test.ts`
 - `packages/contracts/src/runtime-contract.ts`
+- `packages/contracts/src/runtime-contract-validation.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 2.3 developer context from Epic 2, runtime contract, architecture spine, and Story 2.2 review learnings.
 - 2026-08-05: Implemented canonical action envelope contract, shared fixtures, DTO updates, and verification for Story 2.3.
+- 2026-08-05: Resolved BMAD review findings and marked Story 2.3 done.

@@ -107,19 +107,16 @@ export type RuntimeActionProposal =
   | RuntimeScheduleFollowUpActionEnvelope
   | RuntimeUpdateGoalActionEnvelope;
 
-export type RuntimeActionEnvelopeBase<
+type RuntimeActionEnvelopeBase<
   AggregateType extends RuntimeActionAggregateType,
   ActionType extends RuntimeActionType,
   Payload extends RuntimeJsonValue,
-> = {
+> = RuntimeActionLifecycleState & {
   actionId: string;
   aggregateType: AggregateType;
   actionType: ActionType;
   idempotencyKey: string;
   payload: Payload;
-  validationResult: RuntimeActionValidationResult;
-  executionStatus: RuntimeActionExecutionStatus;
-  commitMarker: RuntimeActionCommitMarker;
 };
 
 export type RuntimeActionAggregateType = 'memory' | 'follow_up' | 'goal';
@@ -162,8 +159,41 @@ export type RuntimeUpdateGoalActionPayload = {
   changes: { [key: string]: RuntimeJsonValue };
 };
 
-export type RuntimeActionValidationResult = {
-  status: 'pending' | 'valid' | 'invalid';
+export type RuntimeActionLifecycleState =
+  | RuntimeUncommittedActionLifecycleState
+  | RuntimeCommittedActionLifecycleState;
+
+export type RuntimeUncommittedActionLifecycleState = {
+  validationResult: RuntimeActionValidationResult;
+  executionStatus: Exclude<RuntimeActionExecutionStatus, 'committed'>;
+  commitMarker: null;
+};
+
+export type RuntimeCommittedActionLifecycleState = {
+  validationResult: RuntimeValidActionValidationResult;
+  executionStatus: 'committed';
+  commitMarker: RuntimeCommittedActionCommitMarker;
+};
+
+export type RuntimeActionValidationResult =
+  | RuntimePendingActionValidationResult
+  | RuntimeValidActionValidationResult
+  | RuntimeInvalidActionValidationResult;
+
+export type RuntimePendingActionValidationResult = {
+  status: 'pending';
+  reasonCodes: string[];
+  message?: string;
+};
+
+export type RuntimeValidActionValidationResult = {
+  status: 'valid';
+  reasonCodes: string[];
+  message?: string;
+};
+
+export type RuntimeInvalidActionValidationResult = {
+  status: 'invalid';
   reasonCodes: string[];
   message?: string;
 };
@@ -174,10 +204,12 @@ export type RuntimeActionExecutionStatus =
   | 'committed'
   | 'failed';
 
-export type RuntimeActionCommitMarker = {
+export type RuntimeActionCommitMarker = RuntimeCommittedActionCommitMarker | null;
+
+export type RuntimeCommittedActionCommitMarker = {
   committedAt: string;
   referenceId: string;
-} | null;
+};
 
 export type RuntimeDiagnostics = {
   traceId: string;

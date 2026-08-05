@@ -1,0 +1,30 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "committed-memory-demo",
+      "aggregateType": "memory",
+      "actionType": "save_memory",
+      "idempotencyKey": "action:committed-memory-demo",
+      "payload": {
+        "memoryCandidateId": "memory-candidate-demo"
+      },
+      "validationResult": {
+        "status": "valid",
+        "reasonCodes": []
+      },
+      "executionStatus": "committed",
+      "commitMarker": null
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-committed-without-marker",
+    "runtimeVersion": "maf-contract-fixture",
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42
+  }
+}

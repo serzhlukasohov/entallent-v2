@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from datetime import datetime
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_ERROR_CATEGORY = "CONTRACT_SCHEMA_INVALID"
+MAX_SCHEMA_DEPTH = 64
 RUNTIME_ROOT = Path(__file__).resolve().parent
 
 
@@ -60,7 +62,7 @@ def validate_runtime_contract(
     if not isinstance(schema, dict):
         return fail("$schema", DEFAULT_ERROR_CATEGORY, f"Missing schema: {schema_name}")
 
-    return validate_schema(schema, value, "$", schemas)
+    return validate_schema(schema, value, "$", schemas, 0)
 
 
 def validate_schema(
@@ -68,16 +70,20 @@ def validate_schema(
     value: Any,
     path: str,
     schemas: dict[str, Any],
+    depth: int,
 ) -> dict[str, Any]:
+    if depth > MAX_SCHEMA_DEPTH:
+        return fail(path, error_category(schema), "Maximum schema depth exceeded")
+
     if isinstance(schema.get("oneOf"), list):
-        return validate_one_of(schema, value, path, schemas)
+        return validate_one_of(schema, value, path, schemas, depth + 1)
 
     ref = schema.get("$ref")
     if isinstance(ref, str):
         resolved = resolve_ref(ref, schemas)
         if resolved is None:
             return fail(path, error_category(schema), f"Unresolvable schema ref: {ref}")
-        return validate_schema(resolved, value, path, schemas)
+        return validate_schema(resolved, value, path, schemas, depth + 1)
 
     if allows_null(schema) and value is None:
         return {"ok": True}
@@ -87,9 +93,9 @@ def validate_schema(
         return fail(path, error_category(schema), f"Expected {schema_type}")
 
     if schema_type == "object":
-        return validate_object(schema, value, path, schemas)
+        return validate_object(schema, value, path, schemas, depth + 1)
     if schema_type == "array":
-        return validate_array(schema, value, path, schemas)
+        return validate_array(schema, value, path, schemas, depth + 1)
     if schema_type == "string":
         return validate_string(schema, value, path)
     if schema_type == "integer":
@@ -105,6 +111,7 @@ def validate_one_of(
     value: Any,
     path: str,
     schemas: dict[str, Any],
+    depth: int,
 ) -> dict[str, Any]:
     candidates = schema.get("oneOf")
     if not isinstance(candidates, list):
@@ -114,7 +121,7 @@ def validate_one_of(
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
-        result = validate_schema(candidate, value, path, schemas)
+        result = validate_schema(candidate, value, path, schemas, depth + 1)
         if result["ok"]:
             match_count += 1
 
@@ -129,6 +136,7 @@ def validate_object(
     value: Any,
     path: str,
     schemas: dict[str, Any],
+    depth: int,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         return fail(path, error_category(schema), "Expected object")
@@ -161,15 +169,62 @@ def validate_object(
             additional_properties = schema.get("additionalProperties")
             if isinstance(additional_properties, dict):
                 result = validate_schema(
-                    additional_properties, property_value, f"{path}.{key}", schemas
+                    additional_properties,
+                    property_value,
+                    f"{path}.{key}",
+                    schemas,
+                    depth + 1,
                 )
                 if not result["ok"]:
                     return result
             continue
 
-        result = validate_schema(child_schema, property_value, f"{path}.{key}", schemas)
+        result = validate_schema(
+            child_schema, property_value, f"{path}.{key}", schemas, depth + 1
+        )
         if not result["ok"]:
             return result
+
+    if schema.get("x-action-lifecycle") is True:
+        result = validate_action_lifecycle(schema, value, path)
+        if not result["ok"]:
+            return result
+
+    return {"ok": True}
+
+
+def validate_action_lifecycle(
+    schema: dict[str, Any], value: dict[str, Any], path: str
+) -> dict[str, Any]:
+    validation_result = value.get("validationResult")
+    validation_status = (
+        validation_result.get("status") if isinstance(validation_result, dict) else None
+    )
+    execution_status = value.get("executionStatus")
+    commit_marker = value.get("commitMarker")
+    category = error_category(schema)
+
+    if execution_status == "committed":
+        if validation_status != "valid":
+            return fail(
+                f"{path}.validationResult.status",
+                category,
+                "Committed action must have a valid validation result",
+            )
+        if not isinstance(commit_marker, dict):
+            return fail(
+                f"{path}.commitMarker",
+                category,
+                "Committed action must include a commit marker",
+            )
+        return {"ok": True}
+
+    if commit_marker is not None:
+        return fail(
+            f"{path}.commitMarker",
+            category,
+            "Uncommitted action must not include a commit marker",
+        )
 
     return {"ok": True}
 
@@ -179,6 +234,7 @@ def validate_array(
     value: Any,
     path: str,
     schemas: dict[str, Any],
+    depth: int,
 ) -> dict[str, Any]:
     if not isinstance(value, list):
         return fail(path, error_category(schema), "Expected array")
@@ -188,7 +244,7 @@ def validate_array(
         return {"ok": True}
 
     for index, item in enumerate(value):
-        result = validate_schema(item_schema, item, f"{path}[{index}]", schemas)
+        result = validate_schema(item_schema, item, f"{path}[{index}]", schemas, depth + 1)
         if not result["ok"]:
             return result
 
@@ -236,7 +292,11 @@ def validate_integer(schema: dict[str, Any], value: Any, path: str) -> dict[str,
 
 
 def validate_number(schema: dict[str, Any], value: Any, path: str) -> dict[str, Any]:
-    if not isinstance(value, int | float) or isinstance(value, bool):
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+    ):
         return fail(path, error_category(schema), "Expected number")
 
     minimum = schema.get("minimum")
@@ -261,7 +321,9 @@ def resolve_ref(ref: str, schemas: dict[str, Any]) -> dict[str, Any] | None:
 
 def allows_null(schema: dict[str, Any]) -> bool:
     schema_type = schema.get("type")
-    return isinstance(schema_type, list) and "null" in schema_type
+    return schema_type == "null" or (
+        isinstance(schema_type, list) and "null" in schema_type
+    )
 
 
 def first_non_null_type(schema: dict[str, Any]) -> str | None:
@@ -276,6 +338,8 @@ def first_non_null_type(schema: dict[str, Any]) -> str | None:
 
 
 def matches_type(schema_type: str, value: Any) -> bool:
+    if schema_type == "null":
+        return value is None
     if schema_type == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if schema_type == "array":
