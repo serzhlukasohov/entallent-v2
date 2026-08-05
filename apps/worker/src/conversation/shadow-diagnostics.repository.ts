@@ -78,6 +78,10 @@ export class ShadowDiagnosticsRepository {
         throw new Error('shadow_diagnostics_runtime_attempt_not_found');
       }
 
+      if (attempt.runtimeMode !== params.runtimeMode || attempt.traceId !== params.traceId) {
+        throw new Error('shadow_diagnostics_runtime_attempt_mismatch');
+      }
+
       const values = {
         tenantId: params.tenantId,
         messageId: params.messageId,
@@ -150,6 +154,11 @@ export function redactShadowDiagnosticsFields(
       return Object.fromEntries(
         Object.entries(value).map(([key, item]) => [key, redact(item, [...keyPath, key])]),
       );
+    }
+
+    if (typeof value === 'string' && !isAllowedDiagnosticStringKey(keyPath[keyPath.length - 1])) {
+      reasonCodes.add('raw_text_redacted');
+      return { redacted: true, reasonCode: 'raw_text_redacted' };
     }
 
     return value;
@@ -250,7 +259,7 @@ function assertJsonValue(value: unknown, depth: number): asserts value is Shadow
 function redactionReasonForKey(key: string | undefined): string | null {
   if (!key) return null;
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (['text', 'rawtext', 'messagetext', 'replytext', 'candidatetext'].includes(normalized)) {
+  if (['text', 'rawtext', 'messagetext', 'replytext', 'candidatetext', 'reply'].includes(normalized)) {
     return 'raw_text_redacted';
   }
   if (['prompt', 'modelprompt', 'rawprompt', 'providerresponse', 'modelresponse'].includes(normalized)) {
@@ -262,13 +271,40 @@ function redactionReasonForKey(key: string | undefined): string | null {
   if (['memorycontent', 'content'].includes(normalized)) {
     return 'memory_content_redacted';
   }
-  if (['actionpayload', 'payload'].includes(normalized)) {
+  if (['actionpayload', 'payload', 'arguments'].includes(normalized)) {
     return 'action_payload_redacted';
   }
-  if (['providererror', 'rawprovidererror', 'rawerror', 'error', 'stack'].includes(normalized)) {
+  if (['providererror', 'rawprovidererror', 'rawerror', 'error', 'stack', 'stacktrace'].includes(normalized)) {
     return 'provider_error_redacted';
   }
+  if (['tenantname', 'workspacename', 'username', 'preferredname', 'displayname'].includes(normalized)) {
+    return 'identity_text_redacted';
+  }
   return null;
+}
+
+function isAllowedDiagnosticStringKey(key: string | undefined): boolean {
+  if (!key) return false;
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return (
+    normalized === 'status' ||
+    normalized === 'outcome' ||
+    normalized === 'reasoncode' ||
+    normalized === 'reasoncodes' ||
+    normalized === 'riskseverity' ||
+    normalized === 'severity' ||
+    normalized === 'comparison' ||
+    normalized === 'replydigest' ||
+    normalized === 'digest' ||
+    normalized === 'hash' ||
+    normalized === 'traceid' ||
+    normalized === 'runtimeversion' ||
+    normalized === 'requestid' ||
+    normalized === 'eventid' ||
+    normalized.endsWith('id') ||
+    normalized.endsWith('digest') ||
+    normalized.endsWith('hash')
+  );
 }
 
 function isRuntimeMode(value: string): value is ShadowDiagnosticsRuntimeMode {

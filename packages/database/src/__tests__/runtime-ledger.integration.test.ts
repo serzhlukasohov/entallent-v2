@@ -373,4 +373,119 @@ describeIntegration('Runtime ledger schema (integration)', () => {
       }),
     ).rejects.toThrow();
   });
+
+  it('rejects negative shadow diagnostics metrics', async () => {
+    const { db } = getTestDb();
+
+    await expect(
+      db.insert(runtimeShadowDiagnostics).values({
+        tenantId,
+        messageId,
+        runtimeAttemptId: attemptId,
+        runtimeMode: 'maf_shadow',
+        traceId: 'trace-runtime-ledger-negative-metrics',
+        runtimeVersion: 'ts-runtime@negative-metrics',
+        validationStatus: 'valid',
+        redactionStatus: 'not_required',
+        currentResult: {},
+        candidateResult: {},
+        riskComparison: {},
+        memoryComparison: {},
+        actionComparison: {},
+        validationDetails: {},
+        redactionDetails: {},
+        latencyMs: -1,
+        modelCallCount: 0,
+        toolCallCount: 0,
+        retryCount: 0,
+        estimatedCost: '0.000000',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects shadow diagnostics whose tenant and message do not match the runtime attempt', async () => {
+    const { db } = getTestDb();
+
+    const [otherTenant] = await db
+      .insert(tenants)
+      .values({
+        name: 'Runtime Ledger Other Corp',
+        status: 'active',
+        timezone: 'UTC',
+        locale: 'en',
+        retentionPolicy: {},
+        safetyPolicy: {},
+        proactiveMessagingPolicy: {},
+        surveyConfiguration: {},
+      })
+      .returning();
+
+    const [otherUser] = await db
+      .insert(users)
+      .values({
+        tenantId: otherTenant!.id,
+        status: 'active',
+        preferredName: 'Other Ledger User',
+        timezone: 'UTC',
+        locale: 'en',
+        communicationPreferences: {},
+        proactiveMessagingEnabled: true,
+        quietHours: { enabled: false },
+        onboardingStatus: 'completed',
+        consentState: { agreed: true },
+      })
+      .returning();
+
+    const [otherConversation] = await db
+      .insert(conversations)
+      .values({
+        tenantId: otherTenant!.id,
+        userId: otherUser!.id,
+        channelType: 'slack',
+        externalConversationId: 'runtime-ledger-other-channel',
+        status: 'active',
+      })
+      .returning();
+
+    const [otherMessage] = await db
+      .insert(messages)
+      .values({
+        tenantId: otherTenant!.id,
+        conversationId: otherConversation!.id,
+        userId: otherUser!.id,
+        direction: 'inbound',
+        senderType: 'user',
+        text: 'Synthetic ledger mismatch message.',
+        occurredAt: new Date('2026-08-05T13:05:00.000Z'),
+        traceId: 'trace-runtime-ledger-mismatch',
+      })
+      .returning();
+
+    await expect(
+      db.insert(runtimeShadowDiagnostics).values({
+        tenantId: otherTenant!.id,
+        messageId: otherMessage!.id,
+        runtimeAttemptId: attemptId,
+        runtimeMode: 'maf_shadow',
+        traceId: 'trace-runtime-ledger-mismatch',
+        runtimeVersion: 'ts-runtime@mismatch',
+        validationStatus: 'valid',
+        redactionStatus: 'not_required',
+        currentResult: {},
+        candidateResult: {},
+        riskComparison: {},
+        memoryComparison: {},
+        actionComparison: {},
+        validationDetails: {},
+        redactionDetails: {},
+        latencyMs: 1,
+        modelCallCount: 0,
+        toolCallCount: 0,
+        retryCount: 0,
+        estimatedCost: '0.000000',
+      }),
+    ).rejects.toThrow();
+
+    await db.delete(tenants).where(eq(tenants.id, otherTenant!.id));
+  });
 });

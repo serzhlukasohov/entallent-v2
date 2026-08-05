@@ -109,6 +109,17 @@ describe('ShadowDiagnosticsRepository', () => {
     expect(db.calls.values).not.toHaveBeenCalled();
   });
 
+  it('requires diagnostics metadata to match the runtime attempt', async () => {
+    const db = createDbMock();
+    db.calls.limit.mockResolvedValueOnce([{ ...runtimeAttempt, traceId: 'trace-other' }]);
+    const repository = new ShadowDiagnosticsRepository(db as never);
+
+    await expect(repository.recordShadowDiagnostics(makeDiagnostics())).rejects.toThrow(
+      'shadow_diagnostics_runtime_attempt_mismatch',
+    );
+    expect(db.calls.values).not.toHaveBeenCalled();
+  });
+
   it('redacts raw candidate text, risk evidence, memory content, action payload, and provider errors before persistence', async () => {
     const db = createDbMock();
     const repository = new ShadowDiagnosticsRepository(db as never);
@@ -140,6 +151,48 @@ describe('ShadowDiagnosticsRepository', () => {
           'memory_content_redacted',
           'action_payload_redacted',
           'provider_error_redacted',
+        ]),
+      },
+    });
+  });
+
+  it('redacts free-form diagnostic strings and identity names before persistence', async () => {
+    const db = createDbMock();
+    const repository = new ShadowDiagnosticsRepository(db as never);
+
+    await repository.recordShadowDiagnostics(
+      makeDiagnostics({
+        currentResult: 'raw root diagnostic text',
+        candidateResult: {
+          reply: 'raw candidate reply',
+          stackTrace: 'raw provider stack',
+          tenantName: 'Acme People',
+          workspaceName: 'People Ops',
+          nested: {
+            summary: 'raw unrecognized summary',
+            reasonCodes: ['stable_reason_code'],
+            correlationId: 'message-uuid-only',
+          },
+        },
+      }),
+    );
+
+    const persisted = db.calls.values.mock.calls[0]?.[0];
+    expect(JSON.stringify(persisted)).not.toContain('raw root diagnostic text');
+    expect(JSON.stringify(persisted)).not.toContain('raw candidate reply');
+    expect(JSON.stringify(persisted)).not.toContain('raw provider stack');
+    expect(JSON.stringify(persisted)).not.toContain('Acme People');
+    expect(JSON.stringify(persisted)).not.toContain('People Ops');
+    expect(JSON.stringify(persisted)).not.toContain('raw unrecognized summary');
+    expect(JSON.stringify(persisted)).toContain('stable_reason_code');
+    expect(JSON.stringify(persisted)).toContain('message-uuid-only');
+    expect(persisted).toMatchObject({
+      redactionStatus: 'redacted',
+      redactionDetails: {
+        reasonCodes: expect.arrayContaining([
+          'raw_text_redacted',
+          'provider_error_redacted',
+          'identity_text_redacted',
         ]),
       },
     });

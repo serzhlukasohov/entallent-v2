@@ -4,7 +4,7 @@ baseline_commit: c14a9e35c3f3e8a18d94d3aa723146bca9e939e6
 
 # Story 3.2: Add Shadow Diagnostics Record
 
-Status: review
+Status: done
 Epic: 3 - Baseline And Shadow Comparison
 Story ID: 3.2
 
@@ -182,6 +182,18 @@ GPT-5 Codex
 - Verification: `pnpm --filter @entalent/worker test` passed with 53 tests.
 - Verification: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: scope check found no `agent-service`, MAF client, FastAPI, or production shadow execution wiring.
+- BMAD code review found blocking redaction and database-integrity issues: key-name-only redaction could persist free-form strings, tenant/workspace/user names were not explicitly redacted, diagnostics did not verify attempt trace/runtime metadata, database metrics lacked non-negative checks, direct writes could mismatch attempt/tenant/message, and Drizzle metadata lacked `0008_snapshot.json`.
+- Review fixes applied: redaction is now fail-closed for unknown strings while preserving allowed stable diagnostic keys, identity-name fields are redacted with `identity_text_redacted`, repository writes verify attempt trace/runtime metadata, the database enforces non-negative diagnostics metrics and a composite attempt/tenant/message FK, and Drizzle metadata includes `0008_snapshot.json`.
+- Review verification: `pnpm --filter @entalent/worker test -- shadow-diagnostics.repository.test.ts` passed with 6 tests.
+- Review verification: `pnpm --filter @entalent/database build` passed.
+- Review verification: `pnpm --filter @entalent/database typecheck` passed.
+- Review verification: `pnpm --filter @entalent/database db:generate` reported no schema changes after adding `0008_snapshot.json`.
+- Review verification: `pnpm --filter @entalent/worker build` passed.
+- Review verification: `pnpm --filter @entalent/database test:integration` passed with 18 skipped tests because `DATABASE_URL` is absent.
+- Review verification: `pnpm --filter @entalent/worker test` passed with 55 tests after rerun; an earlier parallel run failed because `packages/database build` cleaned `dist` while worker tests imported it.
+- Review verification: `pnpm test` passed with 15 successful turbo tasks.
+- Review verification: `git diff --check` passed.
+- Review verification: scope check found no `agent-service`, MAF client, FastAPI, or production shadow execution wiring.
 
 ### Completion Notes List
 
@@ -191,6 +203,8 @@ GPT-5 Codex
 - Added migration `0008_runtime_shadow_diagnostics.sql` and exported the schema from `@entalent/database`.
 - Added `ShadowDiagnosticsRepository` with tenant-scoped runtime-attempt lookup, attempt/runtime-version upsert, metric validation, JSON validation, and redaction-before-write.
 - Added redaction reason metadata for raw text, model prompt/provider response, risk evidence, memory content, action payload, and provider error fields.
+- Hardened redaction after BMAD review so free-form strings are redacted by default and tenant/workspace/user names cannot persist beyond UUID references.
+- Added database-level non-negative metric checks, a composite diagnostics-to-attempt scope FK, and matching Drizzle snapshot metadata.
 - Added worker unit tests, database integration coverage, and out-of-scope file assertions.
 
 ### File List
@@ -201,9 +215,11 @@ GPT-5 Codex
 - `apps/worker/src/conversation/shadow-diagnostics.repository.ts`
 - `apps/worker/src/conversation/shadow-diagnostics.repository.test.ts`
 - `packages/database/migrations/0008_runtime_shadow_diagnostics.sql`
+- `packages/database/migrations/meta/0008_snapshot.json`
 - `packages/database/migrations/meta/_journal.json`
 - `packages/database/src/__tests__/runtime-ledger.integration.test.ts`
 - `packages/database/src/schema/index.ts`
+- `packages/database/src/schema/runtime-attempts.ts`
 - `packages/database/src/schema/runtime-shadow-diagnostics.ts`
 
 ### Change Log
@@ -211,3 +227,4 @@ GPT-5 Codex
 - 2026-08-05: Created Story 3.2 developer context from Epic 3, architecture spine, SPEC, Epic 2 retrospective, Story 3.1 learnings, and existing runtime ledger persistence patterns.
 - 2026-08-05: Started Story 3.2 dev-story implementation.
 - 2026-08-05: Implemented canonical shadow diagnostics schema, migration, repository, redaction guard, tests, and verification for Story 3.2.
+- 2026-08-05: Resolved BMAD code review findings for redaction, database integrity, Drizzle metadata, and verification; marked Story 3.2 done.

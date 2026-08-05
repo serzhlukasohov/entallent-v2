@@ -9,6 +9,7 @@ import {
   index,
   unique,
   check,
+  foreignKey,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
@@ -52,6 +53,11 @@ export const runtimeShadowDiagnostics = pgTable(
     attemptRuntimeVersionUnique: unique(
       'runtime_shadow_diagnostics_attempt_version_unique',
     ).on(t.runtimeAttemptId, t.runtimeVersion),
+    attemptScopeReference: foreignKey({
+      name: 'runtime_shadow_diagnostics_attempt_scope_fk',
+      columns: [t.runtimeAttemptId, t.tenantId, t.messageId],
+      foreignColumns: [runtimeAttempts.id, runtimeAttempts.tenantId, runtimeAttempts.messageId],
+    }).onDelete('cascade'),
     tenantCreatedIdx: index('runtime_shadow_diagnostics_tenant_created_idx').on(
       t.tenantId,
       t.createdAt,
@@ -76,6 +82,26 @@ export const runtimeShadowDiagnostics = pgTable(
     redactionStatusCheck: check(
       'runtime_shadow_diagnostics_redaction_status_check',
       sql`${t.redactionStatus} in ('redacted', 'not_required', 'rejected')`,
+    ),
+    latencyMsNonNegativeCheck: check(
+      'runtime_shadow_diagnostics_latency_ms_non_negative_check',
+      sql`${t.latencyMs} >= 0`,
+    ),
+    modelCallCountNonNegativeCheck: check(
+      'runtime_shadow_diagnostics_model_call_count_non_negative_check',
+      sql`${t.modelCallCount} >= 0`,
+    ),
+    toolCallCountNonNegativeCheck: check(
+      'runtime_shadow_diagnostics_tool_call_count_non_negative_check',
+      sql`${t.toolCallCount} >= 0`,
+    ),
+    retryCountNonNegativeCheck: check(
+      'runtime_shadow_diagnostics_retry_count_non_negative_check',
+      sql`${t.retryCount} >= 0`,
+    ),
+    estimatedCostNonNegativeCheck: check(
+      'runtime_shadow_diagnostics_estimated_cost_non_negative_check',
+      sql`${t.estimatedCost} >= 0`,
     ),
   }),
 );

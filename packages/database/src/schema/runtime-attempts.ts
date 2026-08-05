@@ -40,6 +40,11 @@ export const runtimeAttempts = pgTable(
       t.messageId,
       t.runtimeAttempt,
     ),
+    recordScopeUnique: unique('runtime_attempts_record_scope_unique').on(
+      t.id,
+      t.tenantId,
+      t.messageId,
+    ),
     traceIdx: index('runtime_attempts_trace_id_idx').on(t.traceId),
     messageIdx: index('runtime_attempts_message_id_idx').on(t.messageId),
     requestEventIdx: index('runtime_attempts_request_event_idx').on(t.requestId, t.eventId),
