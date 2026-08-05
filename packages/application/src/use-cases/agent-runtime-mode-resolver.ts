@@ -1,7 +1,7 @@
 import type { ProcessMessageRequest } from '../ports/agent-runtime.port';
 import type { FeatureFlagContext, RuntimeControlFlagKey } from '../ports/feature-flag.port';
 import { RUNTIME_CONTROL_FLAGS } from '../ports/feature-flag.port';
-import type { AgentRuntimeMode } from './agent-runtime-router';
+import type { AgentRuntimeDecision } from './agent-runtime-router';
 
 export interface RuntimeControlFlagPort {
   isEnabled(key: RuntimeControlFlagKey, context: FeatureFlagContext): Promise<boolean>;
@@ -11,26 +11,41 @@ export interface RuntimeControlFlagPort {
 export class AgentRuntimeModeResolver {
   constructor(private readonly runtimeControls: RuntimeControlFlagPort) {}
 
-  async resolve(request: ProcessMessageRequest): Promise<AgentRuntimeMode> {
+  async resolve(request: ProcessMessageRequest): Promise<AgentRuntimeDecision> {
     const context = toFeatureFlagContext(request);
 
     if (await this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_DISABLED, context)) {
-      return 'maf_disabled';
+      return {
+        mode: 'maf_disabled',
+        decisionSource: 'global_kill_switch',
+      };
     }
 
     if (await this.isDenylisted(context)) {
-      return 'typescript';
+      return {
+        mode: 'typescript',
+        decisionSource: 'tenant_user_denylist',
+      };
     }
 
     if (await this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_SHADOW, context)) {
-      return 'maf_shadow';
+      return {
+        mode: 'maf_shadow',
+        decisionSource: 'shadow_flag',
+      };
     }
 
     if (await this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY, context)) {
-      return 'maf_canary';
+      return {
+        mode: 'maf_canary',
+        decisionSource: 'canary_flag',
+      };
     }
 
-    return 'typescript';
+    return {
+      mode: 'typescript',
+      decisionSource: 'typescript_default',
+    };
   }
 
   private async isDenylisted(context: FeatureFlagContext): Promise<boolean> {

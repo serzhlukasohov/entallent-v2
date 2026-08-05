@@ -25,7 +25,10 @@ describe('AgentRuntimeModeResolver', () => {
   it('defaults to TypeScript when no runtime flags are enabled', async () => {
     const resolver = new AgentRuntimeModeResolver(flagReader());
 
-    await expect(resolver.resolve(REQUEST)).resolves.toBe('typescript');
+    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+      mode: 'typescript',
+      decisionSource: 'typescript_default',
+    });
   });
 
   it('resolves maf_disabled when the global kill switch is enabled', async () => {
@@ -37,7 +40,10 @@ describe('AgentRuntimeModeResolver', () => {
       ]),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toBe('maf_disabled');
+    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+      mode: 'maf_disabled',
+      decisionSource: 'global_kill_switch',
+    });
   });
 
   it('lets denylist precedence win over shadow and canary modes', async () => {
@@ -51,7 +57,10 @@ describe('AgentRuntimeModeResolver', () => {
       ),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toBe('typescript');
+    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+      mode: 'typescript',
+      decisionSource: 'tenant_user_denylist',
+    });
   });
 
   it('resolves shadow before canary when both rollout modes are enabled', async () => {
@@ -62,7 +71,10 @@ describe('AgentRuntimeModeResolver', () => {
       ]),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toBe('maf_shadow');
+    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+      mode: 'maf_shadow',
+      decisionSource: 'shadow_flag',
+    });
   });
 
   it('resolves canary when canary is enabled without shadow', async () => {
@@ -70,7 +82,10 @@ describe('AgentRuntimeModeResolver', () => {
       flagReader([RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY]),
     );
 
-    await expect(resolver.resolve(REQUEST)).resolves.toBe('maf_canary');
+    await expect(resolver.resolve(REQUEST)).resolves.toEqual({
+      mode: 'maf_canary',
+      decisionSource: 'canary_flag',
+    });
   });
 
   it('propagates flag failures so the router can fail closed with warning context', async () => {

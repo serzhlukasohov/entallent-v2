@@ -4,7 +4,7 @@ baseline_commit: fbe6ef5eb851c2583259d322018f4b9f0fe04558
 
 # Story 1.4: Log Runtime Decisions Per Job
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -21,35 +21,35 @@ so that rollout behavior can be audited before shadow and canary modes.
 
 ## Tasks / Subtasks
 
-- [ ] Add a runtime decision model in `packages/application` (AC: 1)
-  - [ ] Define `AgentRuntimeDecision` with `mode`, `decisionSource`, and optional `fallbackReason`.
-  - [ ] Keep `AgentRuntimeMode` values unchanged: `typescript`, `maf_shadow`, `maf_canary`, `maf_disabled`.
-  - [ ] Keep the application package framework-neutral; do not import NestJS or pino.
-- [ ] Update runtime mode resolution to include decision source (AC: 1)
-  - [ ] Have `AgentRuntimeModeResolver` return a decision object instead of only a mode, or add a dedicated `resolveDecision` method while preserving compatibility where needed.
-  - [ ] Map sources explicitly: global kill switch, tenant/user denylist, shadow flag, canary flag, TypeScript default.
-  - [ ] Preserve Story 1.3 precedence and fail-closed behavior.
-- [ ] Log runtime decisions in `AgentRuntimeRouter` (AC: 1, 2)
-  - [ ] Log exactly once per `processMessage` call after mode evaluation succeeds.
-  - [ ] On evaluation failure, log a TypeScript fallback decision with `fallbackReason` and still preserve the existing warning behavior with `traceId`.
-  - [ ] Include only `traceId`, `tenantId`, `userId`, selected runtime mode, decision source, and fallback reason when present.
-  - [ ] Do not log message text, response text, classification details, risk evidence, external conversation IDs, Slack workspace IDs, or user-authored content.
-- [ ] Wire the worker logger adapter (AC: 1, 2)
-  - [ ] Extend the existing worker-side `AgentRuntimeRouter` logger adapter in `apps/worker/src/conversation/conversation.module.ts`.
-  - [ ] Keep Nest `Logger` usage at the worker composition boundary only.
-  - [ ] Prefer the existing structured `createLogger(AgentRuntimeRouter.name)` / `AppLogger` pattern from `@entalent/observability` over stringifying context into the message.
-  - [ ] Keep `ConversationProcessor` unchanged; it should still inject only `AGENT_RUNTIME_PORT`.
-- [ ] Add focused tests (AC: 1, 2)
-  - [ ] Unit-test successful decision logging for default TypeScript, `maf_disabled`, `maf_shadow`, and `maf_canary`.
-  - [ ] Unit-test evaluation failure logging includes fallback reason and still delegates to `TypeScriptAgentRuntime`.
-  - [ ] Unit-test log payload key set so message/response/user-authored fields cannot appear.
-  - [ ] Update resolver tests to assert decision sources and existing precedence.
-- [ ] Run verification commands (AC: 1, 2)
-  - [ ] `pnpm --filter @entalent/application test -- agent-runtime`
-  - [ ] `pnpm --filter @entalent/application typecheck`
-  - [ ] `pnpm --filter @entalent/application build`
-  - [ ] `pnpm --filter @entalent/worker typecheck`
-  - [ ] Touched-file eslint for updated application and worker files.
+- [x] Add a runtime decision model in `packages/application` (AC: 1)
+  - [x] Define `AgentRuntimeDecision` with `mode`, `decisionSource`, and optional `fallbackReason`.
+  - [x] Keep `AgentRuntimeMode` values unchanged: `typescript`, `maf_shadow`, `maf_canary`, `maf_disabled`.
+  - [x] Keep the application package framework-neutral; do not import NestJS or pino.
+- [x] Update runtime mode resolution to include decision source (AC: 1)
+  - [x] Have `AgentRuntimeModeResolver` return a decision object instead of only a mode, or add a dedicated `resolveDecision` method while preserving compatibility where needed.
+  - [x] Map sources explicitly: global kill switch, tenant/user denylist, shadow flag, canary flag, TypeScript default.
+  - [x] Preserve Story 1.3 precedence and fail-closed behavior.
+- [x] Log runtime decisions in `AgentRuntimeRouter` (AC: 1, 2)
+  - [x] Log exactly once per `processMessage` call after mode evaluation succeeds.
+  - [x] On evaluation failure, log a TypeScript fallback decision with `fallbackReason` and still preserve the existing warning behavior with `traceId`.
+  - [x] Include only `traceId`, `tenantId`, `userId`, selected runtime mode, decision source, and fallback reason when present.
+  - [x] Do not log message text, response text, classification details, risk evidence, external conversation IDs, Slack workspace IDs, or user-authored content.
+- [x] Wire the worker logger adapter (AC: 1, 2)
+  - [x] Extend the existing worker-side `AgentRuntimeRouter` logger adapter in `apps/worker/src/conversation/conversation.module.ts`.
+  - [x] Keep Nest `Logger` usage at the worker composition boundary only.
+  - [x] Prefer the existing structured `createLogger(AgentRuntimeRouter.name)` / `AppLogger` pattern from `@entalent/observability` over stringifying context into the message.
+  - [x] Keep `ConversationProcessor` unchanged; it should still inject only `AGENT_RUNTIME_PORT`.
+- [x] Add focused tests (AC: 1, 2)
+  - [x] Unit-test successful decision logging for default TypeScript, `maf_disabled`, `maf_shadow`, and `maf_canary`.
+  - [x] Unit-test evaluation failure logging includes fallback reason and still delegates to `TypeScriptAgentRuntime`.
+  - [x] Unit-test log payload key set so message/response/user-authored fields cannot appear.
+  - [x] Update resolver tests to assert decision sources and existing precedence.
+- [x] Run verification commands (AC: 1, 2)
+  - [x] `pnpm --filter @entalent/application test -- agent-runtime`
+  - [x] `pnpm --filter @entalent/application typecheck`
+  - [x] `pnpm --filter @entalent/application build`
+  - [x] `pnpm --filter @entalent/worker typecheck`
+  - [x] Touched-file eslint for updated application and worker files.
 
 ## Dev Notes
 
@@ -133,15 +133,35 @@ Codex GPT-5
 
 ### Debug Log References
 
+- RED: `pnpm --filter @entalent/application test -- agent-runtime` failed with expected missing decision/logging behavior.
+- GREEN: `pnpm --filter @entalent/application test -- agent-runtime` passed with 19 tests.
+- Verification: `pnpm --filter @entalent/application typecheck` passed.
+- Verification: `pnpm --filter @entalent/application build` passed.
+- Verification: `pnpm --filter @entalent/worker typecheck` passed when run after application build completed.
+- Verification: `pnpm exec eslint packages/application/src/use-cases/agent-runtime-router.ts packages/application/src/use-cases/agent-runtime-router.test.ts packages/application/src/use-cases/agent-runtime-mode-resolver.ts packages/application/src/use-cases/agent-runtime-mode-resolver.test.ts packages/application/src/index.ts apps/worker/src/conversation/conversation.module.ts` passed.
+- Regression: `pnpm test` passed with 15 successful turbo tasks.
+
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- Added framework-neutral runtime decision types with explicit decision sources and optional fallback reason.
+- Updated `AgentRuntimeModeResolver` to return decision objects while preserving Story 1.3 precedence and fail-closed propagation.
+- Added structured decision logging in `AgentRuntimeRouter`, including TypeScript fallback decision logging on evaluation failure and guarded logger calls.
+- Rewired worker composition to use `createLogger(AgentRuntimeRouter.name)` with structured context fields instead of JSON stringified context.
+- Added focused tests for mode/source mappings, fallback logging, no-content payload keys, logger failure tolerance, and legacy string evaluator normalization.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/1-4-log-runtime-decisions-per-job.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `apps/worker/src/conversation/conversation.module.ts`
+- `packages/application/src/index.ts`
+- `packages/application/src/use-cases/agent-runtime-mode-resolver.test.ts`
+- `packages/application/src/use-cases/agent-runtime-mode-resolver.ts`
+- `packages/application/src/use-cases/agent-runtime-router.test.ts`
+- `packages/application/src/use-cases/agent-runtime-router.ts`
 
 ## Change Log
 
 - 2026-08-05: Created Story 1.4 and marked ready for dev.
+- 2026-08-05: Implemented structured runtime decision logging and marked ready for review.

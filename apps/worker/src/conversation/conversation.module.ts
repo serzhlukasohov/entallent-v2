@@ -1,4 +1,4 @@
-import { Logger, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import {
   AGENT_RUNTIME_PORT,
@@ -9,6 +9,7 @@ import {
   PulseBacklogService,
   TypeScriptAgentRuntime,
 } from '@entalent/application';
+import { createLogger } from '@entalent/observability';
 import { ConversationProcessor } from './conversation.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
 import { OutboxService } from './outbox.service';
@@ -88,12 +89,13 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     {
       provide: AGENT_RUNTIME_PORT,
       useFactory: (typeScriptRuntime: TypeScriptAgentRuntime, runtimeControls: RuntimeControlFlagRepository) => {
-        const logger = new Logger(AgentRuntimeRouter.name);
+        const logger = createLogger(AgentRuntimeRouter.name);
         const modeResolver = new AgentRuntimeModeResolver(runtimeControls);
         return new AgentRuntimeRouter(typeScriptRuntime, {
           evaluateMode: (request) => modeResolver.resolve(request),
           logger: {
-            warn: (message, context) => logger.warn(context ? `${message} ${JSON.stringify(context)}` : message),
+            info: (message, context) => logger.info(message, context),
+            warn: (message, context) => logger.warn(message, context),
           },
         });
       },
