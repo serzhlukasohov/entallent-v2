@@ -4,7 +4,7 @@ baseline_commit: 53c12f2
 
 # Story 4.1: Scaffold `agent-service`
 
-Status: ready-for-dev
+Status: review
 Epic: 4 - Deployable Python Agent Service Foundation
 Story ID: 4.1
 
@@ -22,38 +22,38 @@ so that MAF runtime work has a deployable home.
 
 ## Tasks / Subtasks
 
-- [ ] Create the minimal Python service project under `agent-service/`. (AC: 1, 3)
-  - [ ] Add `agent-service/pyproject.toml` using Python `>=3.13,<3.14`.
-  - [ ] Add a Python version marker such as `agent-service/.python-version` set to `3.13.14` if the selected local toolchain supports it.
-  - [ ] Add package namespace `agent_service` under `agent-service/src/agent_service/`.
-  - [ ] Use FastAPI-owned routes over stable core MAF service structure; do not add `agent-framework-hosting` helpers.
-  - [ ] Include dev tooling scripts or documented commands for pytest, ruff, and mypy or pyright.
-- [ ] Add application settings that are OpenTelemetry-ready but dependency-light. (AC: 1, 2)
-  - [ ] Add Pydantic settings for service name, environment, log level, optional OTLP endpoint, and optional tracing enablement.
-  - [ ] Ensure settings can load with no model, Redis, Postgres, Azure, LangWatch, or TypeScript internal-service credentials.
-  - [ ] Keep secrets out of committed defaults; use environment variables only for optional settings.
-- [ ] Add liveness health route only. (AC: 2, 3)
-  - [ ] Add a FastAPI app factory or app module that mounts `/health/live`.
-  - [ ] Return a stable JSON body with at least `status`, `service`, and `version`.
-  - [ ] Do not add `/health/ready`; readiness belongs to Story 4.5.
-  - [ ] Do not add `POST /runtime/process-message`; runtime endpoint skeleton belongs to Story 4.2.
-- [ ] Add focused Python tests. (AC: 1, 2, 3)
-  - [ ] Add unit tests for settings defaults and `/health/live`.
-  - [ ] Prove `/health/live` does not require external dependencies or configured secrets.
-  - [ ] Add scope regression checks that runtime endpoint/auth/session/workflow/client/routing/UI files were not introduced.
-- [ ] Add minimal developer docs. (AC: 1, 2)
-  - [ ] Add `agent-service/README.md` with local setup, run, and check commands.
-  - [ ] Document that Story 4.1 is scaffold/liveness only and intentionally excludes runtime endpoint, auth, durable state, deployment envelope, and MAF workflow behavior.
-- [ ] Update implementation tracking. (AC: 1-3)
-  - [ ] Update this story's Dev Agent Record during implementation.
-  - [ ] Move sprint status from `ready-for-dev` to `in-progress` during dev-story and to `review` when implementation is complete.
-- [ ] Run and record verification. (AC: 1-3)
-  - [ ] Run Python unit tests for `agent-service`.
-  - [ ] Run ruff.
-  - [ ] Run mypy or pyright.
-  - [ ] Run a local liveness check against `/health/live` if the dev server can start in the sandbox.
-  - [ ] Run `git diff --check`.
-  - [ ] Run `pnpm test` only if TypeScript package metadata or root workspace behavior is changed; otherwise record why it was not needed.
+- [x] Create the minimal Python service project under `agent-service/`. (AC: 1, 3)
+  - [x] Add `agent-service/pyproject.toml` using Python `>=3.13,<3.14`.
+  - [x] Add a Python version marker such as `agent-service/.python-version` set to `3.13.14` if the selected local toolchain supports it.
+  - [x] Add package namespace `agent_service` under `agent-service/src/agent_service/`.
+  - [x] Use FastAPI-owned routes over stable core MAF service structure; do not add `agent-framework-hosting` helpers.
+  - [x] Include dev tooling scripts or documented commands for pytest, ruff, and mypy or pyright.
+- [x] Add application settings that are OpenTelemetry-ready but dependency-light. (AC: 1, 2)
+  - [x] Add Pydantic settings for service name, environment, log level, optional OTLP endpoint, and optional tracing enablement.
+  - [x] Ensure settings can load with no model, Redis, Postgres, Azure, LangWatch, or TypeScript internal-service credentials.
+  - [x] Keep secrets out of committed defaults; use environment variables only for optional settings.
+- [x] Add liveness health route only. (AC: 2, 3)
+  - [x] Add a FastAPI app factory or app module that mounts `/health/live`.
+  - [x] Return a stable JSON body with at least `status`, `service`, and `version`.
+  - [x] Do not add `/health/ready`; readiness belongs to Story 4.5.
+  - [x] Do not add `POST /runtime/process-message`; runtime endpoint skeleton belongs to Story 4.2.
+- [x] Add focused Python tests. (AC: 1, 2, 3)
+  - [x] Add unit tests for settings defaults and `/health/live`.
+  - [x] Prove `/health/live` does not require external dependencies or configured secrets.
+  - [x] Add scope regression checks that runtime endpoint/auth/session/workflow/client/routing/UI files were not introduced.
+- [x] Add minimal developer docs. (AC: 1, 2)
+  - [x] Add `agent-service/README.md` with local setup, run, and check commands.
+  - [x] Document that Story 4.1 is scaffold/liveness only and intentionally excludes runtime endpoint, auth, durable state, deployment envelope, and MAF workflow behavior.
+- [x] Update implementation tracking. (AC: 1-3)
+  - [x] Update this story's Dev Agent Record during implementation.
+  - [x] Move sprint status from `ready-for-dev` to `in-progress` during dev-story and to `review` when implementation is complete.
+- [x] Run and record verification. (AC: 1-3)
+  - [x] Run Python unit tests for `agent-service`.
+  - [x] Run ruff.
+  - [x] Run mypy or pyright.
+  - [x] Run a local liveness check against `/health/live` if the dev server can start in the sandbox.
+  - [x] Run `git diff --check`.
+  - [x] Run `pnpm test` only if TypeScript package metadata or root workspace behavior is changed; otherwise record why it was not needed.
 
 ## Dev Notes
 
@@ -202,18 +202,46 @@ GPT-5 Codex
 - Loaded BMAD create-story workflow, config, sprint status, Epic 4 Story 4.1 requirements, architecture spine, SPEC, runtime-contract companion, Epic 3 retrospective, recent git history, and repo Python-tooling inventory.
 - No `project-context.md` was found.
 - Web research checked Python 3.13.14, FastAPI, Pydantic, Microsoft Agent Framework, and Agent Framework PyPI surfaces for current version/support context.
+- Started dev-story implementation from baseline `a9cba45`.
+- Local `python3` points to 3.14.6, but `python3.13` is available as 3.13.13 and will be used for Story 4.1 checks.
+- RED/setup note: `.venv/bin/python -m pip install -e ".[dev]"` initially failed inside sandbox because DNS to `pypi.org` was unavailable.
+- Dependency install succeeded with network escalation. Resolved packages included FastAPI `0.141.1`, Pydantic `2.13.4`, pydantic-settings `2.14.2`, pytest `8.4.2`, ruff `0.12.12`, mypy `1.20.2`, and uvicorn `0.35.0`.
+- Verification: `.venv/bin/python -m pytest` passed with 6 tests; FastAPI emitted a non-blocking Starlette deprecation warning that `httpx` with `starlette.testclient` is deprecated in favor of `httpx2`.
+- Verification: `.venv/bin/python -m ruff check .` passed.
+- Verification: `.venv/bin/python -m mypy src tests` passed.
+- Verification: local `uvicorn` liveness run required sandbox escalation for local port binding; `curl -sS http://127.0.0.1:8001/health/live` returned `{"status":"healthy","service":"agent-service","version":"0.1.0"}`.
+- Verification: `git diff --check` passed.
+- Root `pnpm test` was not run for this implementation because no TypeScript package metadata, root workspace config, or TypeScript runtime behavior changed.
 
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
 - Story 4.1 is ready for BMAD story validation and dev-story implementation.
 - Scope explicitly permits creating `agent-service/` and explicitly forbids runtime endpoint/client/workflow/auth/session/deployment/canary/UI work in this story.
+- Added a minimal Python 3.13.x FastAPI scaffold under `agent-service/` with Pydantic settings and an application factory.
+- Added `/health/live` only; no runtime endpoint, readiness endpoint, MAF workflow, internal auth, durable state, Docker/deployment envelope, TypeScript client, routing, canary, or UI work was added.
+- Added deterministic unit and scope tests plus ruff/mypy configuration in `agent-service/pyproject.toml`.
+- Added `agent-service/.gitignore` to keep `.venv` and Python caches out of version control.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/4-1-scaffold-agent-service.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `agent-service/.gitignore`
+- `agent-service/.python-version`
+- `agent-service/README.md`
+- `agent-service/pyproject.toml`
+- `agent-service/src/agent_service/__init__.py`
+- `agent-service/src/agent_service/api/__init__.py`
+- `agent-service/src/agent_service/api/health.py`
+- `agent-service/src/agent_service/infrastructure/__init__.py`
+- `agent-service/src/agent_service/infrastructure/settings.py`
+- `agent-service/src/agent_service/main.py`
+- `agent-service/tests/unit/test_health.py`
+- `agent-service/tests/unit/test_scope.py`
+- `agent-service/tests/unit/test_settings.py`
 
 ### Change Log
 
 - 2026-08-06: Created Story 4.1 developer context from Epic 4, architecture spine, SPEC, runtime-contract companion, Epic 3 retrospective, repo state, and current Python/FastAPI/MAF version research.
+- 2026-08-06: Implemented Python/FastAPI `agent-service` scaffold, liveness route, settings, tests, docs, and verification for Story 4.1.
