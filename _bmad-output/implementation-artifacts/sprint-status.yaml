@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-08-05T21:49:40Z
+# last_updated: 2026-08-06T10:05:00Z
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-05T21:49:40Z
+last_updated: 2026-08-06T10:05:00Z
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -64,10 +64,10 @@ development_status:
   2-6-define-runtime-retry-budget-and-error-mapping: done
   epic-2-retrospective: done
 
-  epic-3: in-progress
+  epic-3: done
   3-1-expand-migration-baseline-scenarios: done
   3-2-add-shadow-diagnostics-record: done
-  3-3-report-shadow-comparison-readiness: review
+  3-3-report-shadow-comparison-readiness: done
   epic-3-retrospective: optional
 
   epic-4: backlog

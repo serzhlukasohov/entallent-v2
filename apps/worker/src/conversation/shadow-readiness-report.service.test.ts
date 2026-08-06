@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   REQUIRED_SHADOW_READINESS_MIGRATION_CASE_IDS,
@@ -127,10 +129,24 @@ describe('buildShadowReadinessReport', () => {
       migrationCaseIds: ['casual-conversation', 'explicit-reminder'],
       traceIds: ['trace-1', 'trace-2'],
     });
-    expect(report.metrics.latencyMs).toMatchObject({ count: 2, mean: 150, max: 200, p95: 200 });
+    expect(report.metrics.latencyMs).toMatchObject({ count: 2, mean: 150, max: 200, p95: null });
     expect(report.metrics.modelCallCount.mean).toBe(2);
     expect(report.metrics.toolCallCount.max).toBe(2);
     expect(report.metrics.estimatedCost.mean).toBe(0.0002);
+    expect(report.migrationCases).toEqual([
+      expect.objectContaining({
+        migrationCaseId: 'casual-conversation',
+        diagnosticCount: 1,
+        scenarioIds: ['planning-memory'],
+        traceIds: ['trace-1'],
+      }),
+      expect.objectContaining({
+        migrationCaseId: 'explicit-reminder',
+        diagnosticCount: 1,
+        scenarioIds: ['proactivity-reminders'],
+        traceIds: ['trace-2'],
+      }),
+    ]);
   });
 
   it('blocks readiness for critical risk false negatives and duplicate action proposals', () => {
@@ -151,6 +167,37 @@ describe('buildShadowReadinessReport', () => {
           actionComparison: {
             status: 'worse',
             duplicateProposalCount: 1,
+          },
+          validationDetails: {
+            scenarioId: 'crisis-self-harm',
+            migrationCaseIds: ['crisis-self-harm'],
+            reasonCodes: [],
+          },
+        }),
+      ],
+    });
+
+    expect(report.status).toBe('blocked');
+    expect(report.blockers.map((blocker) => blocker.reasonCode)).toEqual(
+      expect.arrayContaining(['critical_risk_false_negative', 'duplicate_action_proposal']),
+    );
+  });
+
+  it('blocks critical severity regressions and duplicate statuses when explicit flags are missing', () => {
+    const report = buildShadowReadinessReport({
+      tenantId: 'tenant-1',
+      generatedAt,
+      requiredMigrationCaseIds: ['crisis-self-harm'],
+      gateSummary: passedGateSummary(),
+      diagnostics: [
+        diagnostic({
+          riskComparison: {
+            status: 'worse',
+            currentSeverity: 'critical',
+            candidateSeverity: 'none',
+          },
+          actionComparison: {
+            status: 'duplicate_proposal',
           },
           validationDetails: {
             scenarioId: 'crisis-self-harm',
@@ -196,6 +243,57 @@ describe('buildShadowReadinessReport', () => {
       requiredCaseIds: ['burnout-severe-stress'],
     });
     expect(report.blockers).toHaveLength(0);
+  });
+
+  it('keeps observed sensitive cases manual-review-required even when gate arrays are missing', () => {
+    const report = buildShadowReadinessReport({
+      tenantId: 'tenant-1',
+      generatedAt,
+      requiredMigrationCaseIds: ['crisis-self-harm'],
+      gateSummary: passedGateSummary({
+        manualReview: {},
+      }),
+      diagnostics: [
+        diagnostic({
+          validationDetails: {
+            scenarioId: 'crisis-self-harm',
+            migrationCaseIds: ['crisis-self-harm'],
+            reasonCodes: [],
+          },
+        }),
+      ],
+    });
+
+    expect(report.status).toBe('manual_review_required');
+    expect(report.manualReview).toEqual({
+      requiredScenarioIds: ['crisis-self-harm'],
+      requiredCaseIds: ['crisis-self-harm'],
+    });
+  });
+
+  it('reports insufficient data when baseline gate summary is omitted', () => {
+    const report = buildShadowReadinessReport({
+      tenantId: 'tenant-1',
+      generatedAt,
+      requiredMigrationCaseIds: ['casual-conversation'],
+      diagnostics: [
+        diagnostic({
+          validationDetails: {
+            scenarioId: 'planning-memory',
+            migrationCaseIds: ['casual-conversation'],
+            reasonCodes: [],
+          },
+        }),
+      ],
+    });
+
+    expect(report.status).toBe('insufficient_data');
+    expect(report.insufficientDataReasons).toEqual([
+      {
+        reasonCode: 'missing_baseline_gate_summary',
+        migrationCaseIds: ['casual-conversation'],
+      },
+    ]);
   });
 
   it('reports insufficient data when required baseline cases have no mapped diagnostics', () => {
@@ -262,6 +360,55 @@ describe('buildShadowReadinessReport', () => {
     expect(serialized).not.toContain('raw provider stack trace');
   });
 
+  it('blocks malformed diagnostic payloads instead of treating them as clean', () => {
+    const report = buildShadowReadinessReport({
+      tenantId: 'tenant-1',
+      generatedAt,
+      requiredMigrationCaseIds: ['casual-conversation'],
+      gateSummary: passedGateSummary(),
+      diagnostics: [
+        diagnostic({
+          validationDetails: {
+            scenarioId: 'planning-memory',
+            migrationCaseIds: ['casual-conversation'],
+            reasonCodes: [],
+          },
+          riskComparison: null,
+          memoryComparison: [],
+          actionComparison: { duplicateProposalCount: 0 },
+        }),
+      ],
+    });
+
+    expect(report.status).toBe('blocked');
+    expect(report.blockers.map((blocker) => blocker.reasonCode)).toEqual(
+      expect.arrayContaining(['diagnostic_payload_malformed']),
+    );
+  });
+
+  it('blocks unstable validation reason codes before report serialization', () => {
+    const report = buildShadowReadinessReport({
+      tenantId: 'tenant-1',
+      generatedAt,
+      requiredMigrationCaseIds: ['casual-conversation'],
+      gateSummary: passedGateSummary(),
+      diagnostics: [
+        diagnostic({
+          validationDetails: {
+            scenarioId: 'planning-memory',
+            migrationCaseIds: ['casual-conversation'],
+            reasonCodes: ['raw provider stack trace'],
+          },
+        }),
+      ],
+    });
+
+    const serialized = JSON.stringify(report);
+    expect(report.status).toBe('blocked');
+    expect(report.blockers.map((blocker) => blocker.reasonCode)).toContain('redaction_rejected');
+    expect(serialized).not.toContain('raw provider stack trace');
+  });
+
   it('keeps the default required baseline case list independent and complete', () => {
     expect(REQUIRED_SHADOW_READINESS_MIGRATION_CASE_IDS).toEqual([
       'burnout-severe-stress',
@@ -308,5 +455,13 @@ describe('ShadowReadinessReportService', () => {
     expect(db.calls.from).toHaveBeenCalledTimes(1);
     expect(db.calls.where).toHaveBeenCalledTimes(1);
     expect(db.calls.orderBy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not introduce out-of-scope MAF service, client, or UI files', () => {
+    const repoRoot = join(process.cwd(), '../..');
+
+    expect(existsSync(join(repoRoot, 'agent-service'))).toBe(false);
+    expect(existsSync(join(repoRoot, 'packages/application/src/use-cases/maf-agent-runtime-client.ts'))).toBe(false);
+    expect(existsSync(join(repoRoot, 'apps/dashboard/src/shadow-readiness-report.tsx'))).toBe(false);
   });
 });

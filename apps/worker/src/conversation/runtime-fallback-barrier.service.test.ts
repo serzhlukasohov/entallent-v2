@@ -112,7 +112,7 @@ describe('RuntimeFallbackBarrierService', () => {
     [{ eventId: undefined }, 'eventId'],
     [{ runtimeAttempt: undefined }, 'runtimeAttempt'],
     [{ runtimeAttempt: 0 }, 'runtimeAttempt'],
-  ] as const)('returns unknown without lookup when durable request metadata is missing: %s', async (override) => {
+  ] as const)('returns unknown without lookup when durable request metadata is missing: %s', async (override, _field) => {
     const ledger = createLedger({
       id: 'attempt-1',
       traceId: 'trace-1',

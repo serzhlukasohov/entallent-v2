@@ -4,7 +4,7 @@ baseline_commit: 8cacbfe089f8784ad3da34d3c370eb70a9a39c10
 
 # Story 3.3: Report Shadow Comparison Readiness
 
-Status: review
+Status: done
 Epic: 3 - Baseline And Shadow Comparison
 Story ID: 3.3
 
@@ -60,6 +60,20 @@ so that the team can decide when MAF is ready for canary.
   - [x] Run `pnpm --filter @entalent/worker test`.
   - [x] Run `pnpm test`.
   - [x] Run `git diff --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Preserve migration case IDs through diagnostics redaction [apps/worker/src/conversation/shadow-diagnostics.repository.ts] — fixed by sharing the canonical baseline ID list from `@entalent/contracts` and allowing stable `migrationCaseIds`/ID arrays through the diagnostics redaction guard.
+- [x] [Review][Patch] Fail closed on malformed diagnostic JSONB payloads [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by treating malformed comparison/validation payload shape as `diagnostic_payload_malformed` blockers instead of `{}` success.
+- [x] [Review][Patch] Detect critical risk regressions without explicit boolean flags [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by blocking when current severity is `critical` and candidate severity regresses to `none`/`low`.
+- [x] [Review][Patch] Detect duplicate action proposal statuses without explicit counts [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by treating duplicate-like action statuses as `duplicate_action_proposal` blockers.
+- [x] [Review][Patch] Require baseline gate context before readiness [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by adding `missing_baseline_gate_summary` insufficient-data output when the gate summary is omitted.
+- [x] [Review][Patch] Keep sensitive baseline cases manual-review-required even with missing gate arrays [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by deriving observed sensitive case/scenario review requirements from the shared baseline list.
+- [x] [Review][Patch] Exclude unstable/free-text validation reason codes from serialized reports [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by allowlisting stable reason-code syntax and blocking unsafe values as `redaction_rejected`.
+- [x] [Review][Patch] Group readiness output by baseline migration case [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by adding per-case diagnostic counts, scenario IDs, trace IDs, blocker counts, and metrics.
+- [x] [Review][Patch] Avoid loading unused raw diagnostic result JSONB payloads [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by switching the read-only reporter query to an explicit privacy-safe column selection.
+- [x] [Review][Patch] Lock out-of-scope service/client/UI additions in tests [apps/worker/src/conversation/shadow-readiness-report.service.test.ts] — fixed with scope regression assertions for `agent-service`, `MafAgentRuntimeClient`, and dashboard report UI files.
+- [x] [Review][Patch] Do not report p95 when sample count is too sparse [apps/worker/src/conversation/shadow-readiness-report.service.ts] — fixed by returning `p95: null` until the sample count reaches the report threshold.
 
 ## Dev Notes
 
@@ -195,6 +209,22 @@ GPT-5 Codex
 - Verification: `pnpm test` passed with 15 successful turbo tasks.
 - Verification: `git diff --check` passed.
 - Verification: scope check found no `agent-service`, MAF client, FastAPI, or production shadow execution wiring.
+- BMAD code review found 0 decision-needed, 11 patch, 0 deferred, and 0 dismissed actionable findings for Story 3.3.
+- Review fix verification: `pnpm --filter @entalent/worker test -- shadow-readiness-report.service.test.ts` passed with 13 tests.
+- Review fix verification: `pnpm --filter @entalent/worker test -- shadow-diagnostics.repository.test.ts` passed with 7 tests.
+- Review fix verification: `pnpm --filter @entalent/worker test -- shadow-readiness-report.service.test.ts shadow-diagnostics.repository.test.ts runtime-fallback-barrier.service.test.ts` passed with 36 tests.
+- Review fix verification: `pnpm --filter @entalent/worker typecheck` passed.
+- Review fix verification: `pnpm --filter @entalent/worker build` passed after rerunning sequentially behind `@entalent/contracts build`.
+- Review fix verification: `pnpm --filter @entalent/worker test` passed with 69 tests.
+- Review fix verification: `pnpm --filter @entalent/contracts build` passed.
+- Review fix verification: `pnpm --filter @entalent/contracts test` passed with 58 TypeScript tests and Python runtime fixture validation.
+- Review fix verification: `pnpm --filter @entalent/conversation-sim typecheck` passed.
+- Review fix verification: `pnpm --filter @entalent/conversation-sim lint` passed.
+- Review fix verification: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/migration-baseline.sim.test.ts` passed with 2 tests.
+- Review fix verification: `pnpm --filter @entalent/worker lint` passed with one existing warning in `apps/worker/src/main.ts`.
+- Review fix verification: `pnpm test` passed with 15 successful turbo tasks.
+- Review fix verification: `git diff --check` passed.
+- Review fix verification: `ruby -e "require 'yaml'; YAML.load_file('_bmad-output/implementation-artifacts/sprint-status.yaml')"` passed.
 
 ### Completion Notes List
 
@@ -205,16 +235,25 @@ GPT-5 Codex
 - Added hard blockers for baseline gate failure, critical risk false negatives, duplicate action proposals, validation failure, comparison failure, and redaction rejection.
 - Added report summaries for quality, risk parity, memory/action differences, latency, model-call count, tool-call count, retry count, estimated cost, runtime versions, scenario IDs, migration case IDs, and trace IDs.
 - Added synthetic unit tests proving status precedence, blocker reason codes, missing baseline coverage, manual review handling, privacy-safe serialization, and read-only diagnostics loading.
+- Resolved BMAD review findings by deriving required/sensitive baseline IDs from a shared contracts source, preserving stable migration IDs through diagnostics redaction, failing closed on malformed payloads, filtering unstable reason codes, requiring gate context, and adding per-case readiness summaries.
+- Updated sparse metric semantics so p95 is nullable until enough samples exist.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/3-3-report-shadow-comparison-readiness.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `apps/worker/src/conversation/runtime-fallback-barrier.service.test.ts`
 - `apps/worker/src/conversation/conversation.module.ts`
+- `apps/worker/src/conversation/shadow-diagnostics.repository.ts`
+- `apps/worker/src/conversation/shadow-diagnostics.repository.test.ts`
 - `apps/worker/src/conversation/shadow-readiness-report.service.ts`
 - `apps/worker/src/conversation/shadow-readiness-report.service.test.ts`
+- `packages/contracts/src/index.ts`
+- `packages/contracts/src/migration-baseline.ts`
+- `packages/conversation-sim/src/scenarios/migration-baseline.ts`
 
 ### Change Log
 
 - 2026-08-05: Created Story 3.3 developer context from Epic 3, architecture spine, SPEC, validation baseline, Story 3.1 lessons, Story 3.2 diagnostics/redaction lessons, and existing conversation-sim gate/report formats.
 - 2026-08-05: Implemented read-only shadow readiness report service, privacy-safe aggregation contract, status/blocker semantics, tests, and verification for Story 3.3.
+- 2026-08-06: Resolved BMAD code review findings, re-ran verification, and marked Story 3.3 done.

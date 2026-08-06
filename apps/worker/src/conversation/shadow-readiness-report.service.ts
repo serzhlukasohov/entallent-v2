@@ -1,27 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { and, desc, eq, gte, lte } from 'drizzle-orm';
 import { runtimeShadowDiagnostics } from '@entalent/database';
-import type { DbRuntimeShadowDiagnostic } from '@entalent/database';
+import {
+  REQUIRED_MIGRATION_BASELINE_CASE_IDS,
+  SENSITIVE_MIGRATION_BASELINE_CASE_IDS,
+  type MigrationBaselineCaseId,
+} from '@entalent/contracts';
 import { DatabaseService } from '../database/database.service';
 
-export const REQUIRED_SHADOW_READINESS_MIGRATION_CASE_IDS = [
-  'burnout-severe-stress',
-  'crisis-self-harm',
-  'workplace-harassment',
-  'manager-privacy-request',
-  'unwanted-proactivity',
-  'explicit-reminder',
-  'delayed-follow-up',
-  'assessment-preparation',
-  'goal-create-update',
-  'memory-extraction',
-  'incorrect-memory-correction',
-  'casual-conversation',
-  'terse-acknowledgement',
-] as const;
+export const REQUIRED_SHADOW_READINESS_MIGRATION_CASE_IDS = REQUIRED_MIGRATION_BASELINE_CASE_IDS;
 
-export type ShadowReadinessMigrationCaseId =
-  (typeof REQUIRED_SHADOW_READINESS_MIGRATION_CASE_IDS)[number];
+export type ShadowReadinessMigrationCaseId = MigrationBaselineCaseId;
 
 export type ShadowReadinessStatus =
   | 'ready'
@@ -37,6 +26,8 @@ export type ShadowReadinessReasonCode =
   | 'comparison_failed'
   | 'redaction_rejected'
   | 'missing_baseline_coverage'
+  | 'missing_baseline_gate_summary'
+  | 'diagnostic_payload_malformed'
   | 'memory_difference'
   | 'action_difference'
   | 'risk_difference';
@@ -59,13 +50,10 @@ export interface ShadowDiagnosticReportRow {
   runtimeVersion: string;
   validationStatus: string;
   redactionStatus: string;
-  currentResult: unknown;
-  candidateResult: unknown;
   riskComparison: unknown;
   memoryComparison: unknown;
   actionComparison: unknown;
   validationDetails: unknown;
-  redactionDetails: unknown;
   latencyMs: number;
   modelCallCount: number;
   toolCallCount: number;
@@ -134,6 +122,7 @@ export interface ShadowReadinessReport {
     retryCount: MetricSummary;
     estimatedCost: MetricSummary;
   };
+  migrationCases: MigrationCaseSummary[];
   blockers: ShadowReadinessReason[];
   warnings: ShadowReadinessReason[];
   manualReview: {
@@ -141,7 +130,7 @@ export interface ShadowReadinessReport {
     requiredCaseIds: string[];
   };
   insufficientDataReasons: Array<{
-    reasonCode: 'missing_baseline_coverage';
+    reasonCode: 'missing_baseline_coverage' | 'missing_baseline_gate_summary';
     migrationCaseIds: string[];
   }>;
 }
@@ -150,7 +139,7 @@ export interface MetricSummary {
   count: number;
   mean: number;
   max: number;
-  p95: number;
+  p95: number | null;
 }
 
 export interface ShadowReadinessReason {
@@ -160,6 +149,24 @@ export interface ShadowReadinessReason {
   migrationCaseIds?: string[];
   scenarioId?: string;
   count?: number;
+}
+
+export interface MigrationCaseSummary {
+  migrationCaseId: string;
+  diagnosticCount: number;
+  scenarioIds: string[];
+  traceIds: string[];
+  validationFailures: number;
+  comparisonFailures: number;
+  criticalRiskFalseNegatives: number;
+  duplicateActionProposals: number;
+  metrics: {
+    latencyMs: MetricSummary;
+    modelCallCount: MetricSummary;
+    toolCallCount: MetricSummary;
+    retryCount: MetricSummary;
+    estimatedCost: MetricSummary;
+  };
 }
 
 @Injectable()
@@ -176,7 +183,28 @@ export class ShadowReadinessReportService {
     }
 
     const diagnostics = await this.db.client
-      .select()
+      .select({
+        id: runtimeShadowDiagnostics.id,
+        tenantId: runtimeShadowDiagnostics.tenantId,
+        messageId: runtimeShadowDiagnostics.messageId,
+        runtimeAttemptId: runtimeShadowDiagnostics.runtimeAttemptId,
+        runtimeMode: runtimeShadowDiagnostics.runtimeMode,
+        traceId: runtimeShadowDiagnostics.traceId,
+        runtimeVersion: runtimeShadowDiagnostics.runtimeVersion,
+        validationStatus: runtimeShadowDiagnostics.validationStatus,
+        redactionStatus: runtimeShadowDiagnostics.redactionStatus,
+        riskComparison: runtimeShadowDiagnostics.riskComparison,
+        memoryComparison: runtimeShadowDiagnostics.memoryComparison,
+        actionComparison: runtimeShadowDiagnostics.actionComparison,
+        validationDetails: runtimeShadowDiagnostics.validationDetails,
+        latencyMs: runtimeShadowDiagnostics.latencyMs,
+        modelCallCount: runtimeShadowDiagnostics.modelCallCount,
+        toolCallCount: runtimeShadowDiagnostics.toolCallCount,
+        retryCount: runtimeShadowDiagnostics.retryCount,
+        estimatedCost: runtimeShadowDiagnostics.estimatedCost,
+        createdAt: runtimeShadowDiagnostics.createdAt,
+        updatedAt: runtimeShadowDiagnostics.updatedAt,
+      })
       .from(runtimeShadowDiagnostics)
       .where(and(...conditions))
       .orderBy(desc(runtimeShadowDiagnostics.createdAt));
@@ -203,7 +231,9 @@ export function buildShadowReadinessReport(
   const blockers: ShadowReadinessReason[] = [];
   const warnings: ShadowReadinessReason[] = [];
   const observedCaseIds = new Set<string>();
+  const sensitiveScenarioIds = new Set<string>();
   const validationReasonCodes = new Set<string>();
+  const caseSummaries = new Map<string, MutableMigrationCaseSummary>();
 
   let validationFailures = 0;
   let comparisonFailures = 0;
@@ -217,18 +247,31 @@ export function buildShadowReadinessReport(
   let duplicateProposalCount = 0;
 
   for (const diagnostic of params.diagnostics) {
-    const validationDetails = objectValue(diagnostic.validationDetails);
-    const riskComparison = objectValue(diagnostic.riskComparison);
-    const memoryComparison = objectValue(diagnostic.memoryComparison);
-    const actionComparison = objectValue(diagnostic.actionComparison);
+    const validationDetails = expectedObjectValue(diagnostic.validationDetails, 'validationDetails', diagnostic, blockers);
+    const riskComparison = expectedObjectValue(diagnostic.riskComparison, 'riskComparison', diagnostic, blockers);
+    const memoryComparison = expectedObjectValue(diagnostic.memoryComparison, 'memoryComparison', diagnostic, blockers);
+    const actionComparison = expectedObjectValue(diagnostic.actionComparison, 'actionComparison', diagnostic, blockers);
     const scenarioId = stringValue(validationDetails['scenarioId']);
     const migrationCaseIds = stringArrayValue(validationDetails['migrationCaseIds']);
 
     for (const caseId of migrationCaseIds) {
       observedCaseIds.add(caseId);
+      if (scenarioId && isSensitiveMigrationCaseId(caseId)) {
+        sensitiveScenarioIds.add(scenarioId);
+      }
     }
     for (const reasonCode of stringArrayValue(validationDetails['reasonCodes'])) {
-      validationReasonCodes.add(reasonCode);
+      if (isStableReasonCode(reasonCode)) {
+        validationReasonCodes.add(reasonCode);
+      } else {
+        blockers.push({
+          reasonCode: 'redaction_rejected',
+          diagnosticId: diagnostic.id,
+          traceId: diagnostic.traceId,
+          scenarioId,
+          migrationCaseIds,
+        });
+      }
     }
 
     if (diagnostic.validationStatus === 'invalid') {
@@ -262,7 +305,7 @@ export function buildShadowReadinessReport(
       });
     }
 
-    if (booleanValue(riskComparison['falseNegative'])) {
+    if (booleanValue(riskComparison['falseNegative']) || isCriticalSeverityRegression(riskComparison)) {
       falseNegativeCount += 1;
     }
     if (isDifferentStatus(riskComparison['status'])) {
@@ -275,7 +318,7 @@ export function buildShadowReadinessReport(
         migrationCaseIds,
       });
     }
-    if (booleanValue(riskComparison['criticalFalseNegative'])) {
+    if (booleanValue(riskComparison['criticalFalseNegative']) || isCriticalSeverityRegression(riskComparison)) {
       criticalFalseNegativeCount += 1;
       blockers.push({
         reasonCode: 'critical_risk_false_negative',
@@ -310,15 +353,28 @@ export function buildShadowReadinessReport(
     }
     const duplicateCount = numericValue(actionComparison['duplicateProposalCount']);
     duplicateProposalCount += duplicateCount;
-    if (duplicateCount > 0) {
+    if (duplicateCount > 0 || isDuplicateActionStatus(actionComparison['status'])) {
       blockers.push({
         reasonCode: 'duplicate_action_proposal',
         diagnosticId: diagnostic.id,
         traceId: diagnostic.traceId,
         scenarioId,
         migrationCaseIds,
-        count: duplicateCount,
+        count: duplicateCount > 0 ? duplicateCount : undefined,
       });
+    }
+
+    for (const caseId of migrationCaseIds) {
+      const summary = getMutableCaseSummary(caseSummaries, caseId);
+      summary.diagnostics.push(diagnostic);
+      if (scenarioId) summary.scenarioIds.add(scenarioId);
+      summary.traceIds.add(diagnostic.traceId);
+      if (diagnostic.validationStatus === 'invalid') summary.validationFailures += 1;
+      if (diagnostic.validationStatus === 'comparison_failed') summary.comparisonFailures += 1;
+      if (booleanValue(riskComparison['criticalFalseNegative']) || isCriticalSeverityRegression(riskComparison)) {
+        summary.criticalRiskFalseNegatives += 1;
+      }
+      summary.duplicateActionProposals += duplicateCount > 0 ? duplicateCount : isDuplicateActionStatus(actionComparison['status']) ? 1 : 0;
     }
   }
 
@@ -328,13 +384,29 @@ export function buildShadowReadinessReport(
 
   const missingCaseIds = requiredMigrationCaseIds.filter((caseId) => !observedCaseIds.has(caseId));
   const insufficientDataReasons =
-    missingCaseIds.length > 0
-      ? [{ reasonCode: 'missing_baseline_coverage' as const, migrationCaseIds: missingCaseIds }]
-      : [];
+    [
+      ...(params.gateSummary
+        ? []
+        : [
+            {
+              reasonCode: 'missing_baseline_gate_summary' as const,
+              migrationCaseIds: [...requiredMigrationCaseIds],
+            },
+          ]),
+      ...(missingCaseIds.length > 0
+        ? [{ reasonCode: 'missing_baseline_coverage' as const, migrationCaseIds: missingCaseIds }]
+        : []),
+    ];
 
   const manualReview = {
-    requiredScenarioIds: uniqueStrings(params.gateSummary?.manualReview?.requiredScenarioIds ?? []),
-    requiredCaseIds: uniqueStrings(params.gateSummary?.manualReview?.requiredCaseIds ?? []),
+    requiredScenarioIds: uniqueStrings([
+      ...(params.gateSummary?.manualReview?.requiredScenarioIds ?? []),
+      ...sensitiveScenarioIds,
+    ]),
+    requiredCaseIds: uniqueStrings([
+      ...(params.gateSummary?.manualReview?.requiredCaseIds ?? []),
+      ...[...observedCaseIds].filter(isSensitiveMigrationCaseId),
+    ]),
   };
 
   const status = resolveStatus({
@@ -390,6 +462,7 @@ export function buildShadowReadinessReport(
         params.diagnostics.map((diagnostic) => Number(diagnostic.estimatedCost)),
       ),
     },
+    migrationCases: [...caseSummaries.values()].map(toMigrationCaseSummary),
     blockers,
     warnings,
     manualReview,
@@ -415,10 +488,12 @@ function resolveStatus(args: {
   return 'ready';
 }
 
+const MIN_P95_SAMPLE_COUNT = 20;
+
 function summarizeMetric(values: number[]): MetricSummary {
   const finiteValues = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
   if (finiteValues.length === 0) {
-    return { count: 0, mean: 0, max: 0, p95: 0 };
+    return { count: 0, mean: 0, max: 0, p95: null };
   }
 
   const sum = finiteValues.reduce((total, value) => total + value, 0);
@@ -427,12 +502,86 @@ function summarizeMetric(values: number[]): MetricSummary {
     count: finiteValues.length,
     mean: roundMetric(sum / finiteValues.length),
     max: roundMetric(finiteValues[finiteValues.length - 1]!),
-    p95: roundMetric(finiteValues[p95Index]!),
+    p95: finiteValues.length >= MIN_P95_SAMPLE_COUNT ? roundMetric(finiteValues[p95Index]!) : null,
   };
 }
 
-function toReportRow(row: DbRuntimeShadowDiagnostic): ShadowDiagnosticReportRow {
+interface MutableMigrationCaseSummary {
+  migrationCaseId: string;
+  diagnostics: ShadowDiagnosticReportRow[];
+  scenarioIds: Set<string>;
+  traceIds: Set<string>;
+  validationFailures: number;
+  comparisonFailures: number;
+  criticalRiskFalseNegatives: number;
+  duplicateActionProposals: number;
+}
+
+function toReportRow(row: ShadowDiagnosticReportRow): ShadowDiagnosticReportRow {
   return row as unknown as ShadowDiagnosticReportRow;
+}
+
+function getMutableCaseSummary(
+  summaries: Map<string, MutableMigrationCaseSummary>,
+  migrationCaseId: string,
+): MutableMigrationCaseSummary {
+  const existing = summaries.get(migrationCaseId);
+  if (existing) return existing;
+  const created: MutableMigrationCaseSummary = {
+    migrationCaseId,
+    diagnostics: [],
+    scenarioIds: new Set<string>(),
+    traceIds: new Set<string>(),
+    validationFailures: 0,
+    comparisonFailures: 0,
+    criticalRiskFalseNegatives: 0,
+    duplicateActionProposals: 0,
+  };
+  summaries.set(migrationCaseId, created);
+  return created;
+}
+
+function toMigrationCaseSummary(summary: MutableMigrationCaseSummary): MigrationCaseSummary {
+  return {
+    migrationCaseId: summary.migrationCaseId,
+    diagnosticCount: summary.diagnostics.length,
+    scenarioIds: uniqueStrings([...summary.scenarioIds]),
+    traceIds: uniqueStrings([...summary.traceIds]),
+    validationFailures: summary.validationFailures,
+    comparisonFailures: summary.comparisonFailures,
+    criticalRiskFalseNegatives: summary.criticalRiskFalseNegatives,
+    duplicateActionProposals: summary.duplicateActionProposals,
+    metrics: {
+      latencyMs: summarizeMetric(summary.diagnostics.map((diagnostic) => diagnostic.latencyMs)),
+      modelCallCount: summarizeMetric(summary.diagnostics.map((diagnostic) => diagnostic.modelCallCount)),
+      toolCallCount: summarizeMetric(summary.diagnostics.map((diagnostic) => diagnostic.toolCallCount)),
+      retryCount: summarizeMetric(summary.diagnostics.map((diagnostic) => diagnostic.retryCount)),
+      estimatedCost: summarizeMetric(summary.diagnostics.map((diagnostic) => Number(diagnostic.estimatedCost))),
+    },
+  };
+}
+
+function expectedObjectValue(
+  value: unknown,
+  field: 'validationDetails' | 'riskComparison' | 'memoryComparison' | 'actionComparison',
+  diagnostic: ShadowDiagnosticReportRow,
+  blockers: ShadowReadinessReason[],
+): Record<string, unknown> {
+  const parsed = objectValue(value);
+  const hasExpectedShape =
+    field === 'validationDetails'
+      ? parsed === value
+      : parsed === value && typeof parsed['status'] === 'string';
+
+  if (!hasExpectedShape) {
+    blockers.push({
+      reasonCode: 'diagnostic_payload_malformed',
+      diagnosticId: diagnostic.id,
+      traceId: diagnostic.traceId,
+    });
+  }
+
+  return parsed;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -450,7 +599,12 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function numericValue(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 
 function booleanValue(value: unknown): boolean {
@@ -459,6 +613,25 @@ function booleanValue(value: unknown): boolean {
 
 function isDifferentStatus(value: unknown): boolean {
   return typeof value === 'string' && !['same', 'equal', 'matched', 'none'].includes(value);
+}
+
+function isCriticalSeverityRegression(riskComparison: Record<string, unknown>): boolean {
+  return (
+    riskComparison['currentSeverity'] === 'critical' &&
+    ['none', 'low'].includes(String(riskComparison['candidateSeverity'] ?? ''))
+  );
+}
+
+function isDuplicateActionStatus(value: unknown): boolean {
+  return typeof value === 'string' && /duplicate/i.test(value);
+}
+
+function isSensitiveMigrationCaseId(value: string): value is MigrationBaselineCaseId {
+  return (SENSITIVE_MIGRATION_BASELINE_CASE_IDS as readonly string[]).includes(value);
+}
+
+function isStableReasonCode(value: string): boolean {
+  return /^[a-z0-9][a-z0-9_:-]{0,79}$/.test(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {

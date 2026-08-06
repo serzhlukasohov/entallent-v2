@@ -14,7 +14,7 @@ const runtimeAttempt = {
 function createDbMock() {
   const returning = vi.fn().mockResolvedValue([{ id: 'diagnostics-1' }]);
   const onConflictDoUpdate = vi.fn(() => ({ returning }));
-  const values = vi.fn(() => ({ onConflictDoUpdate, returning }));
+  const values = vi.fn((_payload: unknown) => ({ onConflictDoUpdate, returning }));
   const insert = vi.fn(() => ({ values }));
   const limit = vi.fn().mockResolvedValue([runtimeAttempt]);
   const where = vi.fn(() => ({ limit }));
@@ -136,7 +136,7 @@ describe('ShadowDiagnosticsRepository', () => {
       }),
     );
 
-    const persisted = db.calls.values.mock.calls[0]?.[0];
+    const persisted = db.calls.values.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(JSON.stringify(persisted)).not.toContain('I can quote the raw user message');
     expect(JSON.stringify(persisted)).not.toContain('raw crisis evidence');
     expect(JSON.stringify(persisted)).not.toContain('raw memory content');
@@ -177,7 +177,7 @@ describe('ShadowDiagnosticsRepository', () => {
       }),
     );
 
-    const persisted = db.calls.values.mock.calls[0]?.[0];
+    const persisted = db.calls.values.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(JSON.stringify(persisted)).not.toContain('raw root diagnostic text');
     expect(JSON.stringify(persisted)).not.toContain('raw candidate reply');
     expect(JSON.stringify(persisted)).not.toContain('raw provider stack');
@@ -196,6 +196,30 @@ describe('ShadowDiagnosticsRepository', () => {
         ]),
       },
     });
+  });
+
+  it('preserves stable scenario and migration case identifiers while redacting free-form validation text', async () => {
+    const db = createDbMock();
+    const repository = new ShadowDiagnosticsRepository(db as never);
+
+    await repository.recordShadowDiagnostics(
+      makeDiagnostics({
+        validationDetails: {
+          scenarioId: 'planning-memory',
+          migrationCaseIds: ['casual-conversation', 'explicit-reminder'],
+          reasonCodes: ['candidate_schema_invalid'],
+          summary: 'raw validator summary',
+        },
+      }),
+    );
+
+    const persisted = db.calls.values.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(persisted.validationDetails).toMatchObject({
+      scenarioId: 'planning-memory',
+      migrationCaseIds: ['casual-conversation', 'explicit-reminder'],
+      reasonCodes: ['candidate_schema_invalid'],
+    });
+    expect(JSON.stringify(persisted)).not.toContain('raw validator summary');
   });
 
   it('does not introduce out-of-scope MAF service or client files', () => {

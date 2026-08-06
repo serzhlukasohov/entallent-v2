@@ -301,7 +301,10 @@ function isAllowedDiagnosticStringKey(key: string | undefined): boolean {
     normalized === 'runtimeversion' ||
     normalized === 'requestid' ||
     normalized === 'eventid' ||
+    normalized === 'migrationcaseid' ||
+    normalized === 'migrationcaseids' ||
     normalized.endsWith('id') ||
+    normalized.endsWith('ids') ||
     normalized.endsWith('digest') ||
     normalized.endsWith('hash')
   );
