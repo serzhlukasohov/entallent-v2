@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-08-06T10:05:00Z
+# last_updated: 2026-08-06T10:20:00Z
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-06T10:05:00Z
+last_updated: 2026-08-06T10:20:00Z
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -68,7 +68,7 @@ development_status:
   3-1-expand-migration-baseline-scenarios: done
   3-2-add-shadow-diagnostics-record: done
   3-3-report-shadow-comparison-readiness: done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done
 
   epic-4: backlog
   4-1-scaffold-agent-service: backlog
@@ -121,8 +121,28 @@ action_items:
   - epic: 2
     action: "Encode manual-review requirements in the migration baseline for sensitive scenarios."
     owner: "John / Product Manager"
-    status: open
+    status: done
   - epic: 2
     action: "Carry Epic 2 stable reason-code and redaction rules into the shadow diagnostics record."
     owner: "Amelia / Developer"
     status: done
+  - epic: 3
+    action: "Keep required and sensitive migration baseline case IDs sourced from @entalent/contracts for every future simulation, diagnostics, and readiness consumer."
+    owner: "Amelia / Developer"
+    status: open
+  - epic: 3
+    action: "Carry fail-closed redaction and stable reason-code allowlists into Python service validation, tool-call audit records, and future shadow candidate diagnostics."
+    owner: "Amelia / Developer"
+    status: open
+  - epic: 3
+    action: "Keep Epic 4 Story 4.1 limited to scaffold and liveness; defer runtime endpoint, service auth, durable session store, worker client, MAF workflow, shadow execution, canary routing, and UI to their planned stories."
+    owner: "Winston / Architect"
+    status: open
+  - epic: 3
+    action: "Run upstream package builds sequentially before dependent worker or service verification when a build cleans a shared dist directory."
+    owner: "Amelia / Developer"
+    status: open
+  - epic: 3
+    action: "Resolve or explicitly document the strict runtime-boundary request shape before Epic 5 introduces MafAgentRuntimeClient."
+    owner: "Winston / Architect"
+    status: open
