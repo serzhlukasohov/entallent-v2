@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-08-06T10:20:00Z
+# last_updated: 2026-08-06T10:35:00Z
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-06T10:20:00Z
+last_updated: 2026-08-06T10:35:00Z
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -70,8 +70,8 @@ development_status:
   3-3-report-shadow-comparison-readiness: done
   epic-3-retrospective: done
 
-  epic-4: backlog
-  4-1-scaffold-agent-service: backlog
+  epic-4: in-progress
+  4-1-scaffold-agent-service: ready-for-dev
   4-2-add-runtime-endpoint-skeleton: backlog
   4-3-add-scoped-internal-service-auth: backlog
   4-4-add-durable-session-and-checkpoint-store: backlog
