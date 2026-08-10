@@ -124,5 +124,5 @@ const runtimeFallbackBarrierPhases = new Set<unknown>([
 ]);
 
 function isMafRuntimeMode(value: unknown): boolean {
-  return value === 'maf_shadow' || value === 'maf_canary';
+  return value === 'maf_shadow' || value === 'maf_canary' || value === 'maf_primary';
 }

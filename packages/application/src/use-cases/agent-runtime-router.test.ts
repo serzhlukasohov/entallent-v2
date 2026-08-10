@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { RuntimeResult } from '@entalent/contracts';
 import type { ProcessMessageRequest, ProcessMessageResult } from '../ports/agent-runtime.port';
 import { AgentRuntimeRouter } from './agent-runtime-router';
-import type { AgentRuntimeMode } from './agent-runtime-router';
+import { MafAgentRuntimeClient } from './maf-agent-runtime-client';
+import { MafPrimaryAgentRuntime } from './maf-primary-agent-runtime';
+import type {
+  AgentRuntimeConfigurationDiagnostic,
+  AgentRuntimeFallbackExecutor,
+  AgentRuntimeMode,
+} from './agent-runtime-router';
 import type { TypeScriptAgentRuntime } from './typescript-agent-runtime';
 
 const REQUEST: ProcessMessageRequest = {
@@ -15,6 +22,24 @@ const REQUEST: ProcessMessageRequest = {
   externalWorkspaceId: 'workspace-1',
   externalConversationId: 'channel-1',
   traceId: 'trace-1',
+};
+
+const PRIMARY_REQUEST: ProcessMessageRequest = {
+  ...REQUEST,
+  requestId: '11111111-1111-4111-8111-111111111111',
+  eventId: '22222222-2222-4222-8222-222222222222',
+  messageId: '33333333-3333-4333-8333-333333333333',
+  conversationId: '44444444-4444-4444-8444-444444444444',
+  userId: '55555555-5555-4555-8555-555555555555',
+  messageText: 'I need help making this week less chaotic.',
+  messageCreatedAt: '2026-08-07T10:00:00.000Z',
+  userDisplayName: 'User One',
+  conversationSessionKey: 'workspace-1:user-1:channel-1:thread-1',
+  runtimeContext: {
+    recentTurns: [],
+    memoryItems: [],
+    goals: [],
+  },
 };
 
 const RESULT: ProcessMessageResult = {
@@ -45,6 +70,37 @@ const RESULT: ProcessMessageResult = {
     surveyMustBeBlocked: false,
     proactiveMessagesMustBePaused: false,
     reasoningSummary: 'none',
+  },
+};
+
+const CANDIDATE_RESULT: RuntimeResult = {
+  reply: {
+    text: 'candidate reply',
+    mode: 'normal',
+  },
+  riskAssessment: {
+    type: null,
+    severity: 'none',
+    confidence: 0,
+    evidence: [],
+    immediateResponseRequired: false,
+    escalationRecommended: false,
+    surveyMustBeBlocked: false,
+    proactiveMessagesMustBePaused: false,
+  },
+  memoryCandidates: [],
+  proposedActions: [],
+  diagnostics: {
+    traceId: 'trace-1',
+    runtimeVersion: 'maf-candidate-test',
+    runtimeAttempt: 1,
+    modelCalls: 1,
+    toolCalls: 0,
+    latencyMs: 42,
+    retryCount: 0,
+    modelRetryCount: 0,
+    toolRetryCount: 0,
+    httpRetryCount: 0,
   },
 };
 
@@ -146,6 +202,266 @@ describe('AgentRuntimeRouter', () => {
       expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
     },
   );
+
+  it('runs primary MAF before TypeScript and returns the primary result when maf_primary is selected', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafPrimaryRuntime = {
+      processMessage: vi.fn().mockResolvedValue({
+        ...RESULT,
+        outboundMessageId: 'maf-out-1',
+        responseText: 'maf primary reply',
+      }),
+    };
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      mafPrimaryRuntime,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toEqual({
+      ...RESULT,
+      outboundMessageId: 'maf-out-1',
+      responseText: 'maf primary reply',
+    });
+
+    expect(mafPrimaryRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
+  });
+
+  it('records primary success without exposing the primary response payload', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafPrimaryRuntime = {
+      processMessage: vi.fn().mockResolvedValue({
+        ...RESULT,
+        outboundMessageId: 'maf-out-1',
+        responseText: 'raw primary reply must not enter callback',
+      }),
+    };
+    const recordPrimarySuccess = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      recordDecision: vi.fn(async () => ({ runtimeAttemptId: 'attempt-1' })),
+      recordPrimarySuccess,
+      mafPrimaryRuntime,
+    });
+
+    await router.processMessage(REQUEST);
+
+    expect(recordPrimarySuccess).toHaveBeenCalledWith({
+      request: REQUEST,
+      decision: {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      },
+      runtimeAttemptId: 'attempt-1',
+    });
+    const primarySuccessRecord = (recordPrimarySuccess.mock.calls as unknown as [[unknown]])[0]?.[0];
+    expect(JSON.stringify(primarySuccessRecord)).not.toContain('raw primary reply');
+  });
+
+  it('falls back to TypeScript before side effects when primary MAF reports a safe failure', async () => {
+    const primaryError = new Error('provider failed');
+    Object.assign(primaryError, {
+      safeDiagnostic: {
+        reasonCode: 'maf_runtime_fetch_failed',
+      },
+    });
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafPrimaryRuntime = {
+      processMessage: vi.fn().mockRejectedValue(primaryError),
+    };
+    const recordDecision = vi.fn(async () => ({ runtimeAttemptId: 'attempt-1' }));
+    const recordPrimaryFailure = vi.fn(async () => undefined);
+    const executeFallback = vi.fn(async <T>(
+      _request: ProcessMessageRequest,
+      fallback: () => Promise<T> | T,
+    ): Promise<T> => fallback()) as AgentRuntimeFallbackExecutor;
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      mafPrimaryRuntime,
+      recordDecision,
+      recordPrimaryFailure,
+      executeFallback,
+      logger,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(recordPrimaryFailure).toHaveBeenCalledWith({
+      request: REQUEST,
+      decision: {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      },
+      diagnostic: {
+        reasonCode: 'maf_runtime_fetch_failed',
+      },
+      runtimeAttemptId: 'attempt-1',
+    });
+    expect(executeFallback).toHaveBeenCalledWith(REQUEST, expect.any(Function));
+    expect(logger.warn).toHaveBeenCalledWith('MAF primary failed before commit; falling back to TypeScript runtime', {
+      traceId: 'trace-1',
+      mode: 'maf_primary',
+      decisionSource: 'primary_flag',
+      fallbackReason: 'maf_runtime_fetch_failed',
+    });
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
+
+  it('records a configuration diagnostic and falls back when primary MAF config is missing', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const recordConfigurationDiagnostic = vi.fn(async () => undefined);
+    const mafRuntime = new MafAgentRuntimeClient({ fetch: vi.fn() });
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      mafRuntime,
+      recordConfigurationDiagnostic,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(recordConfigurationDiagnostic).toHaveBeenCalledWith({
+      mode: 'maf_primary',
+      decisionSource: 'primary_flag',
+      reasonCode: 'maf_runtime_configuration_missing',
+      missingConfigKeys: ['AGENT_SERVICE_INTERNAL_URL'],
+    });
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
+
+  it.each([
+    {
+      name: 'missing config',
+      client: new MafAgentRuntimeClient({ fetch: vi.fn() }),
+      expectedDiagnostic: {
+        reasonCode: 'maf_runtime_configuration_missing',
+        missingConfigKeys: ['AGENT_SERVICE_INTERNAL_URL'],
+      },
+    },
+    {
+      name: 'invalid URL',
+      client: new MafAgentRuntimeClient({ serviceUrl: 'file:///tmp/agent-service', fetch: vi.fn() }),
+      expectedDiagnostic: {
+        reasonCode: 'maf_runtime_url_invalid',
+        invalidConfigKeys: ['AGENT_SERVICE_INTERNAL_URL'],
+      },
+    },
+    {
+      name: 'HTTP failure',
+      client: new MafAgentRuntimeClient({
+        serviceUrl: 'http://127.0.0.1:8001',
+        fetch: vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ raw: 'body' }) })),
+      }),
+      expectedDiagnostic: {
+        reasonCode: 'maf_runtime_http_failed',
+        invalidFields: ['http_status:503'],
+      },
+    },
+    {
+      name: 'invalid RuntimeResult',
+      client: new MafAgentRuntimeClient({
+        serviceUrl: 'http://127.0.0.1:8001',
+        fetch: vi.fn(async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ reply: { text: 'invalid because mode is missing' } }),
+        })),
+      }),
+      expectedDiagnostic: {
+        reasonCode: 'maf_runtime_response_invalid',
+        invalidFields: expect.any(Array),
+      },
+    },
+  ])('falls back through the primary adapter for $name before TypeScript commits', async ({
+    client,
+    expectedDiagnostic,
+  }) => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const recordPrimaryFailure = vi.fn(async () => undefined);
+    const executeFallback = vi.fn(async <T>(
+      _request: ProcessMessageRequest,
+      fallback: () => Promise<T> | T,
+    ): Promise<T> => fallback()) as AgentRuntimeFallbackExecutor;
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      recordDecision: vi.fn(async () => ({ runtimeAttemptId: 'attempt-1' })),
+      recordPrimaryFailure,
+      executeFallback,
+      mafPrimaryRuntime: createPrimaryRuntime(client),
+    });
+
+    await expect(router.processMessage(PRIMARY_REQUEST)).resolves.toBe(RESULT);
+
+    expect(recordPrimaryFailure).toHaveBeenCalledWith({
+      request: PRIMARY_REQUEST,
+      decision: {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      },
+      diagnostic: expectedDiagnostic,
+      runtimeAttemptId: 'attempt-1',
+    });
+    expect(executeFallback).toHaveBeenCalledWith(PRIMARY_REQUEST, expect.any(Function));
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(PRIMARY_REQUEST);
+  });
+
+  it('falls back through the primary adapter when the MAF request times out before commit', async () => {
+    vi.useFakeTimers();
+    try {
+      const typescriptRuntime = {
+        processMessage: vi.fn().mockResolvedValue(RESULT),
+      } as unknown as TypeScriptAgentRuntime;
+      const client = new MafAgentRuntimeClient({
+        serviceUrl: 'http://127.0.0.1:8001',
+        timeoutMs: 5,
+        fetch: vi.fn((_input, init) => new Promise((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal | undefined;
+          signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })),
+      });
+      const recordPrimaryFailure = vi.fn(async () => undefined);
+      const executeFallback = vi.fn(async <T>(
+        _request: ProcessMessageRequest,
+        fallback: () => Promise<T> | T,
+      ): Promise<T> => fallback()) as AgentRuntimeFallbackExecutor;
+      const router = new AgentRuntimeRouter(typescriptRuntime, {
+        evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+        recordDecision: vi.fn(async () => ({ runtimeAttemptId: 'attempt-1' })),
+        recordPrimaryFailure,
+        executeFallback,
+        mafPrimaryRuntime: createPrimaryRuntime(client),
+      });
+
+      const result = router.processMessage(PRIMARY_REQUEST);
+      await vi.advanceTimersByTimeAsync(5);
+
+      await expect(result).resolves.toBe(RESULT);
+      expect(recordPrimaryFailure).toHaveBeenCalledWith({
+        request: PRIMARY_REQUEST,
+        decision: {
+          mode: 'maf_primary',
+          decisionSource: 'primary_flag',
+        },
+        diagnostic: {
+          reasonCode: 'maf_runtime_fetch_failed',
+        },
+        runtimeAttemptId: 'attempt-1',
+      });
+      expect(executeFallback).toHaveBeenCalledWith(PRIMARY_REQUEST, expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('executes TypeScript fallback directly when no fallback guard is configured', async () => {
     const typescriptRuntime = {
@@ -390,4 +706,374 @@ describe('AgentRuntimeRouter', () => {
       runtimeError,
     );
   });
+
+  it('runs a MAF candidate only in shadow mode and records valid shadow diagnostics after returning the TypeScript result', async () => {
+    const callOrder: string[] = [];
+    const typescriptRuntime = {
+      processMessage: vi.fn(async () => {
+        callOrder.push('typescript');
+        return RESULT;
+      }),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafRuntime = {
+      getConfigurationDiagnostic: vi.fn(() => null),
+      processCandidate: vi.fn(async () => {
+        callOrder.push('candidate');
+        return CANDIDATE_RESULT;
+      }),
+    };
+    const recordDecision = vi.fn(async () => {
+      callOrder.push('ledger');
+      return { runtimeAttemptId: 'attempt-1' };
+    });
+    const recordShadowCandidate = vi.fn(async () => {
+      callOrder.push('shadow-diagnostics');
+    });
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime,
+      recordDecision,
+      recordShadowCandidate,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(callOrder).toEqual(['ledger', 'typescript', 'candidate', 'shadow-diagnostics']);
+    expect(mafRuntime.processCandidate).toHaveBeenCalledWith(REQUEST);
+    expect(recordShadowCandidate).toHaveBeenCalledWith({
+      request: REQUEST,
+      decision: {
+        mode: 'maf_shadow',
+        decisionSource: 'shadow_flag',
+      },
+      runtimeAttemptId: 'attempt-1',
+      currentResult: RESULT,
+      candidateResult: CANDIDATE_RESULT,
+      validationStatus: 'valid',
+    });
+  });
+
+  it('records invalid shadow diagnostics and still returns the TypeScript result when the candidate fails validation', async () => {
+    const candidateError = new Error('raw response body with bearer token');
+    Object.assign(candidateError, {
+      safeDiagnostic: {
+        reasonCode: 'maf_runtime_response_invalid',
+        invalidFields: ['$.diagnostics.retryCount'],
+      },
+    });
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafRuntime = {
+      getConfigurationDiagnostic: vi.fn(() => null),
+      processCandidate: vi.fn().mockRejectedValue(candidateError),
+    };
+    const recordShadowCandidate = vi.fn(async () => undefined);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime,
+      recordShadowCandidate,
+      logger,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(recordShadowCandidate).toHaveBeenCalledWith({
+      request: REQUEST,
+      decision: {
+        mode: 'maf_shadow',
+        decisionSource: 'shadow_flag',
+      },
+      currentResult: RESULT,
+      validationStatus: 'invalid',
+      diagnostic: {
+        reasonCode: 'maf_runtime_response_invalid',
+        invalidFields: ['$.diagnostics.retryCount'],
+      },
+    });
+    const firstShadowRecord = (recordShadowCandidate.mock.calls as unknown as [
+      { diagnostic?: unknown },
+    ][])[0]?.[0];
+    const diagnostic = JSON.stringify(firstShadowRecord?.diagnostic);
+    expect(diagnostic).not.toContain('raw response body');
+    expect(diagnostic).not.toContain('bearer token');
+    expect(logger.warn).toHaveBeenCalledWith('MAF shadow candidate failed; TypeScript result remains user-facing', {
+      traceId: 'trace-1',
+      mode: 'maf_shadow',
+      decisionSource: 'shadow_flag',
+      fallbackReason: 'maf_runtime_response_invalid',
+    });
+  });
+
+  it('routes maf_canary through the primary MAF adapter and keeps it user-facing', async () => {
+    const primaryResult: ProcessMessageResult = {
+      ...RESULT,
+      outboundMessageId: 'canary-out-1',
+      responseText: 'canary primary reply',
+    };
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafPrimaryRuntime = {
+      processMessage: vi.fn().mockResolvedValue(primaryResult),
+    };
+    const recordDecision = vi.fn(async () => ({ runtimeAttemptId: 'attempt-1' }));
+    const recordPrimarySuccess = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_canary', decisionSource: 'canary_flag' }),
+      mafRuntime: {
+        getConfigurationDiagnostic: vi.fn(() => null),
+      },
+      mafPrimaryRuntime,
+      recordDecision,
+      recordPrimarySuccess,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toEqual(primaryResult);
+
+    expect(mafPrimaryRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+    expect(recordDecision).toHaveBeenCalledWith(REQUEST, {
+      mode: 'maf_canary',
+      decisionSource: 'canary_flag',
+    });
+    expect(recordPrimarySuccess).toHaveBeenCalledWith({
+      request: REQUEST,
+      decision: {
+        mode: 'maf_canary',
+        decisionSource: 'canary_flag',
+      },
+      runtimeAttemptId: 'attempt-1',
+    });
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to TypeScript when maf_canary fails before commit with a safe diagnostic', async () => {
+    const primaryError = new Error('provider failed');
+    Object.assign(primaryError, {
+      safeDiagnostic: {
+        reasonCode: 'maf_runtime_fetch_failed',
+      },
+    });
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafPrimaryRuntime = {
+      processMessage: vi.fn().mockRejectedValue(primaryError),
+    };
+    const recordDecision = vi.fn(async () => ({ runtimeAttemptId: 'attempt-1' }));
+    const recordPrimaryFailure = vi.fn(async () => undefined);
+    const executeFallback = vi.fn(async <T>(_request: ProcessMessageRequest, fallback: () => Promise<T> | T) =>
+      fallback(),
+    ) as AgentRuntimeFallbackExecutor;
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_canary', decisionSource: 'canary_flag' }),
+      recordDecision,
+      recordPrimaryFailure,
+      executeFallback,
+      mafRuntime: {
+        getConfigurationDiagnostic: vi.fn(() => null),
+      },
+      mafPrimaryRuntime,
+      logger,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(mafPrimaryRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+    expect(recordPrimaryFailure).toHaveBeenCalledWith({
+      request: REQUEST,
+      decision: {
+        mode: 'maf_canary',
+        decisionSource: 'canary_flag',
+      },
+      diagnostic: {
+        reasonCode: 'maf_runtime_fetch_failed',
+      },
+      runtimeAttemptId: 'attempt-1',
+    });
+    expect(executeFallback).toHaveBeenCalledWith(REQUEST, expect.any(Function));
+    expect(logger.warn).toHaveBeenCalledWith('MAF primary failed before commit; falling back to TypeScript runtime', {
+      traceId: 'trace-1',
+      mode: 'maf_canary',
+      decisionSource: 'canary_flag',
+      fallbackReason: 'maf_runtime_fetch_failed',
+    });
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
+
+  it('still uses candidate diagnostics only for maf_shadow mode', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafRuntime = {
+      getConfigurationDiagnostic: vi.fn(() => null),
+      processCandidate: vi.fn().mockResolvedValue(CANDIDATE_RESULT),
+    };
+    const recordShadowCandidate = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime,
+      recordShadowCandidate,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(mafRuntime.processCandidate).toHaveBeenCalledWith(REQUEST);
+    expect(recordShadowCandidate).toHaveBeenCalled();
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
+
+  it.each(['maf_shadow', 'maf_canary'] as const)(
+    'fails closed to TypeScript and records a configuration diagnostic for missing MAF config in %s mode',
+    async (mode) => {
+      const typescriptRuntime = {
+        processMessage: vi.fn().mockResolvedValue(RESULT),
+      } as unknown as TypeScriptAgentRuntime;
+      const recordConfigurationDiagnostic = vi.fn(async () => undefined);
+      const mafRuntime = new MafAgentRuntimeClient({ fetch: vi.fn() });
+      const router = new AgentRuntimeRouter(typescriptRuntime, {
+        evaluateMode: () => ({ mode, decisionSource: mode === 'maf_shadow' ? 'shadow_flag' : 'canary_flag' }),
+        mafRuntime,
+        recordConfigurationDiagnostic,
+      });
+
+      await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+      expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+      expect(recordConfigurationDiagnostic).toHaveBeenCalledWith({
+        mode,
+        decisionSource: mode === 'maf_shadow' ? 'shadow_flag' : 'canary_flag',
+        reasonCode: 'maf_runtime_configuration_missing',
+        missingConfigKeys: ['AGENT_SERVICE_INTERNAL_URL'],
+      });
+    },
+  );
+
+  it('records a redacted MAF boundary diagnostic before delegating to TypeScript', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const recordConfigurationDiagnostic = vi.fn(async () => undefined);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const mafRuntime = new MafAgentRuntimeClient({
+      serviceUrl: 'https://agent-service.internal',
+      serviceAuthSecret: 'super-secret-service-auth-token',
+      fetch: vi.fn(),
+    });
+    const requestWithRawFields = {
+      ...REQUEST,
+      requestId: '',
+      externalConversationId: 'raw-channel',
+      externalWorkspaceId: 'raw-workspace',
+    };
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime,
+      recordConfigurationDiagnostic,
+      logger,
+    });
+
+    await expect(router.processMessage(requestWithRawFields)).resolves.toBe(RESULT);
+
+    const diagnostic = (recordConfigurationDiagnostic.mock.calls as unknown as [
+      AgentRuntimeConfigurationDiagnostic,
+    ][])[0]?.[0];
+    expect(diagnostic).toEqual({
+      mode: 'maf_shadow',
+      decisionSource: 'shadow_flag',
+      reasonCode: 'maf_runtime_boundary_request_invalid',
+      invalidFields: ['requestId'],
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain('super-secret-service-auth-token');
+    expect(JSON.stringify(diagnostic)).not.toContain('raw-channel');
+    expect(JSON.stringify(diagnostic)).not.toContain('raw-workspace');
+    expect(logger.warn).toHaveBeenCalledWith('MAF runtime unavailable; falling back to TypeScript runtime', {
+      traceId: 'trace-1',
+      mode: 'maf_shadow',
+      decisionSource: 'shadow_flag',
+      fallbackReason: 'maf_runtime_boundary_request_invalid',
+    });
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(requestWithRawFields);
+  });
+
+  it('still fails closed when the MAF diagnostic provider throws', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const recordConfigurationDiagnostic = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime: {
+        getConfigurationDiagnostic: () => {
+          throw new Error('raw provider failure');
+        },
+      },
+      recordConfigurationDiagnostic,
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(recordConfigurationDiagnostic).toHaveBeenCalledWith({
+      mode: 'maf_shadow',
+      decisionSource: 'shadow_flag',
+      reasonCode: 'maf_runtime_configuration_invalid',
+      invalidConfigKeys: ['AGENT_SERVICE_INTERNAL_URL'],
+    });
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
+
+  it('still fails closed when recording the MAF diagnostic throws', async () => {
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime: new MafAgentRuntimeClient({ fetch: vi.fn() }),
+      recordConfigurationDiagnostic: () => {
+        throw new Error('diagnostic sink unavailable');
+      },
+    });
+
+    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
 });
+
+function createPrimaryRuntime(client: MafAgentRuntimeClient): MafPrimaryAgentRuntime {
+  return new MafPrimaryAgentRuntime(
+    {
+      findById: vi.fn(async () => ({
+        id: PRIMARY_REQUEST.conversationId,
+        tenantId: PRIMARY_REQUEST.tenantId,
+        userId: PRIMARY_REQUEST.userId,
+        channelType: 'slack',
+        externalConversationId: PRIMARY_REQUEST.externalConversationId,
+        status: 'active',
+        userTimezone: 'UTC',
+        userTimezoneUpdatedAt: new Date(),
+      })),
+      findRecentMessages: vi.fn(async () => []),
+      saveMessage: vi.fn(async (params) => ({
+        id: 'primary-outbound-1',
+        ...params,
+        occurredAt: params.occurredAt ?? new Date(),
+        createdAt: new Date(),
+      })),
+      updateMessageDelivery: vi.fn(async () => undefined),
+    },
+    {
+      enqueueMessageSend: vi.fn(async () => undefined),
+      enqueueMemoryExtraction: vi.fn(async () => undefined),
+      enqueueFollowUpExecution: vi.fn(async () => undefined),
+      enqueueSurveyEvidence: vi.fn(async () => undefined),
+      enqueueGroupReport: vi.fn(async () => undefined),
+      enqueueStyleAnalysis: vi.fn(async () => undefined),
+      enqueueProfileHydration: vi.fn(async () => undefined),
+    },
+    client,
+    { isEnabled: vi.fn(async () => true) },
+  );
+}

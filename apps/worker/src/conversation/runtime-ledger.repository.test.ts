@@ -87,6 +87,68 @@ describe('RuntimeLedgerRepository', () => {
     expect(db.calls.onConflictDoUpdate).not.toHaveBeenCalled();
   });
 
+  it('records primary MAF runtime attempts with the explicit ledger mode', async () => {
+    const db = createDbMock();
+    const repository = new RuntimeLedgerRepository(db as never);
+
+    await repository.recordStartedAttempt({
+      tenantId: 'tenant-1',
+      requestId: 'request-1',
+      eventId: 'event-1',
+      messageId: 'message-1',
+      runtimeAttempt: 1,
+      traceId: 'trace-1',
+      runtimeMode: 'maf_primary',
+    });
+
+    expect(db.calls.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeMode: 'maf_primary',
+        phase: 'started',
+      }),
+    );
+  });
+
+  it('normalizes legacy runtime mode aliases before persisting runtime attempts', async () => {
+    const db = createDbMock();
+    const repository = new RuntimeLedgerRepository(db as never);
+
+    await repository.recordStartedAttempt({
+      tenantId: 'tenant-1',
+      requestId: 'request-1',
+      eventId: 'event-1',
+      messageId: 'message-1',
+      runtimeAttempt: 1,
+      traceId: 'trace-1',
+      runtimeMode: 'primary' as never,
+    });
+
+    expect(db.calls.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeMode: 'maf_primary',
+      }),
+    );
+  });
+
+  it('rejects runtime attempt creation for unknown runtime modes', async () => {
+    const db = createDbMock();
+    const repository = new RuntimeLedgerRepository(db as never);
+
+    await expect(
+      repository.recordStartedAttempt({
+        tenantId: 'tenant-1',
+        requestId: 'request-1',
+        eventId: 'event-1',
+        messageId: 'message-1',
+        runtimeAttempt: 1,
+        traceId: 'trace-1',
+        runtimeMode: 'legacy-unsupported' as never,
+      }),
+    ).rejects.toThrow('runtime_attempt_invalid_mode');
+
+    expect(db.calls.insert).not.toHaveBeenCalled();
+  });
+
   it('returns an existing attempt without rewinding phase on duplicate durable key', async () => {
     const db = createDbMock();
     const repository = new RuntimeLedgerRepository(db as never);

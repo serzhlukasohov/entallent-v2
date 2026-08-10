@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "FastAPI foundation for the enTalent MAF runtime service"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+  "agent-framework-core>=1.13,<1.14",
   "fastapi>=0.139,<0.142",
+  "httpx>=0.28,<0.29",
   "pydantic>=2.13,<3",
   "pydantic-settings>=2.10,<3",
   "uvicorn>=0.35,<0.36",
@@ -16,7 +18,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.28,<0.29",
   "mypy>=1.17,<2",
   "pytest>=8.4,<9",
   "ruff>=0.12,<0.13",

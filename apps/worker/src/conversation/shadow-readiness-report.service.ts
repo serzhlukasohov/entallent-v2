@@ -30,7 +30,20 @@ export type ShadowReadinessReasonCode =
   | 'diagnostic_payload_malformed'
   | 'memory_difference'
   | 'action_difference'
-  | 'risk_difference';
+  | 'risk_difference'
+  | 'latency_threshold_exceeded'
+  | 'cost_threshold_exceeded'
+  | 'sensitive_memory_false_positive'
+  | 'stale_shadow_diagnostics'
+  | 'manual_review_required'
+  | 'insufficient_shadow_data'
+  | 'risk_suppression_regression'
+  | 'escalation_trigger_regression'
+  | 'manager_privacy_regression'
+  | 'cohort_minimum_regression'
+  | 'survey_consent_regression'
+  | 'proactive_consent_regression'
+  | 'gdpr_deletion_export_regression';
 
 export interface ShadowReadinessGateSummary {
   status?: string;
@@ -95,6 +108,7 @@ export interface ShadowReadinessReport {
     scenarioIds: string[];
     migrationCaseIds: string[];
     traceIds: string[];
+    latestDiagnosticAt: string | null;
   };
   quality: {
     validationFailures: number;
@@ -160,6 +174,7 @@ export interface MigrationCaseSummary {
   comparisonFailures: number;
   criticalRiskFalseNegatives: number;
   duplicateActionProposals: number;
+  memoryFalsePositiveCount: number;
   metrics: {
     latencyMs: MetricSummary;
     modelCallCount: MetricSummary;
@@ -169,9 +184,62 @@ export interface MigrationCaseSummary {
   };
 }
 
+export interface CanaryGateConfig {
+  maxLatencyMs: number;
+  maxEstimatedCost: number;
+  maxDiagnosticAgeMs: number;
+  blockOnAnyMemoryFalsePositiveForSensitiveCases: boolean;
+}
+
+export interface BuildCanaryGateDecisionParams {
+  report: ShadowReadinessReport;
+  config?: Partial<CanaryGateConfig>;
+}
+
+export interface CanaryGateDecision {
+  schemaVersion: 1;
+  status: ShadowReadinessStatus;
+  canaryEnabled: boolean;
+  blockers: ShadowReadinessReason[];
+  warnings: ShadowReadinessReason[];
+  config: CanaryGateConfig;
+  report: ShadowReadinessReport;
+}
+
+const DEFAULT_CANARY_GATE_CONFIG: CanaryGateConfig = {
+  maxLatencyMs: 5000,
+  maxEstimatedCost: 0.05,
+  maxDiagnosticAgeMs: 24 * 60 * 60 * 1000,
+  blockOnAnyMemoryFalsePositiveForSensitiveCases: true,
+};
+
+const POLICY_REGRESSION_REASON_CODES = new Set<ShadowReadinessReasonCode>([
+  'risk_suppression_regression',
+  'escalation_trigger_regression',
+  'manager_privacy_regression',
+  'cohort_minimum_regression',
+  'survey_consent_regression',
+  'proactive_consent_regression',
+  'gdpr_deletion_export_regression',
+]);
+
+const SAFE_VALIDATION_REASON_CODES = new Set<string>([
+  ...POLICY_REGRESSION_REASON_CODES,
+  'candidate_schema_invalid',
+  'maf_candidate_valid',
+  'maf_candidate_invalid',
+  'maf_runtime_boundary_request_invalid',
+  'maf_runtime_configuration_invalid',
+  'maf_runtime_configuration_missing',
+  'maf_runtime_fetch_failed',
+  'maf_runtime_http_failed',
+  'maf_runtime_response_invalid',
+  'maf_runtime_url_invalid',
+]);
+
 @Injectable()
 export class ShadowReadinessReportService {
-  constructor(private readonly db: Pick<DatabaseService, 'client'>) {}
+  constructor(private readonly db: DatabaseService) {}
 
   async generateReport(params: GenerateShadowReadinessReportParams): Promise<ShadowReadinessReport> {
     const conditions = [eq(runtimeShadowDiagnostics.tenantId, params.tenantId)];
@@ -234,6 +302,7 @@ export function buildShadowReadinessReport(
   const sensitiveScenarioIds = new Set<string>();
   const validationReasonCodes = new Set<string>();
   const caseSummaries = new Map<string, MutableMigrationCaseSummary>();
+  const hasValidGateSummary = isValidGateStatus(params.gateSummary?.status);
 
   let validationFailures = 0;
   let comparisonFailures = 0;
@@ -251,8 +320,8 @@ export function buildShadowReadinessReport(
     const riskComparison = expectedObjectValue(diagnostic.riskComparison, 'riskComparison', diagnostic, blockers);
     const memoryComparison = expectedObjectValue(diagnostic.memoryComparison, 'memoryComparison', diagnostic, blockers);
     const actionComparison = expectedObjectValue(diagnostic.actionComparison, 'actionComparison', diagnostic, blockers);
-    const scenarioId = stringValue(validationDetails['scenarioId']);
-    const migrationCaseIds = stringArrayValue(validationDetails['migrationCaseIds']);
+    addMetricPayloadBlockers(diagnostic, blockers);
+    const { scenarioId, migrationCaseIds } = diagnosticEvidence(validationDetails, diagnostic, blockers);
 
     for (const caseId of migrationCaseIds) {
       observedCaseIds.add(caseId);
@@ -260,9 +329,21 @@ export function buildShadowReadinessReport(
         sensitiveScenarioIds.add(scenarioId);
       }
     }
-    for (const reasonCode of stringArrayValue(validationDetails['reasonCodes'])) {
-      if (isStableReasonCode(reasonCode)) {
+    for (const reasonCode of uniqueStrings(stringArrayValue(validationDetails['reasonCodes']))) {
+      if (isSafeValidationReasonCode(reasonCode)) {
         validationReasonCodes.add(reasonCode);
+        if (isPolicyRegressionReasonCode(reasonCode)) {
+          if (!scenarioId || migrationCaseIds.length === 0) {
+            addDiagnosticPayloadMalformedBlocker(diagnostic, blockers);
+          }
+          blockers.push({
+            reasonCode,
+            diagnosticId: diagnostic.id,
+            traceId: diagnostic.traceId,
+            scenarioId,
+            migrationCaseIds,
+          });
+        }
       } else {
         blockers.push({
           reasonCode: 'redaction_rejected',
@@ -339,7 +420,7 @@ export function buildShadowReadinessReport(
         migrationCaseIds,
       });
     }
-    memoryFalsePositiveCount += numericValue(memoryComparison['falsePositiveCount']);
+    memoryFalsePositiveCount += nonNegativeNumericValue(memoryComparison['falsePositiveCount']);
 
     if (isDifferentStatus(actionComparison['status'])) {
       actionDifferences += 1;
@@ -375,6 +456,7 @@ export function buildShadowReadinessReport(
         summary.criticalRiskFalseNegatives += 1;
       }
       summary.duplicateActionProposals += duplicateCount > 0 ? duplicateCount : isDuplicateActionStatus(actionComparison['status']) ? 1 : 0;
+      summary.memoryFalsePositiveCount += nonNegativeNumericValue(memoryComparison['falsePositiveCount']);
     }
   }
 
@@ -385,7 +467,7 @@ export function buildShadowReadinessReport(
   const missingCaseIds = requiredMigrationCaseIds.filter((caseId) => !observedCaseIds.has(caseId));
   const insufficientDataReasons =
     [
-      ...(params.gateSummary
+      ...(hasValidGateSummary
         ? []
         : [
             {
@@ -400,11 +482,11 @@ export function buildShadowReadinessReport(
 
   const manualReview = {
     requiredScenarioIds: uniqueStrings([
-      ...(params.gateSummary?.manualReview?.requiredScenarioIds ?? []),
+      ...(hasValidGateSummary ? (params.gateSummary?.manualReview?.requiredScenarioIds ?? []) : []),
       ...sensitiveScenarioIds,
     ]),
     requiredCaseIds: uniqueStrings([
-      ...(params.gateSummary?.manualReview?.requiredCaseIds ?? []),
+      ...(hasValidGateSummary ? (params.gateSummary?.manualReview?.requiredCaseIds ?? []) : []),
       ...[...observedCaseIds].filter(isSensitiveMigrationCaseId),
     ]),
   };
@@ -428,11 +510,12 @@ export function buildShadowReadinessReport(
       runtimeVersions: uniqueStrings(params.diagnostics.map((diagnostic) => diagnostic.runtimeVersion)),
       scenarioIds: uniqueStrings(
         params.diagnostics
-          .map((diagnostic) => stringValue(objectValue(diagnostic.validationDetails)['scenarioId']))
+          .map((diagnostic) => stableEvidenceId(objectValue(diagnostic.validationDetails)['scenarioId']))
           .filter(isNonEmptyString),
       ),
       migrationCaseIds: uniqueStrings([...observedCaseIds]),
       traceIds: uniqueStrings(params.diagnostics.map((diagnostic) => diagnostic.traceId)),
+      latestDiagnosticAt: latestDiagnosticAt(params.diagnostics),
     },
     quality: {
       validationFailures,
@@ -467,6 +550,90 @@ export function buildShadowReadinessReport(
     warnings,
     manualReview,
     insufficientDataReasons,
+  };
+}
+
+export function buildCanaryGateDecision(
+  params: BuildCanaryGateDecisionParams,
+): CanaryGateDecision {
+  const config = normalizeCanaryGateConfig(params.config);
+  const gateBlockers: ShadowReadinessReason[] = [];
+  const gateWarnings: ShadowReadinessReason[] = [];
+
+  if (params.report.status === 'manual_review_required') {
+    gateBlockers.push({
+      reasonCode: 'manual_review_required',
+      scenarioId: params.report.manualReview.requiredScenarioIds[0],
+      migrationCaseIds: params.report.manualReview.requiredCaseIds,
+    });
+  }
+
+  if (params.report.status === 'insufficient_data') {
+    gateBlockers.push({
+      reasonCode: 'insufficient_shadow_data',
+      migrationCaseIds: uniqueStrings(
+        params.report.insufficientDataReasons.flatMap((reason) => reason.migrationCaseIds),
+      ),
+    });
+  }
+
+  if (params.report.metadata.diagnosticCount > 0) {
+    addMetricEvidenceBlocker(params.report.metrics.latencyMs, params.report, gateBlockers);
+    addMetricEvidenceBlocker(params.report.metrics.estimatedCost, params.report, gateBlockers);
+    addStaleDiagnosticBlocker(params.report, config, gateBlockers);
+  }
+
+  const latencyGateValue = gateMetricValue(params.report.metrics.latencyMs);
+  if (latencyGateValue > config.maxLatencyMs) {
+    gateBlockers.push({
+      reasonCode: 'latency_threshold_exceeded',
+      count: params.report.metrics.latencyMs.count,
+    });
+  }
+
+  const costGateValue = gateMetricValue(params.report.metrics.estimatedCost);
+  if (costGateValue > config.maxEstimatedCost) {
+    gateBlockers.push({
+      reasonCode: 'cost_threshold_exceeded',
+      count: params.report.metrics.estimatedCost.count,
+    });
+  }
+
+  for (const migrationCase of params.report.migrationCases) {
+    if (
+      config.blockOnAnyMemoryFalsePositiveForSensitiveCases &&
+      migrationCase.memoryFalsePositiveCount > 0 &&
+      isSensitiveMigrationCaseId(migrationCase.migrationCaseId)
+    ) {
+      gateBlockers.push({
+        reasonCode: 'sensitive_memory_false_positive',
+        migrationCaseIds: [migrationCase.migrationCaseId],
+        count: migrationCase.memoryFalsePositiveCount,
+      });
+    }
+  }
+
+  const blockers = [...params.report.blockers, ...gateBlockers];
+  const warnings = [...params.report.warnings, ...gateWarnings];
+  const hasHardBlocker =
+    params.report.status === 'blocked' ||
+    params.report.blockers.length > 0 ||
+    gateBlockers.some((blocker) => isHardCanaryGateBlocker(blocker.reasonCode));
+  const status =
+    params.report.status === 'ready' && hasHardBlocker
+      ? 'blocked'
+      : hasHardBlocker
+        ? 'blocked'
+        : params.report.status;
+
+  return {
+    schemaVersion: 1,
+    status,
+    canaryEnabled: status === 'ready' && blockers.length === 0,
+    blockers,
+    warnings,
+    config,
+    report: params.report,
   };
 }
 
@@ -515,6 +682,7 @@ interface MutableMigrationCaseSummary {
   comparisonFailures: number;
   criticalRiskFalseNegatives: number;
   duplicateActionProposals: number;
+  memoryFalsePositiveCount: number;
 }
 
 function toReportRow(row: ShadowDiagnosticReportRow): ShadowDiagnosticReportRow {
@@ -536,6 +704,7 @@ function getMutableCaseSummary(
     comparisonFailures: 0,
     criticalRiskFalseNegatives: 0,
     duplicateActionProposals: 0,
+    memoryFalsePositiveCount: 0,
   };
   summaries.set(migrationCaseId, created);
   return created;
@@ -551,6 +720,7 @@ function toMigrationCaseSummary(summary: MutableMigrationCaseSummary): Migration
     comparisonFailures: summary.comparisonFailures,
     criticalRiskFalseNegatives: summary.criticalRiskFalseNegatives,
     duplicateActionProposals: summary.duplicateActionProposals,
+    memoryFalsePositiveCount: summary.memoryFalsePositiveCount,
     metrics: {
       latencyMs: summarizeMetric(summary.diagnostics.map((diagnostic) => diagnostic.latencyMs)),
       modelCallCount: summarizeMetric(summary.diagnostics.map((diagnostic) => diagnostic.modelCallCount)),
@@ -559,6 +729,127 @@ function toMigrationCaseSummary(summary: MutableMigrationCaseSummary): Migration
       estimatedCost: summarizeMetric(summary.diagnostics.map((diagnostic) => Number(diagnostic.estimatedCost))),
     },
   };
+}
+
+function normalizeCanaryGateConfig(config: Partial<CanaryGateConfig> | undefined): CanaryGateConfig {
+  return {
+    maxLatencyMs: positiveFiniteNumber(config?.maxLatencyMs) ?? DEFAULT_CANARY_GATE_CONFIG.maxLatencyMs,
+    maxEstimatedCost:
+      positiveFiniteNumber(config?.maxEstimatedCost) ?? DEFAULT_CANARY_GATE_CONFIG.maxEstimatedCost,
+    maxDiagnosticAgeMs:
+      positiveFiniteNumber(config?.maxDiagnosticAgeMs) ?? DEFAULT_CANARY_GATE_CONFIG.maxDiagnosticAgeMs,
+    blockOnAnyMemoryFalsePositiveForSensitiveCases:
+      config?.blockOnAnyMemoryFalsePositiveForSensitiveCases ??
+      DEFAULT_CANARY_GATE_CONFIG.blockOnAnyMemoryFalsePositiveForSensitiveCases,
+  };
+}
+
+function positiveFiniteNumber(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function gateMetricValue(metric: MetricSummary): number {
+  return metric.max;
+}
+
+function isHardCanaryGateBlocker(reasonCode: ShadowReadinessReasonCode): boolean {
+  return !['manual_review_required', 'insufficient_shadow_data'].includes(reasonCode);
+}
+
+function addMetricEvidenceBlocker(
+  metric: MetricSummary,
+  report: ShadowReadinessReport,
+  blockers: ShadowReadinessReason[],
+): void {
+  if (metric.count !== report.metadata.diagnosticCount) {
+    blockers.push({
+      reasonCode: 'insufficient_shadow_data',
+      count: metric.count,
+    });
+  }
+}
+
+function addStaleDiagnosticBlocker(
+  report: ShadowReadinessReport,
+  config: CanaryGateConfig,
+  blockers: ShadowReadinessReason[],
+): void {
+  const latestAt = report.metadata.latestDiagnosticAt ? Date.parse(report.metadata.latestDiagnosticAt) : NaN;
+  const generatedAt = Date.parse(report.generatedAt);
+  if (!Number.isFinite(latestAt) || !Number.isFinite(generatedAt)) {
+    blockers.push({ reasonCode: 'insufficient_shadow_data' });
+    return;
+  }
+
+  if (generatedAt - latestAt > config.maxDiagnosticAgeMs) {
+    blockers.push({
+      reasonCode: 'stale_shadow_diagnostics',
+      count: report.metadata.diagnosticCount,
+    });
+  }
+}
+
+function addMetricPayloadBlockers(
+  diagnostic: ShadowDiagnosticReportRow,
+  blockers: ShadowReadinessReason[],
+): void {
+  const metricValues = [
+    diagnostic.latencyMs,
+    diagnostic.modelCallCount,
+    diagnostic.toolCallCount,
+    diagnostic.retryCount,
+    Number(diagnostic.estimatedCost),
+  ];
+  if (metricValues.some((value) => !Number.isFinite(value) || value < 0)) {
+    blockers.push({
+      reasonCode: 'diagnostic_payload_malformed',
+      diagnosticId: diagnostic.id,
+      traceId: diagnostic.traceId,
+    });
+  }
+}
+
+function diagnosticEvidence(
+  validationDetails: Record<string, unknown>,
+  diagnostic: ShadowDiagnosticReportRow,
+  blockers: ShadowReadinessReason[],
+): { scenarioId: string | undefined; migrationCaseIds: string[] } {
+  const scenarioId = stableEvidenceId(validationDetails['scenarioId']);
+  const migrationCaseIds = knownMigrationCaseIds(validationDetails['migrationCaseIds']);
+
+  if (hasProvidedValue(validationDetails['scenarioId']) && !scenarioId) {
+    addRedactionRejectedBlocker(diagnostic, blockers);
+  }
+  if (
+    hasProvidedValue(validationDetails['migrationCaseIds']) &&
+    !hasOnlyKnownMigrationCaseIds(validationDetails['migrationCaseIds'])
+  ) {
+    addRedactionRejectedBlocker(diagnostic, blockers);
+  }
+
+  return { scenarioId, migrationCaseIds };
+}
+
+function addRedactionRejectedBlocker(
+  diagnostic: ShadowDiagnosticReportRow,
+  blockers: ShadowReadinessReason[],
+): void {
+  blockers.push({
+    reasonCode: 'redaction_rejected',
+    diagnosticId: diagnostic.id,
+    traceId: diagnostic.traceId,
+  });
+}
+
+function addDiagnosticPayloadMalformedBlocker(
+  diagnostic: ShadowDiagnosticReportRow,
+  blockers: ShadowReadinessReason[],
+): void {
+  blockers.push({
+    reasonCode: 'diagnostic_payload_malformed',
+    diagnosticId: diagnostic.id,
+    traceId: diagnostic.traceId,
+  });
 }
 
 function expectedObjectValue(
@@ -594,10 +885,6 @@ function stringArrayValue(value: unknown): string[] {
   return Array.isArray(value) ? value.filter(isNonEmptyString) : [];
 }
 
-function stringValue(value: unknown): string | undefined {
-  return isNonEmptyString(value) ? value : undefined;
-}
-
 function numericValue(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value !== '') {
@@ -605,6 +892,10 @@ function numericValue(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function nonNegativeNumericValue(value: unknown): number {
+  return Math.max(0, numericValue(value));
 }
 
 function booleanValue(value: unknown): boolean {
@@ -631,7 +922,40 @@ function isSensitiveMigrationCaseId(value: string): value is MigrationBaselineCa
 }
 
 function isStableReasonCode(value: string): boolean {
-  return /^[a-z0-9][a-z0-9_:-]{0,79}$/.test(value);
+  return /^[a-z0-9][a-z0-9_:-]{0,79}$/.test(value) && !containsSensitiveTokenMarker(value);
+}
+
+function isSafeValidationReasonCode(value: string): boolean {
+  return SAFE_VALIDATION_REASON_CODES.has(value) && isStableReasonCode(value);
+}
+
+function isPolicyRegressionReasonCode(value: string): value is ShadowReadinessReasonCode {
+  return POLICY_REGRESSION_REASON_CODES.has(value as ShadowReadinessReasonCode);
+}
+
+function stableEvidenceId(value: unknown): string | undefined {
+  return isNonEmptyString(value) && isStableReasonCode(value) ? value : undefined;
+}
+
+function knownMigrationCaseIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => isKnownMigrationCaseId(item))
+    : [];
+}
+
+function hasOnlyKnownMigrationCaseIds(value: unknown): boolean {
+  return Array.isArray(value) && value.every((item) => isKnownMigrationCaseId(item));
+}
+
+function isKnownMigrationCaseId(value: unknown): value is string {
+  return (
+    isNonEmptyString(value) &&
+    (REQUIRED_SHADOW_READINESS_MIGRATION_CASE_IDS as readonly string[]).includes(value)
+  );
+}
+
+function hasProvidedValue(value: unknown): boolean {
+  return value !== undefined && value !== null;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -640,6 +964,22 @@ function isNonEmptyString(value: unknown): value is string {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter(isNonEmptyString))];
+}
+
+function latestDiagnosticAt(diagnostics: readonly ShadowDiagnosticReportRow[]): string | null {
+  const latest = diagnostics
+    .map((diagnostic) => diagnostic.createdAt.getTime())
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+  return latest === undefined ? null : new Date(latest).toISOString();
+}
+
+function isValidGateStatus(value: string | undefined): boolean {
+  return value === 'passed' || value === 'failed' || value === 'manual_review_required';
+}
+
+function containsSensitiveTokenMarker(value: string): boolean {
+  return /(?:bearer|(?:^|[_:-])sk[-_:]|api[-_]?key|secret|token)/i.test(value);
 }
 
 function roundMetric(value: number): number {

@@ -1,0 +1,25 @@
+# Inert Railway service registration template for Story 4.5.
+# This file documents the intended service envelope; it is not a root
+# railway.toml and does not mutate existing Railway services.
+
+name = "agent-service"
+root_directory = "agent-service"
+dockerfile_path = "agent-service/Dockerfile"
+start_command = "python -m uvicorn agent_service.main:create_app --factory --host 0.0.0.0 --port ${AGENT_SERVICE_PORT:-8001}"
+healthcheck_path = "/health/ready"
+healthcheck_timeout_seconds = 5
+
+[env]
+AGENT_SERVICE_PORT = "8001"
+AGENT_SERVICE_ENVIRONMENT = "production"
+AGENT_SERVICE_LOG_LEVEL = "INFO"
+AGENT_SERVICE_TRACING_ENABLED = "false"
+AGENT_SERVICE_RUNTIME_STATE_BACKEND = "sqlite"
+AGENT_SERVICE_RUNTIME_STATE_SQLITE_PATH = "/data/agent-service/runtime-state.sqlite3"
+AGENT_SERVICE_NON_LOCAL_SHADOW_ENABLED = "true"
+AGENT_SERVICE_INTERNAL_SERVICE_IDENTITY = "agent-service"
+AGENT_SERVICE_INTERNAL_URL = "http://agent-service.railway.internal:8001"
+AGENT_SERVICE_INTERNAL_API_URL = "http://api.railway.internal:3000/api/v1"
+
+[secrets]
+AGENT_SERVICE_INTERNAL_SERVICE_AUTH_SECRET = "owned-by-platform-security"

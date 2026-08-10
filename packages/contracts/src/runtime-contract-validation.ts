@@ -1,3 +1,7 @@
+import schemaDocument from '../runtime/openapi.json';
+
+export const RUNTIME_OPENAPI_SCHEMA = schemaDocument as unknown;
+
 export type RuntimeContractValidationResult =
   | { ok: true }
   | {

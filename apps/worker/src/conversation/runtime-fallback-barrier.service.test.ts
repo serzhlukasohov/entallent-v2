@@ -27,7 +27,7 @@ describe('RuntimeFallbackBarrierService', () => {
     const ledger = createLedger({
       id: 'attempt-1',
       traceId: 'trace-1',
-      runtimeMode: 'maf_shadow',
+      runtimeMode: 'maf_primary',
       runtimeAttempt: 1,
       phase: 'actions_validated',
       failureReason: null,

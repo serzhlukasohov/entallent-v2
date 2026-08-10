@@ -1,6 +1,7 @@
 import type {
   ConversationMode,
   RiskDetection,
+  RuntimeContext,
   SituationClassification,
 } from '@entalent/contracts';
 
@@ -17,6 +18,14 @@ export interface ProcessMessageRequest {
   externalWorkspaceId: string;
   externalConversationId: string;
   traceId: string;
+  messageText?: string;
+  messageCreatedAt?: string;
+  userDisplayName?: string;
+  userTimezone?: string;
+  userLocale?: string;
+  conversationSessionKey?: string;
+  conversationThreadId?: string;
+  runtimeContext?: RuntimeContext;
 }
 
 export interface ProcessMessageResult {

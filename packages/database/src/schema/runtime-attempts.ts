@@ -51,7 +51,7 @@ export const runtimeAttempts = pgTable(
     phaseIdx: index('runtime_attempts_phase_idx').on(t.phase),
     runtimeModeCheck: check(
       'runtime_attempts_runtime_mode_check',
-      sql`${t.runtimeMode} in ('typescript', 'maf_shadow', 'maf_canary', 'maf_disabled')`,
+      sql`${t.runtimeMode} in ('typescript', 'maf_shadow', 'maf_canary', 'maf_primary', 'maf_disabled')`,
     ),
     phaseCheck: check(
       'runtime_attempts_phase_check',

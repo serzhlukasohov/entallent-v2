@@ -9,6 +9,7 @@ import { UsersModule } from './users/users.module';
 import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
 import { shouldMountDevModule } from './dev/dev-endpoints';
+import { InternalMafContextModule } from './internal-maf-context/internal-maf-context.module';
 
 const mountDevModule = shouldMountDevModule();
 
@@ -21,6 +22,7 @@ const mountDevModule = shouldMountDevModule();
     ChannelModule,
     UsersModule,
     AdminModule,
+    InternalMafContextModule,
     ...(mountDevModule ? [DevModule] : []),
   ],
 })

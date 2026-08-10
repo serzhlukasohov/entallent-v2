@@ -52,7 +52,7 @@ interface RedactedDiagnosticsFields {
 
 @Injectable()
 export class ShadowDiagnosticsRepository {
-  constructor(private readonly db: Pick<DatabaseService, 'client'>) {}
+  constructor(private readonly db: DatabaseService) {}
 
   async recordShadowDiagnostics(
     params: RecordShadowDiagnosticsParams,

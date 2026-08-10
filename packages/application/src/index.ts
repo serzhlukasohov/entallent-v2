@@ -28,7 +28,16 @@ export type { ConversationRecord, MessageRecord, WorkspaceConnectionRecord, Chan
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
-export type { AgentRuntimeDecision, AgentRuntimeDecisionSource, AgentRuntimeFallbackExecutor, AgentRuntimeMode, AgentRuntimeModeEvaluationResult, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions } from './use-cases/agent-runtime-router';
+export type { AgentRuntimeConfigurationDiagnostic, AgentRuntimeConfigurationDiagnosticRecorder, AgentRuntimeDecision, AgentRuntimeDecisionRecord, AgentRuntimeDecisionSource, AgentRuntimeFallbackExecutor, AgentRuntimeMode, AgentRuntimeModeEvaluationResult, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions, AgentRuntimeShadowCandidateRecord, AgentRuntimeShadowCandidateRecorder } from './use-cases/agent-runtime-router';
+export { MafAgentRuntimeClient, MafAgentRuntimeConfigurationError } from './use-cases/maf-agent-runtime-client';
+export type { MafAgentRuntimeCandidateProvider, MafAgentRuntimeClientOptions, MafAgentRuntimeClientOptionsSnapshot, MafAgentRuntimeDiagnostic, MafAgentRuntimeDiagnosticProvider, MafAgentRuntimeDiagnosticReasonCode, MafAgentRuntimeFetch } from './use-cases/maf-agent-runtime-client';
+export { MafPrimaryAgentRuntime } from './use-cases/maf-primary-agent-runtime';
+export { runMafShadowLocalValidation } from './use-cases/maf-shadow-local-validation';
+export type { MafShadowLocalValidationEvidence, MafShadowLocalValidationOptions, MafShadowLocalValidationStatus, RedactedMafShadowDiagnosticEvidence } from './use-cases/maf-shadow-local-validation';
+export { resolveMafShadowLiveSmokeEnv, runMafShadowLiveSmoke } from './use-cases/maf-shadow-live-smoke';
+export type { MafShadowLiveSmokeEnvResolution, MafShadowLiveSmokeEvidence, MafShadowLiveSmokeOptions, MafShadowLiveSmokeProvider, MafShadowLiveSmokeStatus, MafShadowLiveSmokeValidationStatus } from './use-cases/maf-shadow-live-smoke';
+export { runMafPrimaryLiveSmoke } from './use-cases/maf-primary-live-smoke';
+export type { MafPrimaryLiveSmokeEvidence, MafPrimaryLiveSmokeOptions, MafPrimaryLiveSmokeStatus, MafPrimaryLiveSmokeValidationStatus } from './use-cases/maf-primary-live-smoke';
 export { RuntimeFallbackBlockedError, classifyRuntimeFallbackBarrier, executeRuntimeFallbackIfAllowed } from './use-cases/runtime-fallback-barrier';
 export type { RuntimeFallbackBarrierAttemptState, RuntimeFallbackBarrierDecision, RuntimeFallbackBarrierPhase, RuntimeFallbackBarrierReasonCode, RuntimeFallbackBarrierStatus } from './use-cases/runtime-fallback-barrier';
 export { classifyRuntimeError, normalizeRuntimeRetryDiagnostics } from './use-cases/runtime-error-classifier';

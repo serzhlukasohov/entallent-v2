@@ -42,6 +42,7 @@ describe('AgentRuntimeModeResolver', () => {
       flagReader([
         RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_DISABLED,
         RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_SHADOW,
+        RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_PRIMARY,
         RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY,
       ]),
     );
@@ -57,6 +58,7 @@ describe('AgentRuntimeModeResolver', () => {
       flagReader(
         [
           RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_SHADOW,
+          RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_PRIMARY,
           RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY,
         ],
         true,
@@ -83,6 +85,34 @@ describe('AgentRuntimeModeResolver', () => {
     });
   });
 
+  it('resolves primary after shadow and before canary when primary is enabled', async () => {
+    const resolver = new AgentRuntimeModeResolver(
+      flagReader([
+        RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_PRIMARY,
+        RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY,
+      ]),
+    );
+
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
+      mode: 'maf_primary',
+      decisionSource: 'primary_flag',
+    });
+  });
+
+  it('keeps shadow precedence over primary for candidate validation', async () => {
+    const resolver = new AgentRuntimeModeResolver(
+      flagReader([
+        RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_SHADOW,
+        RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_PRIMARY,
+      ]),
+    );
+
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
+      mode: 'maf_shadow',
+      decisionSource: 'shadow_flag',
+    });
+  });
+
   it('resolves canary when canary is enabled without shadow', async () => {
     const resolver = new AgentRuntimeModeResolver(
       flagReader([RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY]),
@@ -92,6 +122,32 @@ describe('AgentRuntimeModeResolver', () => {
       mode: 'maf_canary',
       decisionSource: 'canary_flag',
     });
+  });
+
+  it('passes workspace context into canary flag evaluation', async () => {
+    const runtimeControls: RuntimeControlFlagPort = {
+      isEnabled: vi.fn((key: string, context: FeatureFlagContext) =>
+        Promise.resolve(
+          key === RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY &&
+            context.externalWorkspaceId === 'workspace-1',
+        ),
+      ),
+      isUserDenylisted: vi.fn((_context: FeatureFlagContext) => Promise.resolve(false)),
+    };
+    const resolver = new AgentRuntimeModeResolver(runtimeControls);
+
+    await expect(resolver.resolveDecision(REQUEST)).resolves.toEqual({
+      mode: 'maf_canary',
+      decisionSource: 'canary_flag',
+    });
+    expect(runtimeControls.isEnabled).toHaveBeenCalledWith(
+      RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY,
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        externalWorkspaceId: 'workspace-1',
+      }),
+    );
   });
 
   it('propagates flag failures so the router can fail closed with warning context', async () => {

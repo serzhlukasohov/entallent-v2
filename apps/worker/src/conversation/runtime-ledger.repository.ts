@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { and, eq, or } from 'drizzle-orm';
 import { runtimeActions, runtimeAttempts } from '@entalent/database';
 import type { DbRuntimeAction, DbRuntimeAttempt } from '@entalent/database';
@@ -13,7 +13,7 @@ export type RuntimeLedgerPhase =
   | 'reply_committed'
   | 'failed';
 
-export type RuntimeLedgerMode = 'typescript' | 'maf_shadow' | 'maf_canary' | 'maf_disabled';
+export type RuntimeLedgerMode = 'typescript' | 'maf_shadow' | 'maf_canary' | 'maf_primary' | 'maf_disabled';
 
 export interface RecordStartedAttemptParams {
   tenantId: string;
@@ -56,9 +56,24 @@ export interface RuntimeFallbackAttemptState {
 
 @Injectable()
 export class RuntimeLedgerRepository {
-  constructor(private readonly db: Pick<DatabaseService, 'client'>) {}
+  private readonly logger = new Logger(RuntimeLedgerRepository.name);
+
+  constructor(private readonly db: DatabaseService) {}
 
   async recordStartedAttempt(params: RecordStartedAttemptParams): Promise<DbRuntimeAttempt> {
+    const runtimeMode = normalizeRuntimeModeForInsert(params.runtimeMode);
+    if (!runtimeMode) {
+      this.logger.warn('Runtime ledger start attempt rejected: invalid runtime mode', {
+        runtimeMode: params.runtimeMode,
+        tenantId: params.tenantId,
+        requestId: params.requestId,
+        eventId: params.eventId,
+        messageId: params.messageId,
+        runtimeAttempt: params.runtimeAttempt,
+      });
+      throw new Error('runtime_attempt_invalid_mode');
+    }
+
     const now = new Date();
     const [attempt] = await this.db.client
       .insert(runtimeAttempts)
@@ -69,7 +84,7 @@ export class RuntimeLedgerRepository {
         messageId: params.messageId,
         runtimeAttempt: params.runtimeAttempt,
         traceId: params.traceId,
-        runtimeMode: params.runtimeMode,
+        runtimeMode,
         phase: 'started',
         failureReason: null,
         updatedAt: now,
@@ -475,3 +490,32 @@ const runtimeLedgerPhaseRanks: Record<RuntimeLedgerPhase, number> = {
   reply_committed: 4,
   failed: 4,
 };
+
+const runtimeModeAliases: Record<string, RuntimeLedgerMode> = {
+  ts: 'typescript',
+  typescript: 'typescript',
+  shadow: 'maf_shadow',
+  canary: 'maf_canary',
+  primary: 'maf_primary',
+  disabled: 'maf_disabled',
+};
+
+function normalizeRuntimeModeForInsert(runtimeMode: RuntimeLedgerMode): RuntimeLedgerMode | null {
+  const normalized = runtimeMode.trim().toLowerCase();
+
+  if (runtimeModeAliases[normalized]) {
+    return runtimeModeAliases[normalized];
+  }
+
+  if (
+    normalized === 'typescript' ||
+    normalized === 'maf_shadow' ||
+    normalized === 'maf_canary' ||
+    normalized === 'maf_primary' ||
+    normalized === 'maf_disabled'
+  ) {
+    return normalized as RuntimeLedgerMode;
+  }
+
+  return null;
+}

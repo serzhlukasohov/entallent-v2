@@ -383,6 +383,7 @@ function baseErrorInput(): RuntimeErrorInput {
   return {
     traceId: 'trace-1',
     runtimeAttempt: 1,
+    barrierDecision: OPEN_BARRIER,
     retryDiagnostics: {
       traceId: 'trace-1',
       runtimeAttempt: 1,

@@ -1,10 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { AGENT_RUNTIME_PORT, ProactiveCheckInUseCase } from '@entalent/application';
 import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/application';
-import { tenants } from '@entalent/database';
+import { messages, tenants, users } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
 import { DatabaseService } from '../database/database.service';
@@ -96,9 +97,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     let status: 'success' | 'error' = 'success';
 
     try {
+      const mafCandidateContext = await this.loadMafCandidateContext(job.data);
       const result = await this.agentRuntime.processMessage({
         requestId: job.data.requestId,
-        eventId: job.data.eventId,
+        eventId: normalizeMafRuntimeEventId(job.data.eventId, job.data.requestId),
         runtimeAttempt: runtimeAttemptNumberFromJob(job),
         messageId: job.data.messageId,
         conversationId: job.data.conversationId,
@@ -107,6 +109,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         externalWorkspaceId: job.data.externalWorkspaceId,
         externalConversationId: job.data.externalConversationId,
         traceId: job.data.traceId,
+        ...mafCandidateContext,
       });
 
       this.logger.log(
@@ -132,8 +135,136 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         });
     }
   }
+
+  private async loadMafCandidateContext(
+    job: ConversationJob,
+  ): Promise<Partial<Parameters<AgentRuntimePort['processMessage']>[0]>> {
+    try {
+      const [currentMessage] = await this.db.client
+        .select({
+          text: messages.text,
+          occurredAt: messages.occurredAt,
+          externalThreadId: messages.externalThreadId,
+          userPreferredName: users.preferredName,
+          userTimezone: users.timezone,
+          userLocale: users.locale,
+        })
+        .from(messages)
+        .leftJoin(users, and(eq(users.id, messages.userId), eq(users.tenantId, messages.tenantId)))
+        .where(
+          and(
+            eq(messages.id, job.messageId),
+            eq(messages.tenantId, job.tenantId),
+            eq(messages.conversationId, job.conversationId),
+            eq(messages.userId, job.userId),
+            isNull(messages.deletedAt),
+          ),
+        )
+        .limit(1);
+
+      if (!currentMessage) {
+        return {};
+      }
+
+      const recentRows = await this.db.client
+        .select({
+          text: messages.text,
+          senderType: messages.senderType,
+          direction: messages.direction,
+          occurredAt: messages.occurredAt,
+        })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.tenantId, job.tenantId),
+            eq(messages.conversationId, job.conversationId),
+            isNull(messages.deletedAt),
+            threadScopePredicate(currentMessage.externalThreadId),
+          ),
+        )
+        .orderBy(desc(messages.occurredAt))
+        .limit(8);
+
+      const threadId = normalizeOptionalString(currentMessage.externalThreadId);
+      return {
+        messageText: currentMessage.text,
+        messageCreatedAt: toIsoString(currentMessage.occurredAt),
+        eventId: normalizeMafRuntimeEventId(job.eventId, job.requestId),
+        userDisplayName: normalizeOptionalString(currentMessage.userPreferredName),
+        userTimezone: normalizeOptionalString(currentMessage.userTimezone),
+        userLocale: normalizeOptionalString(currentMessage.userLocale),
+        conversationThreadId: threadId,
+        conversationSessionKey: [
+          job.externalWorkspaceId,
+          job.userId,
+          job.externalConversationId,
+          threadId ?? 'dm',
+        ].join(':'),
+        runtimeContext: {
+          recentTurns: recentRows
+            .slice()
+            .reverse()
+            .flatMap((row) => toRecentTurn(row)),
+          memoryItems: [],
+          goals: [],
+        },
+      };
+    } catch {
+      return {};
+    }
+  }
 }
 
 export function runtimeAttemptNumberFromJob(job: Pick<Job, 'attemptsMade'>): number {
   return job.attemptsMade + 1;
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeMafRuntimeEventId(eventId: string | undefined, fallbackEventId?: string): string | undefined {
+  if (eventId && eventIdRegex.test(eventId)) {
+    return eventId;
+  }
+
+  return fallbackEventId && eventIdRegex.test(fallbackEventId) ? fallbackEventId : undefined;
+}
+
+const eventIdRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function toIsoString(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function threadScopePredicate(externalThreadId: string | null): SQL {
+  const threadId = normalizeOptionalString(externalThreadId);
+  return threadId ? eq(messages.externalThreadId, threadId) : isNull(messages.externalThreadId);
+}
+
+function toRecentTurn(row: {
+  text: string;
+  senderType: string;
+  direction: string;
+  occurredAt: Date | string;
+}): Array<{
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}> {
+  const content = row.text.trim();
+  if (!content) {
+    return [];
+  }
+
+  try {
+    return [{
+      role: row.senderType === 'agent' || row.direction === 'outbound' ? 'assistant' : 'user',
+      content,
+      timestamp: toIsoString(row.occurredAt),
+    }];
+  } catch {
+    return [];
+  }
 }

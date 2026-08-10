@@ -204,8 +204,11 @@ describe('SurveyEvidenceExtractionUseCase', () => {
   it('completing a group upserts pending_confirmation', async () => {
     const surveyRepo = makeSurveyRepo('scored');
     // group of one question fully covered
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (surveyRepo.findQuestionsForWindow as any).mockResolvedValue([makeQuestion('q-1', 'autonomy')]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (surveyRepo.findAssessmentsForWindow as any).mockResolvedValue([{ surveyQuestionId: 'q-1', status: 'scored' }]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (surveyRepo.findGroupState as any).mockResolvedValue(null);
 
     const useCase = new SurveyEvidenceExtractionUseCase(

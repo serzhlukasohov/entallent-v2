@@ -138,6 +138,26 @@ describeIntegration('Runtime ledger schema (integration)', () => {
     ).rejects.toThrow();
   });
 
+  it('accepts maf_primary runtime mode in runtime_attempts', async () => {
+    const { db } = getTestDb();
+
+    const [attempt] = await db
+      .insert(runtimeAttempts)
+      .values({
+        tenantId,
+        requestId: 'request-runtime-ledger-primary-integration',
+        eventId: 'event-runtime-ledger-primary-integration',
+        messageId,
+        runtimeAttempt: 1,
+        traceId: 'trace-runtime-ledger-primary-integration',
+        runtimeMode: 'maf_primary',
+        phase: 'started',
+      })
+      .returning();
+
+    expect(attempt?.runtimeMode).toBe('maf_primary');
+  });
+
   it('updates required attempt phases', async () => {
     const { db } = getTestDb();
 

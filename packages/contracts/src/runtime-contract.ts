@@ -1,3 +1,5 @@
+import type { SituationClassification } from './ai';
+
 export type RuntimeJsonPrimitive = string | number | boolean | null;
 export type RuntimeJsonValue =
   | RuntimeJsonPrimitive
@@ -74,6 +76,7 @@ export type RuntimeResult = {
   riskAssessment?: RuntimeRiskAssessment;
   memoryCandidates: RuntimeMemoryCandidate[];
   proposedActions: RuntimeActionProposal[];
+  classification: SituationClassification;
   diagnostics: RuntimeDiagnostics;
 };
 

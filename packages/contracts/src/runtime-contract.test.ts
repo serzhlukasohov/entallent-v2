@@ -8,6 +8,7 @@ import type {
   RuntimeResult,
 } from './index';
 import {
+  RUNTIME_OPENAPI_SCHEMA,
   validateRuntimeContract,
   validateRuntimeErrorResponse,
   validateRuntimeProcessMessageRequest,
@@ -67,6 +68,10 @@ describe('Runtime contract DTO exports', () => {
 });
 
 describe('Runtime contract fixtures', () => {
+  it('exports the canonical runtime OpenAPI schema document for runtime boundary validators', () => {
+    expect(RUNTIME_OPENAPI_SCHEMA).toEqual(schemaDocument);
+  });
+
   it('validates named runtime contract schemas through OpenAPI', () => {
     expect(
       validateRuntimeProcessMessageRequest({

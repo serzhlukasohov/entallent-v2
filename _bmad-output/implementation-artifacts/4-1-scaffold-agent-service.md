@@ -4,7 +4,7 @@ baseline_commit: 53c12f2
 
 # Story 4.1: Scaffold `agent-service`
 
-Status: review
+Status: done
 Epic: 4 - Deployable Python Agent Service Foundation
 Story ID: 4.1
 
@@ -54,6 +54,12 @@ so that MAF runtime work has a deployable home.
   - [x] Run a local liveness check against `/health/live` if the dev server can start in the sandbox.
   - [x] Run `git diff --check`.
   - [x] Run `pnpm test` only if TypeScript package metadata or root workspace behavior is changed; otherwise record why it was not needed.
+
+### Review Findings
+
+- [x] [Review][Patch] OpenTelemetry service-name setting ignores field-name overrides and the service-prefixed environment variable [`agent-service/src/agent_service/infrastructure/settings.py:18`]
+- [x] [Review][Patch] Scaffold exposes FastAPI docs/OpenAPI endpoints beyond the liveness route [`agent-service/src/agent_service/main.py:9`]
+- [x] [Review][Patch] Scope regression test is narrower than the story's required guardrails [`agent-service/tests/unit/test_scope.py:7`]
 
 ## Dev Notes
 
@@ -212,6 +218,12 @@ GPT-5 Codex
 - Verification: local `uvicorn` liveness run required sandbox escalation for local port binding; `curl -sS http://127.0.0.1:8001/health/live` returned `{"status":"healthy","service":"agent-service","version":"0.1.0"}`.
 - Verification: `git diff --check` passed.
 - Root `pnpm test` was not run for this implementation because no TypeScript package metadata, root workspace config, or TypeScript runtime behavior changed.
+- BMAD code review found three scoped patch items: OpenTelemetry settings alias behavior, default FastAPI docs/OpenAPI route exposure, and incomplete scope regression guardrails.
+- Review verification: `.venv/bin/python -m pytest` passed with 9 tests; FastAPI emitted the same non-blocking Starlette `httpx` deprecation warning.
+- Review verification: `.venv/bin/python -m ruff check .` passed.
+- Review verification: `.venv/bin/python -m mypy src tests` passed.
+- Review verification: `git diff --check` passed.
+- Review verification: local `uvicorn` liveness check returned `{"status":"healthy","service":"agent-service","version":"0.1.0"}`; `/docs` and `/openapi.json` returned 404.
 
 ### Completion Notes List
 
@@ -222,6 +234,7 @@ GPT-5 Codex
 - Added `/health/live` only; no runtime endpoint, readiness endpoint, MAF workflow, internal auth, durable state, Docker/deployment envelope, TypeScript client, routing, canary, or UI work was added.
 - Added deterministic unit and scope tests plus ruff/mypy configuration in `agent-service/pyproject.toml`.
 - Added `agent-service/.gitignore` to keep `.venv` and Python caches out of version control.
+- Review patches applied for settings override behavior, liveness-only FastAPI surface, and broader scope regression coverage.
 
 ### File List
 

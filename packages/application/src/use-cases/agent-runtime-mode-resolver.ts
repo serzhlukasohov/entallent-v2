@@ -39,6 +39,13 @@ export class AgentRuntimeModeResolver {
       };
     }
 
+    if (await this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_PRIMARY, context)) {
+      return {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      };
+    }
+
     if (await this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_CANARY, context)) {
       return {
         mode: 'maf_canary',
@@ -61,5 +68,6 @@ function toFeatureFlagContext(request: ProcessMessageRequest): FeatureFlagContex
   return {
     tenantId: request.tenantId,
     userId: request.userId,
+    externalWorkspaceId: request.externalWorkspaceId,
   };
 }

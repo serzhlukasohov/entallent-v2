@@ -6,7 +6,9 @@
     "type": "burnout_signal",
     "severity": "medium",
     "confidence": 1.2,
-    "evidence": ["Synthetic evidence."],
+    "evidence": [
+      "Synthetic evidence."
+    ],
     "immediateResponseRequired": false,
     "escalationRecommended": false,
     "surveyMustBeBlocked": false,
@@ -25,5 +27,19 @@
     "modelRetryCount": 0,
     "toolRetryCount": 0,
     "httpRetryCount": 0
+  },
+  "classification": {
+    "primaryIntent": "support",
+    "secondaryIntents": [],
+    "emotionalState": [],
+    "urgency": "low",
+    "confidence": 0.83,
+    "requiresSafetyCheck": false,
+    "surveyAllowed": true,
+    "reasoningSummary": "Synthetic classification generated for deterministic fixture.",
+    "reminderRequest": null,
+    "dialogueAct": "new_substance",
+    "latestUserSubstance": "Synthetic classification context.",
+    "topicAnchor": null
   }
 }

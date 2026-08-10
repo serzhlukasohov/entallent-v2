@@ -6,15 +6,20 @@ import {
 } from './runtime-fallback-barrier';
 
 describe('classifyRuntimeFallbackBarrier', () => {
-  it.each(['started', 'candidate_received', 'actions_validated', 'failed'] as const)(
-    'allows fallback before committed side effects for %s',
-    (phase) => {
+  it.each([
+    ['maf_shadow', 'started'],
+    ['maf_canary', 'candidate_received'],
+    ['maf_primary', 'actions_validated'],
+    ['maf_primary', 'failed'],
+  ] as const)(
+    'allows fallback for %s before committed side effects for %s',
+    (runtimeMode, phase) => {
       expect(
         classifyRuntimeFallbackBarrier({
           id: 'attempt-1',
           traceId: 'trace-1',
           runtimeAttempt: 1,
-          runtimeMode: 'maf_shadow',
+          runtimeMode,
           phase,
           failureReason: null,
         }),

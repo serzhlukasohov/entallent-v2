@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { ShadowDiagnosticsRepository } from './shadow-diagnostics.repository';
@@ -222,10 +222,35 @@ describe('ShadowDiagnosticsRepository', () => {
     expect(JSON.stringify(persisted)).not.toContain('raw validator summary');
   });
 
-  it('does not introduce out-of-scope MAF service or client files', () => {
+  it('supports Story 9.1 user-facing canary runtime through the primary adapter', () => {
     const repoRoot = join(process.cwd(), '../..');
+    const routerSource = join(
+      repoRoot,
+      'packages/application/src/use-cases/agent-runtime-router.ts',
+    );
+    const mafClientSource = join(
+      repoRoot,
+      'packages/application/src/use-cases/maf-agent-runtime-client.ts',
+    );
+    const workerModuleSource = join(repoRoot, 'apps/worker/src/conversation/conversation.module.ts');
 
-    expect(existsSync(join(repoRoot, 'agent-service'))).toBe(false);
-    expect(existsSync(join(repoRoot, 'packages/application/src/use-cases/maf-agent-runtime-client.ts'))).toBe(false);
+    expect(existsSync(join(repoRoot, 'agent-service'))).toBe(true);
+    expect(existsSync(mafClientSource)).toBe(true);
+    expect(existsSync(routerSource)).toBe(true);
+    expect(existsSync(workerModuleSource)).toBe(true);
+
+    const router = readFileSync(routerSource, 'utf8');
+    const mafClient = readFileSync(mafClientSource, 'utf8');
+    const workerModule = readFileSync(workerModuleSource, 'utf8');
+
+    expect(mafClient).toContain('/runtime/process-message');
+    expect(router).toContain("decision.mode === 'maf_primary' || decision.mode === 'maf_canary'");
+    expect(router).toContain('this.mafRuntime.processCandidate(request)');
+    expect(router).toContain('this.mafRuntime.getConfigurationDiagnostic(request)');
+    expect(workerModule).toContain('recordShadowCandidate');
+    expect(workerModule).toContain('ShadowDiagnosticsRepository');
+    expect(workerModule).toContain('recordActionEnvelopes');
+    expect(workerModule).toContain('recordCandidateReceived');
+    expect(existsSync(join(repoRoot, 'apps/dashboard/src/shadow-readiness-report.tsx'))).toBe(false);
   });
 });

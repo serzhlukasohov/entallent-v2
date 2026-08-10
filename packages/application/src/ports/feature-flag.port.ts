@@ -9,12 +9,14 @@ export const FEATURE_FLAGS = {
   MAF_RUNTIME_DISABLED: 'maf_runtime_disabled',
   MAF_RUNTIME_SHADOW: 'maf_runtime_shadow',
   MAF_RUNTIME_CANARY: 'maf_runtime_canary',
+  MAF_RUNTIME_PRIMARY: 'maf_runtime_primary',
   MAF_RUNTIME_USER_DENYLIST: 'maf_runtime_user_denylist',
 } as const;
 
 export const RUNTIME_CONTROL_FLAGS = {
   MAF_RUNTIME_DISABLED: FEATURE_FLAGS.MAF_RUNTIME_DISABLED,
   MAF_RUNTIME_SHADOW: FEATURE_FLAGS.MAF_RUNTIME_SHADOW,
+  MAF_RUNTIME_PRIMARY: FEATURE_FLAGS.MAF_RUNTIME_PRIMARY,
   MAF_RUNTIME_CANARY: FEATURE_FLAGS.MAF_RUNTIME_CANARY,
   MAF_RUNTIME_USER_DENYLIST: FEATURE_FLAGS.MAF_RUNTIME_USER_DENYLIST,
 } as const;
@@ -25,6 +27,7 @@ export type RuntimeControlFlagKey = (typeof RUNTIME_CONTROL_FLAGS)[keyof typeof 
 export interface FeatureFlagContext {
   tenantId: string;
   userId?: string;
+  externalWorkspaceId?: string;
 }
 
 export interface FeatureFlagPort {

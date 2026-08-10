@@ -4,8 +4,11 @@ import { StyleAnalysisUseCase } from './style-analysis.use-case';
 const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i}`, direction: i % 2 === 0 ? 'inbound' : 'outbound', text: `msg ${i}`, occurredAt: new Date(), conversationId: 'c', tenantId: 't', userId: 'u', createdAt: new Date() }));
 
 function deps(userMsgs: number) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const conversationRepo = { findRecentMessages: vi.fn().mockResolvedValue(msgs(userMsgs * 2)) } as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ai = { analyzeStyle: vi.fn().mockResolvedValue({ dimensions: { register: 1, humor: 1, verbosity: 1, emoji: 1 }, phrases: ['eh, so-so'] }) } as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const styleRepo = { findByUser: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockImplementation(async (p) => p) } as any;
   return { conversationRepo, ai, styleRepo };
 }
