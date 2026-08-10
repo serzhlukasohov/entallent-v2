@@ -12,7 +12,8 @@ DEFAULT_ERROR_CATEGORY = "CONTRACT_SCHEMA_INVALID"
 MAX_SCHEMA_DEPTH = 64
 REPO_ROOT = Path(__file__).resolve().parents[4]
 RUNTIME_CONTRACT_ROOT = REPO_ROOT / "packages/contracts/runtime"
-OPENAPI_SCHEMA_PATH = RUNTIME_CONTRACT_ROOT / "openapi.json"
+REPO_OPENAPI_SCHEMA_PATH = RUNTIME_CONTRACT_ROOT / "openapi.json"
+PACKAGED_OPENAPI_SCHEMA_PATH = Path(__file__).with_name("openapi.json")
 
 
 class RuntimeContractValidationSuccess(TypedDict):
@@ -33,7 +34,21 @@ RuntimeContractValidationResult = (
 
 @lru_cache(maxsize=1)
 def read_runtime_schema_document() -> dict[str, Any]:
-    document = json.loads(OPENAPI_SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema_path = next(
+        (
+            path
+            for path in (REPO_OPENAPI_SCHEMA_PATH, PACKAGED_OPENAPI_SCHEMA_PATH)
+            if path.exists()
+        ),
+        None,
+    )
+    if schema_path is None:
+        raise FileNotFoundError(
+            "Runtime OpenAPI schema document not found at "
+            f"{REPO_OPENAPI_SCHEMA_PATH} or {PACKAGED_OPENAPI_SCHEMA_PATH}"
+        )
+
+    document = json.loads(schema_path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise ValueError("Runtime OpenAPI schema document must be a JSON object")
     return document
