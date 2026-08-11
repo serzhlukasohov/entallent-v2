@@ -161,9 +161,22 @@ describe('ConversationProcessor runtime ledger recording', () => {
         },
       ]),
     };
+    const memoryQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [
+        {
+          id: 'memory-1',
+          category: 'project_context',
+          content: 'The project codename is Север-17.',
+          importance: '0.80',
+        },
+      ]),
+    };
     const db = {
       client: {
-        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery),
+        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
       },
     };
     const processor = new ConversationProcessor(
@@ -201,10 +214,17 @@ describe('ConversationProcessor runtime ledger recording', () => {
             timestamp: '2026-08-06T18:00:00.000Z',
           },
         ],
-        memoryItems: [],
+        memoryItems: [
+          {
+            id: 'memory-1',
+            category: 'project_context',
+            content: 'The project codename is Север-17.',
+            importance: 0.8,
+          },
+        ],
         goals: [],
       },
     }));
-    expect(db.client.select).toHaveBeenCalledTimes(2);
+    expect(db.client.select).toHaveBeenCalledTimes(3);
   });
 });

@@ -5,7 +5,7 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { AGENT_RUNTIME_PORT, ProactiveCheckInUseCase } from '@entalent/application';
 import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/application';
-import { messages, tenants, users } from '@entalent/database';
+import { memoryItems, messages, tenants, users } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
 import { DatabaseService } from '../database/database.service';
@@ -185,6 +185,24 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         .orderBy(desc(messages.occurredAt))
         .limit(8);
 
+      const memoryRows = await this.db.client
+        .select({
+          id: memoryItems.id,
+          category: memoryItems.category,
+          content: memoryItems.content,
+          importance: memoryItems.importance,
+        })
+        .from(memoryItems)
+        .where(
+          and(
+            eq(memoryItems.tenantId, job.tenantId),
+            eq(memoryItems.userId, job.userId),
+            eq(memoryItems.status, 'active'),
+          ),
+        )
+        .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt))
+        .limit(12);
+
       const threadId = normalizeOptionalString(currentMessage.externalThreadId);
       return {
         messageText: currentMessage.text,
@@ -205,7 +223,12 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
             .slice()
             .reverse()
             .flatMap((row) => toRecentTurn(row)),
-          memoryItems: [],
+          memoryItems: memoryRows.map((row) => ({
+            id: row.id,
+            category: row.category,
+            content: row.content,
+            importance: Number(row.importance),
+          })),
           goals: [],
         },
       };
