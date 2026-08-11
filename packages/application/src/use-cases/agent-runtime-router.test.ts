@@ -276,7 +276,7 @@ describe('AgentRuntimeRouter', () => {
     expect(JSON.stringify(primarySuccessRecord)).not.toContain('raw primary reply');
   });
 
-  it('falls back to TypeScript before side effects when primary MAF reports a safe failure', async () => {
+  it('fails closed when primary MAF reports a safe failure', async () => {
     const primaryError = new Error('provider failed');
     Object.assign(primaryError, {
       safeDiagnostic: {
@@ -305,7 +305,7 @@ describe('AgentRuntimeRouter', () => {
       logger,
     });
 
-    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+    await expect(router.processMessage(REQUEST)).rejects.toBe(primaryError);
 
     expect(recordPrimaryFailure).toHaveBeenCalledWith({
       request: REQUEST,
@@ -318,17 +318,17 @@ describe('AgentRuntimeRouter', () => {
       },
       runtimeAttemptId: 'attempt-1',
     });
-    expect(executeFallback).toHaveBeenCalledWith(REQUEST, expect.any(Function));
-    expect(logger.warn).toHaveBeenCalledWith('MAF primary failed before commit; falling back to TypeScript runtime', {
+    expect(executeFallback).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith('MAF primary failed before commit; failing closed', {
       traceId: 'trace-1',
       mode: 'maf_primary',
       decisionSource: 'primary_flag',
       fallbackReason: 'maf_runtime_fetch_failed',
     });
-    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
   });
 
-  it('fails proactive primary check-ins closed instead of falling back when primary MAF reports a safe failure', async () => {
+  it('fails proactive primary check-ins closed when primary MAF reports a safe failure', async () => {
     const primaryError = new Error('provider failed');
     Object.assign(primaryError, {
       safeDiagnostic: {
@@ -360,9 +360,7 @@ describe('AgentRuntimeRouter', () => {
       executeFallback,
     });
 
-    await expect(router.processMessage(proactiveRequest)).rejects.toThrow(
-      'maf_proactive_primary_runtime_unavailable',
-    );
+    await expect(router.processMessage(proactiveRequest)).rejects.toBe(primaryError);
 
     expect(recordPrimaryFailure).toHaveBeenCalledWith({
       request: proactiveRequest,
@@ -376,6 +374,41 @@ describe('AgentRuntimeRouter', () => {
       runtimeAttemptId: 'attempt-1',
     });
     expect(executeFallback).not.toHaveBeenCalled();
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
+  });
+
+  it('preserves the primary MAF error when generic failure recording throws', async () => {
+    const primaryError = new Error('provider failed');
+    Object.assign(primaryError, {
+      safeDiagnostic: {
+        reasonCode: 'maf_runtime_fetch_failed',
+      },
+    });
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafPrimaryRuntime = {
+      processMessage: vi.fn().mockRejectedValue(primaryError),
+    };
+    const recordFailure = vi.fn(async () => {
+      throw new Error('failure recorder unavailable');
+    });
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      mafPrimaryRuntime,
+      recordFailure,
+    });
+
+    await expect(router.processMessage(REQUEST)).rejects.toBe(primaryError);
+
+    expect(recordFailure).toHaveBeenCalledWith(
+      REQUEST,
+      {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      },
+      primaryError,
+    );
     expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
   });
 
@@ -401,19 +434,26 @@ describe('AgentRuntimeRouter', () => {
     expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
   });
 
-  it('records a configuration diagnostic and falls back when primary MAF config is missing', async () => {
+  it('records diagnostics and fails closed when primary MAF config is missing', async () => {
     const typescriptRuntime = {
       processMessage: vi.fn().mockResolvedValue(RESULT),
     } as unknown as TypeScriptAgentRuntime;
     const recordConfigurationDiagnostic = vi.fn(async () => undefined);
+    const recordPrimaryFailure = vi.fn(async () => undefined);
+    const executeFallback = vi.fn(async <T>(
+      _request: ProcessMessageRequest,
+      fallback: () => Promise<T> | T,
+    ): Promise<T> => fallback()) as AgentRuntimeFallbackExecutor;
     const mafRuntime = new MafAgentRuntimeClient({ fetch: vi.fn() });
     const router = new AgentRuntimeRouter(typescriptRuntime, {
       evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
       mafRuntime,
       recordConfigurationDiagnostic,
+      recordPrimaryFailure,
+      executeFallback,
     });
 
-    await expect(router.processMessage(REQUEST)).resolves.toBe(RESULT);
+    await expect(router.processMessage(REQUEST)).rejects.toThrow('maf_runtime_configuration_missing');
 
     expect(recordConfigurationDiagnostic).toHaveBeenCalledWith({
       mode: 'maf_primary',
@@ -421,7 +461,19 @@ describe('AgentRuntimeRouter', () => {
       reasonCode: 'maf_runtime_configuration_missing',
       missingConfigKeys: ['AGENT_SERVICE_INTERNAL_URL'],
     });
-    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+    expect(recordPrimaryFailure).toHaveBeenCalledWith({
+      request: REQUEST,
+      decision: {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      },
+      diagnostic: {
+        reasonCode: 'maf_runtime_configuration_missing',
+        missingConfigKeys: ['AGENT_SERVICE_INTERNAL_URL'],
+      },
+    });
+    expect(executeFallback).not.toHaveBeenCalled();
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -467,7 +519,7 @@ describe('AgentRuntimeRouter', () => {
         invalidFields: expect.any(Array),
       },
     },
-  ])('falls back through the primary adapter for $name before TypeScript commits', async ({
+  ])('fails closed through the primary adapter for $name before TypeScript commits', async ({
     client,
     expectedDiagnostic,
   }) => {
@@ -487,7 +539,7 @@ describe('AgentRuntimeRouter', () => {
       mafPrimaryRuntime: createPrimaryRuntime(client),
     });
 
-    await expect(router.processMessage(PRIMARY_REQUEST)).resolves.toBe(RESULT);
+    await expect(router.processMessage(PRIMARY_REQUEST)).rejects.toThrow(expectedDiagnostic.reasonCode);
 
     expect(recordPrimaryFailure).toHaveBeenCalledWith({
       request: PRIMARY_REQUEST,
@@ -498,11 +550,11 @@ describe('AgentRuntimeRouter', () => {
       diagnostic: expectedDiagnostic,
       runtimeAttemptId: 'attempt-1',
     });
-    expect(executeFallback).toHaveBeenCalledWith(PRIMARY_REQUEST, expect.any(Function));
-    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(PRIMARY_REQUEST);
+    expect(executeFallback).not.toHaveBeenCalled();
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
   });
 
-  it('falls back through the primary adapter when the MAF request times out before commit', async () => {
+  it('fails closed through the primary adapter when the MAF request times out before commit', async () => {
     vi.useFakeTimers();
     try {
       const typescriptRuntime = {
@@ -530,9 +582,10 @@ describe('AgentRuntimeRouter', () => {
       });
 
       const result = router.processMessage(PRIMARY_REQUEST);
+      const expectation = expect(result).rejects.toThrow('maf_runtime_fetch_failed');
       await vi.advanceTimersByTimeAsync(5);
 
-      await expect(result).resolves.toBe(RESULT);
+      await expectation;
       expect(recordPrimaryFailure).toHaveBeenCalledWith({
         request: PRIMARY_REQUEST,
         decision: {
@@ -544,7 +597,8 @@ describe('AgentRuntimeRouter', () => {
         },
         runtimeAttemptId: 'attempt-1',
       });
-      expect(executeFallback).toHaveBeenCalledWith(PRIMARY_REQUEST, expect.any(Function));
+      expect(executeFallback).not.toHaveBeenCalled();
+      expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

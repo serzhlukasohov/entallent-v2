@@ -173,7 +173,7 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
       await this.recordMafShadowCandidateIfNeeded(request, decision, currentResult, decisionRecord, configurationDiagnostic);
       return currentResult;
     } catch (error) {
-      await this.recordFailure?.(request, decision, error);
+      await this.recordRuntimeFailure(request, decision, error);
       throw error;
     }
   }
@@ -185,6 +185,10 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     decisionRecord: AgentRuntimeDecisionRecord | void,
   ): Promise<ProcessMessageResult> {
     if (configurationDiagnostic) {
+      if (decision.mode === 'maf_primary') {
+        await this.recordPrimaryFailureDiagnostic(request, decision, configurationDiagnostic, decisionRecord);
+        throw mafPrimaryUnavailableError(configurationDiagnostic);
+      }
       this.assertProactivePrimaryFallbackAllowed(request);
       return this.executeTypeScriptFallback(request, () => this.typeScriptRuntime.processMessage(request));
     }
@@ -195,6 +199,9 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
         missingCanonicalFields: ['runtime_primary_provider'],
       };
       await this.recordPrimaryFailureDiagnostic(request, decision, diagnostic, decisionRecord);
+      if (decision.mode === 'maf_primary') {
+        throw mafPrimaryUnavailableError(diagnostic);
+      }
       this.assertProactivePrimaryFallbackAllowed(request);
       return this.executeTypeScriptFallback(request, () => this.typeScriptRuntime.processMessage(request));
     }
@@ -210,8 +217,23 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
 
       const diagnostic = safeMafRuntimeDiagnostic(error);
       await this.recordPrimaryFailureDiagnostic(request, decision, diagnostic, decisionRecord);
+      if (decision.mode === 'maf_primary') {
+        throw error;
+      }
       this.assertProactivePrimaryFallbackAllowed(request);
       return this.executeTypeScriptFallback(request, () => this.typeScriptRuntime.processMessage(request));
+    }
+  }
+
+  private async recordRuntimeFailure(
+    request: ProcessMessageRequest,
+    decision: AgentRuntimeDecision,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.recordFailure?.(request, decision, error);
+    } catch {
+      // Preserve the runtime error; observability must not mask fail-closed behavior.
     }
   }
 
@@ -269,16 +291,16 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     }
 
     const routerDiagnostic: AgentRuntimeConfigurationDiagnostic = {
+      ...diagnostic,
       mode: decision.mode,
       decisionSource: decision.decisionSource,
-      ...diagnostic,
     };
 
     this.warnMafUnavailable(request, routerDiagnostic);
     try {
       await this.recordConfigurationDiagnostic?.(routerDiagnostic);
     } catch {
-      // Fallback to TypeScript must not depend on diagnostics persistence.
+      // Runtime execution must not depend on diagnostics persistence.
     }
 
     return diagnostic;
@@ -404,14 +426,19 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     diagnostic: AgentRuntimeConfigurationDiagnostic,
   ): void {
     try {
-      this.logger?.warn('MAF runtime unavailable; falling back to TypeScript runtime', {
-        traceId: request.traceId,
-        mode: diagnostic.mode,
-        decisionSource: diagnostic.decisionSource,
-        fallbackReason: diagnostic.reasonCode,
-      });
+      this.logger?.warn(
+        diagnostic.mode === 'maf_primary'
+          ? 'MAF primary unavailable; failing closed'
+          : 'MAF runtime unavailable; falling back to TypeScript runtime',
+        {
+          traceId: request.traceId,
+          mode: diagnostic.mode,
+          decisionSource: diagnostic.decisionSource,
+          fallbackReason: diagnostic.reasonCode,
+        },
+      );
     } catch {
-      // Fallback to TypeScript must not depend on observability working.
+      // Runtime execution must not depend on observability working.
     }
   }
 
@@ -430,7 +457,7 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
         ...optionalRuntimeAttemptId(decisionRecord?.runtimeAttemptId),
       });
     } catch {
-      // Fallback to TypeScript must not depend on diagnostics persistence.
+      // Runtime execution must not depend on diagnostics persistence.
     }
   }
 
@@ -440,14 +467,19 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     diagnostic: MafAgentRuntimeDiagnostic,
   ): void {
     try {
-      this.logger?.warn('MAF primary failed before commit; falling back to TypeScript runtime', {
-        traceId: request.traceId,
-        mode: decision.mode,
-        decisionSource: decision.decisionSource,
-        fallbackReason: diagnostic.reasonCode,
-      });
+      this.logger?.warn(
+        decision.mode === 'maf_primary'
+          ? 'MAF primary failed before commit; failing closed'
+          : 'MAF primary failed before commit; falling back to TypeScript runtime',
+        {
+          traceId: request.traceId,
+          mode: decision.mode,
+          decisionSource: decision.decisionSource,
+          fallbackReason: diagnostic.reasonCode,
+        },
+      );
     } catch {
-      // Runtime fallback must not depend on observability working.
+      // Runtime execution must not depend on observability working.
     }
   }
 
@@ -495,6 +527,16 @@ function hasSafeMafRuntimeDiagnostic(error: unknown): error is { safeDiagnostic:
     'safeDiagnostic' in error &&
     isMafRuntimeDiagnostic((error as { safeDiagnostic?: unknown }).safeDiagnostic)
   );
+}
+
+function mafPrimaryUnavailableError(diagnostic: MafAgentRuntimeDiagnostic): Error & {
+  safeDiagnostic: MafAgentRuntimeDiagnostic;
+} {
+  const error = new Error(diagnostic.reasonCode) as Error & {
+    safeDiagnostic: MafAgentRuntimeDiagnostic;
+  };
+  error.safeDiagnostic = diagnostic;
+  return error;
 }
 
 function optionalRuntimeAttemptId(
