@@ -1,0 +1,62 @@
+name: MAF Production Regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: maf-production-regression-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  regression:
+    name: Slack memory, mirroring, pulse, and MAF primary regression
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || vars.MAF_PROD_REGRESSION_ENABLED == '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Railway CLI
+        run: |
+          npm install -g @railway/cli
+          railway --version
+
+      - name: Link Railway project
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+        run: railway link "$RAILWAY_PROJECT_ID"
+
+      - name: Wait for Railway auto-deploy window
+        if: github.event_name == 'push'
+        env:
+          MAF_REGRESSION_DEPLOY_WAIT_SECONDS: ${{ vars.MAF_REGRESSION_DEPLOY_WAIT_SECONDS || '180' }}
+        run: sleep "${MAF_REGRESSION_DEPLOY_WAIT_SECONDS:-180}"
+
+      - name: Run production regression
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SLACK_REGRESSION_USER_TOKEN: ${{ secrets.SLACK_REGRESSION_USER_TOKEN }}
+          SLACK_REGRESSION_CHANNEL_ID: ${{ secrets.SLACK_REGRESSION_CHANNEL_ID }}
+          MAF_REGRESSION_TIMEOUT_SECONDS: ${{ vars.MAF_REGRESSION_TIMEOUT_SECONDS || '120' }}
+          MAF_REGRESSION_DEPLOY_WAIT_SECONDS: ${{ vars.MAF_REGRESSION_DEPLOY_WAIT_SECONDS || '180' }}
+        run: pnpm run maf:prod:regression
