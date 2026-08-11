@@ -111,13 +111,26 @@
           },
           "context": {
             "$ref": "#/components/schemas/RuntimeContext"
+          },
+          "requestPurpose": {
+            "type": "string",
+            "enum": [
+              "inbound_message",
+              "proactive_check_in"
+            ]
+          },
+          "proactiveContext": {
+            "$ref": "#/components/schemas/RuntimeProactiveContext"
           }
         }
       },
       "RuntimeTenant": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "workspaceId"],
+        "required": [
+          "id",
+          "workspaceId"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -132,7 +145,9 @@
       "RuntimeUser": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -169,7 +184,9 @@
           },
           "channel": {
             "type": "string",
-            "enum": ["slack"]
+            "enum": [
+              "slack"
+            ]
           },
           "externalWorkspaceId": {
             "type": "string",
@@ -196,7 +213,11 @@
       "RuntimeMessage": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "text", "createdAt"],
+        "required": [
+          "id",
+          "text",
+          "createdAt"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -215,7 +236,11 @@
       "RuntimeContext": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["recentTurns", "memoryItems", "goals"],
+        "required": [
+          "recentTurns",
+          "memoryItems",
+          "goals"
+        ],
         "properties": {
           "recentTurns": {
             "type": "array",
@@ -240,11 +265,18 @@
       "RuntimeRecentTurn": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["role", "content", "timestamp"],
+        "required": [
+          "role",
+          "content",
+          "timestamp"
+        ],
         "properties": {
           "role": {
             "type": "string",
-            "enum": ["user", "assistant"]
+            "enum": [
+              "user",
+              "assistant"
+            ]
           },
           "content": {
             "type": "string",
@@ -259,7 +291,12 @@
       "RuntimeMemoryItem": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "category", "content", "importance"],
+        "required": [
+          "id",
+          "category",
+          "content",
+          "importance"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -283,7 +320,11 @@
       "RuntimeGoal": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "title", "status"],
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -351,7 +392,12 @@
           },
           "urgency": {
             "type": "string",
-            "enum": ["low", "medium", "high", "critical"]
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
           },
           "confidence": {
             "type": "number",
@@ -369,9 +415,15 @@
             "minLength": 1
           },
           "reminderRequest": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "additionalProperties": false,
-            "required": ["intent", "dueAt"],
+            "required": [
+              "intent",
+              "dueAt"
+            ],
             "properties": {
               "intent": {
                 "type": "string",
@@ -396,17 +448,29 @@
             ]
           },
           "latestUserSubstance": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "topicAnchor": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
       "RuntimeResult": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["reply", "memoryCandidates", "proposedActions", "classification", "diagnostics"],
+        "required": [
+          "reply",
+          "memoryCandidates",
+          "proposedActions",
+          "classification",
+          "diagnostics"
+        ],
         "properties": {
           "reply": {
             "$ref": "#/components/schemas/RuntimeReply"
@@ -437,7 +501,9 @@
       "RuntimeReply": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["text"],
+        "required": [
+          "text"
+        ],
         "properties": {
           "text": {
             "type": "string",
@@ -446,6 +512,9 @@
           "mode": {
             "type": "string",
             "minLength": 1
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RuntimeReplyMetadata"
           }
         }
       },
@@ -464,11 +533,20 @@
         ],
         "properties": {
           "type": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "severity": {
             "type": "string",
-            "enum": ["none", "low", "medium", "high", "critical"]
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
           },
           "confidence": {
             "type": "number",
@@ -498,7 +576,13 @@
       "RuntimeMemoryCandidate": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actionId", "type", "content", "confidence", "sourceMessageIds"],
+        "required": [
+          "actionId",
+          "type",
+          "content",
+          "confidence",
+          "sourceMessageIds"
+        ],
         "properties": {
           "actionId": {
             "type": "string",
@@ -519,7 +603,11 @@
           },
           "sensitivity": {
             "type": "string",
-            "enum": ["normal", "sensitive", "highly_sensitive"]
+            "enum": [
+              "normal",
+              "sensitive",
+              "highly_sensitive"
+            ]
           },
           "sourceMessageIds": {
             "type": "array",
@@ -567,12 +655,16 @@
           },
           "aggregateType": {
             "type": "string",
-            "enum": ["memory"],
+            "enum": [
+              "memory"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           "actionType": {
             "type": "string",
-            "enum": ["save_memory"],
+            "enum": [
+              "save_memory"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           "idempotencyKey": {
@@ -621,12 +713,16 @@
           },
           "aggregateType": {
             "type": "string",
-            "enum": ["follow_up"],
+            "enum": [
+              "follow_up"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           "actionType": {
             "type": "string",
-            "enum": ["schedule_follow_up"],
+            "enum": [
+              "schedule_follow_up"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           "idempotencyKey": {
@@ -675,12 +771,16 @@
           },
           "aggregateType": {
             "type": "string",
-            "enum": ["goal"],
+            "enum": [
+              "goal"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           "actionType": {
             "type": "string",
-            "enum": ["update_goal"],
+            "enum": [
+              "update_goal"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           "idempotencyKey": {
@@ -709,7 +809,9 @@
       "SaveMemoryActionPayload": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["memoryCandidateId"],
+        "required": [
+          "memoryCandidateId"
+        ],
         "properties": {
           "memoryCandidateId": {
             "type": "string",
@@ -722,7 +824,11 @@
       "ScheduleFollowUpActionPayload": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["executeAt", "intent", "deduplicationKey"],
+        "required": [
+          "executeAt",
+          "intent",
+          "deduplicationKey"
+        ],
         "properties": {
           "executeAt": {
             "type": "string",
@@ -745,7 +851,9 @@
       "UpdateGoalActionPayload": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["changes"],
+        "required": [
+          "changes"
+        ],
         "properties": {
           "goalId": {
             "type": "string",
@@ -765,11 +873,18 @@
       "ActionValidationResult": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["status", "reasonCodes"],
+        "required": [
+          "status",
+          "reasonCodes"
+        ],
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["pending", "valid", "invalid"],
+            "enum": [
+              "pending",
+              "valid",
+              "invalid"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           "reasonCodes": {
@@ -791,13 +906,24 @@
       },
       "ActionExecutionStatus": {
         "type": "string",
-        "enum": ["not_started", "blocked", "committed", "failed"],
+        "enum": [
+          "not_started",
+          "blocked",
+          "committed",
+          "failed"
+        ],
         "x-error-category": "ACTION_PROPOSAL_INVALID"
       },
       "ActionCommitMarker": {
-        "type": ["object", "null"],
+        "type": [
+          "object",
+          "null"
+        ],
         "additionalProperties": false,
-        "required": ["committedAt", "referenceId"],
+        "required": [
+          "committedAt",
+          "referenceId"
+        ],
         "properties": {
           "committedAt": {
             "type": "string",
@@ -815,7 +941,10 @@
       "RuntimeJsonValue": {
         "oneOf": [
           {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "x-error-category": "ACTION_PROPOSAL_INVALID"
           },
           {
@@ -937,6 +1066,70 @@
           "message": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      },
+      "RuntimeProactiveContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "pulse_check_in"
+            ]
+          },
+          "probeQuestion": {
+            "$ref": "#/components/schemas/RuntimePulseProbeQuestion"
+          }
+        }
+      },
+      "RuntimePulseProbeQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "probeStrategies"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stableKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "group": {
+            "type": "string",
+            "minLength": 1
+          },
+          "probeStrategies": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "RuntimeReplyMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "containsSurveyProbe": {
+            "type": "boolean"
+          },
+          "surveyProbeQuestionId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       }

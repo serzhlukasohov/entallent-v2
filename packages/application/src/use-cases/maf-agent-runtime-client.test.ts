@@ -270,6 +270,41 @@ describe('MafAgentRuntimeClient', () => {
     });
   });
 
+  it('serializes proactive check-in context into the canonical runtime request', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => CANDIDATE_RESULT,
+    }));
+    const client = new MafAgentRuntimeClient({
+      serviceUrl: 'https://agent-service.internal/',
+      fetch: fetchImpl,
+    });
+    const proactiveRequest: ProcessMessageRequest = {
+      ...CANDIDATE_REQUEST,
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: {
+        reason: 'pulse_check_in',
+        probeQuestion: {
+          id: '88888888-8888-4888-8888-888888888888',
+          stableKey: 'role_clarity',
+          title: 'Role Clarity',
+          group: 'growth',
+          probeStrategies: ['Ask what success looks like this week.'],
+        },
+      },
+    };
+
+    await client.processCandidate(proactiveRequest);
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, { body?: string }];
+    const body = JSON.parse(String(init?.body));
+    expect(body).toEqual(expect.objectContaining({
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: proactiveRequest.proactiveContext,
+    }));
+  });
+
   it('uses the global fetch implementation and default timeout when no test fetch is injected', async () => {
     const originalFetch = (globalThis as unknown as { fetch?: unknown }).fetch;
     const fetchImpl = vi.fn(async () => ({

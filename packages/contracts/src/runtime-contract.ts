@@ -12,12 +12,16 @@ export type RuntimeProcessMessageRequest = {
   traceId: string;
   idempotencyKey: string;
   runtimeAttempt: number;
+  requestPurpose?: RuntimeRequestPurpose;
   tenant: RuntimeTenant;
   user: RuntimeUser;
   conversation: RuntimeConversation;
   message: RuntimeMessage;
   context: RuntimeContext;
+  proactiveContext?: RuntimeProactiveContext;
 };
+
+export type RuntimeRequestPurpose = 'inbound_message' | 'proactive_check_in';
 
 export type RuntimeTenant = {
   id: string;
@@ -71,6 +75,19 @@ export type RuntimeGoal = {
   status: string;
 };
 
+export type RuntimeProactiveContext = {
+  reason: 'pulse_check_in';
+  probeQuestion?: RuntimePulseProbeQuestion;
+};
+
+export type RuntimePulseProbeQuestion = {
+  id: string;
+  stableKey?: string;
+  title?: string;
+  group?: string;
+  probeStrategies: string[];
+};
+
 export type RuntimeResult = {
   reply: RuntimeReply;
   riskAssessment?: RuntimeRiskAssessment;
@@ -83,6 +100,12 @@ export type RuntimeResult = {
 export type RuntimeReply = {
   text: string;
   mode?: string;
+  metadata?: RuntimeReplyMetadata;
+};
+
+export type RuntimeReplyMetadata = {
+  containsSurveyProbe?: boolean;
+  surveyProbeQuestionId?: string;
 };
 
 export type RuntimeRiskAssessment = {

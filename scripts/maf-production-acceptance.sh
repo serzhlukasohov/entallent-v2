@@ -99,6 +99,36 @@ latest_attempts="$(
     "SELECT trace_id, runtime_mode, phase, failure_reason, created_at FROM runtime_attempts ORDER BY created_at DESC LIMIT 5;"
 )"
 
+log "Checking recent proactive check-in MAF evidence"
+proactive_total="$(
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtAX -c \
+    "SELECT count(*)
+     FROM messages m
+     WHERE m.occurred_at >= '${since}'
+       AND m.direction = 'outbound'
+       AND m.message_type = 'proactive_check_in';"
+)"
+proactive_bad_count="$(
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtAX -c \
+    "SELECT count(*)
+     FROM messages m
+     LEFT JOIN runtime_attempts r ON r.trace_id = m.trace_id
+     WHERE m.occurred_at >= '${since}'
+       AND m.direction = 'outbound'
+       AND m.message_type = 'proactive_check_in'
+       AND (
+         m.metadata->>'runtimeMode' IS DISTINCT FROM 'maf_primary'
+         OR r.trace_id IS NULL
+         OR r.runtime_mode <> 'maf_primary'
+         OR r.phase <> 'reply_committed'
+         OR r.failure_reason IS NOT NULL
+       );"
+)"
+[[ "$proactive_bad_count" == "0" ]] || fail "found $proactive_bad_count proactive_check_in messages without MAF primary evidence since $since"
+if [[ "${MAF_ACCEPTANCE_REQUIRE_PROACTIVE_CHECKIN:-0}" == "1" ]]; then
+  [[ "$proactive_total" != "0" ]] || fail "no recent proactive_check_in MAF primary evidence since $since"
+fi
+
 log "Production MAF acceptance checks passed"
 printf '\nDashboard surface summary:\n'
 printf '  users.total=%s\n' "$users_total"

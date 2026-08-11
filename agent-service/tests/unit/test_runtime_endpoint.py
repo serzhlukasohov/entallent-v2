@@ -165,6 +165,63 @@ def test_runtime_endpoint_uses_configured_model_client(
     assert body["diagnostics"]["modelCalls"] == 1
 
 
+def test_runtime_endpoint_marks_proactive_probe_only_when_reply_matches_probe(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    request_body = read_fixture("valid/proactive-check-in-request.json")
+
+    class FakeModelClient:
+        async def generate_reply(
+            self,
+            request: dict[str, Any],
+            state: dict[str, Any],
+        ) -> ConversationModelReply:
+            _ = request
+            _ = state
+            return ConversationModelReply(
+                text="Quick pulse: what would success look like for you this week?",
+            )
+
+    monkeypatch.setattr(runtime_api, "build_model_client", lambda _: FakeModelClient())
+    client = TestClient(create_app())
+
+    response = client.post("/runtime/process-message", json=request_body)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert validate_runtime_result(body) == {"ok": True}
+    assert body["reply"]["metadata"] == {
+        "containsSurveyProbe": True,
+        "surveyProbeQuestionId": "88888888-8888-4888-8888-888888888888",
+    }
+
+
+def test_runtime_endpoint_does_not_mark_generic_proactive_reply_as_probe_sent(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    request_body = read_fixture("valid/proactive-check-in-request.json")
+
+    class FakeModelClient:
+        async def generate_reply(
+            self,
+            request: dict[str, Any],
+            state: dict[str, Any],
+        ) -> ConversationModelReply:
+            _ = request
+            _ = state
+            return ConversationModelReply(text="Hey, just checking in. How are things today?")
+
+    monkeypatch.setattr(runtime_api, "build_model_client", lambda _: FakeModelClient())
+    client = TestClient(create_app())
+
+    response = client.post("/runtime/process-message", json=request_body)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert validate_runtime_result(body) == {"ok": True}
+    assert "metadata" not in body["reply"]
+
+
 def test_runtime_endpoint_rejects_unsafe_model_reply_with_safe_error_body(
     monkeypatch: MonkeyPatch,
 ) -> None:

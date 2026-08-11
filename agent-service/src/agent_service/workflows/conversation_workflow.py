@@ -432,9 +432,11 @@ class ConversationWorkflow:
         return state
 
     def _generate_response(self, state: ConversationWorkflowState) -> ConversationWorkflowState:
+        reply_text = "MAF candidate response prepared for shadow comparison."
         state["reply"] = {
-            "text": "MAF candidate response prepared for shadow comparison.",
+            "text": reply_text,
             "mode": "candidate",
+            **self._reply_metadata_for_request(state, reply_text),
         }
         return state
 
@@ -478,8 +480,40 @@ class ConversationWorkflow:
         state["reply"] = {
             "text": reply.text,
             "mode": "candidate",
+            **self._reply_metadata_for_request(state, reply.text),
         }
         return state
+
+    def _reply_metadata_for_request(
+        self,
+        state: ConversationWorkflowState,
+        reply_text: str,
+    ) -> dict[str, Any]:
+        request = self._request_from_state(state)
+        if request.get("requestPurpose") != "proactive_check_in":
+            return {}
+
+        proactive_context = request.get("proactiveContext")
+        if not isinstance(proactive_context, dict):
+            return {}
+
+        probe_question = proactive_context.get("probeQuestion")
+        if not isinstance(probe_question, dict):
+            return {}
+
+        question_id = probe_question.get("id")
+        if not isinstance(question_id, str) or not question_id.strip():
+            return {}
+
+        if not _reply_contains_probe_content(reply_text, probe_question):
+            return {}
+
+        return {
+            "metadata": {
+                "containsSurveyProbe": True,
+                "surveyProbeQuestionId": question_id,
+            },
+        }
 
     def _plan_follow_up(self, state: ConversationWorkflowState) -> ConversationWorkflowState:
         request = self._request_from_state(state)
@@ -971,3 +1005,56 @@ def _trace_id_from_state(state: ConversationWorkflowState) -> str | None:
         if isinstance(trace_id, str) and trace_id:
             return trace_id
     return None
+
+
+def _reply_contains_probe_content(reply_text: str, probe_question: dict[str, Any]) -> bool:
+    reply_tokens = _significant_probe_tokens(reply_text)
+    if not reply_tokens:
+        return False
+
+    title = probe_question.get("title")
+    title_tokens = _significant_probe_tokens(title) if isinstance(title, str) else set()
+    if title_tokens and len(reply_tokens & title_tokens) >= min(2, len(title_tokens)):
+        return True
+
+    strategies = probe_question.get("probeStrategies")
+    if not isinstance(strategies, Sequence) or isinstance(strategies, (str, bytes)):
+        return False
+
+    for strategy in strategies:
+        if not isinstance(strategy, str):
+            continue
+        strategy_tokens = _significant_probe_tokens(strategy)
+        if len(strategy_tokens) < 2:
+            continue
+        if len(reply_tokens & strategy_tokens) >= min(3, len(strategy_tokens)):
+            return True
+
+    return False
+
+
+def _significant_probe_tokens(value: str) -> set[str]:
+    stop_words = {
+        "about",
+        "ask",
+        "does",
+        "have",
+        "internal",
+        "like",
+        "mention",
+        "survey",
+        "that",
+        "this",
+        "what",
+        "when",
+        "with",
+        "your",
+    }
+    tokens: set[str] = set()
+    for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_'-]{2,}", value.lower()):
+        if token in stop_words:
+            continue
+        if len(token) > 3 and token.endswith("s"):
+            token = token[:-1]
+        tokens.add(token)
+    return tokens

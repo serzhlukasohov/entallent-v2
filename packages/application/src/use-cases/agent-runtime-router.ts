@@ -149,6 +149,9 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
       decision = normalizeRuntimeDecision(await this.evaluateMode(request));
       this.logRuntimeDecision(request, decision);
     } catch {
+      if (request.requestPurpose === 'proactive_check_in') {
+        throw new Error('maf_proactive_runtime_mode_evaluation_failed');
+      }
       this.warnEvaluationFailure(request);
       decision = {
         mode: 'typescript',
@@ -182,6 +185,7 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
     decisionRecord: AgentRuntimeDecisionRecord | void,
   ): Promise<ProcessMessageResult> {
     if (configurationDiagnostic) {
+      this.assertProactivePrimaryFallbackAllowed(request);
       return this.executeTypeScriptFallback(request, () => this.typeScriptRuntime.processMessage(request));
     }
 
@@ -191,6 +195,7 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
         missingCanonicalFields: ['runtime_primary_provider'],
       };
       await this.recordPrimaryFailureDiagnostic(request, decision, diagnostic, decisionRecord);
+      this.assertProactivePrimaryFallbackAllowed(request);
       return this.executeTypeScriptFallback(request, () => this.typeScriptRuntime.processMessage(request));
     }
 
@@ -205,7 +210,14 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
 
       const diagnostic = safeMafRuntimeDiagnostic(error);
       await this.recordPrimaryFailureDiagnostic(request, decision, diagnostic, decisionRecord);
+      this.assertProactivePrimaryFallbackAllowed(request);
       return this.executeTypeScriptFallback(request, () => this.typeScriptRuntime.processMessage(request));
+    }
+  }
+
+  private assertProactivePrimaryFallbackAllowed(request: ProcessMessageRequest): void {
+    if (request.requestPurpose === 'proactive_check_in') {
+      throw new Error('maf_proactive_primary_runtime_unavailable');
     }
   }
 

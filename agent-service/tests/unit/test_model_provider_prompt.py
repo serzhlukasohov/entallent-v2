@@ -64,3 +64,32 @@ def test_candidate_reply_prompt_filters_unsafe_context_snippets() -> None:
     assert "Safe recent reply." in prompt
     assert "secret token should not be copied" not in prompt
     assert "password is unsafe context" not in prompt
+
+
+def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "requestPurpose": "proactive_check_in",
+            "message": {"text": "Start a proactive pulse check-in about Role Clarity."},
+            "proactiveContext": {
+                "reason": "pulse_check_in",
+                "probeQuestion": {
+                    "id": "88888888-8888-4888-8888-888888888888",
+                    "stableKey": "role_clarity",
+                    "title": "Role Clarity",
+                    "probeStrategies": [
+                        "Ask what success looks like this week.",
+                        "Do not mention survey mechanics.",
+                    ],
+                },
+            },
+            "context": {"memoryItems": [], "recentTurns": []},
+        },
+        state={},
+    )
+
+    assert "agent initiated context" in prompt
+    assert "Start a short warm pulse check-in" in prompt
+    assert "Probe topic: Role Clarity." in prompt
+    assert "Ask what success looks like this week." in prompt
+    assert "Do not mention survey mechanics or internal probe IDs." in prompt

@@ -181,6 +181,144 @@ it('uses Python-supplied classification when available', async () => {
     expect(outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
+  it('persists proactive check-in replies with MAF metadata and skips inbound-owned extraction jobs', async () => {
+    const proactiveRequest: ProcessMessageRequest = {
+      ...REQUEST,
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: {
+        reason: 'pulse_check_in',
+        probeQuestion: {
+          id: '88888888-8888-4888-8888-888888888888',
+          stableKey: 'role_clarity',
+          title: 'Role Clarity',
+          group: 'growth',
+          probeStrategies: ['Ask what success looks like this week.'],
+        },
+      },
+    };
+    const { runtime, conversationRepo, outbox } = createRuntime({
+      runtimeResult: {
+        ...RUNTIME_RESULT,
+        reply: {
+          ...RUNTIME_RESULT.reply,
+          metadata: {
+            containsSurveyProbe: true,
+            surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+          },
+        },
+      },
+    });
+
+    await expect(runtime.processMessage(proactiveRequest)).resolves.toMatchObject({
+      replyMetadata: {
+        containsSurveyProbe: true,
+        surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+      },
+    });
+
+    expect(conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageType: 'proactive_check_in',
+      metadata: expect.objectContaining({
+        runtimeMode: 'maf_primary',
+        containsSurveyProbe: true,
+        surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+      }),
+    }));
+    expect(outbox.enqueueMessageSend).toHaveBeenCalled();
+    expect(outbox.enqueueMemoryExtraction).not.toHaveBeenCalled();
+    expect(outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('does not commit inbound-evidence side effects for proactive check-in synthetic message ids', async () => {
+    const proactiveRequest: ProcessMessageRequest = {
+      ...REQUEST,
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: { reason: 'pulse_check_in' },
+    };
+    const { runtime, riskSignalRepo, escalation, scheduledActionRepo, memoryRepo, goalRepo } = createRuntime({
+      runtimeResult: {
+        ...RUNTIME_RESULT,
+        riskAssessment: {
+          type: 'potential_self_harm',
+          severity: 'critical',
+          confidence: 0.91,
+          evidence: ['model evidence'],
+          immediateResponseRequired: true,
+          escalationRecommended: true,
+          surveyMustBeBlocked: true,
+          proactiveMessagesMustBePaused: true,
+        },
+        memoryCandidates: [
+          {
+            actionId: 'memory-candidate-1',
+            type: 'preference',
+            content: 'Synthetic proactive request should not save this memory.',
+            confidence: 0.86,
+            sourceMessageIds: [REQUEST.messageId],
+          },
+        ],
+        proposedActions: [
+          {
+            actionId: 'follow-up-action',
+            actionType: 'schedule_follow_up',
+            aggregateType: 'follow_up',
+            idempotencyKey: 'idem-follow-up',
+            payload: {
+              executeAt: '2026-08-06T19:00:00.000Z',
+              intent: 'candidate follow up',
+              deduplicationKey: 'followup:proactive',
+            },
+            validationResult: {
+              status: 'valid',
+              reasonCodes: [],
+            },
+            executionStatus: 'not_started',
+            commitMarker: null,
+          },
+          {
+            actionId: 'memory-action',
+            actionType: 'save_memory',
+            aggregateType: 'memory',
+            idempotencyKey: 'idem-memory',
+            payload: {
+              memoryCandidateId: 'memory-candidate-1',
+            },
+            validationResult: {
+              status: 'valid',
+              reasonCodes: [],
+            },
+            executionStatus: 'not_started',
+            commitMarker: null,
+          },
+          {
+            actionId: 'goal-action',
+            actionType: 'update_goal',
+            aggregateType: 'goal',
+            idempotencyKey: 'idem-goal',
+            payload: {
+              goalId: 'goal-1',
+              changes: { status: 'completed' },
+            },
+            validationResult: {
+              status: 'valid',
+              reasonCodes: [],
+            },
+            executionStatus: 'not_started',
+            commitMarker: null,
+          },
+        ],
+      },
+    });
+
+    await runtime.processMessage(proactiveRequest);
+
+    expect(riskSignalRepo.save).not.toHaveBeenCalled();
+    expect(escalation.raise).not.toHaveBeenCalled();
+    expect(scheduledActionRepo.save).not.toHaveBeenCalled();
+    expect(memoryRepo.save).not.toHaveBeenCalled();
+    expect(goalRepo.updateStatus).not.toHaveBeenCalled();
+  });
+
   it('persists risk signals and raises escalation through TypeScript-owned ports', async () => {
     const criticalResult: RuntimeResult = {
       ...RUNTIME_RESULT,
@@ -434,6 +572,8 @@ it('uses Python-supplied classification when available', async () => {
         importance: 0.8,
         validFrom: new Date(),
         sensitivity: 'normal',
+        createdAt: new Date(),
+        updatedAt: new Date(),
       },
     });
 
@@ -608,6 +748,8 @@ function createRuntime(options: {
     importance: number;
     validFrom: Date;
     sensitivity: string;
+    createdAt: Date;
+    updatedAt: Date;
   };
   memoryRepo?: MemoryRepositoryPort;
   goalRepo?: GoalRepositoryPort;

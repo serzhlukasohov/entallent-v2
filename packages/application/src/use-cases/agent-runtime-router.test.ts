@@ -78,6 +78,20 @@ const CANDIDATE_RESULT: RuntimeResult = {
     text: 'candidate reply',
     mode: 'normal',
   },
+  classification: {
+    primaryIntent: 'casual_conversation',
+    secondaryIntents: [],
+    emotionalState: [],
+    urgency: 'low',
+    confidence: 0.9,
+    requiresSafetyCheck: false,
+    surveyAllowed: true,
+    reasoningSummary: 'candidate',
+    reminderRequest: null,
+    dialogueAct: 'new_substance',
+    latestUserSubstance: 'hello',
+    topicAnchor: null,
+  },
   riskAssessment: {
     type: null,
     severity: 'none',
@@ -312,6 +326,79 @@ describe('AgentRuntimeRouter', () => {
       fallbackReason: 'maf_runtime_fetch_failed',
     });
     expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
+  });
+
+  it('fails proactive primary check-ins closed instead of falling back when primary MAF reports a safe failure', async () => {
+    const primaryError = new Error('provider failed');
+    Object.assign(primaryError, {
+      safeDiagnostic: {
+        reasonCode: 'maf_runtime_fetch_failed',
+      },
+    });
+    const proactiveRequest: ProcessMessageRequest = {
+      ...PRIMARY_REQUEST,
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: { reason: 'pulse_check_in' },
+    };
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafPrimaryRuntime = {
+      processMessage: vi.fn().mockRejectedValue(primaryError),
+    };
+    const recordDecision = vi.fn(async () => ({ runtimeAttemptId: 'attempt-1' }));
+    const recordPrimaryFailure = vi.fn(async () => undefined);
+    const executeFallback = vi.fn(async <T>(
+      _request: ProcessMessageRequest,
+      fallback: () => Promise<T> | T,
+    ): Promise<T> => fallback()) as AgentRuntimeFallbackExecutor;
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      mafPrimaryRuntime,
+      recordDecision,
+      recordPrimaryFailure,
+      executeFallback,
+    });
+
+    await expect(router.processMessage(proactiveRequest)).rejects.toThrow(
+      'maf_proactive_primary_runtime_unavailable',
+    );
+
+    expect(recordPrimaryFailure).toHaveBeenCalledWith({
+      request: proactiveRequest,
+      decision: {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      },
+      diagnostic: {
+        reasonCode: 'maf_runtime_fetch_failed',
+      },
+      runtimeAttemptId: 'attempt-1',
+    });
+    expect(executeFallback).not.toHaveBeenCalled();
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
+  });
+
+  it('fails proactive check-ins closed when runtime mode evaluation throws', async () => {
+    const proactiveRequest: ProcessMessageRequest = {
+      ...PRIMARY_REQUEST,
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: { reason: 'pulse_check_in' },
+    };
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => {
+        throw new Error('flag store unavailable');
+      },
+    });
+
+    await expect(router.processMessage(proactiveRequest)).rejects.toThrow(
+      'maf_proactive_runtime_mode_evaluation_failed',
+    );
+
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
   });
 
   it('records a configuration diagnostic and falls back when primary MAF config is missing', async () => {

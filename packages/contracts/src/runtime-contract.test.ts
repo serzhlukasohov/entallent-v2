@@ -53,7 +53,13 @@ describe('Runtime contract DTO exports', () => {
     const action: RuntimeActionProposal = result.proposedActions[0]!;
 
     expect(request.context.recentTurns[0]?.role).toBe('user');
+    expect(
+      (
+        readJson('fixtures/valid/proactive-check-in-request.json') as RuntimeProcessMessageRequest
+      ).requestPurpose,
+    ).toBe('proactive_check_in');
     expect(result.diagnostics.runtimeVersion).toBe('maf-contract-fixture');
+    expect(result.reply.metadata?.containsSurveyProbe).toBe(true);
     expect(result.diagnostics.runtimeAttempt).toBe(1);
     expect(result.diagnostics.retryCount).toBe(0);
     expect(result.diagnostics.modelRetryCount).toBe(0);

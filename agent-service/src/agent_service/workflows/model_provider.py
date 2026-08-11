@@ -183,14 +183,22 @@ def build_candidate_reply_prompt(
 ) -> str:
     message = request.get("message")
     message_text = message.get("text") if isinstance(message, dict) else ""
+    request_purpose = request.get("requestPurpose")
     risk = state.get("riskAssessment")
     policy = state.get("policyDecision")
     context_summary = state.get("contextSummary")
     reference_context = candidate_reference_context(request)
+    proactive_instruction = proactive_check_in_instruction(request)
+    current_message_line = (
+        "current user message: "
+        if request_purpose != "proactive_check_in"
+        else "agent initiated context: "
+    )
     return "\n".join(
         [
             "Generate one candidate assistant reply.",
-            f"current user message: {message_text if isinstance(message_text, str) else ''}",
+            f"{current_message_line}{message_text if isinstance(message_text, str) else ''}",
+            f"proactive instruction: {proactive_instruction}",
             f"risk summary: {safe_mapping_summary(risk)}",
             f"context summary: {safe_mapping_summary(context_summary)}",
             f"reference context: {reference_context}",
@@ -199,6 +207,40 @@ def build_candidate_reply_prompt(
             "Do not say that memory, follow-ups, goals, surveys, or Slack messages were saved.",
         ],
     )
+
+
+def proactive_check_in_instruction(request: dict[str, Any]) -> str:
+    if request.get("requestPurpose") != "proactive_check_in":
+        return "none"
+
+    proactive_context = request.get("proactiveContext")
+    if not isinstance(proactive_context, Mapping):
+        return "Start a short warm check-in. Ask one concrete question."
+
+    probe_question = proactive_context.get("probeQuestion")
+    if not isinstance(probe_question, Mapping):
+        return "Start a short warm check-in. Ask one concrete question."
+
+    title = safe_context_text(probe_question.get("title"), limit=80)
+    stable_key = safe_context_text(probe_question.get("stableKey"), limit=80)
+    strategies: list[str] = []
+    raw_strategies = probe_question.get("probeStrategies")
+    if isinstance(raw_strategies, list):
+        for item in raw_strategies[:3]:
+            strategy = safe_context_text(item, limit=140)
+            if strategy:
+                strategies.append(strategy)
+
+    parts = [
+        "Start a short warm pulse check-in.",
+        "Ask one concrete question.",
+    ]
+    if title or stable_key:
+        parts.append(f"Probe topic: {title or stable_key}.")
+    if strategies:
+        parts.append(f"Probe strategies: {' / '.join(strategies)}.")
+    parts.append("Do not mention survey mechanics or internal probe IDs.")
+    return " ".join(parts)
 
 
 def chat_messages_payload(messages: Sequence[Message]) -> list[dict[str, str]]:

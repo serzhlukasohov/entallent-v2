@@ -46,8 +46,12 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
 
     const risk = toRiskDetection(candidate.riskAssessment);
 
+    const hasPersistedInboundMessage = request.requestPurpose !== 'proactive_check_in';
+
     await this.enqueueProfileHydrationIfNeeded(request, conversation);
-    await this.persistRiskSideEffects(request, risk);
+    if (hasPersistedInboundMessage) {
+      await this.persistRiskSideEffects(request, risk);
+    }
 
     const outbound = await this.conversationRepo.saveMessage({
       conversationId: request.conversationId,
@@ -57,6 +61,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
       text: candidate.reply.text,
       occurredAt: new Date(),
       traceId: request.traceId,
+      ...(request.requestPurpose === 'proactive_check_in' ? { messageType: 'proactive_check_in' } : {}),
       metadata: toPrimaryMetadata(candidate),
     });
 
@@ -71,14 +76,16 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
       ...(request.conversationThreadId ? { replyToExternalThreadId: request.conversationThreadId } : {}),
     });
 
-    await this.enqueueMafFollowUpProposals(
-      candidate,
-      request,
-      conversation.channelType,
-      conversation.userTimezone ?? 'UTC',
-    );
-    await this.enqueueMafMemoryAndGoalProposals(candidate, request);
-    await this.enqueueTypeScriptOwnedExtractionJobs(request, outbound.id, conversation.channelType);
+    if (hasPersistedInboundMessage) {
+      await this.enqueueMafFollowUpProposals(
+        candidate,
+        request,
+        conversation.channelType,
+        conversation.userTimezone ?? 'UTC',
+      );
+      await this.enqueueMafMemoryAndGoalProposals(candidate, request);
+      await this.enqueueTypeScriptOwnedExtractionJobs(request, outbound.id, conversation.channelType);
+    }
     if (this.onPostCandidateResult) {
       await this.onPostCandidateResult({
         request,
@@ -87,12 +94,14 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
       });
     }
 
+    const replyMetadata = toReplyMetadata(candidate);
     return {
       outboundMessageId: outbound.id,
       responseText: candidate.reply.text,
       mode: toConversationMode(candidate.reply.mode),
       classification: toPrimaryClassification(candidate),
       risk,
+      ...(replyMetadata ? { replyMetadata } : {}),
     };
   }
 
@@ -425,6 +434,7 @@ function parseActionDueAt(value: string): Date | null {
 }
 
 function toPrimaryMetadata(candidate: RuntimeResult): Record<string, unknown> {
+  const replyMetadata = toReplyMetadata(candidate);
   return {
     runtimeMode: 'maf_primary',
     runtimeVersion: candidate.diagnostics.runtimeVersion,
@@ -435,7 +445,30 @@ function toPrimaryMetadata(candidate: RuntimeResult): Record<string, unknown> {
     memoryCandidateCount: candidate.memoryCandidates.length,
     proposedActionsDeferred: candidate.proposedActions.length > 0,
     memoryCandidatesDeferred: candidate.memoryCandidates.length > 0,
+    ...(replyMetadata?.containsSurveyProbe !== undefined
+      ? { containsSurveyProbe: replyMetadata.containsSurveyProbe }
+      : {}),
+    ...(replyMetadata?.surveyProbeQuestionId
+      ? { surveyProbeQuestionId: replyMetadata.surveyProbeQuestionId }
+      : {}),
   };
+}
+
+function toReplyMetadata(candidate: RuntimeResult): ProcessMessageResult['replyMetadata'] {
+  const metadata = candidate.reply.metadata;
+  if (!metadata) {
+    return undefined;
+  }
+
+  const replyMetadata = {
+    ...(typeof metadata.containsSurveyProbe === 'boolean'
+      ? { containsSurveyProbe: metadata.containsSurveyProbe }
+      : {}),
+    ...(typeof metadata.surveyProbeQuestionId === 'string' && metadata.surveyProbeQuestionId.trim()
+      ? { surveyProbeQuestionId: metadata.surveyProbeQuestionId }
+      : {}),
+  };
+  return Object.keys(replyMetadata).length > 0 ? replyMetadata : undefined;
 }
 
 function toConversationMode(mode: string | undefined): ProcessMessageResult['mode'] {

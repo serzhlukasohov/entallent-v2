@@ -419,10 +419,10 @@ function buildRuntimeProcessMessageRequest(request: ProcessMessageRequest): Runt
   }
 
   const threadId = normalizeOptionalString(request.conversationThreadId);
-  return {
-    requestId: request.requestId ?? '',
-    eventId: request.eventId ?? '',
-    traceId: request.traceId,
+    return {
+      requestId: request.requestId ?? '',
+      eventId: request.eventId ?? '',
+      traceId: request.traceId,
     idempotencyKey: [
       'runtime',
       request.externalWorkspaceId,
@@ -430,11 +430,12 @@ function buildRuntimeProcessMessageRequest(request: ProcessMessageRequest): Runt
       request.externalConversationId,
       request.messageId,
       String(request.runtimeAttempt),
-    ].join(':'),
-    runtimeAttempt: request.runtimeAttempt,
-    tenant: {
-      id: request.tenantId,
-      workspaceId: request.externalWorkspaceId,
+      ].join(':'),
+      runtimeAttempt: request.runtimeAttempt,
+      ...(request.requestPurpose ? { requestPurpose: request.requestPurpose } : {}),
+      tenant: {
+        id: request.tenantId,
+        workspaceId: request.externalWorkspaceId,
     },
     user: {
       id: request.userId,
@@ -449,15 +450,16 @@ function buildRuntimeProcessMessageRequest(request: ProcessMessageRequest): Runt
       externalConversationId: request.externalConversationId,
       ...(threadId ? { threadId } : {}),
       sessionKey,
-    },
-    message: {
-      id: request.messageId,
-      text: messageText,
-      createdAt: messageCreatedAt,
-    },
-    context: runtimeContext,
-  };
-}
+      },
+      message: {
+        id: request.messageId,
+        text: messageText,
+        createdAt: messageCreatedAt,
+      },
+      context: runtimeContext,
+      ...(request.proactiveContext ? { proactiveContext: request.proactiveContext } : {}),
+    };
+  }
 
 function optionalStringProperty<Key extends string>(
   key: Key,

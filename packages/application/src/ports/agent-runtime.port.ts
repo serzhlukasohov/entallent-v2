@@ -11,6 +11,7 @@ export interface ProcessMessageRequest {
   requestId?: string;
   eventId?: string;
   runtimeAttempt?: number;
+  requestPurpose?: 'inbound_message' | 'proactive_check_in';
   messageId: string;
   conversationId: string;
   userId: string;
@@ -26,6 +27,7 @@ export interface ProcessMessageRequest {
   conversationSessionKey?: string;
   conversationThreadId?: string;
   runtimeContext?: RuntimeContext;
+  proactiveContext?: ProactiveRuntimeContext;
 }
 
 export interface ProcessMessageResult {
@@ -34,6 +36,23 @@ export interface ProcessMessageResult {
   mode: ConversationMode;
   classification: SituationClassification;
   risk: RiskDetection;
+  replyMetadata?: ProcessMessageReplyMetadata;
+}
+
+export interface ProactiveRuntimeContext {
+  reason: 'pulse_check_in';
+  probeQuestion?: {
+    id: string;
+    stableKey?: string;
+    title?: string;
+    group?: string;
+    probeStrategies: string[];
+  };
+}
+
+export interface ProcessMessageReplyMetadata {
+  containsSurveyProbe?: boolean;
+  surveyProbeQuestionId?: string;
 }
 
 /** @deprecated Use ProcessMessageRequest. */

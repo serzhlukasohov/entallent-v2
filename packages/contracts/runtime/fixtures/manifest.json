@@ -5,6 +5,10 @@
       "path": "valid/process-message-request.json"
     },
     {
+      "schemaName": "RuntimeProcessMessageRequest",
+      "path": "valid/proactive-check-in-request.json"
+    },
+    {
       "schemaName": "RuntimeResult",
       "path": "valid/runtime-result.json"
     },
