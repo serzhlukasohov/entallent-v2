@@ -386,6 +386,84 @@ describe('ConversationProcessor runtime ledger recording', () => {
     );
   });
 
+  it('continues proactive MAF check-in without a probe when optional pulse backlog lookup fails', async () => {
+    const checkInJobData: CheckInJob = {
+      conversationId: '44444444-4444-4444-8444-444444444444',
+      userId: '55555555-5555-4555-8555-555555555555',
+      tenantId: '66666666-6666-4666-8666-666666666666',
+      externalWorkspaceId: 'workspace-1',
+      externalConversationId: 'channel-1',
+      traceId: 'trace-check-in-1',
+    };
+    const tenantQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [{ policy: {} }]),
+    };
+    const conversationQuery = {
+      from: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [{
+        userPreferredName: 'Test User',
+        userTimezone: 'Europe/Warsaw',
+        userLocale: 'en-US',
+      }]),
+    };
+    const recentQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => []),
+    };
+    const memoryQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => []),
+    };
+    const db = {
+      client: {
+        select: vi.fn()
+          .mockReturnValueOnce(tenantQuery)
+          .mockReturnValueOnce(conversationQuery)
+          .mockReturnValueOnce(recentQuery)
+          .mockReturnValueOnce(memoryQuery),
+      },
+    };
+    const pulseBacklogService = {
+      getNextProbeQuestion: vi.fn(async () => {
+        throw new Error('survey window unavailable');
+      }),
+      recordProbeSent: vi.fn(async () => undefined),
+    };
+    const agentRuntime = {
+      processMessage: vi.fn(async () => runtimeResult),
+    };
+    const { processor, checkInUseCase } = createProcessor({
+      agentRuntime,
+      pulseBacklogService,
+      db,
+    });
+
+    await processor.process({
+      id: 'check-in-job-1',
+      name: 'check-in',
+      attemptsMade: 0,
+      data: checkInJobData,
+    } as Job<CheckInJob>);
+
+    expect(checkInUseCase.execute).not.toHaveBeenCalled();
+    expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
+      requestPurpose: 'proactive_check_in',
+      messageText: 'Start a proactive pulse check-in.',
+      proactiveContext: {
+        reason: 'pulse_check_in',
+      },
+    }));
+    expect(pulseBacklogService.recordProbeSent).not.toHaveBeenCalled();
+  });
+
   it('fails MAF check-in before recent-turn context when the conversation does not belong to the job user', async () => {
     const checkInJobData: CheckInJob = {
       conversationId: '44444444-4444-4444-8444-444444444444',

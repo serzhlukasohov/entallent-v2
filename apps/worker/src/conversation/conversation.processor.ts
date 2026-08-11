@@ -129,9 +129,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       tenantId: job.data.tenantId,
       userId: job.data.userId,
     });
-    const probeResult = surveyEnabled
-      ? await this.pulseBacklogService.getNextProbeQuestion(job.data.userId, job.data.tenantId, pulseConfig)
-      : null;
+    const probeResult = surveyEnabled ? await this.selectOptionalProbeQuestion(job, pulseConfig) : null;
 
     const mafCandidateContext = await this.loadProactiveMafCandidateContext(job.data, {
       messageId,
@@ -174,6 +172,24 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     }
 
     return result;
+  }
+
+  private async selectOptionalProbeQuestion(
+    job: Job<CheckInJob>,
+    pulseConfig: ProactivePulseConfig,
+  ): Promise<Awaited<ReturnType<PulseBacklogService['getNextProbeQuestion']>>> {
+    try {
+      return await this.pulseBacklogService.getNextProbeQuestion(
+        job.data.userId,
+        job.data.tenantId,
+        pulseConfig,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Check-in job ${job.id} could not load optional pulse probe: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   private async processInbound(job: Job<ConversationJob>): Promise<void> {
