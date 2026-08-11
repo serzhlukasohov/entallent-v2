@@ -136,6 +136,11 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       messageCreatedAt: now,
       probeQuestion: probeResult?.question ?? null,
     });
+    await this.persistProactiveRuntimeRequestMessage(job.data, {
+      messageId,
+      text: mafCandidateContext.messageText ?? 'Start a proactive pulse check-in.',
+      occurredAt: now,
+    });
 
     const result = await this.agentRuntime.processMessage({
       requestId,
@@ -172,6 +177,36 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     }
 
     return result;
+  }
+
+  private async persistProactiveRuntimeRequestMessage(
+    job: CheckInJob,
+    request: {
+      messageId: string;
+      text: string;
+      occurredAt: Date;
+    },
+  ): Promise<void> {
+    await this.db.client.insert(messages).values({
+      id: request.messageId,
+      tenantId: job.tenantId,
+      conversationId: job.conversationId,
+      userId: job.userId,
+      direction: 'inbound',
+      senderType: 'system',
+      text: request.text,
+      normalizedText: request.text.toLowerCase(),
+      messageType: 'proactive_check_in_request',
+      metadata: {
+        runtimePurpose: 'proactive_check_in',
+        synthetic: true,
+        hiddenFromConversationContext: true,
+      },
+      occurredAt: request.occurredAt,
+      receivedAt: request.occurredAt,
+      traceId: job.traceId,
+      deletedAt: request.occurredAt,
+    });
   }
 
   private async selectOptionalProbeQuestion(

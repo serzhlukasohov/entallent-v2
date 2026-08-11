@@ -315,6 +315,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
       orderBy: vi.fn().mockReturnThis(),
       limit: vi.fn(async () => []),
     };
+    const insertValues = vi.fn(async () => undefined);
     const db = {
       client: {
         select: vi.fn()
@@ -322,6 +323,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
           .mockReturnValueOnce(conversationQuery)
           .mockReturnValueOnce(recentQuery)
           .mockReturnValueOnce(memoryQuery),
+        insert: vi.fn(() => ({ values: insertValues })),
       },
     };
     const pulseBacklogService = {
@@ -360,6 +362,21 @@ describe('ConversationProcessor runtime ledger recording', () => {
     } as Job<CheckInJob>);
 
     expect(checkInUseCase.execute).not.toHaveBeenCalled();
+    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: '66666666-6666-4666-8666-666666666666',
+      conversationId: '44444444-4444-4444-8444-444444444444',
+      userId: '55555555-5555-4555-8555-555555555555',
+      direction: 'inbound',
+      senderType: 'system',
+      text: 'Start a proactive pulse check-in about Role Clarity.',
+      messageType: 'proactive_check_in_request',
+      traceId: 'trace-check-in-1',
+      metadata: {
+        runtimePurpose: 'proactive_check_in',
+        synthetic: true,
+        hiddenFromConversationContext: true,
+      },
+    }));
     expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
       requestPurpose: 'proactive_check_in',
       conversationId: '44444444-4444-4444-8444-444444444444',
@@ -429,6 +446,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
           .mockReturnValueOnce(conversationQuery)
           .mockReturnValueOnce(recentQuery)
           .mockReturnValueOnce(memoryQuery),
+        insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
       },
     };
     const pulseBacklogService = {
@@ -489,6 +507,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
         select: vi.fn()
           .mockReturnValueOnce(tenantQuery)
           .mockReturnValueOnce(conversationQuery),
+        insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
       },
     };
     const agentRuntime = {
@@ -552,6 +571,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
           .mockReturnValueOnce(conversationQuery)
           .mockReturnValueOnce(recentQuery)
           .mockReturnValueOnce(memoryQuery),
+        insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
       },
     };
     const pulseBacklogService = {
