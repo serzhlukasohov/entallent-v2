@@ -13,6 +13,7 @@ import { ManagerTeamController } from './manager-team.controller';
 import { ManagerTrendsController } from './manager-trends.controller';
 import { PulseOverviewController } from './pulse-overview.controller';
 import { UserInsightsController } from './user-insights.controller';
+import { ProfileHydrationStatusController } from './profile-hydration-status.controller';
 
 @Module({
   imports: [DatabaseModule, AuditModule],
@@ -28,6 +29,7 @@ import { UserInsightsController } from './user-insights.controller';
     ManagerTrendsController,
     PulseOverviewController,
     UserInsightsController,
+    ProfileHydrationStatusController,
   ],
   providers: [ApiKeyGuard],
 })

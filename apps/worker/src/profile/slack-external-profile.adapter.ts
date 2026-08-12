@@ -23,8 +23,12 @@ export class SlackExternalProfileAdapter implements ExternalProfilePort {
       const adapter = new SlackAdapter({ botToken: wsConn.botToken });
       return await adapter.getUserProfile(account.externalWorkspaceId, account.externalUserId);
     } catch (err) {
-      this.logger.warn(`fetchProfile failed for user=${userId}: ${(err as Error).message}`);
-      return null;
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`fetchProfile failed for user=${userId}: ${message}`);
+      if (isNonRetryableSlackProfileError(message)) {
+        return null;
+      }
+      throw err;
     }
   }
 
@@ -36,4 +40,14 @@ export class SlackExternalProfileAdapter implements ExternalProfilePort {
     const profile = await this.fetchProfile(userId, tenantId, channelType);
     return profile?.timezone ?? null;
   }
+}
+
+function isNonRetryableSlackProfileError(message: string): boolean {
+  return [
+    'user_not_found',
+    'account_inactive',
+    'is_bot',
+    'user_is_bot',
+    'enterprise_is_restricted',
+  ].some((code) => message.includes(code));
 }
