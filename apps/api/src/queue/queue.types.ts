@@ -1,4 +1,6 @@
 export type ConversationJob = {
+  requestId: string;
+  eventId: string;
   messageId: string;
   conversationId: string;
   userId: string;
@@ -19,4 +21,4 @@ export type MessageSendJob = {
   replyToExternalThreadId?: string;
 };
 
-export type CheckInJob = Omit<ConversationJob, 'messageId'>;
+export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;

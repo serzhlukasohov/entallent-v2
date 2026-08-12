@@ -1,0 +1,1138 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "enTalent MAF Runtime Contract",
+    "version": "0.1.0"
+  },
+  "x-canonical-schema-source": {
+    "source": "neutral-openapi-3.1",
+    "decision": "Runtime HTTP contracts are owned by this OpenAPI 3.1 artifact. TypeScript and Python validators consume this artifact and shared fixtures; neither language-owned model is canonical.",
+    "architectureDecision": "AD-14"
+  },
+  "paths": {
+    "/runtime/process-message": {
+      "post": {
+        "operationId": "processRuntimeMessage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeProcessMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Runtime candidate result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Runtime contract or duplicate request error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Runtime dependency or availability error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RuntimeProcessMessageRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "eventId",
+          "traceId",
+          "idempotencyKey",
+          "runtimeAttempt",
+          "tenant",
+          "user",
+          "conversation",
+          "message",
+          "context"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "eventId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "pattern": "^runtime:[^:]+:[^:]+:[^:]+:[^:]+:[0-9]+$",
+            "x-error-category": "IDEMPOTENCY_KEY_INVALID"
+          },
+          "runtimeAttempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/RuntimeTenant"
+          },
+          "user": {
+            "$ref": "#/components/schemas/RuntimeUser"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/RuntimeConversation"
+          },
+          "message": {
+            "$ref": "#/components/schemas/RuntimeMessage"
+          },
+          "context": {
+            "$ref": "#/components/schemas/RuntimeContext"
+          },
+          "requestPurpose": {
+            "type": "string",
+            "enum": [
+              "inbound_message",
+              "proactive_check_in"
+            ]
+          },
+          "proactiveContext": {
+            "$ref": "#/components/schemas/RuntimeProactiveContext"
+          }
+        }
+      },
+      "RuntimeTenant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "workspaceId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "RuntimeUser": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1
+          },
+          "locale": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      },
+      "RuntimeConversation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "channel",
+          "externalWorkspaceId",
+          "externalConversationId",
+          "sessionKey"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "slack"
+            ]
+          },
+          "externalWorkspaceId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "SESSION_IDENTITY_INVALID"
+          },
+          "externalConversationId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "SESSION_IDENTITY_INVALID"
+          },
+          "threadId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "SESSION_IDENTITY_INVALID"
+          },
+          "sessionKey": {
+            "type": "string",
+            "pattern": "^[^:]+:[^:]+:[^:]+:[^:]+$",
+            "x-error-category": "SESSION_IDENTITY_INVALID"
+          }
+        }
+      },
+      "RuntimeMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RuntimeContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "recentTurns",
+          "memoryItems",
+          "goals"
+        ],
+        "properties": {
+          "recentTurns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeRecentTurn"
+            }
+          },
+          "memoryItems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeMemoryItem"
+            }
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeGoal"
+            }
+          }
+        }
+      },
+      "RuntimeRecentTurn": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "content",
+          "timestamp"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RuntimeMemoryItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "category",
+          "content",
+          "importance"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "importance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "RuntimeGoal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "RuntimeSituationClassification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "primaryIntent",
+          "secondaryIntents",
+          "emotionalState",
+          "urgency",
+          "confidence",
+          "requiresSafetyCheck",
+          "surveyAllowed",
+          "reasoningSummary",
+          "dialogueAct",
+          "latestUserSubstance",
+          "topicAnchor"
+        ],
+        "properties": {
+          "primaryIntent": {
+            "type": "string",
+            "enum": [
+              "support",
+              "coaching",
+              "goal_setting",
+              "progress_update",
+              "casual_conversation",
+              "clarification",
+              "survey_opportunity",
+              "conflict",
+              "burnout_signal",
+              "harassment_signal",
+              "potential_crisis",
+              "celebration",
+              "onboarding",
+              "feedback_request"
+            ]
+          },
+          "secondaryIntents": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "emotionalState": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "requiresSafetyCheck": {
+            "type": "boolean"
+          },
+          "surveyAllowed": {
+            "type": "boolean"
+          },
+          "reasoningSummary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reminderRequest": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "intent",
+              "dueAt"
+            ],
+            "properties": {
+              "intent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "dueAt": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "dialogueAct": {
+            "type": "string",
+            "enum": [
+              "new_substance",
+              "acknowledgement",
+              "continuation",
+              "correction",
+              "request",
+              "emotional_disclosure",
+              "closing"
+            ]
+          },
+          "latestUserSubstance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "topicAnchor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RuntimeResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reply",
+          "memoryCandidates",
+          "proposedActions",
+          "classification",
+          "diagnostics"
+        ],
+        "properties": {
+          "reply": {
+            "$ref": "#/components/schemas/RuntimeReply"
+          },
+          "riskAssessment": {
+            "$ref": "#/components/schemas/RuntimeRiskAssessment"
+          },
+          "memoryCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeMemoryCandidate"
+            }
+          },
+          "proposedActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeActionProposal"
+            }
+          },
+          "classification": {
+            "$ref": "#/components/schemas/RuntimeSituationClassification"
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/RuntimeDiagnostics"
+          }
+        }
+      },
+      "RuntimeReply": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RuntimeReplyMetadata"
+          }
+        }
+      },
+      "RuntimeRiskAssessment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "severity",
+          "confidence",
+          "evidence",
+          "immediateResponseRequired",
+          "escalationRecommended",
+          "surveyMustBeBlocked",
+          "proactiveMessagesMustBePaused"
+        ],
+        "properties": {
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "immediateResponseRequired": {
+            "type": "boolean"
+          },
+          "escalationRecommended": {
+            "type": "boolean"
+          },
+          "surveyMustBeBlocked": {
+            "type": "boolean"
+          },
+          "proactiveMessagesMustBePaused": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RuntimeMemoryCandidate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actionId",
+          "type",
+          "content",
+          "confidence",
+          "sourceMessageIds"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "sensitivity": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "sensitive",
+              "highly_sensitive"
+            ]
+          },
+          "sourceMessageIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "RuntimeActionProposal": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SaveMemoryActionEnvelope"
+          },
+          {
+            "$ref": "#/components/schemas/ScheduleFollowUpActionEnvelope"
+          },
+          {
+            "$ref": "#/components/schemas/UpdateGoalActionEnvelope"
+          }
+        ],
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "SaveMemoryActionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "x-action-lifecycle": true,
+        "x-error-category": "ACTION_PROPOSAL_INVALID",
+        "required": [
+          "actionId",
+          "aggregateType",
+          "actionType",
+          "idempotencyKey",
+          "payload",
+          "validationResult",
+          "executionStatus",
+          "commitMarker"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "aggregateType": {
+            "type": "string",
+            "enum": [
+              "memory"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "actionType": {
+            "type": "string",
+            "enum": [
+              "save_memory"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/SaveMemoryActionPayload",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "validationResult": {
+            "$ref": "#/components/schemas/ActionValidationResult",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "executionStatus": {
+            "$ref": "#/components/schemas/ActionExecutionStatus",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "commitMarker": {
+            "$ref": "#/components/schemas/ActionCommitMarker",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        }
+      },
+      "ScheduleFollowUpActionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "x-action-lifecycle": true,
+        "x-error-category": "ACTION_PROPOSAL_INVALID",
+        "required": [
+          "actionId",
+          "aggregateType",
+          "actionType",
+          "idempotencyKey",
+          "payload",
+          "validationResult",
+          "executionStatus",
+          "commitMarker"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "aggregateType": {
+            "type": "string",
+            "enum": [
+              "follow_up"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "actionType": {
+            "type": "string",
+            "enum": [
+              "schedule_follow_up"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ScheduleFollowUpActionPayload",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "validationResult": {
+            "$ref": "#/components/schemas/ActionValidationResult",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "executionStatus": {
+            "$ref": "#/components/schemas/ActionExecutionStatus",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "commitMarker": {
+            "$ref": "#/components/schemas/ActionCommitMarker",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        }
+      },
+      "UpdateGoalActionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "x-action-lifecycle": true,
+        "x-error-category": "ACTION_PROPOSAL_INVALID",
+        "required": [
+          "actionId",
+          "aggregateType",
+          "actionType",
+          "idempotencyKey",
+          "payload",
+          "validationResult",
+          "executionStatus",
+          "commitMarker"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "aggregateType": {
+            "type": "string",
+            "enum": [
+              "goal"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "actionType": {
+            "type": "string",
+            "enum": [
+              "update_goal"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/UpdateGoalActionPayload",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "validationResult": {
+            "$ref": "#/components/schemas/ActionValidationResult",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "executionStatus": {
+            "$ref": "#/components/schemas/ActionExecutionStatus",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "commitMarker": {
+            "$ref": "#/components/schemas/ActionCommitMarker",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        }
+      },
+      "SaveMemoryActionPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "memoryCandidateId"
+        ],
+        "properties": {
+          "memoryCandidateId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ScheduleFollowUpActionPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executeAt",
+          "intent",
+          "deduplicationKey"
+        ],
+        "properties": {
+          "executeAt": {
+            "type": "string",
+            "format": "date-time",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "deduplicationKey": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "UpdateGoalActionPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "changes"
+        ],
+        "properties": {
+          "goalId": {
+            "type": "string",
+            "format": "uuid",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "changes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimeJsonValue"
+            },
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ActionValidationResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "reasonCodes"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "valid",
+              "invalid"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "reasonCodes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "x-error-category": "ACTION_PROPOSAL_INVALID"
+            },
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ActionExecutionStatus": {
+        "type": "string",
+        "enum": [
+          "not_started",
+          "blocked",
+          "committed",
+          "failed"
+        ],
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "ActionCommitMarker": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": false,
+        "required": [
+          "committedAt",
+          "referenceId"
+        ],
+        "properties": {
+          "committedAt": {
+            "type": "string",
+            "format": "date-time",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          "referenceId": {
+            "type": "string",
+            "minLength": 1,
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        },
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "RuntimeJsonValue": {
+        "oneOf": [
+          {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "number",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "boolean",
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeJsonValue"
+            },
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimeJsonValue"
+            },
+            "x-error-category": "ACTION_PROPOSAL_INVALID"
+          }
+        ],
+        "x-error-category": "ACTION_PROPOSAL_INVALID"
+      },
+      "RuntimeDiagnostics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "traceId",
+          "runtimeVersion",
+          "runtimeAttempt",
+          "modelCalls",
+          "toolCalls",
+          "latencyMs",
+          "retryCount",
+          "modelRetryCount",
+          "toolRetryCount",
+          "httpRetryCount"
+        ],
+        "properties": {
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtimeVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtimeAttempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "modelCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "modelRetryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolRetryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "httpRetryCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "RuntimeErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "traceId",
+          "errorCategory",
+          "retryable",
+          "fallbackAllowed",
+          "message"
+        ],
+        "properties": {
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "errorCategory": {
+            "type": "string",
+            "enum": [
+              "unavailable",
+              "validation_error",
+              "timeout",
+              "duplicate_request",
+              "dependency_failed",
+              "unsafe_partial_result"
+            ],
+            "x-error-category": "RUNTIME_ERROR_CATEGORY_INVALID"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "fallbackAllowed": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "RuntimeProactiveContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "pulse_check_in"
+            ]
+          },
+          "probeQuestion": {
+            "$ref": "#/components/schemas/RuntimePulseProbeQuestion"
+          }
+        }
+      },
+      "RuntimePulseProbeQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "probeStrategies"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stableKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "group": {
+            "type": "string",
+            "minLength": 1
+          },
+          "probeStrategies": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "RuntimeReplyMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "containsSurveyProbe": {
+            "type": "boolean"
+          },
+          "surveyProbeQuestionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    }
+  }
+}

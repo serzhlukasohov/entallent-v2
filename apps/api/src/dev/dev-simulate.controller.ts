@@ -62,6 +62,7 @@ export class DevSimulateController {
       externalConversationId,
     });
 
+    const requestId = randomUUID();
     const traceId = randomUUID();
 
     const { messageId } = await this.ingestion.saveInboundMessage({
@@ -74,6 +75,8 @@ export class DevSimulateController {
     });
 
     await this.queue.add('process', {
+      requestId,
+      eventId: `dev:${requestId}`,
       messageId,
       conversationId,
       userId,

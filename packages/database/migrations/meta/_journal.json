@@ -43,6 +43,34 @@
       "when": 1785679485458,
       "tag": "0005_concerned_supernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785937787097,
+      "tag": "0006_runtime_ledgers",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785939615489,
+      "tag": "0007_runtime_ledger_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785940440000,
+      "tag": "0008_runtime_shadow_diagnostics",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0009_runtime_attempts_allow_maf_primary",
+      "breakpoints": true
     }
   ]
 }

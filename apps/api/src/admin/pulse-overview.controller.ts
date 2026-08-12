@@ -1,5 +1,7 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, eq, isNull } from 'drizzle-orm';
+import type { Env } from '@entalent/config';
 import {
   users,
   surveyWindows,
@@ -49,19 +51,27 @@ export interface PulseOverviewResponse {
 @Controller('admin/pulse/overview')
 @UseGuards(ApiKeyGuard)
 export class PulseOverviewController {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   @Get()
   async getOverview(
-    @Query('tenantId') tenantId: string,
+    @Query('tenantId') tenantId?: string,
   ): Promise<PulseOverviewResponse> {
+    const resolvedTenantId = tenantId ?? this.config.get('DEFAULT_TENANT_ID', { infer: true });
+    if (!resolvedTenantId) {
+      throw new BadRequestException('tenantId query param is required');
+    }
+
     const teamUsers = await this.db.client
       .select({ id: users.id, displayName: users.preferredName })
       .from(users)
-      .where(and(eq(users.tenantId, tenantId), eq(users.status, 'active'), isNull(users.deletedAt)));
+      .where(and(eq(users.tenantId, resolvedTenantId), eq(users.status, 'active'), isNull(users.deletedAt)));
 
     if (!teamUsers.length) {
-      return { tenantId, generatedAt: new Date().toISOString(), allGroups: GROUP_ORDER, employees: [] };
+      return { tenantId: resolvedTenantId, generatedAt: new Date().toISOString(), allGroups: GROUP_ORDER, employees: [] };
     }
 
     const [assessmentRows, groupStateRows, questionDefs, backlogRows] = await Promise.all([
@@ -77,7 +87,7 @@ export class PulseOverviewController {
         .from(surveyAssessments)
         .innerJoin(surveyWindows, eq(surveyAssessments.surveyWindowId, surveyWindows.id))
         .innerJoin(surveyQuestions, eq(surveyAssessments.surveyQuestionId, surveyQuestions.id))
-        .where(and(eq(surveyWindows.tenantId, tenantId), eq(surveyWindows.status, 'active'))),
+        .where(and(eq(surveyWindows.tenantId, resolvedTenantId), eq(surveyWindows.status, 'active'))),
 
       this.db.client
         .select({
@@ -88,7 +98,7 @@ export class PulseOverviewController {
           confirmedAt: surveyGroupStates.confirmedAt,
         })
         .from(surveyGroupStates)
-        .where(eq(surveyGroupStates.tenantId, tenantId)),
+        .where(eq(surveyGroupStates.tenantId, resolvedTenantId)),
 
       this.db.client
         .select({
@@ -116,7 +126,7 @@ export class PulseOverviewController {
         .innerJoin(surveyWindows, eq(pulseBacklog.surveyWindowId, surveyWindows.id))
         .where(
           and(
-            eq(pulseBacklog.tenantId, tenantId),
+            eq(pulseBacklog.tenantId, resolvedTenantId),
             eq(surveyWindows.status, 'active'),
           ),
         ),
@@ -209,7 +219,7 @@ export class PulseOverviewController {
     );
 
     return {
-      tenantId,
+      tenantId: resolvedTenantId,
       generatedAt: new Date().toISOString(),
       allGroups: GROUP_ORDER,
       employees: active,

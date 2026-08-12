@@ -14,11 +14,16 @@ describe('isInQuietHours default window', () => {
     expect(DEFAULT_QUIET_HOURS).toEqual({ enabled: true, startHour: 22, endHour: 8 });
   });
 
-  it('applies the default window when the user has not enabled quiet hours', () => {
-    // At 03:00 UTC, UTC user is inside 22–08 default.
+  it('does not apply quiet hours when the user has disabled them', () => {
+    // At 03:00 UTC, UTC user would be inside the 22-08 default window.
     vi.setSystemTime(new Date('2026-08-02T03:00:00Z'));
-    expect(isInQuietHours('UTC', { enabled: false })).toBe(true);   // default applied
-    expect(isInQuietHours('UTC', { enabled: false } as QuietHours)).toBe(true);
+    expect(isInQuietHours('UTC', { enabled: false })).toBe(false);
+    expect(isInQuietHours('UTC', { enabled: false } as QuietHours)).toBe(false);
+  });
+
+  it('applies the default window when quiet hours are enabled without a custom window', () => {
+    vi.setSystemTime(new Date('2026-08-02T03:00:00Z'));
+    expect(isInQuietHours('UTC', { enabled: true })).toBe(true);
   });
 
   it('is not quiet at midday under the default window', () => {

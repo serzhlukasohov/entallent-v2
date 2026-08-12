@@ -8,6 +8,7 @@ function baseMocks() {
       { id: 'm-1', direction: 'inbound', text: 'hey', occurredAt: new Date(), metadata: undefined },
     ]),
     saveMessage: vi.fn().mockResolvedValue({ id: 'out-1' }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
   const aiProvider = {
     classifySituation: vi.fn().mockResolvedValue({
@@ -27,7 +28,9 @@ function baseMocks() {
     detectRisk: vi.fn(),
     generateResponse: vi.fn().mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false }),
     interpretConfirmationResponse: vi.fn(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const outbox = { enqueueMessageSend: vi.fn(), enqueueMemoryExtraction: vi.fn(), enqueueSurveyEvidence: vi.fn(), enqueueGroupReport: vi.fn(), enqueueStyleAnalysis: vi.fn(), enqueueProfileHydration: vi.fn() } as any;
   const surveyRepo = {
     findPendingConfirmationGroups: vi.fn().mockResolvedValue([]),
@@ -37,7 +40,9 @@ function baseMocks() {
     findEvidenceForQuestion: vi.fn().mockResolvedValue([{ evidenceSummary: 'values ownership', polarity: 'positive', createdAt: new Date() }]),
     upsertGroupState: vi.fn().mockResolvedValue({}),
     findTeamByMemberId: vi.fn().mockResolvedValue(null),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const featureFlags = { isEnabled: vi.fn().mockResolvedValue(true) } as any;
   return { conversationRepo, aiProvider, outbox, surveyRepo, featureFlags };
 }
@@ -222,6 +227,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
       phrases: [], adaptationWeight: weight, conversationsAnalyzed: 4, updatedAt: new Date(),
     }),
     upsert: vi.fn(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
 
   it('terse user is shortened while reply plan skips the question when the agent just asked one', async () => {

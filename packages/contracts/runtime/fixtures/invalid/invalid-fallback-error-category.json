@@ -1,0 +1,7 @@
+{
+  "traceId": "trace-runtime-contract-invalid-error",
+  "errorCategory": "fallback_mystery",
+  "retryable": true,
+  "fallbackAllowed": true,
+  "message": "Synthetic runtime error."
+}

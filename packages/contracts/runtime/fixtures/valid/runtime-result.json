@@ -1,0 +1,110 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response.",
+    "mode": "supportive",
+    "metadata": {
+      "containsSurveyProbe": true,
+      "surveyProbeQuestionId": "88888888-8888-4888-8888-888888888888"
+    }
+  },
+  "riskAssessment": {
+    "type": null,
+    "severity": "none",
+    "confidence": 0.97,
+    "evidence": [],
+    "immediateResponseRequired": false,
+    "escalationRecommended": false,
+    "surveyMustBeBlocked": false,
+    "proactiveMessagesMustBePaused": false
+  },
+  "memoryCandidates": [
+    {
+      "actionId": "memory-candidate-demo",
+      "type": "preference",
+      "content": "Synthetic memory candidate.",
+      "confidence": 0.82,
+      "sensitivity": "normal",
+      "sourceMessageIds": ["44444444-4444-4444-8444-444444444444"]
+    }
+  ],
+  "proposedActions": [
+    {
+      "actionId": "save-memory-demo",
+      "aggregateType": "memory",
+      "actionType": "save_memory",
+      "idempotencyKey": "action:save-memory-demo",
+      "payload": {
+        "memoryCandidateId": "memory-candidate-demo"
+      },
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
+    },
+    {
+      "actionId": "schedule-follow-up-demo",
+      "aggregateType": "follow_up",
+      "actionType": "schedule_follow_up",
+      "idempotencyKey": "action:schedule-follow-up-demo",
+      "payload": {
+        "executeAt": "2026-08-06T11:58:01Z",
+        "intent": "check in later",
+        "deduplicationKey": "followup:demo"
+      },
+      "validationResult": {
+        "status": "valid",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
+    },
+    {
+      "actionId": "update-goal-demo",
+      "aggregateType": "goal",
+      "actionType": "update_goal",
+      "idempotencyKey": "action:update-goal-demo",
+      "payload": {
+        "goalId": "77777777-7777-4777-8777-777777777777",
+        "changes": {
+          "status": "active",
+          "priority": 2,
+          "blocked": false
+        }
+      },
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
+    }
+  ],
+  "classification": {
+    "primaryIntent": "support",
+    "secondaryIntents": [],
+    "emotionalState": [],
+    "urgency": "low",
+    "confidence": 0.83,
+    "requiresSafetyCheck": false,
+    "surveyAllowed": true,
+    "reasoningSummary": "Synthetic classification generated for deterministic fixture.",
+    "reminderRequest": null,
+    "dialogueAct": "new_substance",
+    "latestUserSubstance": "Synthetic classification context.",
+    "topicAnchor": null
+  },
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-valid-result",
+    "runtimeVersion": "maf-contract-fixture",
+    "runtimeAttempt": 1,
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42,
+    "retryCount": 0,
+    "modelRetryCount": 0,
+    "toolRetryCount": 0,
+    "httpRetryCount": 0
+  }
+}

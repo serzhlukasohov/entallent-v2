@@ -1,0 +1,272 @@
+# generated: 2026-08-05T10:19:30Z
+# last_updated: 2026-08-09T18:55:00+02:00
+# project: enTalentNew
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: /Users/serzh/Documents/enTalentNew/_bmad-output/implementation-artifacts
+#
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: Automatically when first story is created (via create-story)
+#   - in-progress -> done: Manually when all stories in epic reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review
+# - Retrospective appends its action items to action_items; sprint-status surfaces open ones
+
+generated: 2026-08-05T10:19:30Z
+last_updated: 2026-08-09T19:40:00+02:00
+project: enTalentNew
+project_key: NOKEY
+tracking_system: file-system
+story_location: /Users/serzh/Documents/enTalentNew/_bmad-output/implementation-artifacts
+
+development_status:
+  epic-1: done
+  1-1-preserve-typescript-runtime-through-agent-runtime-port: done
+  1-2-add-runtime-router-with-typescript-default: done
+  1-3-add-maf-runtime-control-flags: done
+  1-4-log-runtime-decisions-per-job: done
+  epic-1-retrospective: done
+
+  epic-2: done
+  2-1-choose-canonical-runtime-schema-source: done
+  2-2-define-runtime-request-and-result-contract: done
+  2-3-define-canonical-action-envelope: done
+  2-4-add-runtime-attempt-and-action-ledgers: done
+  2-5-enforce-fallback-barrier-from-ledger-state: done
+  2-6-define-runtime-retry-budget-and-error-mapping: done
+  epic-2-retrospective: done
+
+  epic-3: done
+  3-1-expand-migration-baseline-scenarios: done
+  3-2-add-shadow-diagnostics-record: done
+  3-3-report-shadow-comparison-readiness: done
+  epic-3-retrospective: done
+
+  epic-4: done
+  4-1-scaffold-agent-service: done
+  4-2-add-runtime-endpoint-skeleton: done
+  4-3-add-scoped-internal-service-auth: done
+  4-4-add-durable-session-and-checkpoint-store: done
+  4-5-define-deployable-service-envelope: done
+  epic-4-retrospective: done
+
+  epic-5: done
+  5-1-add-disabled-maf-agent-runtime-client: done
+  5-2-implement-maf-workflow-skeleton: done
+  5-3-implement-read-only-context-tools: done
+  5-4-return-structured-maf-candidate-results: done
+  5-5-integrate-maf-candidate-into-shadow-mode: done
+  epic-5-retrospective: done
+
+  epic-6: done
+  6-1-add-canary-gate-evaluation: done
+  6-2-add-staged-rollout-controls: done
+  6-3-preserve-safety-privacy-and-consent-in-canary: done
+  6-4-document-rollback-and-ownership-transfer-rules: done
+  epic-6-retrospective: done
+
+  epic-7: done
+  7-1-replace-deterministic-python-workflow-skeleton-with-microsoft-agent-framework-core-workflow: done
+  7-2-add-opt-in-maf-agent-model-provider-path-for-local-testing: done
+  epic-7-retrospective: done
+
+  epic-8: done
+  8-1-run-local-live-maf-model-validation: done
+  8-2-add-local-maf-shadow-validation: done
+  8-3-run-live-typescript-to-python-maf-shadow-smoke: done
+  epic-8-retrospective: done
+
+  epic-9: done
+  9-1-enable-fast-maf-primary-runtime-cutover: done
+  9-2-run-full-app-primary-runtime-smoke: done
+  epic-9-retrospective: done
+
+action_items:
+  - epic: 1
+    action: 'Require a dedicated story artifact before dev starts for every remaining MAF migration story.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 1
+    action: 'Keep runtime logs privacy-reviewed with stable reason codes and explicit payload allowlists.'
+    owner: 'Amelia / Developer'
+    status: in-progress
+  - epic: 1
+    action: 'Run dependent package verification sequentially when a build cleans an upstream dist directory.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 1
+    action: 'Use compatibility-preserving APIs when enriching runtime control contracts.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 2
+    action: 'Keep cross-language semantic invariants paired with invalid fixtures whenever the runtime contract changes.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 2
+    action: 'Resolve the strict runtime-boundary request shape before wiring a real MAF HTTP client.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 2
+    action: 'Encode manual-review requirements in the migration baseline for sensitive scenarios.'
+    owner: 'John / Product Manager'
+    status: done
+  - epic: 2
+    action: 'Carry Epic 2 stable reason-code and redaction rules into the shadow diagnostics record.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 3
+    action: 'Keep required and sensitive migration baseline case IDs sourced from @entalent/contracts for every future simulation, diagnostics, and readiness consumer.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 3
+    action: 'Carry fail-closed redaction and stable reason-code allowlists into Python service validation, tool-call audit records, and future shadow candidate diagnostics.'
+    owner: 'Amelia / Developer'
+    status: in-progress
+  - epic: 3
+    action: 'Keep Epic 4 Story 4.1 limited to scaffold and liveness; defer runtime endpoint, service auth, durable session store, worker client, MAF workflow, shadow execution, canary routing, and UI to their planned stories.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 3
+    action: 'Run upstream package builds sequentially before dependent worker or service verification when a build cleans a shared dist directory.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 3
+    action: 'Resolve or explicitly document the strict runtime-boundary request shape before Epic 5 introduces MafAgentRuntimeClient.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 4
+    action: 'Resolve or explicitly document the strict runtime-boundary request shape before Story 5.1 introduces MafAgentRuntimeClient.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 4
+    action: 'Keep MafAgentRuntimeClient disabled by default with fail-closed diagnostics until service URL, readiness, and auth configuration are explicitly present.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 4
+    action: 'Carry the Epic 4 scope-regression pattern into every Epic 5 story.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 4
+    action: 'Verify the agent-service Docker image and Railway writable volume registration before enabling non-local shadow outside local tests.'
+    owner: 'Winston / Platform'
+    status: done
+  - epic: 4
+    action: 'Preserve safe error and redaction behavior when adding MAF workflow and read-only tools.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 5
+    action: 'Treat invalid, missing, unsafe, or stale shadow diagnostics as hard canary blockers in Story 6.1.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 5
+    action: 'Keep MAF candidate execution shadow-only until canary gates, staged rollout controls, privacy/consent checks, and rollback rules are implemented and verified.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 5
+    action: 'Preserve tenant, workspace, conversation, thread, and soft-delete filters in every future MAF context source.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 5
+    action: 'Keep env-created MafAgentRuntimeClient coverage for default fetch, default timeout, safe diagnostics, and idempotency-key uniqueness.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 5
+    action: 'Decide whether shadow candidate execution remains awaited in worker jobs or moves to bounded async diagnostics execution before user-facing canary.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 5
+    action: 'Verify agent-service deployment readiness before non-local shadow or canary exposure.'
+    owner: 'Winston / Platform'
+    status: done
+  - epic: 6
+    action: 'Verify agent-service deployment readiness before non-local shadow or canary exposure.'
+    owner: 'Winston / Platform'
+    status: done
+  - epic: 6
+    action: 'Decide whether shadow candidate execution remains awaited in worker jobs or moves to bounded async diagnostics execution before user-facing canary.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 6
+    action: 'Keep user-facing MAF canary enablement as a separate explicit story.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 6
+    action: 'Preserve tenant, workspace, conversation, thread, and soft-delete filters in every future MAF context source.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 6
+    action: 'Keep env-created MafAgentRuntimeClient coverage for default fetch, default timeout, safe diagnostics, and idempotency-key uniqueness.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 6
+    action: 'Maintain allowlisted stable reason-code and known-ID evidence rules for future Python validation and tool audit records.'
+    owner: 'Amelia / Developer'
+    status: open
+  - epic: 7
+    action: 'Run a local live model smoke test for agent-service with real OpenAI or Azure OpenAI env vars.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 7
+    action: 'Create the next BMAD story as a focused local/staging live validation slice.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 7
+    action: 'Keep Story 7.2 provider safety tests as mandatory regression coverage for future model prompt or provider changes.'
+    owner: 'Dana / QA'
+    status: done
+  - epic: 7
+    action: 'Resolve deployment readiness evidence before any non-local shadow or canary exposure.'
+    owner: 'Winston / Platform'
+    status: done
+  - epic: 7
+    action: 'Decide whether the fast-track path changes the planned canary story or only the local/staging validation sequence.'
+    owner: 'John / Product Manager'
+    status: done
+  - epic: 8
+    action: 'Create the fast primary MAF cutover story with explicit controls, fallback behavior, and verification criteria.'
+    owner: 'Amelia / Developer'
+    status: done
+  - epic: 8
+    action: 'Keep pnpm maf:shadow:smoke as mandatory verification before enabling primary MAF locally.'
+    owner: 'Dana / QA'
+    status: done
+  - epic: 8
+    action: 'Implement primary cutover without bypassing TypeScript side-effect ownership.'
+    owner: 'Winston / Architect'
+    status: done
+  - epic: 8
+    action: 'Document the local manual test path once primary mode exists.'
+    owner: 'Paige / Technical Writer'
+    status: done
+  - epic: 9
+    action: 'Add remote/staging app-level primary smoke mode and document required non-local checks.'
+    owner: 'Amelia / Developer'
+    status: done

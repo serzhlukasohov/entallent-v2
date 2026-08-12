@@ -1,0 +1,49 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response."
+  },
+  "memoryCandidates": [],
+  "proposedActions": [
+    {
+      "actionId": "save-memory-demo",
+      "aggregateType": "survey",
+      "actionType": "save_memory",
+      "idempotencyKey": "action:save-memory-demo",
+      "payload": {
+        "memoryCandidateId": "memory-candidate-demo"
+      },
+      "validationResult": {
+        "status": "pending",
+        "reasonCodes": []
+      },
+      "executionStatus": "not_started",
+      "commitMarker": null
+    }
+  ],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-invalid-aggregate",
+    "runtimeVersion": "maf-contract-fixture",
+    "runtimeAttempt": 1,
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42,
+    "retryCount": 0,
+    "modelRetryCount": 0,
+    "toolRetryCount": 0,
+    "httpRetryCount": 0
+  },
+  "classification": {
+    "primaryIntent": "support",
+    "secondaryIntents": [],
+    "emotionalState": [],
+    "urgency": "low",
+    "confidence": 0.83,
+    "requiresSafetyCheck": false,
+    "surveyAllowed": true,
+    "reasoningSummary": "Synthetic classification generated for deterministic fixture.",
+    "reminderRequest": null,
+    "dialogueAct": "new_substance",
+    "latestUserSubstance": "Synthetic classification context.",
+    "topicAnchor": null
+  }
+}

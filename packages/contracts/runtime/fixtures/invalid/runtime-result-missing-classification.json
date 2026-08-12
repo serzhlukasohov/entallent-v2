@@ -1,0 +1,30 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response.",
+    "mode": "supportive"
+  },
+  "riskAssessment": {
+    "type": null,
+    "severity": "none",
+    "confidence": 0.97,
+    "evidence": [],
+    "immediateResponseRequired": false,
+    "escalationRecommended": false,
+    "surveyMustBeBlocked": false,
+    "proactiveMessagesMustBePaused": false
+  },
+  "memoryCandidates": [],
+  "proposedActions": [],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-invalid",
+    "runtimeVersion": "maf-contract-fixture",
+    "runtimeAttempt": 1,
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42,
+    "retryCount": 0,
+    "modelRetryCount": 0,
+    "toolRetryCount": 0,
+    "httpRetryCount": 0
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "reply": {
+    "text": "Synthetic runtime response.",
+    "mode": "supportive"
+  },
+  "memoryCandidates": [],
+  "proposedActions": [],
+  "diagnostics": {
+    "traceId": "trace-runtime-contract-mismatched-retry-diagnostics",
+    "runtimeVersion": "maf-contract-fixture",
+    "runtimeAttempt": 1,
+    "modelCalls": 1,
+    "toolCalls": 0,
+    "latencyMs": 42,
+    "retryCount": 4,
+    "modelRetryCount": 1,
+    "toolRetryCount": 1,
+    "httpRetryCount": 1
+  },
+  "classification": {
+    "primaryIntent": "support",
+    "secondaryIntents": [],
+    "emotionalState": [],
+    "urgency": "low",
+    "confidence": 0.83,
+    "requiresSafetyCheck": false,
+    "surveyAllowed": true,
+    "reasoningSummary": "Synthetic classification generated for deterministic fixture.",
+    "reminderRequest": null,
+    "dialogueAct": "new_substance",
+    "latestUserSubstance": "Synthetic classification context.",
+    "topicAnchor": null
+  }
+}

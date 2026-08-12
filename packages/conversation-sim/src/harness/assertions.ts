@@ -1,5 +1,6 @@
 import { hasReflectiveOpener } from '@entalent/ai-openai';
 import type { CoachHarness } from './coach-harness';
+import type { MigrationBaselineCase } from '../scenarios/migration-baseline';
 
 export interface Violation {
   turn: number;
@@ -67,6 +68,59 @@ export function countQuestions(text: string): number {
 
 export function describeViolations(violations: Violation[]): string {
   return violations.map((v) => `turn ${v.turn} — ${v.rule}: ${v.detail}`).join('\n');
+}
+
+export interface BaselineScenarioConfig {
+  id: string;
+  migrationCases?: string[];
+  manualReviewRequired?: boolean;
+}
+
+export function findBaselineCoverageGaps(
+  cases: MigrationBaselineCase[],
+  scenarios: BaselineScenarioConfig[],
+): string[] {
+  const gaps: string[] = [];
+  const caseIds = cases.map((baselineCase) => baselineCase.id);
+  const caseIdSet = new Set(caseIds);
+  const configuredCaseIds = new Set(scenarios.flatMap((scenario) => scenario.migrationCases ?? []));
+  const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
+
+  if (caseIds.length !== caseIdSet.size) {
+    gaps.push('migration baseline manifest contains duplicate case IDs');
+  }
+
+  for (const baselineCase of cases) {
+    if (!configuredCaseIds.has(baselineCase.id)) {
+      gaps.push(`${baselineCase.id}: missing from gate config migrationCases`);
+    }
+    for (const scenarioId of baselineCase.scenarioIds) {
+      if (!scenarioIds.has(scenarioId)) {
+        gaps.push(`${baselineCase.id}: missing configured scenario ${scenarioId}`);
+      }
+    }
+    if (baselineCase.manualReviewRequired) {
+      const hasManualReviewScenario = scenarios.some(
+        (scenario) =>
+          scenario.manualReviewRequired === true &&
+          (scenario.migrationCases ?? []).includes(baselineCase.id),
+      );
+      if (!hasManualReviewScenario) {
+        gaps.push(`${baselineCase.id}: sensitive case lacks manualReviewRequired gate metadata`);
+      }
+    }
+  }
+  for (const configuredCaseId of configuredCaseIds) {
+    if (!caseIdSet.has(configuredCaseId as MigrationBaselineCase['id'])) {
+      gaps.push(`${configuredCaseId}: gate config references unknown migration case`);
+    }
+  }
+
+  return gaps;
+}
+
+export function describeBaselineCoverageGaps(gaps: string[]): string {
+  return gaps.join('\n');
 }
 
 /**

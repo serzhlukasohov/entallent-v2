@@ -1,0 +1,7 @@
+{
+  "traceId": "trace-runtime-contract-valid-error",
+  "errorCategory": "timeout",
+  "retryable": true,
+  "fallbackAllowed": true,
+  "message": "Synthetic runtime timeout."
+}

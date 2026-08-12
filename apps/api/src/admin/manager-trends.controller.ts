@@ -1,5 +1,7 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { sql } from 'drizzle-orm';
+import type { Env } from '@entalent/config';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
 import {
@@ -17,13 +19,21 @@ const MAX_DAYS = 120;
 @Controller('admin/manager/trends')
 @UseGuards(ApiKeyGuard)
 export class ManagerTrendsController {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   @Get()
   async getTrends(
-    @Query('tenantId') tenantId: string,
+    @Query('tenantId') tenantId: string | undefined,
     @Query('days') daysRaw?: string,
   ): Promise<TrendsResult> {
+    const resolvedTenantId = tenantId ?? this.config.get('DEFAULT_TENANT_ID', { infer: true });
+    if (!resolvedTenantId) {
+      throw new BadRequestException('tenantId query param is required');
+    }
+
     const days = clampDays(daysRaw);
     // Window: [today-(days-1), today], bucketed by UTC day.
     const since = sql`now() - make_interval(days => ${days - 1})`;
@@ -35,7 +45,7 @@ export class ManagerTrendsController {
                count(DISTINCT user_id)::int AS "activeUsers",
                count(*)::int AS "inboundMessages"
         FROM messages
-        WHERE tenant_id = ${tenantId}
+        WHERE tenant_id = ${resolvedTenantId}
           AND direction = 'inbound'
           AND text <> '__init__'
           AND deleted_at IS NULL
@@ -51,7 +61,7 @@ export class ManagerTrendsController {
                count(*)::int AS count
         FROM survey_evidence e
         JOIN survey_windows w ON e.survey_window_id = w.id
-        WHERE w.tenant_id = ${tenantId}
+        WHERE w.tenant_id = ${resolvedTenantId}
           AND e.created_at >= date_trunc('day', ${since})
         GROUP BY 1, 2
         ORDER BY 1
@@ -62,7 +72,7 @@ export class ManagerTrendsController {
         SELECT a.status AS status, count(*)::int AS count
         FROM survey_assessments a
         JOIN survey_windows w ON a.survey_window_id = w.id
-        WHERE w.tenant_id = ${tenantId} AND w.status = 'active'
+        WHERE w.tenant_id = ${resolvedTenantId} AND w.status = 'active'
         GROUP BY 1
       `) as unknown as Promise<FunnelRow[]>,
 
@@ -76,7 +86,7 @@ export class ManagerTrendsController {
         FROM survey_evidence e
         JOIN survey_windows w ON e.survey_window_id = w.id
         JOIN survey_questions q ON e.survey_question_id = q.id
-        WHERE w.tenant_id = ${tenantId}
+        WHERE w.tenant_id = ${resolvedTenantId}
           AND w.status = 'active'
           AND e.superseded_at IS NULL
         GROUP BY 1, 2, 3, e.polarity
