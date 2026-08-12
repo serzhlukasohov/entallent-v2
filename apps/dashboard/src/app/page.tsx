@@ -1,12 +1,10 @@
 import { TeamTable } from './components/TeamTable';
 import { Nav } from './components/Nav';
-import { fetchApi, TENANT_ID } from './lib';
+import { fetchAdminManagerTeam } from './lib';
 import type { AdminManagerTeamResponse } from '@entalent/contracts';
 
 export default async function DashboardPage() {
-  const data = await fetchApi<AdminManagerTeamResponse>(
-    `/admin/manager/team?tenantId=${TENANT_ID}`,
-  );
+  const data = await fetchAdminManagerTeam();
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>

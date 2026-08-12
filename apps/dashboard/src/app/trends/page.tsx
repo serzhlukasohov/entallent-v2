@@ -1,14 +1,9 @@
-import type { AdminManagerTrendsResponse } from '@entalent/contracts';
 import { Nav } from '../components/Nav';
-import { fetchApi, TENANT_ID } from '../lib';
+import { fetchAdminManagerTrends } from '../lib';
 import { EngagementChart, SignalChart, CoverageFunnel, QuestionSentimentChart } from './charts';
 
-const WINDOW_DAYS = 14;
-
 export default async function TrendsPage() {
-  const data = await fetchApi<AdminManagerTrendsResponse>(
-    `/admin/manager/trends?tenantId=${TENANT_ID}&days=${WINDOW_DAYS}`,
-  );
+  const data = await fetchAdminManagerTrends();
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>

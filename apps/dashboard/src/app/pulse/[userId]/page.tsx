@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import type { AdminQuestionInsight, AdminUserInsightsResponse } from '@entalent/contracts';
+import type { AdminQuestionInsight } from '@entalent/contracts';
 import { Nav } from '../../components/Nav';
-import { fetchApi } from '../../lib';
+import { fetchAdminUserInsights } from '../../lib';
 
 type QuestionInsight = AdminQuestionInsight;
 
@@ -61,7 +61,7 @@ export default async function UserInsightsPage({
   params: Promise<{ userId: string }>;
 }) {
   const { userId } = await params;
-  const data = await fetchApi<AdminUserInsightsResponse>(`/admin/users/${userId}/insights`, 0);
+  const data = await fetchAdminUserInsights(userId);
 
   if (!data || !data.windowId) {
     return (

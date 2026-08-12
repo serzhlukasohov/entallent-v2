@@ -1,7 +1,6 @@
 import Link from 'next/link';
-import type { AdminPulseOverviewResponse } from '@entalent/contracts';
 import { Nav } from '../components/Nav';
-import { fetchApi, TENANT_ID } from '../lib';
+import { fetchAdminPulseOverview } from '../lib';
 import { DevControls } from './DevControls';
 import { devControlsEnabled } from './dev-controls-gate';
 
@@ -40,10 +39,7 @@ function assessmentColor(status: string | null): string {
 
 export default async function PulsePage() {
   const showDevControls = devControlsEnabled();
-  const data = await fetchApi<AdminPulseOverviewResponse>(
-    `/admin/pulse/overview?tenantId=${TENANT_ID}`,
-    0,
-  );
+  const data = await fetchAdminPulseOverview();
 
   const updated = data
     ? new Date(data.generatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
