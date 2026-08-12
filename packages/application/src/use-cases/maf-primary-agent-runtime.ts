@@ -266,14 +266,20 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
 
   private async enqueueProfileHydrationIfNeeded(
     request: ProcessMessageRequest,
-    conversation: { channelType: string; userTimezone?: string | null; userTimezoneUpdatedAt?: Date | null },
+    conversation: {
+      channelType: string;
+      userDisplayName?: string | null;
+      userTimezone?: string | null;
+      userTimezoneUpdatedAt?: Date | null;
+    },
   ): Promise<void> {
+    const displayNameMissing = !conversation.userDisplayName;
     const timezoneMissing = !conversation.userTimezone;
     const timezoneStale = Boolean(
       conversation.userTimezoneUpdatedAt &&
         Date.now() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000,
     );
-    if (!timezoneMissing && !timezoneStale) {
+    if (!displayNameMissing && !timezoneMissing && !timezoneStale) {
       return;
     }
 

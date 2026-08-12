@@ -14,8 +14,16 @@ export class ProfileHydrationUseCase {
   ) {}
 
   async execute(input: ProfileHydrationInput): Promise<void> {
-    const tz = await this.externalProfile.fetchTimezone(input.userId, input.tenantId, input.channelType);
-    if (!tz) return;
-    await this.userProfileRepo.updateTimezone(input.userId, input.tenantId, tz);
+    const profile = await this.externalProfile.fetchProfile(
+      input.userId,
+      input.tenantId,
+      input.channelType,
+    );
+    if (!profile) return;
+
+    await this.userProfileRepo.updateProfile(input.userId, input.tenantId, {
+      displayName: profile.displayName,
+      timezone: profile.timezone,
+    });
   }
 }
