@@ -14,6 +14,7 @@ import { ManagerTrendsController } from './manager-trends.controller';
 import { PulseOverviewController } from './pulse-overview.controller';
 import { UserInsightsController } from './user-insights.controller';
 import { ProfileHydrationStatusController } from './profile-hydration-status.controller';
+import { ManagerDashboardReadModel } from './manager-dashboard.read-model';
 
 @Module({
   imports: [DatabaseModule, AuditModule],
@@ -31,6 +32,6 @@ import { ProfileHydrationStatusController } from './profile-hydration-status.con
     UserInsightsController,
     ProfileHydrationStatusController,
   ],
-  providers: [ApiKeyGuard],
+  providers: [ApiKeyGuard, ManagerDashboardReadModel],
 })
 export class AdminModule {}

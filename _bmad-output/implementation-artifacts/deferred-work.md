@@ -26,12 +26,18 @@
   evidence: Split from the architecture improvement bundle because admin DTO contracts are independently shippable and do not depend on queue topology cleanup.
 - source_spec: none
   summary: Formalize profile hydration as the single owner of user identity/profile facts.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-profile-facts-owner.md`
   evidence: Split from the architecture improvement bundle because profile ownership is a larger boundary refactor beyond queue-name drift.
 - source_spec: none
   summary: Introduce an admin read model for manager dashboard summaries.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-admin-manager-dashboard-read-model.md`
   evidence: Split from the architecture improvement bundle because the read model is a larger data-shape and lifecycle decision that can ship independently.
 - source_spec: none
   summary: Add profile hydration status, retry visibility, and alerts for missing Slack display names.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-profile-hydration-observability.md`
   evidence: Split from the architecture improvement bundle because observability/state tracking is independently shippable from shared queue constants.
 - source_spec: none
   summary: Harden Slack display-name backfill tooling with dry-run, explicit tenant selection, audit logging, and safer output modes.
