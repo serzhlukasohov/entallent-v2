@@ -30,6 +30,7 @@
     "maf:prod:acceptance": "bash scripts/maf-production-acceptance.sh",
     "maf:prod:regression": "bash scripts/maf-production-regression.sh",
     "maf:agent-service:readiness": "bash scripts/verify-agent-service-readiness.sh",
+    "dashboard:prod:verify": "dotenv -e .env -- pnpm exec tsx scripts/verify-production-dashboard.ts",
     "db:generate": "pnpm --filter @entalent/database db:generate",
     "db:migrate": "dotenv -e .env -- pnpm --filter @entalent/database db:migrate",
     "db:seed": "dotenv -e .env -- pnpm exec tsx packages/database/src/seed.ts",
