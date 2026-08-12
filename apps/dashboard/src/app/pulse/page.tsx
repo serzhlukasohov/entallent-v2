@@ -1,7 +1,7 @@
 import Link from 'next/link';
+import type { AdminPulseOverviewResponse } from '@entalent/contracts';
 import { Nav } from '../components/Nav';
 import { fetchApi, TENANT_ID } from '../lib';
-import type { PulseOverviewResponse } from '../types';
 import { DevControls } from './DevControls';
 import { devControlsEnabled } from './dev-controls-gate';
 
@@ -40,7 +40,7 @@ function assessmentColor(status: string | null): string {
 
 export default async function PulsePage() {
   const showDevControls = devControlsEnabled();
-  const data = await fetchApi<PulseOverviewResponse>(
+  const data = await fetchApi<AdminPulseOverviewResponse>(
     `/admin/pulse/overview?tenantId=${TENANT_ID}`,
     0,
   );
@@ -59,7 +59,8 @@ export default async function PulsePage() {
 
       {!data || data.employees.length === 0 ? (
         <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
-          No data. Make sure TENANT_ID is configured and employees have completed at least one assessment.
+          No data. Make sure TENANT_ID is configured and employees have completed at least one
+          assessment.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -80,7 +81,16 @@ export default async function PulsePage() {
                   style={{ color: 'var(--text)', textDecoration: 'none' }}
                 >
                   {emp.displayName ?? emp.userId.slice(0, 8) + '…'}
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>→ insights</span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--text-muted)',
+                      fontWeight: 400,
+                      marginLeft: 6,
+                    }}
+                  >
+                    → insights
+                  </span>
                 </Link>
               </div>
 
@@ -103,7 +113,14 @@ export default async function PulsePage() {
                     }}
                   >
                     {/* Group name + status */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: 10,
+                      }}
+                    >
                       <span style={{ fontSize: 13, fontWeight: 600 }}>
                         {GROUP_LABELS[g.questionGroup] ?? g.questionGroup}
                       </span>
@@ -113,7 +130,10 @@ export default async function PulsePage() {
                             fontSize: 11,
                             fontWeight: 500,
                             color: statusColor(g.status),
-                            background: g.status === 'confirmed' ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.1)',
+                            background:
+                              g.status === 'confirmed'
+                                ? 'rgba(34,197,94,0.1)'
+                                : 'rgba(245,158,11,0.1)',
                             padding: '2px 8px',
                             borderRadius: 6,
                           }}
@@ -135,7 +155,10 @@ export default async function PulsePage() {
                     {/* Questions */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                       {g.questions.map((q) => (
-                        <div key={q.stableKey} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div
+                          key={q.stableKey}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                        >
                           <div
                             style={{
                               width: 8,
@@ -154,7 +177,9 @@ export default async function PulsePage() {
                         </div>
                       ))}
                       {g.questions.length === 0 && (
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No questions</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                          No questions
+                        </span>
                       )}
                     </div>
 
@@ -174,14 +199,34 @@ export default async function PulsePage() {
               </div>
 
               {/* Backlog progress row */}
-              <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--surface)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 16, alignItems: 'center' }}>
-                <span>Backlog: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> closed</span>
-                <span><b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> pending</span>
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: '8px 12px',
+                  background: 'var(--surface)',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  gap: 16,
+                  alignItems: 'center',
+                }}
+              >
+                <span>
+                  Backlog: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> closed
+                </span>
+                <span>
+                  <b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> pending
+                </span>
                 {emp.backlog.totalIgnoreCount > 0 && (
                   <span style={{ color: '#f59e0b' }}>↩ {emp.backlog.totalIgnoreCount} ignored</span>
                 )}
                 {emp.backlog.nextQuestion && (
-                  <span>Next: <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> ({emp.backlog.nextQuestion.group})</span>
+                  <span>
+                    Next:{' '}
+                    <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> (
+                    {emp.backlog.nextQuestion.group})
+                  </span>
                 )}
                 {!emp.backlog.nextQuestion && emp.backlog.doneCount > 0 && (
                   <span style={{ color: '#10b981' }}>✓ All questions closed</span>

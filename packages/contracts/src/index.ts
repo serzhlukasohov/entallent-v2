@@ -6,3 +6,4 @@ export * from './runtime-contract-validation';
 export * from './migration-baseline';
 export * from './queue';
 export * from './admin-manager-team';
+export * from './admin-pulse-overview';

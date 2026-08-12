@@ -2,6 +2,12 @@ import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/
 import { ConfigService } from '@nestjs/config';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Env } from '@entalent/config';
+import type {
+  AdminPulseBacklogSummary,
+  AdminPulseEmployeeRow,
+  AdminPulseGroupRow,
+  AdminPulseOverviewResponse,
+} from '@entalent/contracts';
 import {
   channelAccounts,
   users,
@@ -17,38 +23,9 @@ import { attachTeamDisplayNames } from './team-users';
 
 const GROUP_ORDER = ['autonomy', 'belonging', 'engagement', 'growth', 'purpose'];
 
-export interface PulseQuestionRow {
-  stableKey: string;
-  title: string;
-  assessmentStatus: string | null;
-}
-
-export interface PulseGroupRow {
-  questionGroup: string;
-  status: string | null;
-  employeeScore: number | null;
-  confirmedAt: string | null;
-  questions: PulseQuestionRow[];
-}
-
-export interface PulseEmployeeRow {
-  userId: string;
-  displayName: string | null;
-  groups: PulseGroupRow[];
-  backlog: {
-    doneCount: number;
-    pendingCount: number;
-    totalIgnoreCount: number;
-    nextQuestion: { stableKey: string; group: string } | null;
-  };
-}
-
-export interface PulseOverviewResponse {
-  tenantId: string;
-  generatedAt: string;
-  allGroups: string[];
-  employees: PulseEmployeeRow[];
-}
+type PulseEmployeeRow = AdminPulseEmployeeRow;
+type PulseGroupRow = AdminPulseGroupRow;
+type PulseOverviewResponse = AdminPulseOverviewResponse;
 
 @Controller('admin/pulse/overview')
 @UseGuards(ApiKeyGuard)
@@ -165,15 +142,7 @@ export class PulseOverviewController {
     }
 
     // Backlog index: userId → summary
-    const backlogIndex = new Map<
-      string,
-      {
-        doneCount: number;
-        pendingCount: number;
-        totalIgnoreCount: number;
-        nextQuestion: { stableKey: string; group: string } | null;
-      }
-    >();
+    const backlogIndex = new Map<string, AdminPulseBacklogSummary>();
 
     for (const u of teamUsers) {
       const userRows = backlogRows.filter((r) => r.userId === u.id);

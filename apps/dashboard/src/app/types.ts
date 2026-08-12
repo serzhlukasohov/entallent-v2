@@ -25,39 +25,6 @@ export interface QuestionSentiment {
   net: number | null;
 }
 
-export interface PulseQuestionRow {
-  stableKey: string;
-  title: string;
-  assessmentStatus: string | null;
-}
-
-export interface PulseGroupRow {
-  questionGroup: string;
-  status: string | null;
-  employeeScore: number | null;
-  confirmedAt: string | null;
-  questions: PulseQuestionRow[];
-}
-
-export interface PulseEmployeeRow {
-  userId: string;
-  displayName: string | null;
-  groups: PulseGroupRow[];
-  backlog: {
-    doneCount: number;
-    pendingCount: number;
-    totalIgnoreCount: number;
-    nextQuestion: { stableKey: string; group: string } | null;
-  };
-}
-
-export interface PulseOverviewResponse {
-  tenantId: string;
-  generatedAt: string;
-  allGroups: string[];
-  employees: PulseEmployeeRow[];
-}
-
 export interface QuestionInsight {
   questionId: string;
   stableKey: string;
