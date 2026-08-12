@@ -10,16 +10,18 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ALL_QUEUE_NAMES } from '@entalent/contracts';
+import { ALL_QUEUE_NAMES, type AdminQueuesResponse, type QueueName } from '@entalent/contracts';
 import { Job, Queue } from 'bullmq';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import type { Env } from '@entalent/config';
+
+type AdminQueue = Queue & { name: QueueName };
 
 @Controller('admin/queues')
 @UseGuards(ApiKeyGuard)
 export class QueuesController implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QueuesController.name);
-  private queues: Queue[] = [];
+  private queues: AdminQueue[] = [];
 
   constructor(@Inject(ConfigService) private readonly config: ConfigService<Env, true>) {}
 
@@ -30,7 +32,7 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
       port: Number(redisUrl.port) || 6379,
       ...(redisUrl.password ? { password: decodeURIComponent(redisUrl.password) } : {}),
     };
-    this.queues = ALL_QUEUE_NAMES.map((name) => new Queue(name, { connection }));
+    this.queues = ALL_QUEUE_NAMES.map((name) => new Queue(name, { connection }) as AdminQueue);
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -38,7 +40,7 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
   }
 
   @Get()
-  async getStats(): Promise<{ queues: unknown[]; timestamp: string }> {
+  async getStats(): Promise<AdminQueuesResponse> {
     const stats = await Promise.all(
       this.queues.map(async (q) => ({
         name: q.name,

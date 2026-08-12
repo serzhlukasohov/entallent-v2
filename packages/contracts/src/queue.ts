@@ -16,3 +16,15 @@ export type QueueNameKey = keyof typeof QUEUE_NAMES;
 export type QueueName = (typeof QUEUE_NAMES)[QueueNameKey];
 
 export const ALL_QUEUE_NAMES = Object.values(QUEUE_NAMES) as QueueName[];
+
+export type AdminQueueCounts = Record<string, number>;
+
+export interface AdminQueueSnapshot {
+  name: QueueName;
+  counts: AdminQueueCounts;
+}
+
+export interface AdminQueuesResponse {
+  queues: AdminQueueSnapshot[];
+  timestamp: string;
+}

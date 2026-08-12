@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { and, desc, eq } from 'drizzle-orm';
 import { Queue } from 'bullmq';
 import { getDbClient, messages, runtimeAttempts } from '@entalent/database';
+import type { AdminQueuesResponse } from '@entalent/contracts';
 import { resolveMafShadowLiveSmokeEnv } from '../packages/application/src/use-cases/maf-shadow-live-smoke';
 
 type MafShadowLiveSmokeEnvResolution = ReturnType<typeof resolveMafShadowLiveSmokeEnv>;
@@ -77,16 +78,6 @@ interface RuntimeAttemptRecord {
   runtimeMode: string;
   phase: string;
   failureReason: string | null;
-}
-
-interface QueueCountsSnapshot {
-  name: string;
-  counts: Record<string, number | string>;
-}
-
-interface AdminQueuesResponse {
-  queues: QueueCountsSnapshot[];
-  timestamp: string;
 }
 
 interface QueueCheckResult {

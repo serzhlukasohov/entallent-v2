@@ -1,3 +1,5 @@
+import type { AdminQueuesResponse } from '@entalent/contracts';
+
 const API_BASE = process.env.API_INTERNAL_URL ?? 'http://localhost:3000/api/v1';
 const API_KEY = process.env.ADMIN_API_KEY ?? '';
 export const TENANT_ID = process.env.TENANT_ID ?? '';
@@ -14,4 +16,8 @@ export async function fetchApi<T>(path: string, revalidate = 30): Promise<T | nu
   } catch {
     return null;
   }
+}
+
+export function fetchAdminQueues(revalidate = 30): Promise<AdminQueuesResponse | null> {
+  return fetchApi<AdminQueuesResponse>('/admin/queues', revalidate);
 }

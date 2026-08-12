@@ -7,6 +7,7 @@ FROM base AS builder
 WORKDIR /app
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/typescript-config/ packages/typescript-config/
+COPY packages/contracts/ packages/contracts/
 COPY apps/dashboard/ apps/dashboard/
 RUN pnpm install --frozen-lockfile --filter @entalent/dashboard...
 RUN pnpm --filter @entalent/dashboard build
