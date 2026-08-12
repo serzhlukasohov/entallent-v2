@@ -9,7 +9,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "prepare": "bash scripts/install-git-hooks.sh",
+    "prepare": "sh -c 'if [ -d .git ] && [ -f scripts/install-git-hooks.sh ]; then sh scripts/install-git-hooks.sh; fi'",
     "prepush": "pnpm typecheck && pnpm lint && pnpm test",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
