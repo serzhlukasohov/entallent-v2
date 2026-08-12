@@ -1,12 +1,15 @@
 import type { SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord, SurveyGroupStateRecord } from '../types/records';
 
+export const SURVEY_EVIDENCE_POLARITIES = ['positive', 'negative', 'neutral', 'mixed'] as const;
+export type SurveyEvidencePolarity = (typeof SURVEY_EVIDENCE_POLARITIES)[number];
+
 export interface SaveSurveyEvidenceParams {
   surveyWindowId: string;
   surveyQuestionId: string;
   userId: string;
   sourceMessageIds: string[];
   evidenceSummary: string;
-  polarity: string;
+  polarity: SurveyEvidencePolarity;
   strength: number;
   completeness: number;
   confidence: number;

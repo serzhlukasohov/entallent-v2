@@ -32,6 +32,8 @@
   evidence: Split from the architecture improvement bundle because backfill tooling can be reviewed and shipped separately from runtime architecture changes.
 - source_spec: `_bmad-output/implementation-artifacts/spec-admin-manager-team-contract.md`
   summary: Add DB or write-time validation for `survey_evidence.polarity`.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-survey-evidence-polarity-validation.md`
   evidence: Review surfaced that polarity is stored as unrestricted text; preserving wire behavior is correct for this split, but producer-side validation should be handled as a separate data integrity story.
 - source_spec: `_bmad-output/implementation-artifacts/spec-profile-hydration-observability.md`
   summary: Scope profile hydration jobs and repository writes to a specific channel account rather than only `userId + tenantId + channelType`.

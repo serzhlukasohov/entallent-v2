@@ -12,7 +12,8 @@ export type { GoalRepositoryPort, SaveGoalParams } from './ports/goal.repository
 export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from './ports/scheduled-action.repository.port';
 export type { FollowUpContextPort, FollowUpContextData } from './ports/follow-up-context.port';
 export type { ProactiveSchedulerRepositoryPort, FindCheckInCandidatesParams, CheckInCandidate, CheckInEnqueuePort, CheckInEnqueuePayload } from './ports/proactive-scheduler.repository.port';
-export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, UpsertAssessmentParams, UpsertGroupStateParams } from './ports/survey.repository.port';
+export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams } from './ports/survey.repository.port';
+export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';
 export type { PulseBacklogRepositoryPort, PulseBacklogRecord, ResolvedIgnore, ProactivePulseConfig } from './ports/pulse-backlog.repository.port';
 export { DEFAULT_PULSE_CONFIG } from './ports/pulse-backlog.repository.port';
 export type { RiskSignalRepositoryPort, SaveRiskSignalParams } from './ports/risk-signal.repository.port';

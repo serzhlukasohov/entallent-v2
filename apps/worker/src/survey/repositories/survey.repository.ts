@@ -8,19 +8,27 @@ import {
   surveyAssessments,
   type DbSurveyQuestion,
 } from '@entalent/database';
-import type {
-  SurveyRepositoryPort,
-  SaveSurveyEvidenceParams,
-  UpsertAssessmentParams,
-  UpsertGroupStateParams,
-  SurveyQuestionRecord,
-  SurveyWindowRecord,
-  SurveyEvidenceRecord,
-  SurveyGroupStateRecord,
+import {
+  type SurveyRepositoryPort,
+  type SurveyEvidencePolarity,
+  type SaveSurveyEvidenceParams,
+  type UpsertAssessmentParams,
+  type UpsertGroupStateParams,
+  type SurveyQuestionRecord,
+  type SurveyWindowRecord,
+  type SurveyEvidenceRecord,
+  type SurveyGroupStateRecord,
 } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
 import { GroupStateRepository } from './group-state.repository';
 import { TeamRepository } from './team.repository';
+
+const SURVEY_EVIDENCE_POLARITIES: readonly SurveyEvidencePolarity[] = [
+  'positive',
+  'negative',
+  'neutral',
+  'mixed',
+];
 
 @Injectable()
 export class SurveyRepository implements SurveyRepositoryPort {
@@ -99,6 +107,10 @@ export class SurveyRepository implements SurveyRepositoryPort {
   }
 
   async saveEvidence(params: SaveSurveyEvidenceParams): Promise<SurveyEvidenceRecord> {
+    if (!isSurveyEvidencePolarity(params.polarity)) {
+      throw new Error('survey_evidence_invalid_polarity');
+    }
+
     const [row] = await this.db.client
       .insert(surveyEvidence)
       .values({
@@ -231,6 +243,10 @@ export class SurveyRepository implements SurveyRepositoryPort {
   ): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null> {
     return this.teamRepo.findTeamById(teamId);
   }
+}
+
+function isSurveyEvidencePolarity(value: string): boolean {
+  return (SURVEY_EVIDENCE_POLARITIES as readonly string[]).includes(value);
 }
 
 function mapWindow(row: typeof surveyWindows.$inferSelect): SurveyWindowRecord {
