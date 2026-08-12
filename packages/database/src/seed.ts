@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Development seed: creates a minimal tenant + workspace connection so you can test the
  * Slack vertical slice locally without a full OAuth flow.

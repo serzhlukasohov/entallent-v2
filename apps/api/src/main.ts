@@ -7,14 +7,13 @@ import { runMigrations } from '@entalent/database';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
-  console.log('[Bootstrap] Starting...');
-  const env = validateEnv();
-  console.log('[Bootstrap] Env validated, port:', env.API_PORT);
   const logger = new NestLogger('API');
+  logger.log('Starting', 'Bootstrap');
+  const env = validateEnv();
+  logger.log(`Env validated, port: ${env.API_PORT}`, 'Bootstrap');
 
-  console.log('[Bootstrap] Running migrations...');
+  logger.log('Running migrations', 'Bootstrap');
   await runMigrations();
-  console.log('[Bootstrap] Migrations done');
   logger.log('Database migrations applied', 'Bootstrap');
 
   const adapter = new FastifyAdapter({ logger: false });
@@ -47,14 +46,17 @@ async function bootstrap(): Promise<void> {
     },
   );
 
-  console.log('[Bootstrap] Starting listener...');
+  logger.log('Starting listener', 'Bootstrap');
   await app.listen(env.API_PORT, '0.0.0.0');
 
   logger.log(`API listening on port ${env.API_PORT}`, 'Bootstrap');
-  console.log('[Bootstrap] Ready on port', env.API_PORT);
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error('Fatal error during API bootstrap:', error);
+  new NestLogger('API').error(
+    `Fatal error during API bootstrap: ${error instanceof Error ? error.message : String(error)}`,
+    error instanceof Error ? error.stack : undefined,
+    'Bootstrap',
+  );
   process.exit(1);
 });

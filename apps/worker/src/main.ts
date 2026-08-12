@@ -24,6 +24,10 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error('Fatal error during Worker bootstrap:', error);
+  new NestLogger('Worker').error(
+    `Fatal error during Worker bootstrap: ${error instanceof Error ? error.message : String(error)}`,
+    error instanceof Error ? error.stack : undefined,
+    'Bootstrap',
+  );
   process.exit(1);
 });

@@ -411,6 +411,7 @@ export function createMafAgentRuntimeClientFromEnv(env: MafAgentRuntimeClientEnv
   const serviceUrlConfig = resolveAgentServiceUrl(resolvedEnv);
   const timeoutConfig = parseAgentServiceTimeout(resolvedEnv.AGENT_SERVICE_TIMEOUT_MS);
   if (process.env.MAF_DEBUG_RUNTIME_CONFIG === '1') {
+    // eslint-disable-next-line no-console
     console.log(
       '[debug] runtime-config',
       JSON.stringify({
