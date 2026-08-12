@@ -1,6 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import {
+  channelAccounts,
   users,
   messages,
   riskSignals,
@@ -12,6 +13,7 @@ import {
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
 import { buildEmployeeRows, type EmployeeRow } from './manager-team.aggregate';
+import { attachTeamDisplayNames } from './team-users';
 
 export interface TeamOverviewResponse {
   tenantId: string;
@@ -26,14 +28,20 @@ export class ManagerTeamController {
   constructor(private readonly db: DatabaseService) {}
 
   @Get()
-  async getTeamOverview(
-    @Query('tenantId') tenantId: string,
-  ): Promise<TeamOverviewResponse> {
+  async getTeamOverview(@Query('tenantId') tenantId: string): Promise<TeamOverviewResponse> {
     // All active users for the tenant
-    const teamUsers = await this.db.client
-      .select({ id: users.id, displayName: users.preferredName })
-      .from(users)
-      .where(and(eq(users.tenantId, tenantId), eq(users.status, 'active')));
+    const [userRows, channelAccountRows] = await Promise.all([
+      this.db.client
+        .select({ id: users.id, preferredName: users.preferredName })
+        .from(users)
+        .where(and(eq(users.tenantId, tenantId), eq(users.status, 'active'))),
+      this.db.client
+        .select({ userId: channelAccounts.userId, displayName: channelAccounts.displayName })
+        .from(channelAccounts)
+        .where(eq(channelAccounts.tenantId, tenantId)),
+    ]);
+
+    const teamUsers = attachTeamDisplayNames(userRows, channelAccountRows);
 
     if (!teamUsers.length) {
       return { tenantId, teamSize: 0, employees: [], generatedAt: new Date().toISOString() };

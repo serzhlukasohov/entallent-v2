@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Env } from '@entalent/config';
 import {
+  channelAccounts,
   users,
   surveyWindows,
   surveyAssessments,
@@ -12,6 +13,7 @@ import {
 } from '@entalent/database';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
+import { attachTeamDisplayNames } from './team-users';
 
 const GROUP_ORDER = ['autonomy', 'belonging', 'engagement', 'growth', 'purpose'];
 
@@ -57,21 +59,38 @@ export class PulseOverviewController {
   ) {}
 
   @Get()
-  async getOverview(
-    @Query('tenantId') tenantId?: string,
-  ): Promise<PulseOverviewResponse> {
+  async getOverview(@Query('tenantId') tenantId?: string): Promise<PulseOverviewResponse> {
     const resolvedTenantId = tenantId ?? this.config.get('DEFAULT_TENANT_ID', { infer: true });
     if (!resolvedTenantId) {
       throw new BadRequestException('tenantId query param is required');
     }
 
-    const teamUsers = await this.db.client
-      .select({ id: users.id, displayName: users.preferredName })
-      .from(users)
-      .where(and(eq(users.tenantId, resolvedTenantId), eq(users.status, 'active'), isNull(users.deletedAt)));
+    const [userRows, channelAccountRows] = await Promise.all([
+      this.db.client
+        .select({ id: users.id, preferredName: users.preferredName })
+        .from(users)
+        .where(
+          and(
+            eq(users.tenantId, resolvedTenantId),
+            eq(users.status, 'active'),
+            isNull(users.deletedAt),
+          ),
+        ),
+      this.db.client
+        .select({ userId: channelAccounts.userId, displayName: channelAccounts.displayName })
+        .from(channelAccounts)
+        .where(eq(channelAccounts.tenantId, resolvedTenantId)),
+    ]);
+
+    const teamUsers = attachTeamDisplayNames(userRows, channelAccountRows);
 
     if (!teamUsers.length) {
-      return { tenantId: resolvedTenantId, generatedAt: new Date().toISOString(), allGroups: GROUP_ORDER, employees: [] };
+      return {
+        tenantId: resolvedTenantId,
+        generatedAt: new Date().toISOString(),
+        allGroups: GROUP_ORDER,
+        employees: [],
+      };
     }
 
     const [assessmentRows, groupStateRows, questionDefs, backlogRows] = await Promise.all([
@@ -87,7 +106,9 @@ export class PulseOverviewController {
         .from(surveyAssessments)
         .innerJoin(surveyWindows, eq(surveyAssessments.surveyWindowId, surveyWindows.id))
         .innerJoin(surveyQuestions, eq(surveyAssessments.surveyQuestionId, surveyQuestions.id))
-        .where(and(eq(surveyWindows.tenantId, resolvedTenantId), eq(surveyWindows.status, 'active'))),
+        .where(
+          and(eq(surveyWindows.tenantId, resolvedTenantId), eq(surveyWindows.status, 'active')),
+        ),
 
       this.db.client
         .select({
@@ -125,10 +146,7 @@ export class PulseOverviewController {
         .innerJoin(surveyQuestions, eq(pulseBacklog.surveyQuestionId, surveyQuestions.id))
         .innerJoin(surveyWindows, eq(pulseBacklog.surveyWindowId, surveyWindows.id))
         .where(
-          and(
-            eq(pulseBacklog.tenantId, resolvedTenantId),
-            eq(surveyWindows.status, 'active'),
-          ),
+          and(eq(pulseBacklog.tenantId, resolvedTenantId), eq(surveyWindows.status, 'active')),
         ),
     ]);
 
@@ -140,24 +158,32 @@ export class PulseOverviewController {
     }
 
     // Index: userId → questionGroup → group state
-    const stateIndex = new Map<string, Map<string, typeof groupStateRows[0]>>();
+    const stateIndex = new Map<string, Map<string, (typeof groupStateRows)[0]>>();
     for (const row of groupStateRows) {
       if (!stateIndex.has(row.userId)) stateIndex.set(row.userId, new Map());
       stateIndex.get(row.userId)!.set(row.questionGroup, row);
     }
 
     // Backlog index: userId → summary
-    const backlogIndex = new Map<string, {
-      doneCount: number;
-      pendingCount: number;
-      totalIgnoreCount: number;
-      nextQuestion: { stableKey: string; group: string } | null;
-    }>();
+    const backlogIndex = new Map<
+      string,
+      {
+        doneCount: number;
+        pendingCount: number;
+        totalIgnoreCount: number;
+        nextQuestion: { stableKey: string; group: string } | null;
+      }
+    >();
 
     for (const u of teamUsers) {
       const userRows = backlogRows.filter((r) => r.userId === u.id);
       if (!userRows.length) {
-        backlogIndex.set(u.id, { doneCount: 0, pendingCount: 0, totalIgnoreCount: 0, nextQuestion: null });
+        backlogIndex.set(u.id, {
+          doneCount: 0,
+          pendingCount: 0,
+          totalIgnoreCount: 0,
+          nextQuestion: null,
+        });
         continue;
       }
       const doneCount = userRows.filter((r) => r.status === 'done').length;
@@ -208,14 +234,20 @@ export class PulseOverviewController {
         userId: u.id,
         displayName: u.displayName,
         groups,
-        backlog: backlogIndex.get(u.id) ?? { doneCount: 0, pendingCount: 0, totalIgnoreCount: 0, nextQuestion: null },
+        backlog: backlogIndex.get(u.id) ?? {
+          doneCount: 0,
+          pendingCount: 0,
+          totalIgnoreCount: 0,
+          nextQuestion: null,
+        },
       };
     });
 
     // Only show employees who have at least one assessment or group state
-    const active = employees.filter(
-      (e) =>
-        e.groups.some((g) => g.status !== null || g.questions.some((q) => q.assessmentStatus !== null)),
+    const active = employees.filter((e) =>
+      e.groups.some(
+        (g) => g.status !== null || g.questions.some((q) => q.assessmentStatus !== null),
+      ),
     );
 
     return {
