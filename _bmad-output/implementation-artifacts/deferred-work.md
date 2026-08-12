@@ -16,9 +16,13 @@
 
 - source_spec: none
   summary: Add a production dashboard verifier that checks health and admin dashboard display-name invariants after deploy.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-production-dashboard-verifier.md`
   evidence: Split from the architecture improvement bundle because it is independently shippable from shared queue constants and can be reviewed as an operational smoke-test script.
 - source_spec: none
   summary: Move admin dashboard DTO schemas into a shared contracts package and make API/dashboard consume the same response types.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-admin-manager-team-contract.md`
   evidence: Split from the architecture improvement bundle because admin DTO contracts are independently shippable and do not depend on queue topology cleanup.
 - source_spec: none
   summary: Formalize profile hydration as the single owner of user identity/profile facts.
