@@ -2,8 +2,11 @@ import { Nav } from '../components/Nav';
 import { fetchAdminManagerTrends } from '../lib';
 import { EngagementChart, SignalChart, CoverageFunnel, QuestionSentimentChart } from './charts';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function TrendsPage() {
-  const data = await fetchAdminManagerTrends();
+  const data = await fetchAdminManagerTrends(14, 0);
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>

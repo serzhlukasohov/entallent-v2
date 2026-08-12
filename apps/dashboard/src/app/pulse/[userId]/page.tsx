@@ -5,6 +5,9 @@ import { fetchAdminUserInsights } from '../../lib';
 
 type QuestionInsight = AdminQuestionInsight;
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const GROUP_LABELS: Record<string, string> = {
   autonomy: 'Autonomy',
   belonging: 'Belonging',

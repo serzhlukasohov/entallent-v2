@@ -4,6 +4,9 @@ import { fetchAdminPulseOverview } from '../lib';
 import { DevControls } from './DevControls';
 import { devControlsEnabled } from './dev-controls-gate';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const GROUP_LABELS: Record<string, string> = {
   autonomy: 'Autonomy',
   belonging: 'Belonging',

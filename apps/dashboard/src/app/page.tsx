@@ -3,8 +3,11 @@ import { Nav } from './components/Nav';
 import { fetchAdminManagerTeam } from './lib';
 import type { AdminManagerTeamResponse } from '@entalent/contracts';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function DashboardPage() {
-  const data = await fetchAdminManagerTeam();
+  const data = await fetchAdminManagerTeam(0);
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
