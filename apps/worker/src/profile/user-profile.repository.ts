@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, type SQL } from 'drizzle-orm';
+import { and, eq, sql, type SQL } from 'drizzle-orm';
 import { channelAccounts, users } from '@entalent/database';
 import {
   resolveExternalProfileFacts,
@@ -8,8 +8,6 @@ import {
   type UserProfileRepositoryPort,
 } from '@entalent/application';
 import { DatabaseService } from '../database/database.service';
-
-type ProfileMetadata = Record<string, unknown>;
 
 @Injectable()
 export class UserProfileRepository implements UserProfileRepositoryPort {
@@ -78,51 +76,40 @@ export class UserProfileRepository implements UserProfileRepositoryPort {
       ...scope,
     });
 
-    const rows = await this.db.client
-      .select({
-        id: channelAccounts.id,
-        profileMetadata: channelAccounts.profileMetadata,
+    await this.db.client
+      .update(channelAccounts)
+      .set({
+        profileMetadata: buildProfileHydrationMetadataUpdate(outcome),
+        updatedAt: new Date(),
       })
-      .from(channelAccounts)
       .where(and(...predicates));
-
-    await Promise.all(
-      rows.map((row) => {
-        const currentMetadata = normalizeMetadata(row.profileMetadata);
-        const currentHydration = normalizeMetadata(currentMetadata['profileHydration']);
-        const previousAttemptCount = Number(currentHydration['attemptCount'] ?? 0);
-        const attemptCount = Number.isFinite(previousAttemptCount) ? previousAttemptCount + 1 : 1;
-        const hydration: ProfileMetadata = {
-          status: outcome.status,
-          attemptCount,
-          lastAttemptAt: outcome.occurredAt.toISOString(),
-        };
-
-        if (outcome.status === 'success') {
-          hydration['lastSuccessAt'] = outcome.occurredAt.toISOString();
-        } else if (typeof currentHydration['lastSuccessAt'] === 'string') {
-          hydration['lastSuccessAt'] = currentHydration['lastSuccessAt'];
-        }
-        if (outcome.reason) {
-          hydration['reason'] = outcome.reason;
-        }
-        if (outcome.error) {
-          hydration['lastError'] = sanitizeOperationalMessage(outcome.error);
-        }
-
-        return this.db.client
-          .update(channelAccounts)
-          .set({
-            profileMetadata: {
-              ...currentMetadata,
-              profileHydration: hydration,
-            },
-            updatedAt: new Date(),
-          })
-          .where(eq(channelAccounts.id, row.id));
-      }),
-    );
   }
+}
+
+function buildProfileHydrationMetadataUpdate(outcome: ProfileHydrationOutcome): SQL {
+  const occurredAt = outcome.occurredAt.toISOString();
+  const sanitizedError = outcome.error ? sanitizeOperationalMessage(outcome.error) : null;
+  const metadata =
+    sql`CASE WHEN jsonb_typeof(${channelAccounts.profileMetadata}) = 'object' THEN ${channelAccounts.profileMetadata} ELSE '{}'::jsonb END`;
+  const attemptCountText = sql`${channelAccounts.profileMetadata}->'profileHydration'->>'attemptCount'`;
+  const attemptCount = sql`CASE WHEN ${attemptCountText} ~ '^[0-9]+$' THEN ${attemptCountText}::int ELSE 0 END`;
+
+  return sql`jsonb_set(
+    ${metadata},
+    '{profileHydration}',
+    jsonb_strip_nulls(jsonb_build_object(
+      'status', ${outcome.status},
+      'attemptCount', ${attemptCount} + 1,
+      'lastAttemptAt', ${occurredAt},
+      'lastSuccessAt', CASE
+        WHEN ${outcome.status} = 'success' THEN ${occurredAt}
+        ELSE ${channelAccounts.profileMetadata}->'profileHydration'->>'lastSuccessAt'
+      END,
+      'reason', ${outcome.reason ?? null},
+      'lastError', ${sanitizedError}
+    )),
+    true
+  )`;
 }
 
 function sanitizeOperationalMessage(message: string): string {
@@ -131,12 +118,6 @@ function sanitizeOperationalMessage(message: string): string {
     .replace(/xox[baprs]-[A-Za-z0-9-]+/g, '[redacted-slack-token]')
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
     .slice(0, 200);
-}
-
-function normalizeMetadata(value: unknown): ProfileMetadata {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as ProfileMetadata)
-    : {};
 }
 
 function buildChannelAccountPredicates(

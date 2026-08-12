@@ -40,4 +40,6 @@
   evidence: Review surfaced that users with multiple Slack workspace accounts could have unrelated channel accounts marked with the same hydration outcome; completed by carrying external workspace scope through hydration payloads, Slack account lookup, profile writes, and outcome writes.
 - source_spec: `_bmad-output/implementation-artifacts/spec-profile-hydration-observability.md`
   summary: Make profile hydration attempt-count increments atomic if the status remains JSONB-backed.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-profile-hydration-atomic-attempt-count.md`
   evidence: Review surfaced that concurrent hydration attempts can lose JSONB read-modify-write increments; this is acceptable for first-slice observability but should be addressed with the profile ownership refactor.
