@@ -1,19 +1,11 @@
 import { Module, Global } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
+import { QUEUE_NAMES } from '@entalent/contracts';
 import { RedisService } from './redis.service';
 import type { Env } from '@entalent/config';
 
-export const QUEUE_NAMES = {
-  CONVERSATION: 'conversation',
-  MEMORY_EXTRACTION: 'memory-extraction',
-  SURVEY_EVIDENCE: 'survey-evidence',
-  RISK_ANALYSIS: 'risk-analysis',
-  FOLLOWUP_PLANNING: 'followup-planning',
-  FOLLOWUP_EXECUTION: 'followup-execution',
-  MESSAGE_SEND: 'message-send',
-  PROACTIVE_SCAN: 'proactive-scan',
-} as const;
+export { QUEUE_NAMES };
 
 @Global()
 @Module({
@@ -21,7 +13,9 @@ export const QUEUE_NAMES = {
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => {
-        const redisUrl = new URL(config.get('REDIS_URL', { infer: true }) ?? 'redis://localhost:6379');
+        const redisUrl = new URL(
+          config.get('REDIS_URL', { infer: true }) ?? 'redis://localhost:6379',
+        );
         return {
           connection: {
             host: redisUrl.hostname,

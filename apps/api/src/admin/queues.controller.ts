@@ -10,19 +10,10 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Queue } from 'bullmq';
+import { ALL_QUEUE_NAMES } from '@entalent/contracts';
+import { Job, Queue } from 'bullmq';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import type { Env } from '@entalent/config';
-
-const ALL_QUEUES = [
-  'conversation',
-  'memory-extraction',
-  'survey-evidence',
-  'risk-analysis',
-  'followup-planning',
-  'followup-execution',
-  'message-send',
-] as const;
 
 @Controller('admin/queues')
 @UseGuards(ApiKeyGuard)
@@ -39,7 +30,7 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
       port: Number(redisUrl.port) || 6379,
       ...(redisUrl.password ? { password: decodeURIComponent(redisUrl.password) } : {}),
     };
-    this.queues = ALL_QUEUES.map((name) => new Queue(name, { connection }));
+    this.queues = ALL_QUEUE_NAMES.map((name) => new Queue(name, { connection }));
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -80,15 +71,44 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
   @Post('dead-letter/:jobId/retry')
   async retryJob(
     @Param('jobId') jobId: string,
-  ): Promise<{ retried: boolean; queue?: string; reason?: string }> {
+  ): Promise<{ retried: boolean; queue?: string; reason?: string; matches?: string[] }> {
+    const matches: Array<{ queue: Queue; job: Job }> = [];
+
     for (const queue of this.queues) {
       const job = await queue.getJob(jobId);
       if (job) {
-        await job.retry();
-        this.logger.log(`Retried job ${jobId} in queue ${queue.name}`);
-        return { retried: true, queue: queue.name };
+        matches.push({ queue, job });
       }
     }
-    return { retried: false, reason: 'Job not found in any queue' };
+
+    if (matches.length === 0) return { retried: false, reason: 'Job not found in any queue' };
+    if (matches.length > 1) {
+      return {
+        retried: false,
+        reason: 'Job id is ambiguous across queues; retry by queue name',
+        matches: matches.map((match) => match.queue.name),
+      };
+    }
+
+    const [match] = matches;
+    await match.job.retry();
+    this.logger.log(`Retried job ${jobId} in queue ${match.queue.name}`);
+    return { retried: true, queue: match.queue.name };
+  }
+
+  @Post('dead-letter/:queueName/:jobId/retry')
+  async retryJobInQueue(
+    @Param('queueName') queueName: string,
+    @Param('jobId') jobId: string,
+  ): Promise<{ retried: boolean; queue?: string; reason?: string }> {
+    const queue = this.queues.find((q) => q.name === queueName);
+    if (!queue) return { retried: false, reason: 'Queue not found' };
+
+    const job = await queue.getJob(jobId);
+    if (!job) return { retried: false, queue: queue.name, reason: 'Job not found in queue' };
+
+    await job.retry();
+    this.logger.log(`Retried job ${jobId} in queue ${queue.name}`);
+    return { retried: true, queue: queue.name };
   }
 }
