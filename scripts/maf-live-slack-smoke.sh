@@ -51,7 +51,7 @@ TENANT_ID="${TENANT_ID:-${DEFAULT_TENANT_ID:-}}"
 FIELD_ENCRYPTION_KEY="${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}"
 INTERNAL_SERVICE_AUTH_SECRET="${INTERNAL_SERVICE_AUTH_SECRET:-agent-service-internal-secret-000000000000}"
 AGENT_SERVICE_INTERNAL_SERVICE_AUTH_SECRET="${AGENT_SERVICE_INTERNAL_SERVICE_AUTH_SECRET:-$INTERNAL_SERVICE_AUTH_SECRET}"
-AGENT_SERVICE_INTERNAL_API_URL="${AGENT_SERVICE_INTERNAL_API_URL:-http://127.0.0.1:${API_PORT}/api/v1}"
+AGENT_SERVICE_INTERNAL_API_URL="${SMOKE_AGENT_SERVICE_INTERNAL_API_URL:-http://127.0.0.1:${API_PORT}/api/v1}"
 
 export API_PORT WORKER_PORT SERVICE_PORT DATABASE_URL REDIS_URL TENANT_ID FIELD_ENCRYPTION_KEY
 export INTERNAL_SERVICE_AUTH_SECRET AGENT_SERVICE_INTERNAL_SERVICE_AUTH_SECRET AGENT_SERVICE_INTERNAL_API_URL
@@ -549,18 +549,31 @@ main() {
   fi
 
   local runtime_rows
-  runtime_rows="$(query_scalar "SELECT runtime_mode, phase, failure_reason FROM runtime_attempts WHERE tenant_id='${TENANT_ID}' AND message_id='${inbound_id}' ORDER BY created_at DESC LIMIT 1;")"
-  local outbound_metadata
-  outbound_metadata="$(query_scalar "SELECT COALESCE(metadata::text, '') FROM messages WHERE id='${outbound_id}' LIMIT 1;")"
+  runtime_rows="$(query_scalar "SELECT runtime_mode, phase, COALESCE(failure_reason, '') FROM runtime_attempts WHERE tenant_id='${TENANT_ID}' AND message_id='${inbound_id}' ORDER BY created_at DESC;")"
+  local committed_runtime_count
+  committed_runtime_count="$(query_scalar "SELECT COUNT(*) FROM runtime_attempts WHERE tenant_id='${TENANT_ID}' AND message_id='${inbound_id}' AND runtime_mode='maf_primary' AND phase='reply_committed' AND failure_reason IS NULL;")"
+  local failed_runtime_count
+  failed_runtime_count="$(query_scalar "SELECT COUNT(*) FROM runtime_attempts WHERE tenant_id='${TENANT_ID}' AND message_id='${inbound_id}' AND runtime_mode='maf_primary' AND (phase='failed' OR failure_reason IS NOT NULL);")"
+  local outbound_metadata=""
+  local outbound_runtime_mode=""
+  if [ -n "$outbound_id" ]; then
+    outbound_metadata="$(query_scalar "SELECT COALESCE(metadata::text, '') FROM messages WHERE id='${outbound_id}' LIMIT 1;")"
+    outbound_runtime_mode="$(query_scalar "SELECT COALESCE(metadata->>'runtimeMode', '') FROM messages WHERE id='${outbound_id}' LIMIT 1;")"
+  fi
 
   echo "--- runtime attempt ---"
   echo "$runtime_rows"
+  echo "--- runtime summary ---"
+  echo "committed_maf_primary=${committed_runtime_count} failed_maf_primary=${failed_runtime_count}"
   echo "--- outbound metadata ---"
   echo "$outbound_metadata"
   echo "--- workspace verification ---"
   echo "tenant=$TENANT_ID channel=$SLACK_CHANNEL_ID user=$SLACK_USER_ID run_id=$TEST_ID"
 
-  if [ "$run_ok" = "1" ] && printf '%s' "$runtime_rows" | grep -q 'maf_primary' ; then
+  if [ "$run_ok" = "1" ] \
+    && [ "$committed_runtime_count" -gt 0 ] \
+    && [ "$failed_runtime_count" -eq 0 ] \
+    && [ "$outbound_runtime_mode" = "maf_primary" ]; then
     log "Local Slack end-to-end path looks green."
     return 0
   fi
@@ -570,6 +583,15 @@ main() {
   fi
   if [ -n "$runtime_rows" ] && ! printf '%s' "$runtime_rows" | grep -q 'maf_primary'; then
     echo "FAIL: runtime mode is not maf_primary for the tested attempt." >&2
+  fi
+  if [ "$committed_runtime_count" -eq 0 ]; then
+    echo "FAIL: no committed maf_primary runtime attempt was recorded for the tested inbound message." >&2
+  fi
+  if [ "$failed_runtime_count" -gt 0 ]; then
+    echo "FAIL: failed maf_primary runtime attempt(s) were recorded for the tested inbound message." >&2
+  fi
+  if [ "$outbound_runtime_mode" != "maf_primary" ]; then
+    echo "FAIL: outbound message metadata does not prove maf_primary produced the reply." >&2
   fi
   return 1
 }

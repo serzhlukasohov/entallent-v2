@@ -149,7 +149,7 @@ describe('ProactiveSchedulerUseCase', () => {
       const candidate = makeCandidate({
         userId: 'sleeping',
         timezone: 'UTC',
-        quietHours: { enabled: false }, // no custom window → DEFAULT_QUIET_HOURS (22–08) applies
+        quietHours: { enabled: true }, // no custom window → DEFAULT_QUIET_HOURS (22–08) applies
       });
       const repo = makeRepo([candidate]);
       const queue = makeQueue();

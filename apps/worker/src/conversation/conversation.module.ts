@@ -161,18 +161,20 @@ type MafPrimaryAgentRuntimeOptions = {
           memoryRepo,
           goalRepo,
           async ({ request, candidate, runtimeAttemptId }) => {
-            if (!runtimeAttemptId) {
+            const targetRuntimeAttemptId = runtimeAttemptId
+              ?? (hasRuntimeLedgerFields(request) ? runtimeAttemptByRequest.get(makeAttemptKey(request)) : undefined);
+            if (!targetRuntimeAttemptId) {
               return;
             }
 
-            await runtimeLedger.recordCandidateReceived(runtimeAttemptId);
-            await runtimeLedger.recordActionsValidated(runtimeAttemptId);
+            await runtimeLedger.recordCandidateReceived(targetRuntimeAttemptId);
+            await runtimeLedger.recordActionsValidated(targetRuntimeAttemptId);
             await runtimeLedger.recordActionEnvelopes({
               tenantId: request.tenantId,
-              runtimeAttemptId,
+              runtimeAttemptId: targetRuntimeAttemptId,
               actions: candidate.proposedActions,
             });
-            await runtimeLedger.markActionsCommitted(runtimeAttemptId);
+            await runtimeLedger.markActionsCommitted(targetRuntimeAttemptId);
           },
         );
 
@@ -575,7 +577,7 @@ function resolveAgentServiceUrl(env: MafAgentRuntimeClientEnv): Pick<
 
 function parseAgentServiceTimeout(
   timeoutMs: string | undefined,
-): Pick<MafAgentRuntimeClientOptions, 'timeoutMs' | 'invalidConfigKeys'> {
+): Partial<Pick<MafAgentRuntimeClientOptions, 'timeoutMs' | 'invalidConfigKeys'>> {
   const normalized = normalizeOptionalString(timeoutMs);
   if (!normalized) {
     return {};

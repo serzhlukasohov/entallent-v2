@@ -48,7 +48,7 @@ describe('migration baseline: proactivity and reminders', () => {
 
   it('schedules one explicit reminder and deduplicates the repeated request', async () => {
     const scheduledActions = new InMemoryScheduledActionRepository();
-    const dueAt = '2026-08-06T09:00:00.000Z';
+    const dueAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const aiProvider = new ScriptedAiProvider({
       classifications: [
         makeClassification({

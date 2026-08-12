@@ -1,10 +1,10 @@
 # Railway Deploy Memory
 
-Last verified: 2026-08-10.
+Last verified: 2026-08-12.
 
 Project: `reasonable-adaptation`.
 Environment: `production`.
-App services: `api`, `worker`, `dashboard`.
+App services: `api`, `worker`, `agent-service`, `dashboard`.
 
 GitHub auto-deploy is currently working for pushes to `main` from `serzhlukasohov/entallent-v2`.
 
@@ -55,6 +55,42 @@ Optional inputs:
 - `SKIP_RAILWAY_API=1` to skip `railway service/deployment/variables` checks and verify only health endpoints.
 
 If the script reports JSON fields that do not resolve (`missing required variable`, `service not found`, empty deployments), treat that as a blocker for enabling non-local `maf_runtime_primary`.
+
+Known MAF production acceptance baseline:
+
+- The default acceptance window can still include one known pre-fix runtime failure:
+  `checkin-1670b1e3-8f43-4e35-b658-1af4351834d6-1786446000151` at
+  `2026-08-11T11:00:00Z`, with `maf_primary | failed | maf_runtime_http_failed`.
+- Treat that row as historical pre-fix noise when reviewing post-migration health.
+- The clean post-fix baseline starts at `2026-08-11T17:06:52Z`. Use
+  `MAF_ACCEPTANCE_SINCE=2026-08-11T17:06:52Z pnpm run maf:prod:acceptance`
+  when validating current production health until the default deployment window
+  no longer includes the historical failure.
+
+MAF fallback retirement criteria:
+
+- Keep the TypeScript runtime fallback code as a legacy safety net until the
+  default production acceptance command passes without `MAF_ACCEPTANCE_SINCE`
+  for at least 7 consecutive days.
+- During that window, production `maf_primary` runtime attempts should stay
+  `reply_committed` with no unexplained `failure_reason` rows. Document any
+  external outage separately instead of treating it as clean runtime evidence.
+- Proactive pulse check-ins must also remain clean: outbound
+  `proactive_check_in` messages should have `metadata.runtimeMode=maf_primary`
+  and matching `runtime_attempts.phase=reply_committed`.
+- MAF context and side-effect evidence must remain present: authorized
+  `/api/v1/internal/maf/context/read` audit rows, outbound MAF metadata, and
+  runtime action envelopes for proposed memory/follow-up/goal actions.
+- Manager/admin surfaces should stay populated after MAF replies:
+  `/admin/analytics`, `/admin/pulse/overview`, `/admin/manager/trends`, and
+  user insights.
+- Do not remove TypeScript fallback paths until there has been no operational
+  need to use `maf_runtime_disabled`, runtime denylist controls, canary rollback,
+  or shadow comparison for 14-30 days.
+- Before deletion, add or keep a regression test proving that `maf_primary`
+  failure never invokes `TypeScriptAgentRuntime`; after deletion, the fallback
+  path should be an explicit safe failure/operational rollback, not a silent
+  legacy agent response.
 
 Before assuming auto-deploy is broken, check:
 
