@@ -1,12 +1,12 @@
+import type { AdminManagerTrendsResponse } from '@entalent/contracts';
 import { Nav } from '../components/Nav';
 import { fetchApi, TENANT_ID } from '../lib';
-import type { TrendsResult } from '../types';
 import { EngagementChart, SignalChart, CoverageFunnel, QuestionSentimentChart } from './charts';
 
 const WINDOW_DAYS = 14;
 
 export default async function TrendsPage() {
-  const data = await fetchApi<TrendsResult>(
+  const data = await fetchApi<AdminManagerTrendsResponse>(
     `/admin/manager/trends?tenantId=${TENANT_ID}&days=${WINDOW_DAYS}`,
   );
 
@@ -27,7 +27,13 @@ export default async function TrendsPage() {
           Failed to load data. Check TENANT_ID and ADMIN_API_KEY.
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))', gap: 16 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))',
+            gap: 16,
+          }}
+        >
           <EngagementChart data={data.engagement} />
           <SignalChart data={data.signalCapture} />
           <CoverageFunnel data={data.coverageFunnel} />

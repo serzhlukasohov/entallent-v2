@@ -1,4 +1,12 @@
-import type { EngagementPoint, SignalPoint, QuestionSentiment } from '../types';
+import type {
+  AdminEngagementPoint,
+  AdminQuestionSentiment,
+  AdminSignalPoint,
+} from '@entalent/contracts';
+
+type EngagementPoint = AdminEngagementPoint;
+type SignalPoint = AdminSignalPoint;
+type QuestionSentiment = AdminQuestionSentiment;
 
 const C = {
   green: 'var(--green)',
@@ -8,7 +16,15 @@ const C = {
   blue: 'var(--blue)',
 };
 
-function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+function Card({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div
       style={{
@@ -20,7 +36,9 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
     >
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-        {subtitle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{subtitle}</div>}
+        {subtitle && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{subtitle}</div>
+        )}
       </div>
       {children}
     </div>
@@ -39,22 +57,49 @@ export function EngagementChart({ data }: { data: EngagementPoint[] }) {
 
   return (
     <Card title="Engagement" subtitle="inbound messages (bars) · active users (dots) per day">
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: H, position: 'relative' }}>
+      <div
+        style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: H, position: 'relative' }}
+      >
         {data.map((d) => {
           const msgH = (d.inboundMessages / maxMsg) * (H - 20);
           const userY = H - 20 - (d.activeUsers / maxUsers) * (H - 30);
           return (
-            <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', position: 'relative' }}>
+            <div
+              key={d.date}
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                height: '100%',
+                justifyContent: 'flex-end',
+                position: 'relative',
+              }}
+            >
               <span style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>
                 {d.inboundMessages || ''}
               </span>
               <div
                 title={`${d.date}: ${d.inboundMessages} messages, ${d.activeUsers} active`}
-                style={{ width: '70%', height: Math.max(2, msgH), background: C.blue, borderRadius: '3px 3px 0 0', opacity: d.inboundMessages ? 0.85 : 0.2 }}
+                style={{
+                  width: '70%',
+                  height: Math.max(2, msgH),
+                  background: C.blue,
+                  borderRadius: '3px 3px 0 0',
+                  opacity: d.inboundMessages ? 0.85 : 0.2,
+                }}
               />
               {d.activeUsers > 0 && (
                 <div
-                  style={{ position: 'absolute', top: userY, width: 7, height: 7, borderRadius: '50%', background: C.green, border: '1px solid var(--bg)' }}
+                  style={{
+                    position: 'absolute',
+                    top: userY,
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: C.green,
+                    border: '1px solid var(--bg)',
+                  }}
                 />
               )}
             </div>
@@ -63,7 +108,10 @@ export function EngagementChart({ data }: { data: EngagementPoint[] }) {
       </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
         {data.map((d) => (
-          <span key={d.date} style={{ flex: 1, textAlign: 'center', fontSize: 9, color: 'var(--text-muted)' }}>
+          <span
+            key={d.date}
+            style={{ flex: 1, textAlign: 'center', fontSize: 9, color: 'var(--text-muted)' }}
+          >
             {dayLabel(d.date)}
           </span>
         ))}
@@ -87,13 +135,34 @@ export function SignalChart({ data }: { data: SignalPoint[] }) {
     <Card title="Signal capture" subtitle="evidence records per day, by polarity">
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: H }}>
         {data.map((d) => (
-          <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', marginBottom: 2 }}>
+          <div
+            key={d.date}
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'flex-end',
+              height: '100%',
+            }}
+          >
+            <span
+              style={{
+                fontSize: 10,
+                color: 'var(--text-muted)',
+                textAlign: 'center',
+                marginBottom: 2,
+              }}
+            >
               {d.total || ''}
             </span>
             <div
               title={`${d.date}: 🟢${d.positive} 🔴${d.negative} 🟡${d.mixed} ⚪${d.neutral}`}
-              style={{ display: 'flex', flexDirection: 'column', height: (d.total / max) * (H - 20), minHeight: d.total ? 2 : 0 }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                height: (d.total / max) * (H - 20),
+                minHeight: d.total ? 2 : 0,
+              }}
             >
               {segs.map(([k, color]) => {
                 const v = d[k] as number;
@@ -106,7 +175,10 @@ export function SignalChart({ data }: { data: SignalPoint[] }) {
       </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
         {data.map((d) => (
-          <span key={d.date} style={{ flex: 1, textAlign: 'center', fontSize: 9, color: 'var(--text-muted)' }}>
+          <span
+            key={d.date}
+            style={{ flex: 1, textAlign: 'center', fontSize: 9, color: 'var(--text-muted)' }}
+          >
             {dayLabel(d.date)}
           </span>
         ))}
@@ -139,12 +211,34 @@ export function CoverageFunnel({ data }: { data: Record<string, number> }) {
   return (
     <Card title="Coverage funnel" subtitle="assessment statuses across all questions × employees">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {shown.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No data</span>}
+        {shown.length === 0 && (
+          <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No data</span>
+        )}
         {shown.map((s) => (
           <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ width: 110, fontSize: 12, color: 'var(--text-muted)' }}>{FUNNEL_LABELS[s]}</span>
-            <div style={{ flex: 1, height: 22, background: 'var(--surface2)', borderRadius: 5, overflow: 'hidden' }}>
-              <div style={{ width: `${(data[s] / max) * 100}%`, height: '100%', background: FUNNEL_COLORS[s], opacity: 0.85, display: 'flex', alignItems: 'center', paddingLeft: 8 }}>
+            <span style={{ width: 110, fontSize: 12, color: 'var(--text-muted)' }}>
+              {FUNNEL_LABELS[s]}
+            </span>
+            <div
+              style={{
+                flex: 1,
+                height: 22,
+                background: 'var(--surface2)',
+                borderRadius: 5,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: `${(data[s] / max) * 100}%`,
+                  height: '100%',
+                  background: FUNNEL_COLORS[s],
+                  opacity: 0.85,
+                  display: 'flex',
+                  alignItems: 'center',
+                  paddingLeft: 8,
+                }}
+              >
                 <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--bg)' }}>{data[s]}</span>
               </div>
             </div>
@@ -160,21 +254,52 @@ export function QuestionSentimentChart({ data }: { data: QuestionSentiment[] }) 
   const withData = data.filter((q) => q.net !== null);
 
   return (
-    <Card title="Sentiment by Q12 question" subtitle="net = (positive − negative) / total, by cohort · most problematic at the bottom">
+    <Card
+      title="Sentiment by Q12 question"
+      subtitle="net = (positive − negative) / total, by cohort · most problematic at the bottom"
+    >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {withData.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No data</span>}
+        {withData.length === 0 && (
+          <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No data</span>
+        )}
         {withData.map((q) => {
           const net = q.net ?? 0;
           const pct = Math.abs(net) * 50; // half-width max
           const positive = net >= 0;
           return (
             <div key={q.stableKey} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 200, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={q.title}>
+              <span
+                style={{
+                  width: 200,
+                  fontSize: 12,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={q.title}
+              >
                 {q.title}
               </span>
-              <div style={{ flex: 1, height: 20, position: 'relative', background: 'var(--surface2)', borderRadius: 4 }}>
+              <div
+                style={{
+                  flex: 1,
+                  height: 20,
+                  position: 'relative',
+                  background: 'var(--surface2)',
+                  borderRadius: 4,
+                }}
+              >
                 {/* center line */}
-                <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'var(--border)' }} />
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: 0,
+                    bottom: 0,
+                    width: 1,
+                    background: 'var(--border)',
+                  }}
+                />
                 <div
                   title={`net ${net} · +${q.positive}/-${q.negative} (total ${q.total})`}
                   style={{
@@ -190,8 +315,16 @@ export function QuestionSentimentChart({ data }: { data: QuestionSentiment[] }) 
                   }}
                 />
               </div>
-              <span style={{ width: 44, textAlign: 'right', fontSize: 11, color: positive ? C.green : C.red }}>
-                {net > 0 ? '+' : ''}{net.toFixed(2)}
+              <span
+                style={{
+                  width: 44,
+                  textAlign: 'right',
+                  fontSize: 11,
+                  color: positive ? C.green : C.red,
+                }}
+              >
+                {net > 0 ? '+' : ''}
+                {net.toFixed(2)}
               </span>
             </div>
           );

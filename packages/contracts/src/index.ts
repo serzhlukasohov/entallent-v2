@@ -8,3 +8,4 @@ export * from './queue';
 export * from './admin-manager-team';
 export * from './admin-pulse-overview';
 export * from './admin-user-insights';
+export * from './admin-manager-trends';

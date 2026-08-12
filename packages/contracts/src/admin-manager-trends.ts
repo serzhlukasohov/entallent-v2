@@ -1,10 +1,10 @@
-export interface EngagementPoint {
+export interface AdminEngagementPoint {
   date: string;
   activeUsers: number;
   inboundMessages: number;
 }
 
-export interface SignalPoint {
+export interface AdminSignalPoint {
   date: string;
   total: number;
   positive: number;
@@ -13,7 +13,7 @@ export interface SignalPoint {
   neutral: number;
 }
 
-export interface QuestionSentiment {
+export interface AdminQuestionSentiment {
   stableKey: string;
   title: string;
   dimension: string;
@@ -25,11 +25,11 @@ export interface QuestionSentiment {
   net: number | null;
 }
 
-export interface TrendsResult {
+export interface AdminManagerTrendsResponse {
   rangeStart: string;
   rangeEnd: string;
-  engagement: EngagementPoint[];
-  signalCapture: SignalPoint[];
+  engagement: AdminEngagementPoint[];
+  signalCapture: AdminSignalPoint[];
   coverageFunnel: Record<string, number>;
-  questionSentiment: QuestionSentiment[];
+  questionSentiment: AdminQuestionSentiment[];
 }

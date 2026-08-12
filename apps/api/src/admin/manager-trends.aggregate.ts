@@ -1,39 +1,14 @@
-export interface EngagementPoint {
-  date: string; // YYYY-MM-DD
-  activeUsers: number;
-  inboundMessages: number;
-}
+import type {
+  AdminEngagementPoint,
+  AdminManagerTrendsResponse,
+  AdminQuestionSentiment,
+  AdminSignalPoint,
+} from '@entalent/contracts';
 
-export interface SignalPoint {
-  date: string; // YYYY-MM-DD
-  total: number;
-  positive: number;
-  negative: number;
-  mixed: number;
-  neutral: number;
-}
-
-export interface QuestionSentiment {
-  stableKey: string;
-  title: string;
-  dimension: string;
-  positive: number;
-  negative: number;
-  mixed: number;
-  neutral: number;
-  total: number;
-  /** net = (positive - negative) / total, in [-1, 1]; null when no evidence */
-  net: number | null;
-}
-
-export interface TrendsResult {
-  rangeStart: string;
-  rangeEnd: string;
-  engagement: EngagementPoint[];
-  signalCapture: SignalPoint[];
-  coverageFunnel: Record<string, number>;
-  questionSentiment: QuestionSentiment[];
-}
+type EngagementPoint = AdminEngagementPoint;
+type SignalPoint = AdminSignalPoint;
+type QuestionSentiment = AdminQuestionSentiment;
+export type TrendsResult = AdminManagerTrendsResponse;
 
 export interface EngagementRow {
   day: string; // YYYY-MM-DD
