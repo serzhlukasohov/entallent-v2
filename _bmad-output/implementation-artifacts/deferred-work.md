@@ -31,6 +31,8 @@
   evidence: Split from the architecture improvement bundle because observability/state tracking is independently shippable from shared queue constants.
 - source_spec: none
   summary: Harden Slack display-name backfill tooling with dry-run, explicit tenant selection, audit logging, and safer output modes.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-slack-display-name-backfill-safety.md`
   evidence: Split from the architecture improvement bundle because backfill tooling can be reviewed and shipped separately from runtime architecture changes.
 - source_spec: `_bmad-output/implementation-artifacts/spec-admin-manager-team-contract.md`
   summary: Add DB or write-time validation for `survey_evidence.polarity`.
