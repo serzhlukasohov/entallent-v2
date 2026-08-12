@@ -7,3 +7,4 @@ export * from './migration-baseline';
 export * from './queue';
 export * from './admin-manager-team';
 export * from './admin-pulse-overview';
+export * from './admin-user-insights';

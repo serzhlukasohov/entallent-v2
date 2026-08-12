@@ -6,35 +6,12 @@ import {
   surveyQuestions,
   surveyWindows,
 } from '@entalent/database';
+import type { AdminQuestionInsight, AdminUserInsightsResponse } from '@entalent/contracts';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
 
-export interface QuestionInsight {
-  questionId: string;
-  stableKey: string;
-  title: string;
-  canonicalMeaning: string;
-  group: string;
-  displayOrder: number;
-  // Assessment (computed state)
-  assessmentStatus: string | null;
-  score: number | null;
-  assessmentConfidence: number | null;
-  currentState: string | null;   // reasoningSummary — synthesised view of the employee's state
-  assessedAt: string | null;
-  // Latest evidence (root cause)
-  polarity: string | null;
-  evidenceStrength: number | null;
-  rootCause: string | null;      // evidenceSummary — what drove the current state
-  evidenceUpdatedAt: string | null;
-}
-
-export interface UserInsightsResponse {
-  userId: string;
-  windowId: string | null;
-  periodEnd: string | null;
-  questions: QuestionInsight[];
-}
+type QuestionInsight = AdminQuestionInsight;
+type UserInsightsResponse = AdminUserInsightsResponse;
 
 @Controller('admin/users/:userId/insights')
 @UseGuards(ApiKeyGuard)
@@ -48,7 +25,11 @@ export class UserInsightsController {
   ): Promise<UserInsightsResponse> {
     // 1. Find active window for this user
     const [window] = await this.db.client
-      .select({ id: surveyWindows.id, periodEnd: surveyWindows.periodEnd, definitionId: surveyWindows.surveyDefinitionId })
+      .select({
+        id: surveyWindows.id,
+        periodEnd: surveyWindows.periodEnd,
+        definitionId: surveyWindows.surveyDefinitionId,
+      })
       .from(surveyWindows)
       .where(and(eq(surveyWindows.userId, userId), eq(surveyWindows.status, 'active')))
       .limit(1);
@@ -106,7 +87,7 @@ export class UserInsightsController {
       .orderBy(desc(surveyEvidence.createdAt));
 
     // Keep only the latest evidence per question
-    const latestEvidence = new Map<string, typeof evidenceRows[0]>();
+    const latestEvidence = new Map<string, (typeof evidenceRows)[0]>();
     for (const row of evidenceRows) {
       if (!latestEvidence.has(row.questionId)) {
         latestEvidence.set(row.questionId, row);

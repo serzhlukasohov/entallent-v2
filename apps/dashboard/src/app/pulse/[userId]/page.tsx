@@ -1,7 +1,9 @@
 import Link from 'next/link';
+import type { AdminQuestionInsight, AdminUserInsightsResponse } from '@entalent/contracts';
 import { Nav } from '../../components/Nav';
 import { fetchApi } from '../../lib';
-import type { QuestionInsight, UserInsightsResponse } from '../../types';
+
+type QuestionInsight = AdminQuestionInsight;
 
 const GROUP_LABELS: Record<string, string> = {
   autonomy: 'Autonomy',
@@ -59,16 +61,16 @@ export default async function UserInsightsPage({
   params: Promise<{ userId: string }>;
 }) {
   const { userId } = await params;
-  const data = await fetchApi<UserInsightsResponse>(
-    `/admin/users/${userId}/insights`,
-    0,
-  );
+  const data = await fetchApi<AdminUserInsightsResponse>(`/admin/users/${userId}/insights`, 0);
 
   if (!data || !data.windowId) {
     return (
       <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
         <Nav active="pulse" />
-        <Link href="/pulse" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>
+        <Link
+          href="/pulse"
+          style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}
+        >
           ← Back to Pulse
         </Link>
         <p style={{ marginTop: 32, color: 'var(--text-muted)' }}>
@@ -94,18 +96,27 @@ export default async function UserInsightsPage({
   return (
     <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
       <Nav active="pulse" />
-      <Link href="/pulse" style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}>
+      <Link
+        href="/pulse"
+        style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}
+      >
         ← Back to Pulse
       </Link>
 
       <div style={{ marginTop: 20, marginBottom: 28 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
-          Employee Insights
-        </h1>
+        <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>Employee Insights</h1>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           ID: {userId}
           {data.periodEnd && (
-            <> · Window ends: {new Date(data.periodEnd).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</>
+            <>
+              {' '}
+              · Window ends:{' '}
+              {new Date(data.periodEnd).toLocaleDateString('en-GB', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })}
+            </>
           )}
         </div>
       </div>
@@ -182,11 +193,17 @@ function InsightRow({ q }: { q: QuestionInsight }) {
 
       <div>
         {/* Question title + status */}
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 10,
+            flexWrap: 'wrap',
+            marginBottom: 4,
+          }}
+        >
           <span style={{ fontSize: 14, fontWeight: 600 }}>{q.title}</span>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            {status.label}
-          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{status.label}</span>
           {q.score !== null && (
             <span
               style={{
@@ -219,11 +236,7 @@ function InsightRow({ q }: { q: QuestionInsight }) {
             }}
           >
             {q.currentState && (
-              <InfoBlock
-                label="Current State"
-                text={q.currentState}
-                accentColor="#3b82f6"
-              />
+              <InfoBlock label="Current State" text={q.currentState} accentColor="#3b82f6" />
             )}
             {q.rootCause && (
               <InfoBlock
@@ -243,15 +256,35 @@ function InsightRow({ q }: { q: QuestionInsight }) {
 
         {/* Timestamps */}
         {(q.assessedAt || q.evidenceUpdatedAt) && (
-          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)', display: 'flex', gap: 12 }}>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              display: 'flex',
+              gap: 12,
+            }}
+          >
             {q.assessedAt && (
               <span>
-                Assessed: {new Date(q.assessedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                Assessed:{' '}
+                {new Date(q.assessedAt).toLocaleString('en-GB', {
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
               </span>
             )}
             {q.evidenceUpdatedAt && (
               <span>
-                Evidence: {new Date(q.evidenceUpdatedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                Evidence:{' '}
+                {new Date(q.evidenceUpdatedAt).toLocaleString('en-GB', {
+                  day: 'numeric',
+                  month: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
               </span>
             )}
           </div>
@@ -279,10 +312,26 @@ function InfoBlock({
         borderLeft: `3px solid ${accentColor}`,
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: 'var(--text-muted)',
+          marginBottom: 4,
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+        }}
+      >
         {label}
       </div>
-      <div style={{ fontSize: 13, color: text ? 'var(--text)' : 'var(--text-muted)', fontStyle: text ? 'normal' : 'italic', lineHeight: 1.5 }}>
+      <div
+        style={{
+          fontSize: 13,
+          color: text ? 'var(--text)' : 'var(--text-muted)',
+          fontStyle: text ? 'normal' : 'italic',
+          lineHeight: 1.5,
+        }}
+      >
         {text ?? 'Not enough data'}
       </div>
     </div>
