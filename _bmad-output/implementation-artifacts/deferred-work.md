@@ -59,3 +59,10 @@
   status: done
   completed_by: `_bmad-output/implementation-artifacts/spec-profile-hydration-atomic-attempt-count.md`
   evidence: Review surfaced that concurrent hydration attempts can lose JSONB read-modify-write increments; this is acceptable for first-slice observability but should be addressed with the profile ownership refactor.
+
+## Deferred from: dashboard production verification workflow (2026-08-12)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-production-verification-workflow.md`
+  summary: Enable automatic dashboard production verification after GitHub repo secrets and variables are configured.
+  status: todo
+  evidence: The workflow is safe-by-default and can run manually now, but automatic push execution requires `DASHBOARD_PROD_VERIFY_ENABLED=1`, `DASHBOARD_ADMIN_API_KEY`, `DASHBOARD_PROD_TENANT_ID`, `RAILWAY_TOKEN`, and `RAILWAY_PROJECT_ID` to be configured in GitHub.

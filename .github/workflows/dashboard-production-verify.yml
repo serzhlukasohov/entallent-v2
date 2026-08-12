@@ -1,0 +1,139 @@
+name: Dashboard Production Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      wait_seconds:
+        description: Seconds to wait before verification starts
+        required: false
+        default: '0'
+      trends_days:
+        description: Days of trend data to verify
+        required: false
+        default: '14'
+  push:
+    branches: [main]
+
+concurrency:
+  group: dashboard-production-verify-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  verify:
+    name: Verify production dashboard
+    runs-on: ubuntu-latest
+    environment: production
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || vars.DASHBOARD_PROD_VERIFY_ENABLED == '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Railway CLI
+        if: github.event_name == 'push'
+        run: |
+          npm install -g @railway/cli
+          railway --version
+
+      - name: Link Railway project
+        if: github.event_name == 'push'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+        run: railway link "$RAILWAY_PROJECT_ID"
+
+      - name: Wait for production deployment
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.wait_seconds != '0'
+        env:
+          DISPATCH_WAIT_SECONDS: ${{ github.event.inputs.wait_seconds || '0' }}
+        run: |
+          if ! [[ "${DISPATCH_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || [ "${DISPATCH_WAIT_SECONDS}" -gt 900 ]; then
+            echo "wait_seconds must be an integer between 0 and 900"
+            exit 1
+          fi
+          sleep "${DISPATCH_WAIT_SECONDS}"
+
+      - name: Wait for Railway auto-deploy
+        if: github.event_name == 'push'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          DASHBOARD_PROD_VERIFY_WAIT_SECONDS: ${{ vars.DASHBOARD_PROD_VERIFY_WAIT_SECONDS || '900' }}
+        run: |
+          if ! [[ "${DASHBOARD_PROD_VERIFY_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || [ "${DASHBOARD_PROD_VERIFY_WAIT_SECONDS}" -gt 1800 ]; then
+            echo "DASHBOARD_PROD_VERIFY_WAIT_SECONDS must be an integer between 0 and 1800"
+            exit 1
+          fi
+
+          deadline=$((SECONDS + DASHBOARD_PROD_VERIFY_WAIT_SECONDS))
+          services="api dashboard"
+
+          while [ "${SECONDS}" -le "${deadline}" ]; do
+            all_ready=1
+
+            for service in ${services}; do
+              deployments="$(railway deployment list --service "${service}" --limit 10 --json)"
+              status="$(
+                DEPLOYMENTS_JSON="${deployments}" node -e '
+                  const deployments = JSON.parse(process.env.DEPLOYMENTS_JSON || "[]");
+                  const deployment = deployments.find((item) => item?.meta?.commitHash === process.env.GITHUB_SHA);
+                  process.stdout.write(deployment?.status || "MISSING");
+                '
+              )"
+
+              echo "${service} deployment for ${GITHUB_SHA:0:7}: ${status}"
+              if [ "${status}" = "FAILED" ] || [ "${status}" = "CRASHED" ]; then
+                exit 1
+              fi
+              if [ "${status}" != "SUCCESS" ]; then
+                all_ready=0
+              fi
+            done
+
+            if [ "${all_ready}" = "1" ]; then
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "Timed out waiting for Railway deployments for ${GITHUB_SHA:0:7}"
+          exit 1
+
+      - name: Validate verifier configuration
+        env:
+          ADMIN_API_KEY: ${{ secrets.DASHBOARD_ADMIN_API_KEY }}
+          TENANT_ID: ${{ vars.DASHBOARD_PROD_TENANT_ID || secrets.DASHBOARD_PROD_TENANT_ID }}
+          DASHBOARD_VERIFY_TRENDS_DAYS: ${{ github.event.inputs.trends_days || vars.DASHBOARD_PROD_VERIFY_TRENDS_DAYS || '14' }}
+        run: |
+          if [ -z "${ADMIN_API_KEY}" ]; then
+            echo "DASHBOARD_ADMIN_API_KEY is required"
+            exit 1
+          fi
+          if ! [[ "${TENANT_ID}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; then
+            echo "DASHBOARD_PROD_TENANT_ID must be a UUID"
+            exit 1
+          fi
+          if ! [[ "${DASHBOARD_VERIFY_TRENDS_DAYS}" =~ ^[0-9]+$ ]] || [ "${DASHBOARD_VERIFY_TRENDS_DAYS}" -lt 1 ] || [ "${DASHBOARD_VERIFY_TRENDS_DAYS}" -gt 120 ]; then
+            echo "DASHBOARD_VERIFY_TRENDS_DAYS must be an integer between 1 and 120"
+            exit 1
+          fi
+
+      - name: Run production dashboard verifier
+        env:
+          ADMIN_API_KEY: ${{ secrets.DASHBOARD_ADMIN_API_KEY }}
+          TENANT_ID: ${{ vars.DASHBOARD_PROD_TENANT_ID || secrets.DASHBOARD_PROD_TENANT_ID }}
+          API_BASE: ${{ vars.DASHBOARD_PROD_API_BASE || 'https://api-production-bc75.up.railway.app/api/v1' }}
+          DASHBOARD_BASE: ${{ vars.DASHBOARD_PROD_BASE || 'https://dashboard-production-a4f4.up.railway.app' }}
+          DASHBOARD_VERIFY_TRENDS_DAYS: ${{ github.event.inputs.trends_days || vars.DASHBOARD_PROD_VERIFY_TRENDS_DAYS || '14' }}
+        run: pnpm run dashboard:prod:verify
