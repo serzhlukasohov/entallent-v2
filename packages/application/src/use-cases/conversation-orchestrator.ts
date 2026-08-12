@@ -60,7 +60,11 @@ export class ConversationOrchestrator {
       Date.now() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000;
     if (displayNameMissing || tzMissing || tzStale) {
       await this.outbox.enqueueProfileHydration({
-        userId, tenantId, channelType: conversation.channelType, traceId: input.traceId,
+        userId,
+        tenantId,
+        channelType: conversation.channelType,
+        externalWorkspaceId,
+        traceId: input.traceId,
       });
     }
 

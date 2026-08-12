@@ -13,11 +13,20 @@ export class SlackExternalProfileAdapter implements ExternalProfilePort {
     userId: string,
     tenantId: string,
     channelType: string,
+    externalWorkspaceId?: string,
   ): Promise<ExternalUserProfile | null> {
     if (channelType !== 'slack') return null;
-    const account = await this.wsRepo.findSlackAccountByUserId(userId, tenantId);
+    const account = await this.wsRepo.findSlackAccountByUserId(
+      userId,
+      tenantId,
+      externalWorkspaceId,
+    );
     if (!account) return null;
-    const wsConn = await this.wsRepo.findByExternalWorkspace('slack', account.externalWorkspaceId);
+    const wsConn = await this.wsRepo.findByExternalWorkspace(
+      'slack',
+      account.externalWorkspaceId,
+      tenantId,
+    );
     if (!wsConn) return null;
     try {
       const adapter = new SlackAdapter({ botToken: wsConn.botToken });
@@ -36,8 +45,9 @@ export class SlackExternalProfileAdapter implements ExternalProfilePort {
     userId: string,
     tenantId: string,
     channelType: string,
+    externalWorkspaceId?: string,
   ): Promise<string | null> {
-    const profile = await this.fetchProfile(userId, tenantId, channelType);
+    const profile = await this.fetchProfile(userId, tenantId, channelType, externalWorkspaceId);
     return profile?.timezone ?? null;
   }
 }

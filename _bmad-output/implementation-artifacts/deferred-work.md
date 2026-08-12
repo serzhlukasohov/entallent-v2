@@ -35,7 +35,9 @@
   evidence: Review surfaced that polarity is stored as unrestricted text; preserving wire behavior is correct for this split, but producer-side validation should be handled as a separate data integrity story.
 - source_spec: `_bmad-output/implementation-artifacts/spec-profile-hydration-observability.md`
   summary: Scope profile hydration jobs and repository writes to a specific channel account rather than only `userId + tenantId + channelType`.
-  evidence: Review surfaced that users with multiple Slack workspace accounts could have unrelated channel accounts marked with the same hydration outcome; fixing this cleanly requires extending the hydration payload/account identity boundary.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-account-scoped-profile-hydration.md`
+  evidence: Review surfaced that users with multiple Slack workspace accounts could have unrelated channel accounts marked with the same hydration outcome; completed by carrying external workspace scope through hydration payloads, Slack account lookup, profile writes, and outcome writes.
 - source_spec: `_bmad-output/implementation-artifacts/spec-profile-hydration-observability.md`
   summary: Make profile hydration attempt-count increments atomic if the status remains JSONB-backed.
   evidence: Review surfaced that concurrent hydration attempts can lose JSONB read-modify-write increments; this is acceptable for first-slice observability but should be addressed with the profile ownership refactor.

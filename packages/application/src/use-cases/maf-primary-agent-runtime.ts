@@ -288,6 +288,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
         userId: request.userId,
         tenantId: request.tenantId,
         channelType: conversation.channelType,
+        externalWorkspaceId: request.externalWorkspaceId,
         traceId: request.traceId,
       });
     } catch {

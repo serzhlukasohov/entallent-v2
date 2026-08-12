@@ -6,7 +6,7 @@ export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, I
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';
 export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload, StyleAnalysisPayload, ProfileHydrationPayload } from './ports/outbox.port';
 export type { ExternalProfilePort } from './ports/external-profile.port';
-export type { ProfileHydrationOutcome, ProfileHydrationOutcomeStatus, UserProfileRepositoryPort } from './ports/user-profile.repository.port';
+export type { ProfileHydrationAccountScope, ProfileHydrationOutcome, ProfileHydrationOutcomeStatus, UserProfileRepositoryPort } from './ports/user-profile.repository.port';
 export type { MemoryRepositoryPort, SaveMemoryItemParams } from './ports/memory.repository.port';
 export type { GoalRepositoryPort, SaveGoalParams } from './ports/goal.repository.port';
 export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from './ports/scheduled-action.repository.port';

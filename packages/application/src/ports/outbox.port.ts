@@ -59,6 +59,7 @@ export interface ProfileHydrationPayload {
   userId: string;
   tenantId: string;
   channelType: string;
+  externalWorkspaceId?: string;
   traceId: string;
 }
 

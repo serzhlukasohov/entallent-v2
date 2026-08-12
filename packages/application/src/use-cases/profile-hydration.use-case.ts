@@ -5,6 +5,7 @@ export interface ProfileHydrationInput {
   userId: string;
   tenantId: string;
   channelType: string;
+  externalWorkspaceId?: string;
 }
 
 export class ProfileHydrationUseCase {
@@ -22,6 +23,7 @@ export class ProfileHydrationUseCase {
         input.userId,
         input.tenantId,
         input.channelType,
+        input.externalWorkspaceId,
       );
     } catch (err) {
       await this.recordOutcomeBestEffort(input, {
@@ -43,6 +45,8 @@ export class ProfileHydrationUseCase {
 
     try {
       await this.userProfileRepo.updateProfile(input.userId, input.tenantId, {
+        channelType: input.channelType,
+        externalWorkspaceId: input.externalWorkspaceId,
         externalUserId: profile.externalUserId,
         displayName: profile.displayName,
         timezone: profile.timezone,
@@ -64,11 +68,15 @@ export class ProfileHydrationUseCase {
     outcome: Parameters<UserProfileRepositoryPort['recordProfileHydrationOutcome']>[3],
   ): Promise<void> {
     try {
+      const scope = input.externalWorkspaceId
+        ? { externalWorkspaceId: input.externalWorkspaceId }
+        : undefined;
       await this.userProfileRepo.recordProfileHydrationOutcome(
         input.userId,
         input.tenantId,
         input.channelType,
         outcome,
+        scope,
       );
     } catch {
       // Hydration status is operational telemetry; it must not create duplicate profile writes.

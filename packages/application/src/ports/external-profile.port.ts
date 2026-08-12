@@ -7,8 +7,14 @@ export interface ExternalProfilePort {
     userId: string,
     tenantId: string,
     channelType: string,
+    externalWorkspaceId?: string,
   ): Promise<ExternalUserProfile | null>;
 
   /** IANA timezone for the user on the given channel, or null if unavailable. */
-  fetchTimezone(userId: string, tenantId: string, channelType: string): Promise<string | null>;
+  fetchTimezone(
+    userId: string,
+    tenantId: string,
+    channelType: string,
+    externalWorkspaceId?: string,
+  ): Promise<string | null>;
 }

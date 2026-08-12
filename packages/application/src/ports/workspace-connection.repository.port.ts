@@ -4,6 +4,7 @@ export interface WorkspaceConnectionRepositoryPort {
   findByExternalWorkspace(
     channelType: string,
     externalWorkspaceId: string,
+    tenantId?: string,
   ): Promise<WorkspaceConnectionRecord | null>;
   /** Find the first active workspace connection for a tenant+channel — used for proactive sends */
   findFirstByTenant(

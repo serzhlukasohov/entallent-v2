@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, type SQL } from 'drizzle-orm';
 import { channelAccounts, users } from '@entalent/database';
 import {
   resolveExternalProfileFacts,
+  type ProfileHydrationAccountScope,
   type ProfileHydrationOutcome,
   type UserProfileRepositoryPort,
 } from '@entalent/application';
@@ -23,7 +24,13 @@ export class UserProfileRepository implements UserProfileRepositoryPort {
   async updateProfile(
     userId: string,
     tenantId: string,
-    profile: { externalUserId?: string; displayName?: string; timezone?: string },
+    profile: {
+      channelType?: string;
+      externalWorkspaceId?: string;
+      externalUserId?: string;
+      displayName?: string;
+      timezone?: string;
+    },
   ): Promise<void> {
     const updateSet: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
 
@@ -55,7 +62,7 @@ export class UserProfileRepository implements UserProfileRepositoryPort {
       await this.db.client
         .update(channelAccounts)
         .set({ displayName: profileFacts.displayName, updatedAt: new Date() })
-        .where(and(eq(channelAccounts.userId, userId), eq(channelAccounts.tenantId, tenantId)));
+        .where(and(...buildChannelAccountPredicates(userId, tenantId, profile)));
     }
   }
 
@@ -64,20 +71,20 @@ export class UserProfileRepository implements UserProfileRepositoryPort {
     tenantId: string,
     channelType: string,
     outcome: ProfileHydrationOutcome,
+    scope: ProfileHydrationAccountScope = {},
   ): Promise<void> {
+    const predicates = buildChannelAccountPredicates(userId, tenantId, {
+      channelType,
+      ...scope,
+    });
+
     const rows = await this.db.client
       .select({
         id: channelAccounts.id,
         profileMetadata: channelAccounts.profileMetadata,
       })
       .from(channelAccounts)
-      .where(
-        and(
-          eq(channelAccounts.userId, userId),
-          eq(channelAccounts.tenantId, tenantId),
-          eq(channelAccounts.channelType, channelType),
-        ),
-      );
+      .where(and(...predicates));
 
     await Promise.all(
       rows.map((row) => {
@@ -130,4 +137,31 @@ function normalizeMetadata(value: unknown): ProfileMetadata {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as ProfileMetadata)
     : {};
+}
+
+function buildChannelAccountPredicates(
+  userId: string,
+  tenantId: string,
+  scope: {
+    channelType?: string;
+    externalWorkspaceId?: string;
+    externalUserId?: string;
+  },
+): SQL[] {
+  const predicates: SQL[] = [
+    eq(channelAccounts.userId, userId),
+    eq(channelAccounts.tenantId, tenantId),
+  ];
+
+  if (scope.channelType) {
+    predicates.push(eq(channelAccounts.channelType, scope.channelType));
+  }
+  if (scope.externalWorkspaceId) {
+    predicates.push(eq(channelAccounts.externalWorkspaceId, scope.externalWorkspaceId));
+  }
+  if (scope.externalUserId) {
+    predicates.push(eq(channelAccounts.externalUserId, scope.externalUserId));
+  }
+
+  return predicates;
 }

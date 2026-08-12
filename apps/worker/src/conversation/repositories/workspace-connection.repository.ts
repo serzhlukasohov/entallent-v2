@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, type SQL } from 'drizzle-orm';
 import type { Env } from '@entalent/config';
 import { decryptField } from '@entalent/crypto-utils';
 import { workspaceConnections, channelAccounts } from '@entalent/database';
@@ -51,20 +51,24 @@ export class WorkspaceConnectionRepository implements WorkspaceConnectionReposit
   async findSlackAccountByUserId(
     userId: string,
     tenantId: string,
+    externalWorkspaceId?: string,
   ): Promise<{ externalWorkspaceId: string; externalUserId: string } | null> {
+    const predicates: SQL[] = [
+      eq(channelAccounts.userId, userId),
+      eq(channelAccounts.tenantId, tenantId),
+      eq(channelAccounts.channelType, 'slack'),
+    ];
+    if (externalWorkspaceId) {
+      predicates.push(eq(channelAccounts.externalWorkspaceId, externalWorkspaceId));
+    }
+
     const [account] = await this.db.client
       .select({
         externalWorkspaceId: channelAccounts.externalWorkspaceId,
         externalUserId: channelAccounts.externalUserId,
       })
       .from(channelAccounts)
-      .where(
-        and(
-          eq(channelAccounts.userId, userId),
-          eq(channelAccounts.tenantId, tenantId),
-          eq(channelAccounts.channelType, 'slack'),
-        ),
-      )
+      .where(and(...predicates))
       .limit(1);
     return account ?? null;
   }
@@ -72,17 +76,21 @@ export class WorkspaceConnectionRepository implements WorkspaceConnectionReposit
   async findByExternalWorkspace(
     channelType: string,
     externalWorkspaceId: string,
+    tenantId?: string,
   ): Promise<WorkspaceConnectionRecord | null> {
+    const predicates: SQL[] = [
+      eq(workspaceConnections.channelType, channelType),
+      eq(workspaceConnections.externalWorkspaceId, externalWorkspaceId),
+      eq(workspaceConnections.status, 'active'),
+    ];
+    if (tenantId) {
+      predicates.push(eq(workspaceConnections.tenantId, tenantId));
+    }
+
     const [conn] = await this.db.client
       .select()
       .from(workspaceConnections)
-      .where(
-        and(
-          eq(workspaceConnections.channelType, channelType),
-          eq(workspaceConnections.externalWorkspaceId, externalWorkspaceId),
-          eq(workspaceConnections.status, 'active'),
-        ),
-      )
+      .where(and(...predicates))
       .limit(1);
 
     if (!conn) return null;

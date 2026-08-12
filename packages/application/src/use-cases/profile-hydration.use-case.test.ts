@@ -3,7 +3,12 @@ import type { ExternalProfilePort } from '../ports/external-profile.port';
 import type { UserProfileRepositoryPort } from '../ports/user-profile.repository.port';
 import { ProfileHydrationUseCase } from './profile-hydration.use-case';
 
-const INPUT = { userId: 'u-1', tenantId: 't-1', channelType: 'slack' };
+const INPUT = {
+  userId: 'u-1',
+  tenantId: 't-1',
+  channelType: 'slack',
+  externalWorkspaceId: 'ws-1',
+};
 
 describe('ProfileHydrationUseCase', () => {
   it('stores the display name and timezone when the channel returns a profile', async () => {
@@ -21,7 +26,10 @@ describe('ProfileHydrationUseCase', () => {
       recordProfileHydrationOutcome: vi.fn().mockResolvedValue(undefined),
     };
     await new ProfileHydrationUseCase(ext, repo).execute(INPUT);
+    expect(ext.fetchProfile).toHaveBeenCalledWith('u-1', 't-1', 'slack', 'ws-1');
     expect(repo.updateProfile).toHaveBeenCalledWith('u-1', 't-1', {
+      channelType: 'slack',
+      externalWorkspaceId: 'ws-1',
       externalUserId: 'ext-1',
       displayName: 'Alice',
       timezone: 'Europe/Berlin',
@@ -31,6 +39,7 @@ describe('ProfileHydrationUseCase', () => {
       't-1',
       'slack',
       expect.objectContaining({ status: 'success', occurredAt: expect.any(Date) }),
+      { externalWorkspaceId: 'ws-1' },
     );
   });
 
@@ -55,6 +64,7 @@ describe('ProfileHydrationUseCase', () => {
         reason: 'external_profile_unavailable',
         occurredAt: expect.any(Date),
       }),
+      { externalWorkspaceId: 'ws-1' },
     );
   });
 
@@ -82,6 +92,34 @@ describe('ProfileHydrationUseCase', () => {
         error: 'Slack timeout',
         occurredAt: expect.any(Date),
       }),
+      { externalWorkspaceId: 'ws-1' },
+    );
+  });
+
+  it('keeps legacy hydration calls compatible when no external workspace is present', async () => {
+    const ext: ExternalProfilePort = {
+      fetchProfile: vi.fn().mockResolvedValue(null),
+      fetchTimezone: vi.fn(),
+    };
+    const repo: UserProfileRepositoryPort = {
+      updateTimezone: vi.fn(),
+      updateProfile: vi.fn(),
+      recordProfileHydrationOutcome: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await new ProfileHydrationUseCase(ext, repo).execute({
+      userId: 'u-1',
+      tenantId: 't-1',
+      channelType: 'slack',
+    });
+
+    expect(ext.fetchProfile).toHaveBeenCalledWith('u-1', 't-1', 'slack', undefined);
+    expect(repo.recordProfileHydrationOutcome).toHaveBeenCalledWith(
+      'u-1',
+      't-1',
+      'slack',
+      expect.objectContaining({ status: 'missing_profile' }),
+      undefined,
     );
   });
 
