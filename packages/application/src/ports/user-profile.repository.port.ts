@@ -12,7 +12,7 @@ export interface UserProfileRepositoryPort {
   updateProfile(
     userId: string,
     tenantId: string,
-    profile: { displayName?: string; timezone?: string },
+    profile: { externalUserId?: string; displayName?: string; timezone?: string },
   ): Promise<void>;
   recordProfileHydrationOutcome(
     userId: string,

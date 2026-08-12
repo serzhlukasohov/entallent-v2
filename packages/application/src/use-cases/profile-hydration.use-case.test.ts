@@ -22,6 +22,7 @@ describe('ProfileHydrationUseCase', () => {
     };
     await new ProfileHydrationUseCase(ext, repo).execute(INPUT);
     expect(repo.updateProfile).toHaveBeenCalledWith('u-1', 't-1', {
+      externalUserId: 'ext-1',
       displayName: 'Alice',
       timezone: 'Europe/Berlin',
     });

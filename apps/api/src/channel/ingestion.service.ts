@@ -10,7 +10,13 @@ import {
   messages,
   workspaceConnections,
 } from '@entalent/database';
-import type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageResult, IngestMessageParams } from '@entalent/application';
+import {
+  resolveExternalProfileFacts,
+  type IngestionRepositoryPort,
+  type WorkspaceIdentity,
+  type IngestMessageResult,
+  type IngestMessageParams,
+} from '@entalent/application';
 import { DatabaseService } from '../database/database.service';
 
 @Injectable()
@@ -67,9 +73,14 @@ export class IngestionService implements IngestionRepositoryPort {
 
     if (existing) return { userId: existing.userId };
 
+    const profileFacts = resolveExternalProfileFacts({
+      externalUserId: params.externalUserId,
+      displayName: params.displayName,
+    });
+
     const [newUser] = await this.db.client
       .insert(users)
-      .values({ tenantId: params.tenantId, preferredName: params.displayName })
+      .values({ tenantId: params.tenantId, preferredName: profileFacts.preferredName })
       .returning({ id: users.id });
 
     await this.db.client.insert(channelAccounts).values({
@@ -78,7 +89,7 @@ export class IngestionService implements IngestionRepositoryPort {
       channelType: params.channelType,
       externalWorkspaceId: params.externalWorkspaceId,
       externalUserId: params.externalUserId,
-      displayName: params.displayName,
+      displayName: profileFacts.displayName,
     });
 
     return { userId: newUser.id };

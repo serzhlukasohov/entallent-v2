@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { channelAccounts, users } from '@entalent/database';
-import type { ProfileHydrationOutcome, UserProfileRepositoryPort } from '@entalent/application';
+import {
+  resolveExternalProfileFacts,
+  type ProfileHydrationOutcome,
+  type UserProfileRepositoryPort,
+} from '@entalent/application';
 import { DatabaseService } from '../database/database.service';
 
 type ProfileMetadata = Record<string, unknown>;
@@ -19,15 +23,9 @@ export class UserProfileRepository implements UserProfileRepositoryPort {
   async updateProfile(
     userId: string,
     tenantId: string,
-    profile: { displayName?: string; timezone?: string },
+    profile: { externalUserId?: string; displayName?: string; timezone?: string },
   ): Promise<void> {
-    const displayName = profile.displayName?.trim();
     const updateSet: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
-
-    if (profile.timezone) {
-      updateSet.timezone = profile.timezone;
-      updateSet.timezoneUpdatedAt = new Date();
-    }
 
     const [user] = await this.db.client
       .select({ preferredName: users.preferredName })
@@ -35,8 +33,17 @@ export class UserProfileRepository implements UserProfileRepositoryPort {
       .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)))
       .limit(1);
 
-    if (displayName && !user?.preferredName?.trim()) {
-      updateSet.preferredName = displayName;
+    const profileFacts = resolveExternalProfileFacts(profile, {
+      preferredName: user?.preferredName,
+    });
+
+    if (profileFacts.timezone) {
+      updateSet.timezone = profileFacts.timezone;
+      updateSet.timezoneUpdatedAt = new Date();
+    }
+
+    if (profileFacts.preferredName) {
+      updateSet.preferredName = profileFacts.preferredName;
     }
 
     await this.db.client
@@ -44,10 +51,10 @@ export class UserProfileRepository implements UserProfileRepositoryPort {
       .set(updateSet)
       .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)));
 
-    if (displayName) {
+    if (profileFacts.displayName) {
       await this.db.client
         .update(channelAccounts)
-        .set({ displayName, updatedAt: new Date() })
+        .set({ displayName: profileFacts.displayName, updatedAt: new Date() })
         .where(and(eq(channelAccounts.userId, userId), eq(channelAccounts.tenantId, tenantId)));
     }
   }

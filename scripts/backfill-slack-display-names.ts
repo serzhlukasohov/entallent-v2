@@ -1,4 +1,5 @@
 import { and, eq, isNull, or } from 'drizzle-orm';
+import { resolveExternalProfileFacts } from '@entalent/application';
 import { SlackAdapter } from '@entalent/channel-slack';
 import { decryptField } from '@entalent/crypto-utils';
 import { channelAccounts, createDbClient, users, workspaceConnections } from '@entalent/database';
@@ -73,13 +74,19 @@ async function main() {
         account.externalWorkspaceId,
         account.externalUserId,
       );
-      const displayName = profile.displayName.trim();
-      if (!displayName || displayName === account.externalUserId) continue;
+      const profileFacts = resolveExternalProfileFacts(
+        {
+          externalUserId: account.externalUserId,
+          displayName: profile.displayName,
+        },
+        { preferredName: account.userPreferredName },
+      );
+      if (!profileFacts.displayName) continue;
 
       await db
         .update(channelAccounts)
         .set({
-          displayName,
+          displayName: profileFacts.displayName,
           profileMetadata: {
             email: profile.email,
             avatarUrl: profile.avatarUrl,
@@ -95,15 +102,15 @@ async function main() {
           ),
         );
 
-      if (!account.userPreferredName?.trim()) {
+      if (profileFacts.preferredName) {
         await db
           .update(users)
-          .set({ preferredName: displayName, updatedAt: new Date() })
+          .set({ preferredName: profileFacts.preferredName, updatedAt: new Date() })
           .where(and(eq(users.id, account.userId), eq(users.tenantId, tenantId)));
       }
 
       updated += 1;
-      console.log(`Updated ${account.userId} -> ${displayName}`);
+      console.log(`Updated ${account.userId} -> ${profileFacts.displayName}`);
     }
 
     console.log(`Backfill complete: ${updated}/${accounts.length} Slack accounts updated`);

@@ -43,6 +43,7 @@ export class ProfileHydrationUseCase {
 
     try {
       await this.userProfileRepo.updateProfile(input.userId, input.tenantId, {
+        externalUserId: profile.externalUserId,
         displayName: profile.displayName,
         timezone: profile.timezone,
       });
