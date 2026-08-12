@@ -1,10 +1,12 @@
 import { TeamTable } from './components/TeamTable';
 import { Nav } from './components/Nav';
 import { fetchApi, TENANT_ID } from './lib';
-import type { TeamOverviewResponse } from './types';
+import type { AdminManagerTeamResponse } from '@entalent/contracts';
 
 export default async function DashboardPage() {
-  const data = await fetchApi<TeamOverviewResponse>(`/admin/manager/team?tenantId=${TENANT_ID}`);
+  const data = await fetchApi<AdminManagerTeamResponse>(
+    `/admin/manager/team?tenantId=${TENANT_ID}`,
+  );
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
@@ -25,7 +27,7 @@ export default async function DashboardPage() {
   );
 }
 
-function Header({ data }: { data: TeamOverviewResponse | null }) {
+function Header({ data }: { data: AdminManagerTeamResponse | null }) {
   const scored = data?.employees.filter((e) => e.scoredCount > 0).length ?? 0;
   const total = data?.teamSize ?? 0;
   const risks = data?.employees.filter((e) => e.hasActiveRisk).length ?? 0;

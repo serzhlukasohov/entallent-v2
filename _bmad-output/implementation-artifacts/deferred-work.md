@@ -30,3 +30,6 @@
 - source_spec: none
   summary: Harden Slack display-name backfill tooling with dry-run, explicit tenant selection, audit logging, and safer output modes.
   evidence: Split from the architecture improvement bundle because backfill tooling can be reviewed and shipped separately from runtime architecture changes.
+- source_spec: `_bmad-output/implementation-artifacts/spec-admin-manager-team-contract.md`
+  summary: Add DB or write-time validation for `survey_evidence.polarity`.
+  evidence: Review surfaced that polarity is stored as unrestricted text; preserving wire behavior is correct for this split, but producer-side validation should be handled as a separate data integrity story.

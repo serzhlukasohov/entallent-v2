@@ -10,17 +10,11 @@ import {
   surveyQuestions,
   surveyEvidence,
 } from '@entalent/database';
+import type { AdminManagerTeamResponse } from '@entalent/contracts';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
-import { buildEmployeeRows, type EmployeeRow } from './manager-team.aggregate';
+import { buildEmployeeRows } from './manager-team.aggregate';
 import { attachTeamDisplayNames } from './team-users';
-
-export interface TeamOverviewResponse {
-  tenantId: string;
-  teamSize: number;
-  employees: EmployeeRow[];
-  generatedAt: string;
-}
 
 @Controller('admin/manager/team')
 @UseGuards(ApiKeyGuard)
@@ -28,7 +22,7 @@ export class ManagerTeamController {
   constructor(private readonly db: DatabaseService) {}
 
   @Get()
-  async getTeamOverview(@Query('tenantId') tenantId: string): Promise<TeamOverviewResponse> {
+  async getTeamOverview(@Query('tenantId') tenantId: string): Promise<AdminManagerTeamResponse> {
     // All active users for the tenant
     const [userRows, channelAccountRows] = await Promise.all([
       this.db.client

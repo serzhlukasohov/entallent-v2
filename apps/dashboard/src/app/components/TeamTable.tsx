@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { EmployeeRow, QuestionSignal } from '../types';
+import type { AdminManagerTeamEmployee, AdminManagerTeamQuestionSignal } from '@entalent/contracts';
 
 const POLARITY_COLOR: Record<string, string> = {
   positive: 'var(--green)',
@@ -24,7 +24,7 @@ const STATUS_ORDER: Record<string, number> = {
   unknown: 3,
 };
 
-function SignalDot({ signal }: { signal: QuestionSignal }) {
+function SignalDot({ signal }: { signal: AdminManagerTeamQuestionSignal }) {
   const color = signal.polarity ? POLARITY_COLOR[signal.polarity] : 'var(--border)';
   const hasData = signal.assessmentStatus !== 'unknown';
 
@@ -43,7 +43,7 @@ function SignalDot({ signal }: { signal: QuestionSignal }) {
   );
 }
 
-function EvidenceCard({ signal }: { signal: QuestionSignal }) {
+function EvidenceCard({ signal }: { signal: AdminManagerTeamQuestionSignal }) {
   if (!signal.evidenceSummary) return null;
   const color = signal.polarity ? POLARITY_COLOR[signal.polarity] : 'var(--border)';
 
@@ -65,9 +65,7 @@ function EvidenceCard({ signal }: { signal: QuestionSignal }) {
           marginBottom: 6,
         }}
       >
-        <span style={{ fontWeight: 600, fontSize: 12, color: 'var(--text)' }}>
-          {signal.title}
-        </span>
+        <span style={{ fontWeight: 600, fontSize: 12, color: 'var(--text)' }}>{signal.title}</span>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {signal.strength !== null && (
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -94,23 +92,33 @@ function EvidenceCard({ signal }: { signal: QuestionSignal }) {
   );
 }
 
-function EmployeeDetail({ employee }: { employee: EmployeeRow }) {
+function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
   const withEvidence = employee.signals
     .filter((s) => s.evidenceSummary)
-    .sort((a, b) => (STATUS_ORDER[a.assessmentStatus] ?? 9) - (STATUS_ORDER[b.assessmentStatus] ?? 9));
+    .sort(
+      (a, b) => (STATUS_ORDER[a.assessmentStatus] ?? 9) - (STATUS_ORDER[b.assessmentStatus] ?? 9),
+    );
 
   const empty = employee.signals.filter((s) => !s.evidenceSummary);
 
   return (
     <div style={{ padding: '0 20px 20px 20px' }}>
       {withEvidence.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 10 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+            gap: 10,
+          }}
+        >
           {withEvidence.map((s) => (
             <EvidenceCard key={s.stableKey} signal={s} />
           ))}
         </div>
       ) : (
-        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No insights — no conversations yet.</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+          No insights — no conversations yet.
+        </p>
       )}
       {empty.length > 0 && (
         <div style={{ marginTop: 12 }}>
@@ -167,7 +175,8 @@ function CoverageBar({ pct, total, scored }: { pct: number; total: number; score
           style={{
             width: `${pct}%`,
             height: '100%',
-            background: pct > 60 ? 'var(--green)' : pct > 30 ? 'var(--yellow)' : 'var(--text-muted)',
+            background:
+              pct > 60 ? 'var(--green)' : pct > 30 ? 'var(--yellow)' : 'var(--text-muted)',
             borderRadius: 3,
           }}
         />
@@ -179,7 +188,7 @@ function CoverageBar({ pct, total, scored }: { pct: number; total: number; score
   );
 }
 
-export function TeamTable({ employees }: { employees: EmployeeRow[] }) {
+export function TeamTable({ employees }: { employees: AdminManagerTeamEmployee[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   return (
@@ -226,7 +235,9 @@ export function TeamTable({ employees }: { employees: EmployeeRow[] }) {
               cursor: 'pointer',
               transition: 'background 0.15s',
             }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = 'var(--surface2)')}
+            onMouseEnter={(e) =>
+              ((e.currentTarget as HTMLDivElement).style.background = 'var(--surface2)')
+            }
             onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = '')}
           >
             {/* Name + risk */}
@@ -277,7 +288,11 @@ export function TeamTable({ employees }: { employees: EmployeeRow[] }) {
             </div>
 
             {/* Coverage bar */}
-            <CoverageBar pct={emp.coveragePct} total={emp.totalQuestions} scored={emp.scoredCount} />
+            <CoverageBar
+              pct={emp.coveragePct}
+              total={emp.totalQuestions}
+              scored={emp.scoredCount}
+            />
 
             {/* Last active */}
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>

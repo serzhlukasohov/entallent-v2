@@ -1,25 +1,7 @@
-export interface QuestionSignal {
-  stableKey: string;
-  title: string;
-  dimension: string;
-  assessmentStatus: string;
-  polarity: string | null;
-  strength: number | null;
-  confidence: number | null;
-  evidenceSummary: string | null;
-}
+import type { AdminManagerTeamEmployee, AdminManagerTeamQuestionSignal } from '@entalent/contracts';
 
-export interface EmployeeRow {
-  userId: string;
-  displayName: string;
-  lastActiveAt: string | null;
-  hasActiveRisk: boolean;
-  surveyWindowId: string | null;
-  scoredCount: number;
-  totalQuestions: number;
-  coveragePct: number;
-  signals: QuestionSignal[];
-}
+export type QuestionSignal = AdminManagerTeamQuestionSignal;
+export type EmployeeRow = AdminManagerTeamEmployee;
 
 export interface TeamUserInput {
   id: string;

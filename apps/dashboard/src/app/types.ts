@@ -1,33 +1,3 @@
-export interface QuestionSignal {
-  stableKey: string;
-  title: string;
-  dimension: string;
-  assessmentStatus: string;
-  polarity: 'positive' | 'negative' | 'neutral' | 'mixed' | null;
-  strength: number | null;
-  confidence: number | null;
-  evidenceSummary: string | null;
-}
-
-export interface EmployeeRow {
-  userId: string;
-  displayName: string;
-  lastActiveAt: string | null;
-  hasActiveRisk: boolean;
-  surveyWindowId: string | null;
-  scoredCount: number;
-  totalQuestions: number;
-  coveragePct: number;
-  signals: QuestionSignal[];
-}
-
-export interface TeamOverviewResponse {
-  tenantId: string;
-  teamSize: number;
-  employees: EmployeeRow[];
-  generatedAt: string;
-}
-
 export interface EngagementPoint {
   date: string;
   activeUsers: number;

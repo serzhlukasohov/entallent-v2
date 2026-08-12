@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { AdminManagerTeamEmployee } from '@entalent/contracts';
 import { buildEmployeeRows, type BuildEmployeeRowsInput } from './manager-team.aggregate';
 
 function baseInput(overrides: Partial<BuildEmployeeRowsInput> = {}): BuildEmployeeRowsInput {
@@ -54,10 +55,25 @@ describe('buildEmployeeRows', () => {
     expect(sig.evidenceSummary).toBeNull();
   });
 
+  it('preserves stored polarity strings without normalizing the wire response', () => {
+    const rows = buildEmployeeRows(
+      baseInput({
+        assessments: [a('u1', 'q1', 'scored')],
+        evidence: [e('u1', 'q1', 'legacy_custom', 0.7, 0.8, 'legacy polarity evidence')],
+      }),
+    );
+
+    expect(rows[0].signals[0].polarity).toBe('legacy_custom');
+  });
+
   it('sorts signals by stableKey', () => {
     const rows = buildEmployeeRows(
       baseInput({
-        assessments: [a('u1', 'q12_c', 'scored'), a('u1', 'q12_a', 'scored'), a('u1', 'q12_b', 'scored')],
+        assessments: [
+          a('u1', 'q12_c', 'scored'),
+          a('u1', 'q12_a', 'scored'),
+          a('u1', 'q12_b', 'scored'),
+        ],
       }),
     );
     expect(rows[0].signals.map((s) => s.stableKey)).toEqual(['q12_a', 'q12_b', 'q12_c']);
@@ -95,11 +111,18 @@ describe('buildEmployeeRows', () => {
     );
     expect(rows[0].displayName).toBe('u1');
     expect(rows[0].lastActiveAt).toBe(when.toISOString());
+    const employee = rows[0] satisfies AdminManagerTeamEmployee;
+    expect(employee.displayName).toBeTypeOf('string');
   });
 
   it('handles a user with no assessments as 0% coverage', () => {
     const rows = buildEmployeeRows(baseInput());
-    expect(rows[0]).toMatchObject({ totalQuestions: 0, scoredCount: 0, coveragePct: 0, signals: [] });
+    expect(rows[0]).toMatchObject({
+      totalQuestions: 0,
+      scoredCount: 0,
+      coveragePct: 0,
+      signals: [],
+    });
   });
 });
 
