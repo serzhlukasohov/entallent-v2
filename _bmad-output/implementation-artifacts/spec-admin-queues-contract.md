@@ -53,7 +53,7 @@ context: []
 - [x] `packages/contracts/src/queue.test.ts` -- add a focused compile/runtime-light assertion around queue snapshot names and count keys -- catches accidental contract drift.
 - [x] `apps/api/src/admin/queues.controller.ts` -- type `getStats()` as `Promise<AdminQueuesResponse>` and coerce queue names through the canonical `QueueName` list -- makes API the producer of the shared contract.
 - [x] `apps/dashboard` -- import the shared response type wherever `/admin/queues` is consumed; add workspace dependency if required -- makes dashboard compile against the same API contract.
-- [x] `apps/dashboard/Dockerfile` -- copy `packages/contracts` into the dashboard builder stage before `pnpm install` -- keeps production image builds aligned with the new workspace dependency.
+- [x] `apps/dashboard/Dockerfile` -- copy and build `packages/contracts` in the dashboard builder stage before `next build` -- keeps production image builds aligned with the new workspace dependency.
 - [x] `scripts/live-maf-primary-app-smoke.ts` -- replace local duplicate response interfaces with shared imports -- removes a second drift point.
 - [x] Run targeted typechecks/tests -- prove contracts, API, dashboard, and smoke tooling still compile.
 
@@ -97,6 +97,7 @@ Keep this as a type contract, not a runtime schema. BullMQ owns the detailed cou
 
 - Blind Hunter -- no actionable findings.
 - Edge Case Hunter -- fixed dashboard Docker build context, exact `QueueName` type assertion, and numeric admin queue count contract.
+- Production dashboard deploy initially failed because the copied contracts package had no `dist/index.d.ts` in the clean Docker image; fixed by building `@entalent/contracts` before dashboard `next build`.
 
 ## Suggested Review Order
 
@@ -123,6 +124,9 @@ Keep this as a type contract, not a runtime schema. BullMQ owns the detailed cou
 
 - Production image includes the new workspace dependency.
   [`Dockerfile:10`](../../apps/dashboard/Dockerfile#L10)
+
+- Clean image builds contract declarations before dashboard typecheck.
+  [`Dockerfile:13`](../../apps/dashboard/Dockerfile#L13)
 
 **Operational Smoke**
 

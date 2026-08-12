@@ -10,6 +10,7 @@ COPY packages/typescript-config/ packages/typescript-config/
 COPY packages/contracts/ packages/contracts/
 COPY apps/dashboard/ apps/dashboard/
 RUN pnpm install --frozen-lockfile --filter @entalent/dashboard...
+RUN pnpm --filter @entalent/contracts build
 RUN pnpm --filter @entalent/dashboard build
 
 FROM base AS runner
