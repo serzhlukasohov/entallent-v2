@@ -30,6 +30,12 @@ export interface ProcessMessageRequest {
   proactiveContext?: ProactiveRuntimeContext;
 }
 
+export type RuntimeBoundaryProcessMessageRequest = ProcessMessageRequest & {
+  requestId: string;
+  eventId: string;
+  runtimeAttempt: number;
+};
+
 export interface ProcessMessageResult {
   outboundMessageId: string;
   responseText: string;
@@ -60,4 +66,35 @@ export type ProcessMessageInput = ProcessMessageRequest;
 
 export interface AgentRuntimePort {
   processMessage(request: ProcessMessageRequest): Promise<ProcessMessageResult>;
+}
+
+export function isRuntimeBoundaryProcessMessageRequest(
+  request: ProcessMessageRequest,
+): request is RuntimeBoundaryProcessMessageRequest {
+  return runtimeBoundaryProcessMessageRequestInvalidFields(request).length === 0;
+}
+
+export function runtimeBoundaryProcessMessageRequestInvalidFields(
+  request: ProcessMessageRequest,
+): string[] {
+  const invalidFields: string[] = [];
+  if (!normalizeOptionalString(request.requestId)) {
+    invalidFields.push('requestId');
+  }
+  if (!normalizeOptionalString(request.eventId)) {
+    invalidFields.push('eventId');
+  }
+  if (!Number.isInteger(request.runtimeAttempt) || request.runtimeAttempt === undefined || request.runtimeAttempt < 1) {
+    invalidFields.push('runtimeAttempt');
+  }
+  return invalidFields;
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
 }

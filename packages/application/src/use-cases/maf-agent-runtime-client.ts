@@ -8,7 +8,15 @@ import type {
   RuntimeProcessMessageRequest,
   RuntimeResult,
 } from '@entalent/contracts';
-import type { AgentRuntimePort, ProcessMessageRequest, ProcessMessageResult } from '../ports/agent-runtime.port';
+import {
+  runtimeBoundaryProcessMessageRequestInvalidFields,
+} from '../ports/agent-runtime.port';
+import type {
+  AgentRuntimePort,
+  ProcessMessageRequest,
+  ProcessMessageResult,
+  RuntimeBoundaryProcessMessageRequest,
+} from '../ports/agent-runtime.port';
 
 export type MafAgentRuntimeDiagnosticReasonCode =
   | 'maf_runtime_configuration_missing'
@@ -37,7 +45,7 @@ export interface MafAgentRuntimeDiagnosticProvider {
 }
 
 export interface MafAgentRuntimeCandidateProvider extends MafAgentRuntimeDiagnosticProvider {
-  processCandidate(request: ProcessMessageRequest): Promise<RuntimeResult>;
+  processCandidate(request: RuntimeBoundaryProcessMessageRequest): Promise<RuntimeResult>;
 }
 
 export type MafAgentRuntimeFetch = (
@@ -119,7 +127,7 @@ export class MafAgentRuntimeClient implements AgentRuntimePort, MafAgentRuntimeD
     });
   }
 
-  async processCandidate(request: ProcessMessageRequest): Promise<RuntimeResult> {
+  async processCandidate(request: RuntimeBoundaryProcessMessageRequest): Promise<RuntimeResult> {
     const diagnostic = this.getConfigurationDiagnostic(request);
     if (diagnostic) {
       throw new MafAgentRuntimeConfigurationError(diagnostic);
@@ -373,16 +381,7 @@ function isHttpServiceUrl(value: string): boolean {
 }
 
 function invalidRuntimeBoundaryFields(request: ProcessMessageRequest): string[] {
-  const invalidFields: string[] = [];
-  if (!normalizeOptionalString(request.requestId)) {
-    invalidFields.push('requestId');
-  }
-  if (!normalizeOptionalString(request.eventId)) {
-    invalidFields.push('eventId');
-  }
-  if (!Number.isInteger(request.runtimeAttempt) || request.runtimeAttempt === undefined || request.runtimeAttempt < 1) {
-    invalidFields.push('runtimeAttempt');
-  }
+  const invalidFields = runtimeBoundaryProcessMessageRequestInvalidFields(request);
   if (!normalizeOptionalString(request.traceId)) {
     invalidFields.push('traceId');
   }
@@ -409,19 +408,19 @@ function requiredCandidateDiagnostic(request: ProcessMessageRequest): MafAgentRu
   };
 }
 
-function buildRuntimeProcessMessageRequest(request: ProcessMessageRequest): RuntimeProcessMessageRequest | null {
+function buildRuntimeProcessMessageRequest(request: RuntimeBoundaryProcessMessageRequest): RuntimeProcessMessageRequest | null {
   const sessionKey = normalizeOptionalString(request.conversationSessionKey);
   const messageText = normalizeOptionalString(request.messageText);
   const messageCreatedAt = normalizeOptionalString(request.messageCreatedAt);
   const runtimeContext = hasRuntimeContext(request.runtimeContext) ? request.runtimeContext : null;
-  if (!sessionKey || !messageText || !messageCreatedAt || !runtimeContext || request.runtimeAttempt === undefined) {
+  if (!sessionKey || !messageText || !messageCreatedAt || !runtimeContext) {
     return null;
   }
 
   const threadId = normalizeOptionalString(request.conversationThreadId);
     return {
-      requestId: request.requestId ?? '',
-      eventId: request.eventId ?? '',
+      requestId: request.requestId,
+      eventId: request.eventId,
       traceId: request.traceId,
     idempotencyKey: [
       'runtime',

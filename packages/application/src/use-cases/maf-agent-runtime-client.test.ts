@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeResult } from '@entalent/contracts';
-import type { ProcessMessageRequest } from '../ports/agent-runtime.port';
+import type { RuntimeBoundaryProcessMessageRequest } from '../ports/agent-runtime.port';
 import {
   MafAgentRuntimeClient,
   MafAgentRuntimeConfigurationError,
 } from './maf-agent-runtime-client';
 import * as applicationExports from '../index';
 
-const REQUEST: ProcessMessageRequest = {
+const REQUEST: RuntimeBoundaryProcessMessageRequest = {
   requestId: '11111111-1111-4111-8111-111111111111',
   eventId: '22222222-2222-4222-8222-222222222222',
   runtimeAttempt: 1,
@@ -20,7 +20,7 @@ const REQUEST: ProcessMessageRequest = {
   traceId: 'trace-1',
 };
 
-const CANDIDATE_REQUEST: ProcessMessageRequest = {
+const CANDIDATE_REQUEST: RuntimeBoundaryProcessMessageRequest = {
   ...REQUEST,
   messageText: 'I feel stuck but I can keep going.',
   messageCreatedAt: '2026-08-06T18:00:00.000Z',
@@ -280,7 +280,7 @@ describe('MafAgentRuntimeClient', () => {
       serviceUrl: 'https://agent-service.internal/',
       fetch: fetchImpl,
     });
-    const proactiveRequest: ProcessMessageRequest = {
+    const proactiveRequest: RuntimeBoundaryProcessMessageRequest = {
       ...CANDIDATE_REQUEST,
       requestPurpose: 'proactive_check_in',
       proactiveContext: {

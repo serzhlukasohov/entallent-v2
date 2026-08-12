@@ -5,6 +5,8 @@
 ## Deferred from: code review of 2-6-define-runtime-retry-budget-and-error-mapping (2026-08-05)
 
 - `ProcessMessageRequest` still keeps `requestId`, `eventId`, and `runtimeAttempt` optional for compatibility with the current shim boundary. A future tightening story should introduce or require a strict runtime-boundary request type once all existing TypeScript runtime callers have been migrated.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-strict-runtime-boundary-request.md`
 
 ## Deferred from: production MAF regression workflow setup (2026-08-11)
 

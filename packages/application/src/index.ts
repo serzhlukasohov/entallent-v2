@@ -1,6 +1,6 @@
 export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, MemoryContext, ResponseContext, ReplyBrief, ReplyPlan, SurveyQuestionForEvaluation } from './ports/ai-provider.port';
-export type { AgentRuntimePort, ProcessMessageInput, ProcessMessageRequest, ProcessMessageResult } from './ports/agent-runtime.port';
-export { AGENT_RUNTIME_PORT } from './ports/agent-runtime.port';
+export type { AgentRuntimePort, ProcessMessageInput, ProcessMessageRequest, ProcessMessageResult, RuntimeBoundaryProcessMessageRequest } from './ports/agent-runtime.port';
+export { AGENT_RUNTIME_PORT, isRuntimeBoundaryProcessMessageRequest, runtimeBoundaryProcessMessageRequestInvalidFields } from './ports/agent-runtime.port';
 export type { ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
 export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, IngestMessageResult } from './ports/ingestion.repository.port';
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';

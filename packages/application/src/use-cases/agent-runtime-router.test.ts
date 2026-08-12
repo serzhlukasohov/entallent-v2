@@ -131,6 +131,24 @@ describe('AgentRuntimeRouter', () => {
     expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(REQUEST);
   });
 
+  it('keeps TypeScript runtime compatibility for requests without strict MAF boundary fields', async () => {
+    const legacyRequest: ProcessMessageRequest = {
+      ...REQUEST,
+      requestId: undefined,
+      eventId: undefined,
+      runtimeAttempt: undefined,
+    };
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const router = new AgentRuntimeRouter(typescriptRuntime);
+
+    await expect(router.processMessage(legacyRequest)).resolves.toBe(RESULT);
+
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledTimes(1);
+    expect(typescriptRuntime.processMessage).toHaveBeenCalledWith(legacyRequest);
+  });
+
   it('fails closed to the TypeScript runtime when mode evaluation throws', async () => {
     const typescriptRuntime = {
       processMessage: vi.fn().mockResolvedValue(RESULT),
@@ -554,6 +572,49 @@ describe('AgentRuntimeRouter', () => {
     expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
   });
 
+  it('fails closed through the primary adapter before candidate execution when strict boundary fields are missing', async () => {
+    const incompleteRequest: ProcessMessageRequest = {
+      ...PRIMARY_REQUEST,
+      requestId: undefined,
+      eventId: undefined,
+      runtimeAttempt: undefined,
+    };
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => CANDIDATE_RESULT,
+    }));
+    const client = new MafAgentRuntimeClient({
+      serviceUrl: 'http://127.0.0.1:8001',
+      fetch: fetchImpl,
+    });
+    const recordPrimaryFailure = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_primary', decisionSource: 'primary_flag' }),
+      recordPrimaryFailure,
+      mafPrimaryRuntime: createPrimaryRuntime(client),
+    });
+
+    await expect(router.processMessage(incompleteRequest)).rejects.toThrow('maf_runtime_boundary_request_invalid');
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(recordPrimaryFailure).toHaveBeenCalledWith({
+      request: incompleteRequest,
+      decision: {
+        mode: 'maf_primary',
+        decisionSource: 'primary_flag',
+      },
+      diagnostic: {
+        reasonCode: 'maf_runtime_boundary_request_invalid',
+        invalidFields: ['requestId', 'eventId', 'runtimeAttempt'],
+      },
+    });
+    expect(typescriptRuntime.processMessage).not.toHaveBeenCalled();
+  });
+
   it('fails closed through the primary adapter when the MAF request times out before commit', async () => {
     vi.useFakeTimers();
     try {
@@ -945,6 +1006,100 @@ describe('AgentRuntimeRouter', () => {
       decisionSource: 'shadow_flag',
       fallbackReason: 'maf_runtime_response_invalid',
     });
+  });
+
+  it('does not call a permissive MAF shadow provider when strict boundary fields are missing', async () => {
+    const incompleteRequest: ProcessMessageRequest = {
+      ...REQUEST,
+      requestId: undefined,
+      eventId: undefined,
+      runtimeAttempt: undefined,
+    };
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafRuntime = {
+      getConfigurationDiagnostic: vi.fn(() => null),
+      processCandidate: vi.fn(async () => CANDIDATE_RESULT),
+    };
+    const recordShadowCandidate = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime,
+      recordShadowCandidate,
+    });
+
+    await expect(router.processMessage(incompleteRequest)).resolves.toBe(RESULT);
+
+    expect(mafRuntime.processCandidate).not.toHaveBeenCalled();
+    expect(recordShadowCandidate).toHaveBeenCalledWith({
+      request: incompleteRequest,
+      decision: {
+        mode: 'maf_shadow',
+        decisionSource: 'shadow_flag',
+      },
+      currentResult: RESULT,
+      validationStatus: 'invalid',
+      diagnostic: {
+        reasonCode: 'maf_runtime_boundary_request_invalid',
+        invalidFields: ['requestId', 'eventId', 'runtimeAttempt'],
+      },
+    });
+  });
+
+  it('records safe boundary diagnostics for malformed non-string request identifiers', async () => {
+    const malformedRequest = {
+      ...REQUEST,
+      requestId: 42,
+    } as unknown as ProcessMessageRequest;
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafRuntime = {
+      getConfigurationDiagnostic: vi.fn(() => null),
+      processCandidate: vi.fn(async () => CANDIDATE_RESULT),
+    };
+    const recordShadowCandidate = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime,
+      recordShadowCandidate,
+    });
+
+    await expect(router.processMessage(malformedRequest)).resolves.toBe(RESULT);
+
+    expect(mafRuntime.processCandidate).not.toHaveBeenCalled();
+    expect(recordShadowCandidate).toHaveBeenCalledWith(expect.objectContaining({
+      validationStatus: 'invalid',
+      diagnostic: {
+        reasonCode: 'maf_runtime_boundary_request_invalid',
+        invalidFields: ['requestId'],
+      },
+    }));
+  });
+
+  it('leaves traceId validation to the MAF client instead of the strict boundary guard', async () => {
+    const requestWithMissingTrace: ProcessMessageRequest = {
+      ...REQUEST,
+      traceId: '',
+    };
+    const typescriptRuntime = {
+      processMessage: vi.fn().mockResolvedValue(RESULT),
+    } as unknown as TypeScriptAgentRuntime;
+    const mafRuntime = {
+      getConfigurationDiagnostic: vi.fn(() => null),
+      processCandidate: vi.fn(async () => CANDIDATE_RESULT),
+    };
+    const recordShadowCandidate = vi.fn(async () => undefined);
+    const router = new AgentRuntimeRouter(typescriptRuntime, {
+      evaluateMode: () => ({ mode: 'maf_shadow', decisionSource: 'shadow_flag' }),
+      mafRuntime,
+      recordShadowCandidate,
+    });
+
+    await expect(router.processMessage(requestWithMissingTrace)).resolves.toBe(RESULT);
+
+    expect(mafRuntime.processCandidate).toHaveBeenCalledWith(requestWithMissingTrace);
   });
 
   it('routes maf_canary through the primary MAF adapter and keeps it user-facing', async () => {

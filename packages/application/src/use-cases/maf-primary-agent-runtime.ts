@@ -1,4 +1,8 @@
 import type { RuntimeResult, SituationClassification, RiskDetection } from '@entalent/contracts';
+import {
+  isRuntimeBoundaryProcessMessageRequest,
+  runtimeBoundaryProcessMessageRequestInvalidFields,
+} from '../ports/agent-runtime.port';
 import type { ProcessMessageRequest, ProcessMessageResult, AgentRuntimePort } from '../ports/agent-runtime.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
@@ -10,6 +14,9 @@ import type { EscalationPort } from '../ports/escalation.port';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
 import type { MemoryRepositoryPort, SaveMemoryItemParams } from '../ports/memory.repository.port';
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
+import {
+  MafAgentRuntimeConfigurationError,
+} from './maf-agent-runtime-client';
 import type { MafAgentRuntimeCandidateProvider } from './maf-agent-runtime-client';
 
 const TZ_REFRESH_DAYS = 30;
@@ -38,6 +45,13 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
     request: ProcessMessageRequest,
     context?: { runtimeAttemptId?: string },
   ): Promise<ProcessMessageResult> {
+    if (!isRuntimeBoundaryProcessMessageRequest(request)) {
+      throw new MafAgentRuntimeConfigurationError({
+        reasonCode: 'maf_runtime_boundary_request_invalid',
+        invalidFields: runtimeBoundaryProcessMessageRequestInvalidFields(request),
+      });
+    }
+
     const candidate = await this.mafRuntime.processCandidate(request);
     const conversation = await this.conversationRepo.findById(request.conversationId, request.tenantId);
     if (!conversation) {

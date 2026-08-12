@@ -1,4 +1,8 @@
 import type { RuntimeResult } from '@entalent/contracts';
+import {
+  isRuntimeBoundaryProcessMessageRequest,
+  runtimeBoundaryProcessMessageRequestInvalidFields,
+} from '../ports/agent-runtime.port';
 import type { AgentRuntimePort, ProcessMessageRequest, ProcessMessageResult } from '../ports/agent-runtime.port';
 import type {
   MafAgentRuntimeCandidateProvider,
@@ -367,6 +371,21 @@ export class AgentRuntimeRouter implements AgentRuntimePort {
         diagnostic: {
           reasonCode: 'maf_runtime_boundary_request_invalid',
           missingCanonicalFields: ['runtime_candidate_provider'],
+        },
+      });
+      return;
+    }
+
+    if (!isRuntimeBoundaryProcessMessageRequest(request)) {
+      await this.persistShadowCandidate({
+        request,
+        decision,
+        currentResult,
+        ...optionalRuntimeAttemptId(runtimeAttemptId),
+        validationStatus: 'invalid',
+        diagnostic: {
+          reasonCode: 'maf_runtime_boundary_request_invalid',
+          invalidFields: runtimeBoundaryProcessMessageRequestInvalidFields(request),
         },
       });
       return;
