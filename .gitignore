@@ -12,6 +12,7 @@ coverage/
 *.tsbuildinfo
 migrations/meta/
 .autocontext/
+.codegraph/
 runs/
 .agents
 _bmad
