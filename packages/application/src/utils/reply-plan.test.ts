@@ -105,7 +105,7 @@ describe('buildReplyPlan', () => {
     expect(brief.forbiddenMoves).toContain('action_plan');
   });
 
-  it('selects concrete memory anchors for emotional turns', () => {
+  it('keeps memory anchors without required grounding for emotional check-ins', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'emotional_disclosure',
@@ -124,6 +124,28 @@ describe('buildReplyPlan', () => {
       { category: 'milestone', content: 'defending the payments architecture on Friday' },
       { category: 'project_context', content: 'legacy billing has no tests' },
     ]);
+    expect(brief.questionPolicy).toEqual({
+      maxQuestions: 1,
+      reason: 'new_substance_allows_question',
+    });
+    expect(brief.requiredGrounding).toEqual([]);
+  });
+
+  it('selects concrete grounding anchors for anchored emotional support', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'emotional_disclosure',
+        latestUserSubstance: 'I am nervous',
+        topicAnchor: 'payments architecture defense',
+      }),
+      memoryItems: memory([
+        { category: 'milestone', content: 'defending the payments architecture on Friday', importance: 0.9 },
+        { category: 'project_context', content: 'legacy billing has no tests', importance: 0.8 },
+        { category: 'team_context', content: 'joined mobile reviews', importance: 1 },
+      ]),
+      includeFollowUpQuestion: false,
+    });
+
     expect(brief.requiredGrounding).toEqual([
       {
         source: 'memory',
@@ -139,13 +161,13 @@ describe('buildReplyPlan', () => {
       classification: base({
         dialogueAct: 'emotional_disclosure',
         latestUserSubstance: 'I am nervous',
-        topicAnchor: null,
+        topicAnchor: 'payments architecture defense',
       }),
       memoryItems: memory([
         { category: 'project_context', content: 'legacy billing has no tests', importance: 1 },
         { category: 'commitment', content: 'defending the payments architecture on Friday', importance: 0.7 },
       ]),
-      includeFollowUpQuestion: true,
+      includeFollowUpQuestion: false,
     });
 
     expect(brief.requiredGrounding).toEqual([

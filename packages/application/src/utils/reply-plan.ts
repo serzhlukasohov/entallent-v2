@@ -22,6 +22,12 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
   const memoryAnchors = selectMemoryAnchors(input.memoryItems ?? []);
   const responseMove = responseMoveFor(dialogueAct);
   const mayInferFromBrevity = latestUserSubstance !== null;
+  const questionPolicy = buildQuestionPolicy({
+    dialogueAct,
+    latestUserSubstance,
+    includeFollowUpQuestion: input.includeFollowUpQuestion,
+    lastReplyAskedQuestion: input.lastReplyAskedQuestion ?? false,
+  });
 
   return {
     dialogueAct,
@@ -30,13 +36,8 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
     memoryAnchors,
     responseMove,
     mayInferFromBrevity,
-    questionPolicy: buildQuestionPolicy({
-      dialogueAct,
-      latestUserSubstance,
-      includeFollowUpQuestion: input.includeFollowUpQuestion,
-      lastReplyAskedQuestion: input.lastReplyAskedQuestion ?? false,
-    }),
-    requiredGrounding: buildRequiredGrounding(responseMove, memoryAnchors),
+    questionPolicy,
+    requiredGrounding: buildRequiredGrounding(responseMove, topicAnchor, memoryAnchors),
     forbiddenMoves: buildForbiddenMoves({
       responseMove,
       mayInferFromBrevity,
@@ -109,9 +110,11 @@ function buildQuestionPolicy(input: {
 
 function buildRequiredGrounding(
   responseMove: ReplyPlan['responseMove'],
+  topicAnchor: string | null,
   memoryAnchors: ReplyPlan['memoryAnchors'],
 ): ReplyPlan['requiredGrounding'] {
   if (responseMove !== 'support_emotion') return [];
+  if (!topicAnchor) return [];
   const anchor = selectGroundingAnchor(memoryAnchors);
   if (!anchor) return [];
   return [{
