@@ -147,10 +147,7 @@ class AgentFrameworkConversationModelClient:
     ) -> ConversationModelReply:
         self._safety_verdicts = []
         social_reply = deterministic_social_checkin_reply(request)
-        if (
-            social_reply is not None
-            and reply_plan_is_no_substance_acknowledgement(request)
-        ):
+        if social_reply is not None:
             return ConversationModelReply(text=social_reply)
         prompt = build_candidate_reply_prompt(request=request, state=state)
         try:
@@ -761,20 +758,6 @@ def deterministic_social_checkin_reply(request: dict[str, Any]) -> str | None:
     if normalized in {"hi", "hello", "hey", "привет"}:
         return "Привет."
     return "Нормально, спасибо. А ты как?"
-
-
-def reply_plan_is_no_substance_acknowledgement(request: dict[str, Any]) -> bool:
-    context = request.get("context")
-    if not isinstance(context, Mapping):
-        return False
-    plan = context.get("replyPlan")
-    if not isinstance(plan, Mapping):
-        return False
-    return (
-        plan.get("dialogueAct") == "acknowledgement"
-        and plan.get("latestUserSubstance") is None
-        and plan.get("mayInferFromBrevity") is False
-    )
 
 
 def contains_action_plan_move(text: str) -> bool:

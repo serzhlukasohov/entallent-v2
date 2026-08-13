@@ -168,7 +168,7 @@ def test_model_client_safety_verdicts_are_per_call() -> None:
     run_async(
         client.generate_reply(
             {
-                "message": {"text": "Hello"},
+                "message": {"text": "Please summarize the current project update."},
                 "context": {"memoryItems": [], "recentTurns": []},
             },
             {},
@@ -201,7 +201,7 @@ def test_model_client_blocks_output_system_prompt_leakage() -> None:
         run_async(
             client.generate_reply(
                 {
-                    "message": {"text": "Hello"},
+                    "message": {"text": "Please summarize the current project update."},
                     "context": {"memoryItems": [], "recentTurns": []},
                 },
                 {},
