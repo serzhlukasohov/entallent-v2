@@ -2,7 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Job } from 'bullmq';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import {
   AGENT_RUNTIME_PORT,
@@ -602,7 +602,18 @@ function toIsoString(value: Date | string): string {
 
 function threadScopePredicate(externalThreadId: string | null): SQL {
   const threadId = normalizeOptionalString(externalThreadId);
-  return threadId ? eq(messages.externalThreadId, threadId) : isNull(messages.externalThreadId);
+  if (threadId) {
+    return eq(messages.externalThreadId, threadId);
+  }
+
+  return or(
+    isNull(messages.externalThreadId),
+    and(
+      eq(messages.direction, 'outbound'),
+      eq(messages.senderType, 'agent'),
+      sql`${messages.externalThreadId} = ${messages.externalMessageId}`,
+    ),
+  ) ?? isNull(messages.externalThreadId);
 }
 
 function toRecentTurn(row: {

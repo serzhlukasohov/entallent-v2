@@ -81,6 +81,10 @@ context:
   Amendment: MAF primary now persists `replyShape` from `replyPolicy` when no `replyPlan` exists; legacy proactive persists it from typed `ReplyStrategy`.
   Avoids: duplicate follow-up question pacing after proactive check-ins.
   KEEP: metadata is derived from typed policy/strategy, not generated text.
+- Production smoke finding: top-level Slack DM inbound rows have `external_thread_id=null`, while sent bot DM rows are updated to `external_thread_id=external_message_id`.
+  Amendment: worker top-level context scope now includes self-threaded outbound agent rows in addition to null-thread rows.
+  Avoids: losing the previous outbound `replyShape` during the next top-level DM turn.
+  KEEP: true Slack thread replies still scope by explicit `external_thread_id`.
 
 ## Review Triage
 
@@ -97,6 +101,9 @@ context:
 
 - Worker MAF context preserves newest-first outbound metadata ordering.
   [`conversation.processor.ts:703`](../../apps/worker/src/conversation/conversation.processor.ts#L703)
+
+- Top-level Slack DM context includes self-threaded outbound bot rows.
+  [`conversation.processor.ts:603`](../../apps/worker/src/conversation/conversation.processor.ts#L603)
 
 **Metadata Producers**
 
