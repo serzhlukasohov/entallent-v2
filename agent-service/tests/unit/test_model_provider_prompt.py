@@ -380,11 +380,23 @@ def test_candidate_reply_policy_violations_find_soft_coaching_offers() -> None:
         request=request,
         state=state,
     )
+    permission_move_violations = candidate_reply_policy_violations(
+        text=(
+            "Понимаю. Пусть сегодня будет без лишнего давления — просто тихий "
+            "вечер и немного восстановления."
+        ),
+        request=request,
+        state=state,
+    )
 
     assert task_selection_violations == [
         "support the emotion without advice, steps, tactics, or an action plan",
     ]
     assert rest_tactic_violations == [
+        "support the emotion without advice, steps, tactics, or an action plan",
+    ]
+    assert permission_move_violations == [
+        "open with substance, not formulaic validation or paraphrase",
         "support the emotion without advice, steps, tactics, or an action plan",
     ]
 
@@ -420,6 +432,7 @@ def test_reflective_reply_opener_matches_old_provider_antipatterns() -> None:
     assert has_reflective_reply_opener("That's the real root of it.")
     assert has_reflective_reply_opener("Похоже, сегодня сложно держать фокус.")
     assert has_reflective_reply_opener("Привет. Похоже, сегодня сложно держать фокус.")
+    assert has_reflective_reply_opener("Понимаю. День правда мог вымотать.")
     assert has_reflective_reply_opener("Я понимаю, день вышел тяжелым.")
     assert not has_reflective_reply_opener("That sounds hard.")
     assert not has_reflective_reply_opener(

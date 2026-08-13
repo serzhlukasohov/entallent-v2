@@ -69,6 +69,7 @@ REFLECTIVE_REPLY_OPENER_PATTERNS = (
     re.compile(r"^похоже\b", re.IGNORECASE),
     re.compile(r"^кажется\b", re.IGNORECASE),
     re.compile(r"^звучит\s+так\b", re.IGNORECASE),
+    re.compile(r"^понимаю\b", re.IGNORECASE),
     re.compile(r"^я\s+(?:понимаю|слышу)\b", re.IGNORECASE),
 )
 ACTION_PLAN_PHRASE_PATTERNS = (
@@ -80,6 +81,7 @@ ACTION_PLAN_PHRASE_PATTERNS = (
     re.compile(r"\bесли\s+хочешь\b.*\bможем\b", re.IGNORECASE),
     re.compile(r"\bможем\b.*\bвыбрать\b", re.IGNORECASE),
     re.compile(r"\b(?:ближайшие\s+)?\d+\s*(?:[-–]\s*\d+\s*)?минут\b", re.IGNORECASE),
+    re.compile(r"\bпусть\b.*\b(?:будет|будут)\b", re.IGNORECASE),
 )
 OPERATIONAL_SELF_STATUS_PATTERNS = (
     re.compile(r"\b(?:working|operational|normal mode|how can i help)\b", re.IGNORECASE),
