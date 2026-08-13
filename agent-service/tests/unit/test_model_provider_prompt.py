@@ -388,6 +388,14 @@ def test_candidate_reply_policy_violations_find_soft_coaching_offers() -> None:
         request=request,
         state=state,
     )
+    modal_advice_violations = candidate_reply_policy_violations(
+        text=(
+            "Понял. Сегодня можно просто выдохнуть и не тащить ничего лишнего — "
+            "усталость иногда сама просит тишины."
+        ),
+        request=request,
+        state=state,
+    )
 
     assert task_selection_violations == [
         "support the emotion without advice, steps, tactics, or an action plan",
@@ -397,6 +405,9 @@ def test_candidate_reply_policy_violations_find_soft_coaching_offers() -> None:
     ]
     assert permission_move_violations == [
         "open with substance, not formulaic validation or paraphrase",
+        "support the emotion without advice, steps, tactics, or an action plan",
+    ]
+    assert modal_advice_violations == [
         "support the emotion without advice, steps, tactics, or an action plan",
     ]
 

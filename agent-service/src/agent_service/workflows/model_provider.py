@@ -76,6 +76,8 @@ ACTION_PLAN_PHRASE_PATTERNS = (
     re.compile(r"\b(?:try|start by|you can|it may help to)\b", re.IGNORECASE),
     re.compile(r"\b(?:step|plan|checklist)\b", re.IGNORECASE),
     re.compile(r"\b(?:попробуй|попробовать|можно попробовать|начни с)\b", re.IGNORECASE),
+    re.compile(r"\b(?:можно|лучше|стоит)\b", re.IGNORECASE),
+    re.compile(r"\b(?:постарайся|дай\s+себе)\b", re.IGNORECASE),
     re.compile(r"\b(?:шаг|план|чеклист)\b", re.IGNORECASE),
     re.compile(r"\b(?:можно|можешь)\s+(?:дать|сделать|выбрать|убрать)\b", re.IGNORECASE),
     re.compile(r"\bесли\s+хочешь\b.*\bможем\b", re.IGNORECASE),
