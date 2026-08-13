@@ -11,7 +11,7 @@ from agent_service.contracts.runtime_contract import (
     validate_runtime_error_response,
     validate_runtime_result,
 )
-from agent_service.infrastructure.settings import get_settings
+from agent_service.infrastructure.settings import Settings, get_settings
 from agent_service.main import create_app
 from agent_service.workflows.conversation_workflow import ConversationWorkflowError
 from agent_service.workflows.model_provider import (
@@ -37,6 +37,15 @@ RUNTIME_ENV_KEYS = [
     "AZURE_OPENAI_API_KEY",
     "AGENT_SERVICE_AZURE_OPENAI_API_VERSION",
     "AZURE_OPENAI_API_VERSION",
+    "AGENT_SERVICE_LLM_SAFETY_MODE",
+    "AGENT_SERVICE_LLM_SAFETY_PROVIDER",
+    "AGENT_SERVICE_LLM_SAFETY_TIMEOUT_MS",
+    "AGENT_SERVICE_AZURE_CONTENT_SAFETY_ENDPOINT",
+    "AZURE_CONTENT_SAFETY_ENDPOINT",
+    "AGENT_SERVICE_AZURE_CONTENT_SAFETY_KEY",
+    "AZURE_CONTENT_SAFETY_KEY",
+    "AGENT_SERVICE_AZURE_CONTENT_SAFETY_API_VERSION",
+    "AZURE_CONTENT_SAFETY_API_VERSION",
 ]
 
 
@@ -84,6 +93,23 @@ def test_runtime_endpoint_returns_contract_valid_candidate_result_for_valid_requ
     assert body["diagnostics"]["retryCount"] == 0
 
 
+def test_runtime_builds_no_safety_gateway_by_default() -> None:
+    assert runtime_api.build_llm_safety_gateway(Settings()) is None
+
+
+def test_runtime_rejects_block_mode_azure_safety_without_credentials() -> None:
+    settings = Settings(
+        llm_safety_mode="block",
+        llm_safety_provider="azure_prompt_shields",
+    )
+
+    with pytest.raises(ConversationWorkflowError) as error:
+        runtime_api.build_llm_safety_gateway(settings)
+
+    assert error.value.error_category == "dependency_failed"
+    assert "safety" in error.value.safe_message
+
+
 def test_runtime_endpoint_returns_classification_from_workflow_response() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     client = TestClient(create_app())
@@ -109,7 +135,9 @@ def test_runtime_endpoint_returns_classification_from_workflow_response() -> Non
     }
 
 
-def test_runtime_endpoint_rejects_runtime_result_without_classification(monkeypatch: MonkeyPatch) -> None:
+def test_runtime_endpoint_rejects_runtime_result_without_classification(
+    monkeypatch: MonkeyPatch,
+) -> None:
     request_body = read_fixture("valid/process-message-request.json")
     result_without_classification = read_fixture("valid/runtime-result.json")
     del result_without_classification["classification"]

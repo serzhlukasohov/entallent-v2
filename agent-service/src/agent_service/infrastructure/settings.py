@@ -39,6 +39,30 @@ class Settings(BaseSettings):
     model_provider: Literal["disabled", "openai", "azure_openai"] = "disabled"
     model_name: str | None = None
     model_timeout_ms: int = Field(default=10000, gt=0, le=60000)
+    llm_safety_mode: Literal["disabled", "inspect_only", "block"] = "disabled"
+    llm_safety_provider: Literal["local", "azure_prompt_shields"] = "local"
+    llm_safety_timeout_ms: int = Field(default=2500, gt=0, le=30000)
+    azure_content_safety_endpoint: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENT_SERVICE_AZURE_CONTENT_SAFETY_ENDPOINT",
+            "AZURE_CONTENT_SAFETY_ENDPOINT",
+        ),
+    )
+    azure_content_safety_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENT_SERVICE_AZURE_CONTENT_SAFETY_KEY",
+            "AZURE_CONTENT_SAFETY_KEY",
+        ),
+    )
+    azure_content_safety_api_version: str = Field(
+        default="2024-09-01",
+        validation_alias=AliasChoices(
+            "AGENT_SERVICE_AZURE_CONTENT_SAFETY_API_VERSION",
+            "AZURE_CONTENT_SAFETY_API_VERSION",
+        ),
+    )
     openai_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("AGENT_SERVICE_OPENAI_API_KEY", "OPENAI_API_KEY"),

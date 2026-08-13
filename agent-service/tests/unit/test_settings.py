@@ -19,6 +19,12 @@ def test_settings_defaults_do_not_require_external_dependencies(monkeypatch: Mon
     assert settings.context_tool_timeout_ms == 2500
     assert settings.model_provider == "disabled"
     assert settings.model_name is None
+    assert settings.llm_safety_mode == "disabled"
+    assert settings.llm_safety_provider == "local"
+    assert settings.llm_safety_timeout_ms == 2500
+    assert settings.azure_content_safety_endpoint is None
+    assert settings.azure_content_safety_key is None
+    assert settings.azure_content_safety_api_version == "2024-09-01"
 
 
 def test_settings_allow_opentelemetry_configuration_without_secrets() -> None:
@@ -104,3 +110,38 @@ def test_settings_use_prefixed_model_provider_environment(monkeypatch: MonkeyPat
     assert settings.model_provider == "openai"
     assert settings.model_name == "gpt-test"
     assert settings.openai_api_key == "test-key"
+
+
+def test_settings_use_prefixed_llm_safety_environment(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_SERVICE_LLM_SAFETY_MODE", "inspect_only")
+    monkeypatch.setenv("AGENT_SERVICE_LLM_SAFETY_PROVIDER", "azure_prompt_shields")
+    monkeypatch.setenv("AGENT_SERVICE_LLM_SAFETY_TIMEOUT_MS", "1234")
+    monkeypatch.setenv(
+        "AGENT_SERVICE_AZURE_CONTENT_SAFETY_ENDPOINT",
+        "https://safety.example.com",
+    )
+    monkeypatch.setenv("AGENT_SERVICE_AZURE_CONTENT_SAFETY_KEY", "safety-key")
+    monkeypatch.setenv("AGENT_SERVICE_AZURE_CONTENT_SAFETY_API_VERSION", "2024-09-01")
+
+    settings = Settings()
+
+    assert settings.llm_safety_mode == "inspect_only"
+    assert settings.llm_safety_provider == "azure_prompt_shields"
+    assert settings.llm_safety_timeout_ms == 1234
+    assert settings.azure_content_safety_endpoint == "https://safety.example.com"
+    assert settings.azure_content_safety_key == "safety-key"
+    assert settings.azure_content_safety_api_version == "2024-09-01"
+
+
+def test_settings_keep_unprefixed_azure_content_safety_aliases(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AZURE_CONTENT_SAFETY_ENDPOINT", "https://safety-alias.example.com")
+    monkeypatch.setenv("AZURE_CONTENT_SAFETY_KEY", "alias-key")
+    monkeypatch.setenv("AZURE_CONTENT_SAFETY_API_VERSION", "2024-09-01")
+
+    settings = Settings()
+
+    assert settings.azure_content_safety_endpoint == "https://safety-alias.example.com"
+    assert settings.azure_content_safety_key == "alias-key"
+    assert settings.azure_content_safety_api_version == "2024-09-01"

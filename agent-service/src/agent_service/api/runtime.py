@@ -19,6 +19,10 @@ from agent_service.workflows.conversation_workflow import (
     ConversationWorkflowError,
     RuntimeErrorCategory,
 )
+from agent_service.workflows.llm_safety_gateway import (
+    AzurePromptShieldsClient,
+    LlmSafetyGateway,
+)
 from agent_service.workflows.model_provider import (
     AgentFrameworkConversationModelClient,
     ConversationModelClient,
@@ -149,6 +153,7 @@ def _instantiate_workflow(
 def build_model_client(settings: Settings) -> ConversationModelClient | None:
     if settings.model_provider == "disabled":
         return None
+    safety_gateway = build_llm_safety_gateway(settings)
     if settings.model_provider == "openai":
         model_name = normalized_optional_string(settings.model_name)
         api_key = normalized_optional_string(settings.openai_api_key)
@@ -169,6 +174,7 @@ def build_model_client(settings: Settings) -> ConversationModelClient | None:
             ),
             model_name=model_name,
             timeout_ms=settings.model_timeout_ms,
+            safety_gateway=safety_gateway,
         )
     model_name = normalized_optional_string(settings.model_name)
     endpoint = normalized_optional_string(settings.azure_openai_endpoint)
@@ -197,6 +203,34 @@ def build_model_client(settings: Settings) -> ConversationModelClient | None:
         ),
         model_name=model_name,
         timeout_ms=settings.model_timeout_ms,
+        safety_gateway=safety_gateway,
+    )
+
+
+def build_llm_safety_gateway(settings: Settings) -> LlmSafetyGateway | None:
+    if settings.llm_safety_mode == "disabled":
+        return None
+    azure_prompt_shields = None
+    if settings.llm_safety_provider == "azure_prompt_shields":
+        endpoint = normalized_optional_string(settings.azure_content_safety_endpoint)
+        api_key = normalized_optional_string(settings.azure_content_safety_key)
+        if endpoint and api_key:
+            azure_prompt_shields = AzurePromptShieldsClient(
+                endpoint=endpoint,
+                api_key=api_key,
+                api_version=settings.azure_content_safety_api_version,
+                timeout_ms=settings.llm_safety_timeout_ms,
+            )
+        elif settings.llm_safety_mode == "block":
+            raise ConversationWorkflowError(
+                error_category="dependency_failed",
+                retryable=False,
+                fallback_allowed=True,
+                message="MAF LLM safety gateway configuration failed safely.",
+            )
+    return LlmSafetyGateway(
+        mode=settings.llm_safety_mode,
+        azure_prompt_shields=azure_prompt_shields,
     )
 
 

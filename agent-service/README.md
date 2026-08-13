@@ -200,17 +200,47 @@ Optional:
 
 - `AGENT_SERVICE_MODEL_TIMEOUT_MS`: provider HTTP timeout, default `10000`.
 - `AGENT_SERVICE_OPENAI_ORG_ID`: direct OpenAI organization header.
+- `AGENT_SERVICE_LLM_SAFETY_MODE`: `disabled`, `inspect_only`, or `block`;
+  default `disabled`.
+- `AGENT_SERVICE_LLM_SAFETY_PROVIDER`: `local` or `azure_prompt_shields`;
+  default `local`.
+- `AGENT_SERVICE_LLM_SAFETY_TIMEOUT_MS`: gateway provider timeout, default
+  `2500`.
+
+Azure AI Content Safety Prompt Shields can be enabled as the first managed
+gateway provider:
+
+```bash
+export AGENT_SERVICE_LLM_SAFETY_MODE=inspect_only
+export AGENT_SERVICE_LLM_SAFETY_PROVIDER=azure_prompt_shields
+export AGENT_SERVICE_AZURE_CONTENT_SAFETY_ENDPOINT=https://<resource>.cognitiveservices.azure.com
+export AGENT_SERVICE_AZURE_CONTENT_SAFETY_KEY=...
+export AGENT_SERVICE_AZURE_CONTENT_SAFETY_API_VERSION=2024-09-01
+```
+
+The safety gateway inspects the candidate prompt before the MAF Agent call and
+the normalized candidate reply before it is returned. `inspect_only` records
+redacted verdict metadata and lets the model path continue. `block` skips the
+model call or rejects the candidate reply when safety checks block content. If
+Azure Prompt Shields is unavailable in `inspect_only`, the model path fails open
+with a redacted provider-unavailable verdict. In `block`, missing Azure safety
+configuration or provider failure maps to the existing safe dependency failure
+path.
 
 The service also accepts the existing unprefixed `OPENAI_API_KEY`,
 `OPENAI_ORG_ID`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
 `AZURE_OPENAI_API_VERSION` environment names for local convenience. Prefixed
 `AGENT_SERVICE_*` variables are preferred for deployment.
+For Content Safety, the service also accepts `AZURE_CONTENT_SAFETY_ENDPOINT`,
+`AZURE_CONTENT_SAFETY_KEY`, and `AZURE_CONTENT_SAFETY_API_VERSION`.
 
 When enabled, the response generation step calls the MAF Agent path and returns
 `modelCalls: 1`. Provider configuration, HTTP, empty-output, and unsafe-output
 failures map to safe canonical runtime errors. Error responses still exclude raw
 Slack/user text, prompts, bearer tokens, service secrets, provider details,
 stack traces, full payloads, risk evidence, memory content, and action payloads.
+Safety gateway findings follow the same redaction rule: only reason/provider/
+blocked metadata is retained for diagnostics.
 
 This model path is still contract-only proposal output. TypeScript remains the
 side-effect owner, and user-facing MAF replies are enabled only when TypeScript

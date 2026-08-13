@@ -9,6 +9,12 @@ import agent_framework
 import httpx
 from agent_framework import ChatResponse, Message
 
+from agent_service.workflows.llm_safety_gateway import (
+    LlmSafetyGateway,
+    LlmSafetyGatewayBlockedError,
+    LlmSafetyVerdict,
+)
+
 ModelProviderKind = Literal["openai", "azure_openai"]
 
 MODEL_AGENT_INSTRUCTIONS = """
@@ -60,9 +66,12 @@ class AgentFrameworkConversationModelClient:
         chat_client: Any,
         model_name: str | None = None,
         timeout_ms: int = 10000,
+        safety_gateway: LlmSafetyGateway | None = None,
     ) -> None:
         self._model_name = model_name
         self._timeout_seconds = timeout_ms / 1000
+        self._safety_gateway = safety_gateway
+        self._safety_verdicts: list[LlmSafetyVerdict] = []
         self._agent = agent_framework.Agent(
             chat_client,
             instructions=MODEL_AGENT_INSTRUCTIONS,
@@ -76,7 +85,17 @@ class AgentFrameworkConversationModelClient:
         request: dict[str, Any],
         state: dict[str, Any],
     ) -> ConversationModelReply:
+        self._safety_verdicts = []
         prompt = build_candidate_reply_prompt(request=request, state=state)
+        try:
+            input_verdict = await self._inspect_input(prompt=prompt, request=request)
+        except LlmSafetyGatewayBlockedError as error:
+            self._safety_verdicts = [error.verdict]
+            raise ConversationModelProviderError(
+                "MAF LLM safety gateway blocked input safely.",
+            ) from error
+        if input_verdict is not None:
+            self._safety_verdicts.append(input_verdict)
         options = {"model": self._model_name} if self._model_name else None
         request_text = request_message_text(request)
         try:
@@ -99,7 +118,38 @@ class AgentFrameworkConversationModelClient:
             ) from error
 
         text = normalize_model_reply_text(response.text, request_text=request_text)
+        try:
+            output_verdict = await self._inspect_output(text=text)
+        except LlmSafetyGatewayBlockedError as error:
+            self._safety_verdicts.append(error.verdict)
+            raise UnsafeConversationModelOutputError(
+                "MAF LLM safety gateway blocked output safely.",
+            ) from error
+        if output_verdict is not None:
+            self._safety_verdicts.append(output_verdict)
         return ConversationModelReply(text=text)
+
+    @property
+    def safety_verdicts(self) -> list[dict[str, Any]]:
+        return [verdict.redacted_metadata() for verdict in self._safety_verdicts]
+
+    async def _inspect_input(
+        self,
+        *,
+        prompt: str,
+        request: dict[str, Any],
+    ) -> LlmSafetyVerdict | None:
+        if self._safety_gateway is None:
+            return None
+        return await self._safety_gateway.inspect_input(
+            prompt=prompt,
+            documents=candidate_safety_documents(request),
+        )
+
+    async def _inspect_output(self, *, text: str) -> LlmSafetyVerdict | None:
+        if self._safety_gateway is None:
+            return None
+        return await self._safety_gateway.inspect_output(text=text)
 
 
 class OpenAICompatibleChatClient:
@@ -329,6 +379,11 @@ def candidate_reference_context(request: dict[str, Any]) -> str:
             snippets.append(f"recent_{role}: {content}")
 
     return " | ".join(snippets) if snippets else "none"
+
+
+def candidate_safety_documents(request: dict[str, Any]) -> list[str]:
+    reference_context = candidate_reference_context(request)
+    return [] if reference_context == "none" else [reference_context]
 
 
 def safe_context_text(value: Any, *, limit: int) -> str | None:
