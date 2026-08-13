@@ -504,8 +504,18 @@ def candidate_reply_policy_violations(
 def has_reflective_reply_opener(text: str) -> bool:
     if not text:
         return False
-    opener = re.split(r"(?<=[.!?…])\s|\n", text.strip(), maxsplit=1)[0].strip()
+    opener = first_substantive_reply_sentence(text)
     return any(pattern.search(opener) for pattern in REFLECTIVE_REPLY_OPENER_PATTERNS)
+
+
+def first_substantive_reply_sentence(text: str) -> str:
+    parts = [part.strip() for part in re.split(r"(?<=[.!?…])\s|\n", text.strip()) if part.strip()]
+    if not parts:
+        return ""
+    first = re.sub(r"[^a-zа-яё0-9 ]", " ", parts[0].lower()).strip()
+    if first in {"hi", "hello", "hey", "привет"} and len(parts) > 1:
+        return parts[1]
+    return parts[0]
 
 
 def reply_gate_policy(

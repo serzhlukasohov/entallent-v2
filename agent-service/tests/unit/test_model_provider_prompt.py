@@ -314,6 +314,7 @@ def test_reflective_reply_opener_matches_old_provider_antipatterns() -> None:
     assert has_reflective_reply_opener("What you're describing is burnout.")
     assert has_reflective_reply_opener("That's the real root of it.")
     assert has_reflective_reply_opener("Похоже, сегодня сложно держать фокус.")
+    assert has_reflective_reply_opener("Привет. Похоже, сегодня сложно держать фокус.")
     assert has_reflective_reply_opener("Я понимаю, день вышел тяжелым.")
     assert not has_reflective_reply_opener("That sounds hard.")
     assert not has_reflective_reply_opener(
