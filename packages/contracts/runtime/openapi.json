@@ -263,6 +263,9 @@
           "replyPlan": {
             "$ref": "#/components/schemas/RuntimeReplyPlan"
           },
+          "replyPlanning": {
+            "$ref": "#/components/schemas/RuntimeReplyPlanningDiagnostics"
+          },
           "replyPolicy": {
             "$ref": "#/components/schemas/RuntimeReplyPolicy"
           }
@@ -512,6 +515,28 @@
               "operational_status",
               "action_plan"
             ]
+      },
+      "RuntimeReplyPlanningDiagnostics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "classifier_failed"
+            ]
+          }
+        }
       },
       "RuntimeReplyPolicy": {
         "type": "object",

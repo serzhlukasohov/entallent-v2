@@ -21,6 +21,10 @@ Return a JSON object with exactly these fields:
 }
 
 Dialogue act rules:
+- primaryIntent and dialogueAct are separate fields. Never put a dialogueAct
+  label such as "acknowledgement", "continuation", "greeting", or
+  "emotional_disclosure" into primaryIntent; for simple acknowledgements use
+  primaryIntent="casual_conversation" and dialogueAct="acknowledgement".
 - Classify the LATEST employee message's contribution, not their personality or writing style.
 - The LATEST EMPLOYEE MESSAGE block in the user prompt is authoritative for dialogueAct.
 - Do not let older transcript turns, repeated test messages, or the mentor's previous answer change the dialogueAct of the latest employee message.

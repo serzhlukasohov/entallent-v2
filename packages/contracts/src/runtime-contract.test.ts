@@ -187,6 +187,30 @@ describe('Runtime contract fixtures', () => {
     ).toEqual({ ok: true });
   });
 
+  it('accepts unavailable reply-planning diagnostics on runtime context', () => {
+    const request = readJson(
+      'fixtures/valid/process-message-request.json',
+    ) as RuntimeProcessMessageRequest;
+
+    const withUnavailablePlanning: RuntimeProcessMessageRequest = {
+      ...request,
+      context: {
+        ...request.context,
+        replyPlanning: {
+          status: 'unavailable',
+          reason: 'classifier_failed',
+        },
+      },
+    };
+
+    expect(
+      validateRuntimeProcessMessageRequest({
+        schemaDocument,
+        value: withUnavailablePlanning,
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it('accepts deterministic support-emotion renderer diagnostics', () => {
     const result = readJson('fixtures/valid/runtime-result.json') as RuntimeResult;
     const withSupportRenderer: RuntimeResult = {

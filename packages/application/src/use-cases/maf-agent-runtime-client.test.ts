@@ -270,6 +270,37 @@ describe('MafAgentRuntimeClient', () => {
     });
   });
 
+  it('posts a canonical candidate request when reply planning is unavailable', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => CANDIDATE_RESULT,
+    }));
+    const client = new MafAgentRuntimeClient({
+      serviceUrl: 'https://agent-service.internal/',
+      fetch: fetchImpl,
+    });
+
+    const result = await client.processCandidate({
+      ...CANDIDATE_REQUEST,
+      runtimeContext: {
+        ...CANDIDATE_REQUEST.runtimeContext!,
+        replyPlanning: {
+          status: 'unavailable',
+          reason: 'classifier_failed',
+        },
+      },
+    });
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, { body?: string }];
+    const body = JSON.parse(String(init?.body));
+    expect(body.context.replyPlanning).toEqual({
+      status: 'unavailable',
+      reason: 'classifier_failed',
+    });
+    expect(result).toEqual(CANDIDATE_RESULT);
+  });
+
   it('serializes proactive check-in context into the canonical runtime request', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
