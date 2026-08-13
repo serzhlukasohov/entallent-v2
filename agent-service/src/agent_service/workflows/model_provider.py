@@ -858,7 +858,11 @@ def request_message_text(request: dict[str, Any]) -> str | None:
     text = message.get("text")
     if not isinstance(text, str):
         return None
-    normalized = re.sub(r"\s*\*Sent using\*\s+<@[UW][A-Z0-9]+>\s*$", "", text).strip()
+    normalized = re.sub(
+        r"\s*\*Sent using\*\s+<@[UW][A-Z0-9]+(?:\|[^>]+)?>\s*$",
+        "",
+        text,
+    ).strip()
     return normalized if normalized else None
 
 

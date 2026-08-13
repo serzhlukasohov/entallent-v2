@@ -622,7 +622,7 @@ function toRecentTurn(row: {
 }
 
 function stripSlackConnectorFooter(text: string): string {
-  return text.replace(/\s*\*Sent using\*\s+<@[UW][A-Z0-9]+>\s*$/u, '').trim();
+  return text.replace(/\s*\*Sent using\*\s+<@[UW][A-Z0-9]+(?:\|[^>]+)?>\s*$/u, '').trim();
 }
 
 function includeFollowUpQuestionFor(classification: SituationClassification): boolean {
