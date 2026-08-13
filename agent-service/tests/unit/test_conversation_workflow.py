@@ -267,7 +267,7 @@ def test_workflow_uses_deterministic_support_reply_after_emotional_retry_violati
 
 def test_workflow_uses_deterministic_social_reply_for_no_substance_acknowledgement() -> None:
     request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = "как ты?"
+    request_body["message"]["text"] = "как ты?\n*Sent using* <@U0BPHHA21GC>"
     request_body["context"]["replyPlan"] = {
         "dialogueAct": "acknowledgement",
         "latestUserSubstance": None,

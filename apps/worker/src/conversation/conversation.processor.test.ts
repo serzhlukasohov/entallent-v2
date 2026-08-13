@@ -182,7 +182,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
       where: vi.fn().mockReturnThis(),
       limit: vi.fn(async () => [
         {
-          text: 'I feel stuck but I can keep going.',
+          text: 'I feel stuck but I can keep going.\n*Sent using* <@U0BPHHA21GC>',
           occurredAt: new Date('2026-08-06T18:00:00.000Z'),
           externalThreadId: 'thread-1',
           userPreferredName: 'Test User',
@@ -197,7 +197,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
       orderBy: vi.fn().mockReturnThis(),
       limit: vi.fn(async () => [
         {
-          text: 'I feel stuck but I can keep going.',
+          text: 'I feel stuck but I can keep going.\n*Sent using* <@U0BPHHA21GC>',
           senderType: 'user',
           direction: 'inbound',
           occurredAt: new Date('2026-08-06T18:00:00.000Z'),

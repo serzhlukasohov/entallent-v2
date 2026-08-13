@@ -856,7 +856,10 @@ def request_message_text(request: dict[str, Any]) -> str | None:
     if not isinstance(message, Mapping):
         return None
     text = message.get("text")
-    return text if isinstance(text, str) and text.strip() else None
+    if not isinstance(text, str):
+        return None
+    normalized = re.sub(r"\s*\*Sent using\*\s+<@[UW][A-Z0-9]+>\s*$", "", text).strip()
+    return normalized if normalized else None
 
 
 def candidate_reference_context(request: dict[str, Any]) -> str:

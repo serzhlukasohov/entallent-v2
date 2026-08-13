@@ -372,7 +372,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       });
 
       return {
-        messageText: currentMessage.text,
+        messageText: stripSlackConnectorFooter(currentMessage.text),
         messageCreatedAt: toIsoString(currentMessage.occurredAt),
         eventId: normalizeMafRuntimeEventId(job.eventId, job.requestId),
         userDisplayName: normalizeOptionalString(currentMessage.userPreferredName),
@@ -605,7 +605,7 @@ function toRecentTurn(row: {
   content: string;
   timestamp: string;
 }> {
-  const content = row.text.trim();
+  const content = stripSlackConnectorFooter(row.text);
   if (!content) {
     return [];
   }
@@ -619,6 +619,10 @@ function toRecentTurn(row: {
   } catch {
     return [];
   }
+}
+
+function stripSlackConnectorFooter(text: string): string {
+  return text.replace(/\s*\*Sent using\*\s+<@[UW][A-Z0-9]+>\s*$/u, '').trim();
 }
 
 function includeFollowUpQuestionFor(classification: SituationClassification): boolean {
