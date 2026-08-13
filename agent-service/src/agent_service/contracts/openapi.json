@@ -567,6 +567,7 @@
               "goal_setting",
               "progress_update",
               "casual_conversation",
+              "social_checkin",
               "clarification",
               "survey_opportunity",
               "conflict",
@@ -1231,6 +1232,14 @@
           "httpRetryCount": {
             "type": "integer",
             "minimum": 0
+          },
+          "replyRenderer": {
+            "type": "string",
+            "enum": [
+              "workflow_static",
+              "llm",
+              "deterministic_social_reply"
+            ]
           }
         }
       },

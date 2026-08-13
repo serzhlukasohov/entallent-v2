@@ -11,6 +11,9 @@ from agent_service.contracts.runtime_contract import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_ROOT = REPO_ROOT / "packages/contracts/runtime"
+PACKAGED_CONTRACT_PATH = (
+    REPO_ROOT / "agent-service/src/agent_service/contracts/openapi.json"
+)
 
 
 def read_fixture(relative_path: str) -> Any:
@@ -26,6 +29,13 @@ def read_manifest() -> dict[str, list[dict[str, str]]]:
     if not isinstance(valid, list) or not isinstance(invalid, list):
         raise TypeError("fixture manifest must contain valid and invalid lists")
     return {"valid": valid, "invalid": invalid}
+
+
+def test_python_service_packages_shared_runtime_openapi_schema() -> None:
+    shared_schema = json.loads((CONTRACT_ROOT / "openapi.json").read_text())
+    packaged_schema = json.loads(PACKAGED_CONTRACT_PATH.read_text())
+
+    assert packaged_schema == shared_schema
 
 
 def test_python_service_accepts_shared_runtime_contract_valid_fixtures() -> None:
