@@ -396,6 +396,14 @@ def test_candidate_reply_policy_violations_find_soft_coaching_offers() -> None:
         request=request,
         state=state,
     )
+    inline_reflective_permission_violations = candidate_reply_policy_violations(
+        text=(
+            "Сегодня, похоже, реально тяжёлый день — пусть он уже просто "
+            "дотянется до вечера без лишнего давления."
+        ),
+        request=request,
+        state=state,
+    )
 
     assert task_selection_violations == [
         "support the emotion without advice, steps, tactics, or an action plan",
@@ -408,6 +416,10 @@ def test_candidate_reply_policy_violations_find_soft_coaching_offers() -> None:
         "support the emotion without advice, steps, tactics, or an action plan",
     ]
     assert modal_advice_violations == [
+        "support the emotion without advice, steps, tactics, or an action plan",
+    ]
+    assert inline_reflective_permission_violations == [
+        "open with substance, not formulaic validation or paraphrase",
         "support the emotion without advice, steps, tactics, or an action plan",
     ]
 
@@ -442,6 +454,7 @@ def test_reflective_reply_opener_matches_old_provider_antipatterns() -> None:
     assert has_reflective_reply_opener("What you're describing is burnout.")
     assert has_reflective_reply_opener("That's the real root of it.")
     assert has_reflective_reply_opener("Похоже, сегодня сложно держать фокус.")
+    assert has_reflective_reply_opener("Сегодня, похоже, реально тяжёлый день.")
     assert has_reflective_reply_opener("Привет. Похоже, сегодня сложно держать фокус.")
     assert has_reflective_reply_opener("Понимаю. День правда мог вымотать.")
     assert has_reflective_reply_opener("Я понимаю, день вышел тяжелым.")
