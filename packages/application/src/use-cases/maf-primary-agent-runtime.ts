@@ -463,6 +463,7 @@ function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequ
     modelCalls: candidate.diagnostics.modelCalls,
     toolCalls: candidate.diagnostics.toolCalls,
     retryCount: candidate.diagnostics.retryCount,
+    ...(candidate.diagnostics.replyRenderer ? { replyRenderer: candidate.diagnostics.replyRenderer } : {}),
     proposedActionCount: candidate.proposedActions.length,
     memoryCandidateCount: candidate.memoryCandidates.length,
     proposedActionsDeferred: candidate.proposedActions.length > 0,
@@ -478,12 +479,19 @@ function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequ
 }
 
 function toReplyPlanMetadata(request: ProcessMessageRequest): Record<string, unknown> {
+  const planning = request.runtimeContext?.replyPlanning;
   const plan = request.runtimeContext?.replyPlan;
   if (!plan) {
-    return {};
+    return planning
+      ? {
+          replyPlanStatus: planning.status,
+          ...(planning.reason ? { replyPlanUnavailableReason: planning.reason } : {}),
+        }
+      : {};
   }
 
   return {
+    replyPlanStatus: planning?.status ?? 'available',
     replyPlanDialogueAct: plan.dialogueAct,
     replyPlanResponseMove: plan.responseMove,
     replyPlanMaxQuestions: plan.questionPolicy.maxQuestions,

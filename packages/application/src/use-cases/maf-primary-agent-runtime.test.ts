@@ -89,6 +89,7 @@ const RUNTIME_RESULT: RuntimeResult = {
     modelRetryCount: 0,
     toolRetryCount: 0,
     httpRetryCount: 0,
+    replyRenderer: 'llm',
   },
 };
 
@@ -129,10 +130,12 @@ describe('MafPrimaryAgentRuntime', () => {
         modelCalls: 1,
         toolCalls: 0,
         retryCount: 0,
+        replyRenderer: 'llm',
         proposedActionCount: 0,
         memoryCandidateCount: 0,
         proposedActionsDeferred: false,
         memoryCandidatesDeferred: false,
+        replyPlanStatus: 'available',
         replyPlanDialogueAct: 'social_checkin',
         replyPlanResponseMove: 'social_reply',
         replyPlanMaxQuestions: 1,
@@ -432,6 +435,29 @@ it('uses Python-supplied classification when available', async () => {
     }));
     expect(JSON.stringify(metadata)).not.toContain('raw memory content');
     expect(JSON.stringify(metadata)).not.toContain('action payload');
+  });
+
+  it('persists typed reply planning diagnostics when no reply plan is available', async () => {
+    const request: ProcessMessageRequest = {
+      ...REQUEST,
+      runtimeContext: {
+        recentTurns: [],
+        memoryItems: [],
+        goals: [],
+        replyPlanning: {
+          status: 'unavailable',
+          reason: 'classifier_failed',
+        },
+      },
+    };
+    const { runtime, conversationRepo } = createRuntime();
+
+    await runtime.processMessage(request);
+
+    expect(conversationRepo.saveMessage.mock.calls[0]?.[0].metadata).toEqual(expect.objectContaining({
+      replyPlanStatus: 'unavailable',
+      replyPlanUnavailableReason: 'classifier_failed',
+    }));
   });
 
   it('schedules valid Python follow-up proposals through scheduled action repository', async () => {

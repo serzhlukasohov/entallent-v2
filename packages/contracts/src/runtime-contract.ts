@@ -55,6 +55,7 @@ export type RuntimeContext = {
   memoryItems: RuntimeMemoryItem[];
   goals: RuntimeGoal[];
   replyPlan?: RuntimeReplyPlan;
+  replyPlanning?: RuntimeReplyPlanningDiagnostics;
   replyPolicy?: RuntimeReplyPolicy;
 };
 
@@ -125,6 +126,11 @@ export type RuntimeReplyForbiddenMove =
   | 'survey_probe'
   | 'operational_status'
   | 'action_plan';
+
+export type RuntimeReplyPlanningDiagnostics = {
+  status: 'available' | 'unavailable';
+  reason?: 'classifier_failed';
+};
 
 export type RuntimeReplyPolicy = {
   maxChars: number;
@@ -306,6 +312,7 @@ export type RuntimeDiagnostics = {
   modelRetryCount: number;
   toolRetryCount: number;
   httpRetryCount: number;
+  replyRenderer?: 'workflow_static' | 'llm' | 'deterministic_social_reply';
 };
 
 export type RuntimeErrorCategory =

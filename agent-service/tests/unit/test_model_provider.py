@@ -268,6 +268,7 @@ def test_model_client_renders_social_reply_from_reply_plan_without_model_call() 
     )
 
     assert reply.text == "Нормально, спасибо. А ты как?"
+    assert reply.renderer_path == "deterministic_social_reply"
     assert chat_client.call_count == 0
 
 

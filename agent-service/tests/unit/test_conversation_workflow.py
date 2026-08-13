@@ -237,8 +237,9 @@ def test_workflow_uses_typed_social_reply_without_model_call() -> None:
         "mode": "candidate",
     }
     assert chat_client.calls == 0
-    assert result["diagnostics"]["modelCalls"] == 1
+    assert result["diagnostics"]["modelCalls"] == 0
     assert result["diagnostics"]["modelRetryCount"] == 0
+    assert result["diagnostics"]["replyRenderer"] == "deterministic_social_reply"
 
 
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:

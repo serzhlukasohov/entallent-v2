@@ -489,8 +489,11 @@ class ConversationWorkflow:
             ) from error
 
         retry_count = max(0, int(getattr(reply, "retry_count", 0)))
-        state["modelCalls"] = int(state.get("modelCalls", 0)) + 1 + retry_count
-        state["modelRetryCount"] = int(state.get("modelRetryCount", 0)) + retry_count
+        renderer_path = getattr(reply, "renderer_path", "llm")
+        state["replyRenderer"] = renderer_path
+        if renderer_path == "llm":
+            state["modelCalls"] = int(state.get("modelCalls", 0)) + 1 + retry_count
+            state["modelRetryCount"] = int(state.get("modelRetryCount", 0)) + retry_count
         state["retryCount"] = int(state.get("retryCount", 0)) + retry_count
         state["reply"] = {
             "text": reply.text,
@@ -591,6 +594,7 @@ class ConversationWorkflow:
                 "modelRetryCount": int(state.get("modelRetryCount", 0)),
                 "toolRetryCount": 0,
                 "httpRetryCount": 0,
+                "replyRenderer": state.get("replyRenderer", "workflow_static"),
             },
         }
         state["result"] = result

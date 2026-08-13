@@ -527,7 +527,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     timezone?: string;
     turns: RuntimeContext['recentTurns'];
     memoryItems: RuntimeContext['memoryItems'];
-  }): Promise<Pick<RuntimeContext, 'replyPlan' | 'replyPolicy'>> {
+  }): Promise<Pick<RuntimeContext, 'replyPlan' | 'replyPlanning' | 'replyPolicy'>> {
     try {
       const turns = input.turns.map((turn): ConversationTurn => ({
         role: turn.role,
@@ -561,8 +561,14 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           allowListFormatting: false,
         },
       };
-    } catch {
-      return {};
+    } catch (err) {
+      this.logger.warn(`Failed to build inbound reply plan: ${(err as Error).message}`);
+      return {
+        replyPlanning: {
+          status: 'unavailable',
+          reason: 'classifier_failed',
+        },
+      };
     }
   }
 }

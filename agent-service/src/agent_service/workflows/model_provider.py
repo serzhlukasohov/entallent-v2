@@ -46,6 +46,7 @@ CONTROL_CONTEXT_MARKER_PATTERNS = (
 class ConversationModelReply:
     text: str
     retry_count: int = 0
+    renderer_path: str = "llm"
 
 
 class ConversationModelClient(Protocol):
@@ -97,7 +98,10 @@ class AgentFrameworkConversationModelClient:
         self._safety_verdicts = []
         social_reply = deterministic_social_reply_for_plan(request)
         if social_reply is not None:
-            return ConversationModelReply(text=social_reply)
+            return ConversationModelReply(
+                text=social_reply,
+                renderer_path="deterministic_social_reply",
+            )
         prompt = build_candidate_reply_prompt(request=request, state=state)
         try:
             input_verdict = await self._inspect_input(prompt=prompt, request=request)
