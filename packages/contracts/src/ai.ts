@@ -8,6 +8,7 @@ export const SituationIntentSchema = z.enum([
   'goal_setting',
   'progress_update',
   'casual_conversation',
+  'social_checkin',
   'clarification',
   'survey_opportunity',
   'conflict',

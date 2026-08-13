@@ -48,6 +48,25 @@ describe('Contract: SituationClassificationSchema', () => {
     expect(parsed.topicAnchor).toBeNull();
   });
 
+  it('accepts social check-in as a typed intent and dialogue act', () => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'social_checkin',
+      secondaryIntents: [],
+      emotionalState: ['neutral'],
+      urgency: 'low',
+      confidence: 0.94,
+      requiresSafetyCheck: false,
+      surveyAllowed: true,
+      reasoningSummary: 'The latest employee message is a social check-in.',
+      dialogueAct: 'social_checkin',
+      latestUserSubstance: null,
+      topicAnchor: null,
+    });
+
+    expect(parsed.primaryIntent).toBe('social_checkin');
+    expect(parsed.dialogueAct).toBe('social_checkin');
+  });
+
   it('rejects unknown primaryIntent', () => {
     expect(() =>
       SituationClassificationSchema.parse({

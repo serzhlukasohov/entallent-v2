@@ -320,6 +320,96 @@ describe('ConversationProcessor runtime ledger recording', () => {
     expect(db.client.select).toHaveBeenCalledTimes(3);
   });
 
+  it('builds typed social reply context when the classifier returns social_checkin intent', async () => {
+    const agentRuntime = {
+      processMessage: vi.fn(async () => runtimeResult),
+    };
+    const currentQuery = {
+      from: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [
+        {
+          text: 'как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
+          occurredAt: new Date('2026-08-13T14:04:39.000Z'),
+          externalThreadId: null,
+          userPreferredName: 'Serhii',
+          userTimezone: 'Europe/Warsaw',
+          userLocale: 'ru-RU',
+        },
+      ]),
+    };
+    const recentQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [
+        {
+          text: 'как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
+          senderType: 'user',
+          direction: 'inbound',
+          occurredAt: new Date('2026-08-13T14:04:39.000Z'),
+        },
+      ]),
+    };
+    const memoryQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => []),
+    };
+    const db = {
+      client: {
+        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
+      },
+    };
+    const ai = {
+      classifySituation: vi.fn(async () => ({
+        ...runtimeResult.classification,
+        primaryIntent: 'social_checkin',
+        secondaryIntents: [],
+        emotionalState: ['neutral'],
+        urgency: 'low',
+        confidence: 0.94,
+        requiresSafetyCheck: false,
+        surveyAllowed: true,
+        reasoningSummary: 'The latest employee message is a social check-in.',
+        dialogueAct: 'social_checkin',
+        latestUserSubstance: null,
+        topicAnchor: null,
+      })),
+    };
+    const { processor } = createProcessor({ agentRuntime, db, ai });
+
+    await processor.process({
+      id: 'job-1',
+      name: 'process',
+      attemptsMade: 0,
+      data: jobData,
+    } as Job<ConversationJob>);
+
+    expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageText: 'как ты?',
+      runtimeContext: expect.objectContaining({
+        replyPlan: expect.objectContaining({
+          dialogueAct: 'social_checkin',
+          responseMove: 'social_reply',
+          questionPolicy: {
+            maxQuestions: 1,
+            reason: 'social_checkin_returns_question',
+          },
+          forbiddenMoves: expect.arrayContaining(['operational_status']),
+        }),
+        replyPolicy: {
+          maxChars: 120,
+          maxQuestions: 1,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
+      }),
+    }));
+  });
+
   it('marks reply planning unavailable when the typed classifier fails', async () => {
     const agentRuntime = {
       processMessage: vi.fn(async () => runtimeResult),

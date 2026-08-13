@@ -6,7 +6,7 @@ export function buildClassifySystemPrompt(): string {
 
 Return a JSON object with exactly these fields:
 {
-  "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request"
+  "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","social_checkin","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request"
   "secondaryIntents": string[],  // zero or more of the same values
   "emotionalState": string[],    // descriptors like "stressed","excited","anxious","neutral","frustrated","hopeful"
   "urgency": string,             // one of: "low","medium","high","critical"
