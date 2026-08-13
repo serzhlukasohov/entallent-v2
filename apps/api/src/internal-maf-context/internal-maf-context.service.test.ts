@@ -193,6 +193,39 @@ describe('InternalMafContextService', () => {
     expect(JSON.stringify(result)).not.toContain('Bearer secret-token');
   });
 
+  it('does not expose production regression control markers as memory content', async () => {
+    const service = new InternalMafContextService({
+      client: makeDb([
+        [{ id: userId }],
+        [{ id: conversationId }],
+        [{ id: 'account-1' }],
+        [],
+        [
+          {
+            id: 'memory-marker',
+            category: 'project_context',
+            canonicalKey: 'main_memory_marker_20260812_0800',
+            content: 'Continue with main-memory-marker-20260812-0800.',
+            confidence: '0.90',
+            importance: '0.80',
+            sensitivity: 'normal',
+            validFrom: now,
+            updatedAt: now,
+          },
+        ],
+        [],
+        [],
+        [],
+        [],
+      ]),
+    } as never);
+
+    const result = await service.readContext(makeRequest());
+
+    expect(result.memoryItems[0]).toMatchObject({ id: 'memory-marker', content: null });
+    expect(JSON.stringify(result)).not.toContain('main-memory-marker-20260812-0800');
+  });
+
   it('applies an explicit thread filter for thread-specific reads', async () => {
     const whereCalls = [] as Array<Record<string, unknown> | undefined>;
     const service = new InternalMafContextService({

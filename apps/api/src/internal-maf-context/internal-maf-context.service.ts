@@ -47,6 +47,11 @@ export interface InternalMafContextResponse {
 }
 
 const MESSAGE_PREVIEW_LIMIT = 160;
+const CONTROL_MEMORY_MARKER_PATTERNS = [
+  /\bmain-memory-marker-\d{8}-\d{4}\b/i,
+  /\bMAF-regression-\d{8}T\d{6}Z-/i,
+  /\bcontrol marker\b/i,
+];
 const EMPTY_COUNTS = {
   memoryItems: 0,
   goals: 0,
@@ -392,6 +397,9 @@ function safeMemoryContent(value: unknown, sensitivity: unknown): string | null 
   if (containsSensitiveToken(value)) {
     return null;
   }
+  if (containsControlMemoryMarker(value)) {
+    return null;
+  }
   if (value.length <= MESSAGE_PREVIEW_LIMIT) {
     return value;
   }
@@ -411,4 +419,8 @@ function threadFilter(
 
 function containsSensitiveToken(value: string): boolean {
   return /\bBearer\s+[A-Za-z0-9._~+/-]+/i.test(value) || /\b(secret|token|password)\b/i.test(value);
+}
+
+function containsControlMemoryMarker(value: string): boolean {
+  return CONTROL_MEMORY_MARKER_PATTERNS.some((pattern) => pattern.test(value));
 }

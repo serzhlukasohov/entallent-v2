@@ -70,6 +70,43 @@ def test_candidate_reply_prompt_filters_unsafe_context_snippets() -> None:
     assert "password is unsafe context" not in prompt
 
 
+def test_candidate_reply_prompt_filters_regression_control_markers() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "message": {"text": "Привет"},
+            "context": {
+                "memoryItems": [
+                    {
+                        "category": "project_context",
+                        "content": "Continue with main-memory-marker-20260812-0800.",
+                    },
+                    {
+                        "category": "project_context",
+                        "content": "Useful production context.",
+                    },
+                ],
+                "recentTurns": [
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Production MAF regression says the control marker is "
+                            "MAF-regression-20260813T102542Z-local."
+                        ),
+                    },
+                    {"role": "user", "content": "Normal prior context."},
+                ],
+            },
+        },
+        state={},
+    )
+
+    assert "Useful production context." in prompt
+    assert "Normal prior context." in prompt
+    assert "main-memory-marker-20260812-0800" not in prompt
+    assert "MAF-regression-20260813T102542Z-local" not in prompt
+    assert "control marker" not in prompt
+
+
 def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
     prompt = build_candidate_reply_prompt(
         request={

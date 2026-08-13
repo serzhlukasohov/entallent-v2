@@ -36,6 +36,11 @@ UNSAFE_MODEL_TEXT_MARKERS = (
     "password",
     "stack trace",
 )
+CONTROL_CONTEXT_MARKER_PATTERNS = (
+    re.compile(r"\bmain-memory-marker-\d{8}-\d{4}\b", re.IGNORECASE),
+    re.compile(r"\bMAF-regression-\d{8}T\d{6}Z-", re.IGNORECASE),
+    re.compile(r"\bcontrol marker\b", re.IGNORECASE),
+)
 REFLECTIVE_REPLY_OPENER_PATTERNS = (
     re.compile(
         r"^that(?:'s|\s+is)?\s+(?:already\s+|starting\s+to\s+)?"
@@ -699,7 +704,7 @@ def safe_context_text(value: Any, *, limit: int) -> str | None:
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
-    if not text or contains_unsafe_model_text(text):
+    if not text or contains_unsafe_model_text(text) or contains_control_context_marker(text):
         return None
     return text[:limit]
 
@@ -712,3 +717,7 @@ def safe_mapping_summary(value: Any) -> dict[str, Any]:
         if isinstance(key, str) and isinstance(item, str | int | float | bool | type(None)):
             safe[key] = cast(Any, item)
     return safe
+
+
+def contains_control_context_marker(value: str) -> bool:
+    return any(pattern.search(value) for pattern in CONTROL_CONTEXT_MARKER_PATTERNS)
