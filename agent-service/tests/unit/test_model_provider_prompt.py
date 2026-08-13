@@ -1,4 +1,8 @@
-from agent_service.workflows.model_provider import build_candidate_reply_prompt
+from agent_service.workflows.model_provider import (
+    build_candidate_reply_prompt,
+    candidate_reply_policy_violations,
+    has_reflective_reply_opener,
+)
 
 
 def test_candidate_reply_prompt_includes_bounded_memory_context() -> None:
@@ -109,6 +113,26 @@ def test_candidate_reply_prompt_includes_acknowledgement_policy() -> None:
                         "content": "What is the smallest piece that can wait until tomorrow?",
                     },
                 ],
+                "replyPlan": {
+                    "dialogueAct": "acknowledgement",
+                    "latestUserSubstance": None,
+                    "topicAnchor": "there is too much to do, so no time to rest",
+                    "memoryAnchors": [],
+                    "responseMove": "continue_existing_thread",
+                    "mayInferFromBrevity": False,
+                    "questionPolicy": {
+                        "maxQuestions": 0,
+                        "reason": "acknowledgement_no_new_substance",
+                    },
+                    "requiredGrounding": [],
+                    "forbiddenMoves": ["comment_on_brevity"],
+                },
+                "replyPolicy": {
+                    "maxChars": 180,
+                    "maxQuestions": 0,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
             },
         },
         state={
@@ -127,6 +151,10 @@ def test_candidate_reply_prompt_includes_acknowledgement_policy() -> None:
     assert "Do not say 'glad to hear back'" in prompt
     assert "Do not add a checklist or action plan" in prompt
     assert "there is too much to do, so no time to rest" in prompt
+    assert "reply constraints: max 180 characters" in prompt
+    assert "ask zero questions" in prompt
+    assert "reason: acknowledgement_no_new_substance" in prompt
+    assert "replyPlan: dialogueAct=acknowledgement" in prompt
 
 
 def test_candidate_reply_prompt_bans_generic_assistant_moves() -> None:
@@ -148,3 +176,52 @@ def test_candidate_reply_prompt_bans_generic_assistant_moves() -> None:
     assert "do not paraphrase the employee back to themselves" in prompt
     assert "Do not open with formulaic validation" in prompt
     assert "Do not use bullets, numbered steps, productivity frameworks" in prompt
+
+
+def test_candidate_reply_policy_violations_find_old_provider_gates() -> None:
+    violations = candidate_reply_policy_violations(
+        text=(
+            "That, it seems, is the real root: overload.\n"
+            "- First, write a plan?\n"
+            "- Then align with your manager?"
+        ),
+        request={
+            "message": {"text": "ok"},
+            "context": {
+                "memoryItems": [],
+                "recentTurns": [],
+                "replyPolicy": {
+                    "maxChars": 180,
+                    "maxQuestions": 0,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
+        },
+        state={
+            "classification": {
+                "dialogueAct": "acknowledgement",
+                "latestUserSubstance": None,
+            },
+            "riskAssessment": {"severity": "none"},
+        },
+    )
+
+    assert violations == [
+        "open with substance, not formulaic validation or paraphrase",
+        "ask no questions in this turn",
+        "remove bullets, numbered steps, and checklist formatting",
+    ]
+
+
+def test_reflective_reply_opener_matches_old_provider_antipatterns() -> None:
+    assert has_reflective_reply_opener(
+        "That, it seems, is the real root: decisions keep bouncing."
+    )
+    assert has_reflective_reply_opener("Sounds like a classic overload.")
+    assert has_reflective_reply_opener("What you're describing is burnout.")
+    assert has_reflective_reply_opener("That's the real root of it.")
+    assert not has_reflective_reply_opener("That sounds hard.")
+    assert not has_reflective_reply_opener(
+        "Your role seems clear enough, but decisions still route through Roma."
+    )

@@ -107,6 +107,46 @@ describe('Runtime contract fixtures', () => {
     ).toEqual({ ok: true });
   });
 
+  it('accepts an explicit reply plan and policy on runtime context', () => {
+    const request = readJson(
+      'fixtures/valid/process-message-request.json',
+    ) as RuntimeProcessMessageRequest;
+
+    const withPolicy: RuntimeProcessMessageRequest = {
+      ...request,
+      context: {
+        ...request.context,
+        replyPlan: {
+          dialogueAct: 'acknowledgement',
+          latestUserSubstance: null,
+          topicAnchor: 'Synthetic previous user message.',
+          memoryAnchors: [],
+          responseMove: 'continue_existing_thread',
+          mayInferFromBrevity: false,
+          questionPolicy: {
+            maxQuestions: 0,
+            reason: 'acknowledgement_no_new_substance',
+          },
+          requiredGrounding: [],
+          forbiddenMoves: ['comment_on_brevity'],
+        },
+        replyPolicy: {
+          maxChars: 680,
+          maxQuestions: 0,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
+      },
+    };
+
+    expect(
+      validateRuntimeProcessMessageRequest({
+        schemaDocument,
+        value: withPolicy,
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it.each(manifest.valid)('accepts valid $path', (fixture) => {
     const result = validateRuntimeContract({
       schemaDocument,

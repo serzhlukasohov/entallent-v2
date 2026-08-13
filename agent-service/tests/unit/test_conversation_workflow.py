@@ -156,6 +156,41 @@ def test_workflow_uses_injected_maf_agent_model_client_for_reply() -> None:
     assert "current user message:" in chat_client.last_user_message
 
 
+def test_workflow_regenerates_reply_once_for_deterministic_policy_violation() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = "ok"
+    request_body["context"]["replyPolicy"] = {
+        "maxChars": 180,
+        "maxQuestions": 0,
+        "allowReflectiveOpener": False,
+        "allowListFormatting": False,
+    }
+    chat_client = SequentialFakeChatClient(
+        [
+            "That, it seems, is the real root: overload. What is your action plan?",
+            "Leave that thread where it is for now.",
+        ]
+    )
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    result = workflow.run(request_body)
+
+    assert result["reply"] == {
+        "text": "Leave that thread where it is for now.",
+        "mode": "candidate",
+    }
+    assert chat_client.calls == 2
+    assert chat_client.last_user_message is not None
+    assert "Regenerate the reply once" in chat_client.last_user_message
+    assert "ask no questions in this turn" in chat_client.last_user_message
+    assert result["diagnostics"]["modelCalls"] == 2
+    assert result["diagnostics"]["modelRetryCount"] == 1
+
+
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "normal request text"
@@ -617,6 +652,22 @@ class FakeChatClient:
         self.calls += 1
         self.last_user_message = messages[-1].text
         return ChatResponse(messages=[Message("assistant", [self._reply])])
+
+
+class SequentialFakeChatClient:
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = replies
+        self.calls = 0
+        self.last_user_message: str | None = None
+
+    async def get_response(self, messages: Any, **kwargs: Any) -> Any:
+        from agent_framework import ChatResponse, Message
+
+        _ = kwargs
+        self.last_user_message = messages[-1].text
+        reply = self._replies[min(self.calls, len(self._replies) - 1)]
+        self.calls += 1
+        return ChatResponse(messages=[Message("assistant", [reply])])
 
 
 class FailingChatClient:

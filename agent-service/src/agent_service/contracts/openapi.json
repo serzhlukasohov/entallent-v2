@@ -259,6 +259,12 @@
             "items": {
               "$ref": "#/components/schemas/RuntimeGoal"
             }
+          },
+          "replyPlan": {
+            "$ref": "#/components/schemas/RuntimeReplyPlan"
+          },
+          "replyPolicy": {
+            "$ref": "#/components/schemas/RuntimeReplyPolicy"
           }
         }
       },
@@ -337,6 +343,195 @@
           "status": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      },
+      "RuntimeReplyPlan": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dialogueAct",
+          "latestUserSubstance",
+          "topicAnchor",
+          "memoryAnchors",
+          "responseMove",
+          "mayInferFromBrevity",
+          "questionPolicy",
+          "requiredGrounding",
+          "forbiddenMoves"
+        ],
+        "properties": {
+          "dialogueAct": {
+            "type": "string",
+            "enum": [
+              "new_substance",
+              "acknowledgement",
+              "continuation",
+              "correction",
+              "request",
+              "emotional_disclosure",
+              "closing"
+            ]
+          },
+          "latestUserSubstance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "topicAnchor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "memoryAnchors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeReplyMemoryAnchor"
+            }
+          },
+          "responseMove": {
+            "type": "string",
+            "enum": [
+              "address_new_substance",
+              "continue_existing_thread",
+              "answer_request",
+              "support_emotion",
+              "close_or_pause"
+            ]
+          },
+          "mayInferFromBrevity": {
+            "type": "boolean"
+          },
+          "questionPolicy": {
+            "$ref": "#/components/schemas/RuntimeReplyQuestionPolicy"
+          },
+          "requiredGrounding": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeReplyRequiredGrounding"
+            }
+          },
+          "forbiddenMoves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeReplyForbiddenMove"
+            }
+          }
+        }
+      },
+      "RuntimeReplyMemoryAnchor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "content"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "RuntimeReplyQuestionPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "maxQuestions",
+          "reason"
+        ],
+        "properties": {
+          "maxQuestions": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "strategy_disallows_questions",
+              "acknowledgement_no_new_substance",
+              "asked_recently",
+              "new_substance_allows_question"
+            ]
+          }
+        }
+      },
+      "RuntimeReplyRequiredGrounding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "category",
+          "content",
+          "requirement"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "memory"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requirement": {
+            "type": "string",
+            "enum": [
+              "mention_explicitly"
+            ]
+          }
+        }
+      },
+      "RuntimeReplyForbiddenMove": {
+        "type": "string",
+        "enum": [
+          "comment_on_brevity",
+          "diagnose",
+          "survey_probe",
+          "action_plan"
+        ]
+      },
+      "RuntimeReplyPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "maxChars",
+          "maxQuestions",
+          "allowReflectiveOpener",
+          "allowListFormatting"
+        ],
+        "properties": {
+          "maxChars": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maxQuestions": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ]
+          },
+          "allowReflectiveOpener": {
+            "type": "boolean"
+          },
+          "allowListFormatting": {
+            "type": "boolean"
           }
         }
       },

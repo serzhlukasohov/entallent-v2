@@ -1,4 +1,4 @@
-import type { SituationClassification } from './ai';
+import type { DialogueAct, SituationClassification } from './ai';
 
 export type RuntimeJsonPrimitive = string | number | boolean | null;
 export type RuntimeJsonValue =
@@ -54,6 +54,8 @@ export type RuntimeContext = {
   recentTurns: RuntimeRecentTurn[];
   memoryItems: RuntimeMemoryItem[];
   goals: RuntimeGoal[];
+  replyPlan?: RuntimeReplyPlan;
+  replyPolicy?: RuntimeReplyPolicy;
 };
 
 export type RuntimeRecentTurn = {
@@ -73,6 +75,57 @@ export type RuntimeGoal = {
   id: string;
   title: string;
   status: string;
+};
+
+export type RuntimeReplyPlan = {
+  dialogueAct: DialogueAct;
+  latestUserSubstance: string | null;
+  topicAnchor: string | null;
+  memoryAnchors: RuntimeReplyMemoryAnchor[];
+  responseMove:
+    | 'address_new_substance'
+    | 'continue_existing_thread'
+    | 'answer_request'
+    | 'support_emotion'
+    | 'close_or_pause';
+  mayInferFromBrevity: boolean;
+  questionPolicy: RuntimeReplyQuestionPolicy;
+  requiredGrounding: RuntimeReplyRequiredGrounding[];
+  forbiddenMoves: RuntimeReplyForbiddenMove[];
+};
+
+export type RuntimeReplyMemoryAnchor = {
+  category: string;
+  content: string;
+};
+
+export type RuntimeReplyQuestionPolicy = {
+  maxQuestions: 0 | 1;
+  reason:
+    | 'strategy_disallows_questions'
+    | 'acknowledgement_no_new_substance'
+    | 'asked_recently'
+    | 'new_substance_allows_question';
+};
+
+export type RuntimeReplyRequiredGrounding = {
+  source: 'memory';
+  category: string;
+  content: string;
+  requirement: 'mention_explicitly';
+};
+
+export type RuntimeReplyForbiddenMove =
+  | 'comment_on_brevity'
+  | 'diagnose'
+  | 'survey_probe'
+  | 'action_plan';
+
+export type RuntimeReplyPolicy = {
+  maxChars: number;
+  maxQuestions: 0 | 1;
+  allowReflectiveOpener: boolean;
+  allowListFormatting: boolean;
 };
 
 export type RuntimeProactiveContext = {

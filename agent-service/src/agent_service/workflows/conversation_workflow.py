@@ -295,8 +295,10 @@ class ConversationWorkflow:
             "emotionalState": [],
             "urgency": urgency,
             "confidence": 0.62,
-            "requiresSafetyCheck": primary_intent in {"potential_crisis", "burnout_signal", "harassment_signal", "conflict"},
-            "surveyAllowed": primary_intent not in {"potential_crisis", "burnout_signal", "harassment_signal"},
+            "requiresSafetyCheck": primary_intent
+            in {"potential_crisis", "burnout_signal", "harassment_signal", "conflict"},
+            "surveyAllowed": primary_intent
+            not in {"potential_crisis", "burnout_signal", "harassment_signal"},
             "reasoningSummary": f"Python workflow classified intent as {primary_intent}.",
             "reminderRequest": None,
             "dialogueAct": dialogue_act,
@@ -476,7 +478,10 @@ class ConversationWorkflow:
                 message="MAF model provider failed safely.",
             ) from error
 
-        state["modelCalls"] = int(state.get("modelCalls", 0)) + 1
+        retry_count = max(0, int(getattr(reply, "retry_count", 0)))
+        state["modelCalls"] = int(state.get("modelCalls", 0)) + 1 + retry_count
+        state["modelRetryCount"] = int(state.get("modelRetryCount", 0)) + retry_count
+        state["retryCount"] = int(state.get("retryCount", 0)) + retry_count
         state["reply"] = {
             "text": reply.text,
             "mode": "candidate",
@@ -572,7 +577,7 @@ class ConversationWorkflow:
                 "modelCalls": int(state.get("modelCalls", 0)),
                 "toolCalls": int(state.get("toolCalls", 0)),
                 "latencyMs": 0,
-                "retryCount": 0,
+                "retryCount": int(state.get("retryCount", 0)),
                 "modelRetryCount": int(state.get("modelRetryCount", 0)),
                 "toolRetryCount": 0,
                 "httpRetryCount": 0,
@@ -1018,7 +1023,7 @@ def _reply_contains_probe_content(reply_text: str, probe_question: dict[str, Any
         return True
 
     strategies = probe_question.get("probeStrategies")
-    if not isinstance(strategies, Sequence) or isinstance(strategies, (str, bytes)):
+    if not isinstance(strategies, Sequence) or isinstance(strategies, str | bytes):
         return False
 
     for strategy in strategies:

@@ -4,10 +4,19 @@ import { randomUUID } from 'crypto';
 import { Job } from 'bullmq';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { AGENT_RUNTIME_PORT, FEATURE_FLAGS, ProactiveCheckInUseCase, RUNTIME_CONTROL_FLAGS, PulseBacklogService } from '@entalent/application';
-import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/application';
+import {
+  AGENT_RUNTIME_PORT,
+  FEATURE_FLAGS,
+  ProactiveCheckInUseCase,
+  RUNTIME_CONTROL_FLAGS,
+  PulseBacklogService,
+  buildReplyPlan,
+} from '@entalent/application';
+import type { AgentRuntimePort, ConversationTurn, ProactivePulseConfig } from '@entalent/application';
+import type { RuntimeContext, SituationClassification } from '@entalent/contracts';
 import { conversations, memoryItems, messages, tenants, users } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
+import { AiService } from './ai.service';
 import { LlmRunRepository } from './llm-run.repository';
 import { DatabaseService } from '../database/database.service';
 import { FeatureFlagRepository } from '../feature-flags/feature-flag.repository';
@@ -40,6 +49,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly pulseBacklogService: PulseBacklogService,
     private readonly runtimeControls: RuntimeControlFlagRepository,
     private readonly featureFlags: FeatureFlagRepository,
+    private readonly ai: AiService,
     private readonly llmRunRepo: LlmRunRepository,
     private readonly db: DatabaseService,
   ) {
@@ -344,6 +354,23 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         .limit(12);
 
       const threadId = normalizeOptionalString(currentMessage.externalThreadId);
+      const recentTurns = recentRows
+        .slice()
+        .reverse()
+        .flatMap((row) => toRecentTurn(row));
+      const runtimeMemoryItems = memoryRows.map((row) => ({
+        id: row.id,
+        category: row.category,
+        content: row.content,
+        importance: Number(row.importance),
+      }));
+      const replyContext = await this.buildInboundReplyContext({
+        userName: normalizeOptionalString(currentMessage.userPreferredName) ?? 'there',
+        timezone: normalizeOptionalString(currentMessage.userTimezone),
+        turns: recentTurns,
+        memoryItems: runtimeMemoryItems,
+      });
+
       return {
         messageText: currentMessage.text,
         messageCreatedAt: toIsoString(currentMessage.occurredAt),
@@ -359,17 +386,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           threadId ?? 'dm',
         ].join(':'),
         runtimeContext: {
-          recentTurns: recentRows
-            .slice()
-            .reverse()
-            .flatMap((row) => toRecentTurn(row)),
-          memoryItems: memoryRows.map((row) => ({
-            id: row.id,
-            category: row.category,
-            content: row.content,
-            importance: Number(row.importance),
-          })),
+          recentTurns,
+          memoryItems: runtimeMemoryItems,
           goals: [],
+          ...replyContext,
         },
       };
     } catch {
@@ -449,6 +469,17 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt))
       .limit(12);
 
+    const recentTurns = recentRows
+      .slice()
+      .reverse()
+      .flatMap((row) => toRecentTurn(row));
+    const runtimeMemoryItems = memoryRows.map((row) => ({
+      id: row.id,
+      category: row.category,
+      content: row.content,
+      importance: Number(row.importance),
+    }));
+
     return {
       messageText: options.probeQuestion
         ? `Start a proactive pulse check-in about ${options.probeQuestion.title}.`
@@ -464,17 +495,15 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         'dm',
       ].join(':'),
       runtimeContext: {
-        recentTurns: recentRows
-          .slice()
-          .reverse()
-          .flatMap((row) => toRecentTurn(row)),
-        memoryItems: memoryRows.map((row) => ({
-          id: row.id,
-          category: row.category,
-          content: row.content,
-          importance: Number(row.importance),
-        })),
+        recentTurns,
+        memoryItems: runtimeMemoryItems,
         goals: [],
+        replyPolicy: {
+          maxChars: maxReplyChars('short'),
+          maxQuestions: 1,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
       },
       proactiveContext: {
         reason: 'pulse_check_in',
@@ -491,6 +520,46 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           : {}),
       },
     };
+  }
+
+  private async buildInboundReplyContext(input: {
+    userName: string;
+    timezone?: string;
+    turns: RuntimeContext['recentTurns'];
+    memoryItems: RuntimeContext['memoryItems'];
+  }): Promise<Pick<RuntimeContext, 'replyPlan' | 'replyPolicy'>> {
+    try {
+      const turns = input.turns.map((turn): ConversationTurn => ({
+        role: turn.role,
+        content: turn.content,
+        timestamp: new Date(turn.timestamp),
+      }));
+      const classification = await this.ai.classifySituation(turns, {
+        userName: input.userName,
+        now: new Date().toISOString(),
+        timezone: input.timezone,
+      });
+      const includeFollowUpQuestion = includeFollowUpQuestionFor(classification);
+      const replyPlan = buildReplyPlan({
+        classification,
+        memoryItems: input.memoryItems,
+        includeFollowUpQuestion,
+        lastReplyAskedQuestion: lastAssistantTurnAskedQuestion(input.turns),
+        sensitiveMode: isSensitiveClassification(classification),
+      });
+      const maxQuestions = replyPlan.questionPolicy.maxQuestions;
+      return {
+        replyPlan,
+        replyPolicy: {
+          maxChars: maxReplyChars(maxResponseLengthFor(classification)),
+          maxQuestions,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
+      };
+    } catch {
+      return {};
+    }
   }
 }
 
@@ -546,4 +615,63 @@ function toRecentTurn(row: {
   } catch {
     return [];
   }
+}
+
+function includeFollowUpQuestionFor(classification: SituationClassification): boolean {
+  const mode = conversationModeFor(classification);
+  return mode === 'coaching' || mode === 'supportive' || mode === 'normal';
+}
+
+function conversationModeFor(classification: SituationClassification): string {
+  switch (classification.primaryIntent) {
+    case 'support':
+      return 'supportive';
+    case 'coaching':
+    case 'goal_setting':
+    case 'progress_update':
+      return 'coaching';
+    case 'survey_opportunity':
+      return 'survey_probe';
+    case 'potential_crisis':
+      return 'crisis';
+    case 'burnout_signal':
+    case 'harassment_signal':
+      return 'sensitive';
+    case 'celebration':
+      return 'celebration';
+    case 'onboarding':
+      return 'onboarding';
+    case 'casual_conversation':
+    default:
+      return 'normal';
+  }
+}
+
+function isSensitiveClassification(classification: SituationClassification): boolean {
+  const mode = conversationModeFor(classification);
+  return mode === 'sensitive' || mode === 'crisis';
+}
+
+function maxResponseLengthFor(classification: SituationClassification): 'short' | 'medium' {
+  return classification.urgency === 'high' ? 'short' : 'medium';
+}
+
+function maxReplyChars(maxResponseLength: 'short' | 'medium' | 'long'): number {
+  if (maxResponseLength === 'short') {
+    return 360;
+  }
+  if (maxResponseLength === 'medium') {
+    return 680;
+  }
+  return 980;
+}
+
+function lastAssistantTurnAskedQuestion(turns: RuntimeContext['recentTurns']): boolean {
+  for (const turn of [...turns].reverse()) {
+    if (turn.role !== 'assistant') {
+      continue;
+    }
+    return turn.content.includes('?');
+  }
+  return false;
 }

@@ -57,6 +57,7 @@ function createProcessor(options: {
     isUserDenylisted: ReturnType<typeof vi.fn>;
   };
   featureFlags?: { isEnabled: ReturnType<typeof vi.fn> };
+  ai?: { classifySituation: ReturnType<typeof vi.fn> };
   llmRunRepo?: { record: ReturnType<typeof vi.fn> };
   db?: unknown;
 } = {}) {
@@ -81,6 +82,9 @@ function createProcessor(options: {
   const featureFlags = options.featureFlags ?? {
     isEnabled: vi.fn(async () => true),
   };
+  const ai = options.ai ?? {
+    classifySituation: vi.fn(async () => runtimeResult.classification),
+  };
   const llmRunRepo = options.llmRunRepo ?? {
     record: vi.fn(async () => undefined),
   };
@@ -92,6 +96,7 @@ function createProcessor(options: {
       pulseBacklogService as never,
       runtimeControls as never,
       featureFlags as never,
+      ai as never,
       llmRunRepo as never,
       (options.db ?? {}) as never,
     ),
@@ -100,6 +105,7 @@ function createProcessor(options: {
     pulseBacklogService,
     runtimeControls,
     featureFlags,
+    ai,
     llmRunRepo,
   };
 }
@@ -228,7 +234,15 @@ describe('ConversationProcessor runtime ledger recording', () => {
         select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
       },
     };
-    const { processor } = createProcessor({ agentRuntime, llmRunRepo, db });
+    const ai = {
+      classifySituation: vi.fn(async () => ({
+        ...runtimeResult.classification,
+        dialogueAct: 'acknowledgement',
+        latestUserSubstance: null,
+        topicAnchor: 'I feel stuck but I can keep going.',
+      })),
+    };
+    const { processor } = createProcessor({ agentRuntime, llmRunRepo, db, ai });
 
     await processor.process({
       id: 'job-1',
@@ -267,8 +281,42 @@ describe('ConversationProcessor runtime ledger recording', () => {
           },
         ],
         goals: [],
+        replyPlan: expect.objectContaining({
+          dialogueAct: 'acknowledgement',
+          latestUserSubstance: null,
+          topicAnchor: 'I feel stuck but I can keep going.',
+          questionPolicy: {
+            maxQuestions: 0,
+            reason: 'acknowledgement_no_new_substance',
+          },
+        }),
+        replyPolicy: {
+          maxChars: 680,
+          maxQuestions: 0,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
       },
     }));
+    expect(ai.classifySituation).toHaveBeenCalledWith(
+      [
+        {
+          role: 'assistant',
+          content: 'Earlier reply',
+          timestamp: new Date('2026-08-06T17:55:00.000Z'),
+        },
+        {
+          role: 'user',
+          content: 'I feel stuck but I can keep going.',
+          timestamp: new Date('2026-08-06T18:00:00.000Z'),
+        },
+      ],
+      {
+        userName: 'Test User',
+        now: expect.any(String),
+        timezone: 'Europe/Warsaw',
+      },
+    );
     expect(db.client.select).toHaveBeenCalledTimes(3);
   });
 
@@ -394,6 +442,14 @@ describe('ConversationProcessor runtime ledger recording', () => {
           probeStrategies: ['Ask what success looks like this week.'],
         },
       },
+      runtimeContext: expect.objectContaining({
+        replyPolicy: {
+          maxChars: 360,
+          maxQuestions: 1,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
+      }),
     }));
     expect(pulseBacklogService.recordProbeSent).toHaveBeenCalledWith(
       '55555555-5555-4555-8555-555555555555',
