@@ -316,6 +316,7 @@ export type RuntimeDiagnostics = {
     | 'workflow_static'
     | 'llm'
     | 'deterministic_social_reply'
+    | 'deterministic_acknowledgement_reply'
     | 'deterministic_support_emotion_reply';
 };
 

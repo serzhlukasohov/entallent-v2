@@ -708,6 +708,10 @@ def deterministic_reply_for_plan(request: dict[str, Any]) -> tuple[str, str] | N
     if social_reply is not None:
         return social_reply, "deterministic_social_reply"
 
+    acknowledgement_reply = deterministic_acknowledgement_reply_for_plan(request)
+    if acknowledgement_reply is not None:
+        return acknowledgement_reply, "deterministic_acknowledgement_reply"
+
     support_reply = deterministic_support_emotion_reply_for_plan(request)
     if support_reply is not None:
         return support_reply, "deterministic_support_emotion_reply"
@@ -733,6 +737,32 @@ def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str
     return base_reply
 
 
+def deterministic_acknowledgement_reply_for_plan(
+    request: dict[str, Any],
+) -> str | None:
+    if reply_plan_dialogue_act(request) != "acknowledgement":
+        return None
+    if reply_plan_response_move(request) != "continue_existing_thread":
+        return None
+    if explicit_reply_plan_max_questions(request) != 0:
+        return None
+    if reply_plan_may_infer_from_brevity(request) is not False:
+        return None
+    if not reply_plan_latest_user_substance_is_explicit_null(request):
+        return None
+    if reply_plan_latest_user_substance(request) is not None:
+        return None
+    if not reply_plan_required_grounding_is_empty(request):
+        return None
+
+    base_reply = "Понял."
+    max_chars = explicit_reply_policy_max_chars(request)
+    if max_chars is not None and len(base_reply) > max_chars:
+        return None
+
+    return base_reply
+
+
 def reply_plan_dialogue_act(request: dict[str, Any]) -> str | None:
     context = request.get("context")
     if not isinstance(context, Mapping):
@@ -742,6 +772,57 @@ def reply_plan_dialogue_act(request: dict[str, Any]) -> str | None:
         return None
     dialogue_act = plan.get("dialogueAct")
     return dialogue_act if isinstance(dialogue_act, str) else None
+
+
+def reply_plan_may_infer_from_brevity(request: dict[str, Any]) -> bool | None:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return None
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return None
+    may_infer = plan.get("mayInferFromBrevity")
+    return may_infer if isinstance(may_infer, bool) else None
+
+
+def reply_plan_latest_user_substance_is_explicit_null(
+    request: dict[str, Any],
+) -> bool:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return False
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return False
+    return (
+        "latestUserSubstance" in plan
+        and plan.get("latestUserSubstance") is None
+    )
+
+
+def reply_plan_latest_user_substance(request: dict[str, Any]) -> str | None:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return None
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return None
+    latest_user_substance = plan.get("latestUserSubstance")
+    if not isinstance(latest_user_substance, str):
+        return None
+    normalized = " ".join(latest_user_substance.split())
+    return normalized if normalized else None
+
+
+def reply_plan_required_grounding_is_empty(request: dict[str, Any]) -> bool:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return False
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return False
+    required_grounding = plan.get("requiredGrounding")
+    return isinstance(required_grounding, list) and len(required_grounding) == 0
 
 
 def reply_plan_response_move(request: dict[str, Any]) -> str | None:

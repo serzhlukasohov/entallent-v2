@@ -326,6 +326,48 @@ def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
     assert result["diagnostics"]["replyRenderer"] == "deterministic_support_emotion_reply"
 
 
+def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = "понял"
+    request_body["context"]["replyPlan"] = {
+        "dialogueAct": "acknowledgement",
+        "latestUserSubstance": None,
+        "topicAnchor": "focus planning",
+        "memoryAnchors": [],
+        "responseMove": "continue_existing_thread",
+        "mayInferFromBrevity": False,
+        "questionPolicy": {
+            "maxQuestions": 0,
+            "reason": "acknowledgement_no_new_substance",
+        },
+        "requiredGrounding": [],
+        "forbiddenMoves": ["comment_on_brevity", "survey_probe"],
+    }
+    request_body["context"]["replyPolicy"] = {
+        "maxChars": 80,
+        "maxQuestions": 0,
+        "allowReflectiveOpener": False,
+        "allowListFormatting": False,
+    }
+    chat_client = SequentialFakeChatClient(["Понял, держимся короткого шага."])
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    result = workflow.run(request_body)
+
+    assert result["reply"] == {
+        "text": "Понял.",
+        "mode": "candidate",
+    }
+    assert chat_client.calls == 0
+    assert result["diagnostics"]["modelCalls"] == 0
+    assert result["diagnostics"]["modelRetryCount"] == 0
+    assert result["diagnostics"]["replyRenderer"] == "deterministic_acknowledgement_reply"
+
+
 def test_workflow_does_not_render_internal_support_grounding() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "сегодня тяжело собраться"

@@ -272,6 +272,174 @@ def test_model_client_renders_social_reply_from_reply_plan_without_model_call() 
     assert chat_client.call_count == 0
 
 
+def test_model_client_renders_acknowledgement_from_reply_plan_without_model_call() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "A raw acknowledgement the renderer must not classify."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "acknowledgement",
+                        "latestUserSubstance": None,
+                        "topicAnchor": "prior task planning",
+                        "memoryAnchors": [],
+                        "responseMove": "continue_existing_thread",
+                        "mayInferFromBrevity": False,
+                        "questionPolicy": {
+                            "maxQuestions": 0,
+                            "reason": "acknowledgement_no_new_substance",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["comment_on_brevity", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Понял."
+    assert reply.renderer_path == "deterministic_acknowledgement_reply"
+    assert chat_client.call_count == 0
+
+
+def test_model_client_keeps_substantive_acknowledgement_on_model_path() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "понял, давай завтра"},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "acknowledgement",
+                        "latestUserSubstance": "давай завтра",
+                        "topicAnchor": "follow-up timing",
+                        "memoryAnchors": [],
+                        "responseMove": "continue_existing_thread",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 0,
+                            "reason": "acknowledgement_no_new_substance",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("plan_override", "expected_text"),
+    [
+        (
+            {
+                "requiredGrounding": [
+                    {
+                        "source": "memory",
+                        "category": "commitment",
+                        "content": "follow up tomorrow",
+                        "requirement": "mention_explicitly",
+                    },
+                ],
+            },
+            "Safe candidate reply.",
+        ),
+        ({"mayInferFromBrevity": True}, "Safe candidate reply."),
+        ({"latestUserSubstance": "   "}, "Safe candidate reply."),
+    ],
+)
+def test_model_client_keeps_non_plain_acknowledgement_on_model_path(
+    plan_override: dict[str, Any],
+    expected_text: str,
+) -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+    reply_plan = {
+        "dialogueAct": "acknowledgement",
+        "latestUserSubstance": None,
+        "topicAnchor": "prior task planning",
+        "memoryAnchors": [],
+        "responseMove": "continue_existing_thread",
+        "mayInferFromBrevity": False,
+        "questionPolicy": {
+            "maxQuestions": 0,
+            "reason": "acknowledgement_no_new_substance",
+        },
+        "requiredGrounding": [],
+        "forbiddenMoves": ["comment_on_brevity", "survey_probe"],
+    }
+    reply_plan.update(plan_override)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "понял"},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": reply_plan,
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == expected_text
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
+def test_model_client_keeps_missing_substance_field_acknowledgement_on_model_path() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "понял"},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "acknowledgement",
+                        "topicAnchor": "prior task planning",
+                        "memoryAnchors": [],
+                        "responseMove": "continue_existing_thread",
+                        "mayInferFromBrevity": False,
+                        "questionPolicy": {
+                            "maxQuestions": 0,
+                            "reason": "acknowledgement_no_new_substance",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["comment_on_brevity", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
 def test_model_client_renders_no_question_support_emotion_without_model_call() -> None:
     chat_client = CountingChatClient()
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
