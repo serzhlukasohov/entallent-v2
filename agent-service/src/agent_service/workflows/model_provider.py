@@ -65,6 +65,20 @@ REFLECTIVE_REPLY_OPENER_PATTERNS = (
     ),
     re.compile(r"^i\s+(?:understand|hear)\b", re.IGNORECASE),
     re.compile(r"^glad\s+to\s+hear\s+back\b", re.IGNORECASE),
+    re.compile(r"^похоже\b", re.IGNORECASE),
+    re.compile(r"^кажется\b", re.IGNORECASE),
+    re.compile(r"^звучит\s+так\b", re.IGNORECASE),
+    re.compile(r"^я\s+(?:понимаю|слышу)\b", re.IGNORECASE),
+)
+ACTION_PLAN_PHRASE_PATTERNS = (
+    re.compile(r"\b(?:try|start by|you can|it may help to)\b", re.IGNORECASE),
+    re.compile(r"\b(?:step|plan|checklist)\b", re.IGNORECASE),
+    re.compile(r"\b(?:попробуй|попробовать|можно попробовать|начни с)\b", re.IGNORECASE),
+    re.compile(r"\b(?:шаг|план|чеклист)\b", re.IGNORECASE),
+)
+OPERATIONAL_SELF_STATUS_PATTERNS = (
+    re.compile(r"\b(?:working|operational|normal mode|how can i help)\b", re.IGNORECASE),
+    re.compile(r"\b(?:работаю|штатн(?:ом|ый) режим|чем могу помочь)\b", re.IGNORECASE),
 )
 
 
@@ -330,6 +344,8 @@ def build_candidate_reply_prompt(
             "'I understand', 'Glad to hear back', or 'It seems like'.",
             "Do not use bullets, numbered steps, productivity frameworks, or "
             "support-script language unless the employee explicitly asks for instructions.",
+            "If the employee only greets you or asks how you are, answer socially "
+            "and briefly; do not describe operational status or say how you can help.",
             "Do not say that memory, follow-ups, goals, surveys, or Slack messages were saved.",
         ],
     )
@@ -478,6 +494,10 @@ def candidate_reply_policy_violations(
             violations.append("ask at most one question")
     if not policy["allow_list_formatting"] and contains_list_format(text):
         violations.append("remove bullets, numbered steps, and checklist formatting")
+    if forbids_action_plan(request) and contains_action_plan_move(text):
+        violations.append("support the emotion without advice, steps, tactics, or an action plan")
+    if is_social_greeting_or_checkin(request) and contains_operational_self_status(text):
+        violations.append("answer socially, not with operational status or support-bot language")
     return violations
 
 
@@ -605,6 +625,42 @@ def contains_list_format(text: str) -> bool:
         len(line) > 2 and line[0].isdigit() and line[1:3] in {". ", ") "}
         for line in (item.lstrip() for item in lines)
     )
+
+
+def forbids_action_plan(request: dict[str, Any]) -> bool:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return False
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return False
+    forbidden_moves = plan.get("forbiddenMoves")
+    return isinstance(forbidden_moves, list) and "action_plan" in forbidden_moves
+
+
+def contains_action_plan_move(text: str) -> bool:
+    return any(pattern.search(text) for pattern in ACTION_PLAN_PHRASE_PATTERNS)
+
+
+def is_social_greeting_or_checkin(request: dict[str, Any]) -> bool:
+    text = request_message_text(request)
+    if text is None:
+        return False
+    normalized = re.sub(r"[^a-zа-яё0-9? ]", " ", text.lower()).strip()
+    return normalized in {
+        "hi",
+        "hello",
+        "hey",
+        "how are you",
+        "how are you?",
+        "привет",
+        "как дела",
+        "как дела?",
+    }
+
+
+def contains_operational_self_status(text: str) -> bool:
+    return any(pattern.search(text) for pattern in OPERATIONAL_SELF_STATUS_PATTERNS)
 
 
 def chat_messages_payload(messages: Sequence[Message]) -> list[dict[str, str]]:

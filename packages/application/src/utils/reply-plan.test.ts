@@ -65,6 +65,7 @@ describe('buildReplyPlan', () => {
     expect(brief.responseMove).toBe('support_emotion');
     expect(brief.latestUserSubstance).toBe('I am barely sleeping');
     expect(brief.mayInferFromBrevity).toBe(true);
+    expect(brief.forbiddenMoves).toContain('action_plan');
   });
 
   it('selects concrete memory anchors for emotional turns', () => {

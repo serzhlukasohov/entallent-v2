@@ -38,6 +38,7 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
     }),
     requiredGrounding: buildRequiredGrounding(responseMove, memoryAnchors),
     forbiddenMoves: buildForbiddenMoves({
+      responseMove,
       mayInferFromBrevity,
       sensitiveMode: input.sensitiveMode ?? false,
       surveyProbeQuestionId: input.surveyProbeQuestionId,
@@ -122,12 +123,14 @@ function normalizePriority(priority: number): number {
 }
 
 function buildForbiddenMoves(input: {
+  responseMove: ReplyPlan['responseMove'];
   mayInferFromBrevity: boolean;
   sensitiveMode: boolean;
   surveyProbeQuestionId?: string;
 }): ReplyPlan['forbiddenMoves'] {
   const forbidden = new Set<ReplyPlan['forbiddenMoves'][number]>();
   if (!input.mayInferFromBrevity) forbidden.add('comment_on_brevity');
+  if (input.responseMove === 'support_emotion') forbidden.add('action_plan');
   if (input.sensitiveMode) {
     forbidden.add('diagnose');
     forbidden.add('action_plan');

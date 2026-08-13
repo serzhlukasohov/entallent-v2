@@ -213,6 +213,7 @@ def test_candidate_reply_prompt_bans_generic_assistant_moves() -> None:
     assert "do not paraphrase the employee back to themselves" in prompt
     assert "Do not open with formulaic validation" in prompt
     assert "Do not use bullets, numbered steps, productivity frameworks" in prompt
+    assert "do not describe operational status" in prompt
 
 
 def test_candidate_reply_policy_violations_find_old_provider_gates() -> None:
@@ -251,6 +252,60 @@ def test_candidate_reply_policy_violations_find_old_provider_gates() -> None:
     ]
 
 
+def test_candidate_reply_policy_violations_find_russian_reflective_and_action_plan_moves() -> None:
+    violations = candidate_reply_policy_violations(
+        text=(
+            "Похоже, сегодня мозг не хочет держать одну нить. "
+            "Можно попробовать на 10-15 минут убрать всё лишнее и сделать один шаг."
+        ),
+        request={
+            "message": {"text": "Сегодня тяжело сфокусироваться."},
+            "context": {
+                "replyPlan": {
+                    "dialogueAct": "emotional_disclosure",
+                    "responseMove": "support_emotion",
+                    "forbiddenMoves": ["action_plan"],
+                    "questionPolicy": {"maxQuestions": 1},
+                },
+                "replyPolicy": {
+                    "maxChars": 420,
+                    "maxQuestions": 1,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
+        },
+        state={},
+    )
+
+    assert violations == [
+        "open with substance, not formulaic validation or paraphrase",
+        "support the emotion without advice, steps, tactics, or an action plan",
+    ]
+
+
+def test_candidate_reply_policy_violations_find_operational_self_status() -> None:
+    violations = candidate_reply_policy_violations(
+        text="Привет! Всё нормально, работаю в штатном режиме. Чем могу помочь?",
+        request={
+            "message": {"text": "Привет"},
+            "context": {
+                "replyPolicy": {
+                    "maxChars": 420,
+                    "maxQuestions": 1,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
+        },
+        state={},
+    )
+
+    assert violations == [
+        "answer socially, not with operational status or support-bot language",
+    ]
+
+
 def test_reflective_reply_opener_matches_old_provider_antipatterns() -> None:
     assert has_reflective_reply_opener(
         "That, it seems, is the real root: decisions keep bouncing."
@@ -258,6 +313,8 @@ def test_reflective_reply_opener_matches_old_provider_antipatterns() -> None:
     assert has_reflective_reply_opener("Sounds like a classic overload.")
     assert has_reflective_reply_opener("What you're describing is burnout.")
     assert has_reflective_reply_opener("That's the real root of it.")
+    assert has_reflective_reply_opener("Похоже, сегодня сложно держать фокус.")
+    assert has_reflective_reply_opener("Я понимаю, день вышел тяжелым.")
     assert not has_reflective_reply_opener("That sounds hard.")
     assert not has_reflective_reply_opener(
         "Your role seems clear enough, but decisions still route through Roma."
