@@ -89,7 +89,62 @@ def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
     )
 
     assert "agent initiated context" in prompt
-    assert "Start a short warm pulse check-in" in prompt
+    assert "Start a short, human pulse check-in" in prompt
+    assert "Do not force the probe" in prompt
     assert "Probe topic: Role Clarity." in prompt
     assert "Ask what success looks like this week." in prompt
-    assert "Do not mention survey mechanics or internal probe IDs." in prompt
+    assert "Do not mention survey mechanics, assessment language" in prompt
+
+
+def test_candidate_reply_prompt_includes_acknowledgement_policy() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "message": {"text": "ok"},
+            "context": {
+                "memoryItems": [],
+                "recentTurns": [
+                    {"role": "user", "content": "there is too much to do, so no time to rest"},
+                    {
+                        "role": "assistant",
+                        "content": "What is the smallest piece that can wait until tomorrow?",
+                    },
+                ],
+            },
+        },
+        state={
+            "classification": {
+                "dialogueAct": "acknowledgement",
+                "latestUserSubstance": None,
+                "topicAnchor": "there is too much to do, so no time to rest",
+            },
+            "riskAssessment": {"severity": "none"},
+            "contextSummary": {"memoryItemCount": 0, "recentTurnCount": 2},
+            "policyDecision": "allow",
+        },
+    )
+
+    assert "acknowledgement: treat the latest message as a backchannel" in prompt
+    assert "Do not say 'glad to hear back'" in prompt
+    assert "Do not add a checklist or action plan" in prompt
+    assert "there is too much to do, so no time to rest" in prompt
+
+
+def test_candidate_reply_prompt_bans_generic_assistant_moves() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "message": {"text": "there is too much to do, so no time to rest"},
+            "context": {"memoryItems": [], "recentTurns": []},
+        },
+        state={
+            "classification": {
+                "dialogueAct": "emotional_disclosure",
+                "latestUserSubstance": "there is too much to do, so no time to rest",
+            },
+            "riskAssessment": {"severity": "none"},
+            "policyDecision": "allow",
+        },
+    )
+
+    assert "do not paraphrase the employee back to themselves" in prompt
+    assert "Do not open with formulaic validation" in prompt
+    assert "Do not use bullets, numbered steps, productivity frameworks" in prompt

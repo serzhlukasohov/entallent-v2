@@ -65,8 +65,18 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
         )
         AND NOT EXISTS (
           SELECT 1 FROM messages m
-          WHERE m.user_id = u.id AND m.direction = 'outbound'
-            AND m.message_type IN ('proactive_check_in', 'proactive_follow_up', 'reminder')
+          WHERE m.user_id = u.id
+            AND (
+              (
+                m.direction = 'outbound'
+                AND m.message_type IN ('proactive_check_in', 'proactive_follow_up', 'reminder')
+              )
+              OR (
+                m.direction = 'inbound'
+                AND m.sender_type = 'system'
+                AND m.message_type = 'proactive_check_in_request'
+              )
+            )
             AND m.occurred_at > now() - make_interval(days => ${params.minCheckInGapDays})
         )
         AND NOT EXISTS (
