@@ -730,17 +730,7 @@ def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str
     if max_chars is not None and len(base_reply) > max_chars:
         return None
 
-    grounding = first_required_grounding_content(request)
-    if not grounding:
-        return base_reply
-
-    grounded_reply = (
-        f"Да, тяжелый момент, особенно на фоне {grounding}. "
-        "Жаль, что сейчас так давит."
-    )
-    if max_chars is not None and len(grounded_reply) > max_chars:
-        return base_reply
-    return grounded_reply
+    return base_reply
 
 
 def reply_plan_dialogue_act(request: dict[str, Any]) -> str | None:
