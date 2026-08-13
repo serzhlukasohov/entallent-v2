@@ -548,10 +548,14 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         sensitiveMode: isSensitiveClassification(classification),
       });
       const maxQuestions = replyPlan.questionPolicy.maxQuestions;
+      const maxChars = maxReplyCharsForReplyPlan(
+        replyPlan,
+        maxReplyChars(maxResponseLengthFor(classification)),
+      );
       return {
         replyPlan,
         replyPolicy: {
-          maxChars: maxReplyChars(maxResponseLengthFor(classification)),
+          maxChars,
           maxQuestions,
           allowReflectiveOpener: false,
           allowListFormatting: false,
@@ -664,6 +668,20 @@ function maxReplyChars(maxResponseLength: 'short' | 'medium' | 'long'): number {
     return 680;
   }
   return 980;
+}
+
+function maxReplyCharsForReplyPlan(
+  replyPlan: RuntimeContext['replyPlan'],
+  defaultMaxChars: number,
+): number {
+  if (
+    replyPlan?.dialogueAct === 'acknowledgement' &&
+    replyPlan.latestUserSubstance === null &&
+    replyPlan.mayInferFromBrevity === false
+  ) {
+    return Math.min(defaultMaxChars, 120);
+  }
+  return defaultMaxChars;
 }
 
 function lastAssistantTurnAskedQuestion(turns: RuntimeContext['recentTurns']): boolean {

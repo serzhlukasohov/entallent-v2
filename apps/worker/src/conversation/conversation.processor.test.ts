@@ -291,7 +291,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
           },
         }),
         replyPolicy: {
-          maxChars: 680,
+          maxChars: 120,
           maxQuestions: 0,
           allowReflectiveOpener: false,
           allowListFormatting: false,

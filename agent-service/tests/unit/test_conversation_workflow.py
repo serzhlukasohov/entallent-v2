@@ -265,6 +265,56 @@ def test_workflow_uses_deterministic_support_reply_after_emotional_retry_violati
     assert result["diagnostics"]["modelRetryCount"] == 1
 
 
+def test_workflow_uses_deterministic_social_reply_for_no_substance_acknowledgement() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = "как ты?"
+    request_body["context"]["replyPlan"] = {
+        "dialogueAct": "acknowledgement",
+        "latestUserSubstance": None,
+        "topicAnchor": None,
+        "memoryAnchors": [],
+        "responseMove": "continue_existing_thread",
+        "mayInferFromBrevity": False,
+        "questionPolicy": {
+            "maxQuestions": 1,
+            "reason": "acknowledgement_no_new_substance",
+        },
+        "requiredGrounding": [],
+        "forbiddenMoves": ["comment_on_brevity"],
+    }
+    request_body["context"]["replyPolicy"] = {
+        "maxChars": 120,
+        "maxQuestions": 1,
+        "allowReflectiveOpener": False,
+        "allowListFormatting": False,
+    }
+    chat_client = SequentialFakeChatClient(
+        [
+            (
+                "Потихоньку, но держусь. Сегодня хочется чего-то совсем простого — "
+                "тишины и без спешки. Надеюсь, у тебя тоже будет шанс хотя бы немного "
+                "выдохнуть."
+            ),
+            "Потихоньку, но держусь. Сегодня всё ещё хочется тишины.",
+        ]
+    )
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    result = workflow.run(request_body)
+
+    assert result["reply"] == {
+        "text": "Нормально, спасибо. А ты как?",
+        "mode": "candidate",
+    }
+    assert chat_client.calls == 0
+    assert result["diagnostics"]["modelCalls"] == 1
+    assert result["diagnostics"]["modelRetryCount"] == 0
+
+
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "normal request text"

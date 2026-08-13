@@ -146,6 +146,12 @@ class AgentFrameworkConversationModelClient:
         state: dict[str, Any],
     ) -> ConversationModelReply:
         self._safety_verdicts = []
+        social_reply = deterministic_social_checkin_reply(request)
+        if (
+            social_reply is not None
+            and reply_plan_is_no_substance_acknowledgement(request)
+        ):
+            return ConversationModelReply(text=social_reply)
         prompt = build_candidate_reply_prompt(request=request, state=state)
         try:
             input_verdict = await self._inspect_input(prompt=prompt, request=request)
@@ -215,6 +221,8 @@ class AgentFrameworkConversationModelClient:
             )
             if remaining_violations:
                 fallback_text = deterministic_support_emotion_reply(request, state)
+                if fallback_text is None:
+                    fallback_text = deterministic_social_checkin_reply(request)
                 if fallback_text:
                     text = fallback_text
                     remaining_violations = candidate_reply_policy_violations(
@@ -745,6 +753,30 @@ def deterministic_support_emotion_reply(
     return "Да, тяжёлый момент. Жаль, что сейчас так давит."
 
 
+def deterministic_social_checkin_reply(request: dict[str, Any]) -> str | None:
+    if not is_social_greeting_or_checkin(request):
+        return None
+    text = request_message_text(request) or ""
+    normalized = re.sub(r"[^a-zа-яё0-9? ]", " ", text.lower()).strip()
+    if normalized in {"hi", "hello", "hey", "привет"}:
+        return "Привет."
+    return "Нормально, спасибо. А ты как?"
+
+
+def reply_plan_is_no_substance_acknowledgement(request: dict[str, Any]) -> bool:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return False
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return False
+    return (
+        plan.get("dialogueAct") == "acknowledgement"
+        and plan.get("latestUserSubstance") is None
+        and plan.get("mayInferFromBrevity") is False
+    )
+
+
 def contains_action_plan_move(text: str) -> bool:
     return any(pattern.search(text) for pattern in ACTION_PLAN_PHRASE_PATTERNS)
 
@@ -763,6 +795,8 @@ def is_social_greeting_or_checkin(request: dict[str, Any]) -> bool:
         "привет",
         "как дела",
         "как дела?",
+        "как ты",
+        "как ты?",
     }
 
 

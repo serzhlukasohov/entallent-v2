@@ -458,6 +458,32 @@ def test_candidate_reply_policy_violations_find_operational_self_status() -> Non
     ]
 
 
+def test_candidate_reply_policy_violations_apply_social_checkin_reply_policy() -> None:
+    violations = candidate_reply_policy_violations(
+        text=(
+            "Потихоньку, но держусь. Сегодня хочется чего-то совсем простого — "
+            "тишины и без спешки. Надеюсь, у тебя тоже будет шанс хотя бы немного "
+            "выдохнуть."
+        ),
+        request={
+            "message": {"text": "как ты?"},
+            "context": {
+                "replyPolicy": {
+                    "maxChars": 120,
+                    "maxQuestions": 1,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
+        },
+        state={},
+    )
+
+    assert violations == [
+        "keep the reply under 120 characters",
+    ]
+
+
 def test_reflective_reply_opener_matches_old_provider_antipatterns() -> None:
     assert has_reflective_reply_opener(
         "That, it seems, is the real root: decisions keep bouncing."
