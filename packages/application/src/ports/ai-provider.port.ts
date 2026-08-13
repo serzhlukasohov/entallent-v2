@@ -49,12 +49,21 @@ export interface ReplyPlan {
   latestUserSubstance: string | null;
   topicAnchor: string | null;
   memoryAnchors: Array<{ category: string; content: string }>;
-  responseMove: 'address_new_substance' | 'continue_existing_thread' | 'answer_request' | 'support_emotion' | 'close_or_pause';
+  responseMove:
+    | 'social_greeting'
+    | 'social_reply'
+    | 'address_new_substance'
+    | 'continue_existing_thread'
+    | 'answer_request'
+    | 'support_emotion'
+    | 'close_or_pause';
   mayInferFromBrevity: boolean;
   questionPolicy: {
     maxQuestions: 0 | 1;
     reason:
       | 'strategy_disallows_questions'
+      | 'greeting_no_question'
+      | 'social_checkin_returns_question'
       | 'acknowledgement_no_new_substance'
       | 'asked_recently'
       | 'new_substance_allows_question';
@@ -65,7 +74,7 @@ export interface ReplyPlan {
     content: string;
     requirement: 'mention_explicitly';
   }>;
-  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'action_plan'>;
+  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan'>;
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */

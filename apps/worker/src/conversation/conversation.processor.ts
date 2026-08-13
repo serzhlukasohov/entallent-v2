@@ -679,9 +679,11 @@ function maxReplyCharsForReplyPlan(
   defaultMaxChars: number,
 ): number {
   if (
-    replyPlan?.dialogueAct === 'acknowledgement' &&
-    replyPlan.latestUserSubstance === null &&
-    replyPlan.mayInferFromBrevity === false
+    replyPlan?.latestUserSubstance === null &&
+    replyPlan.mayInferFromBrevity === false &&
+    (replyPlan.dialogueAct === 'acknowledgement' ||
+      replyPlan.dialogueAct === 'greeting' ||
+      replyPlan.dialogueAct === 'social_checkin')
   ) {
     return Math.min(defaultMaxChars, 120);
   }

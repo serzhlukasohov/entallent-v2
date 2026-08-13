@@ -24,6 +24,43 @@ const memory = (
 ): Array<Pick<MemoryItemRecord, 'category' | 'content' | 'importance'>> => items;
 
 describe('buildReplyPlan', () => {
+  it('maps social greetings to a typed greeting response move', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'greeting',
+        latestUserSubstance: null,
+        topicAnchor: null,
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief.responseMove).toBe('social_greeting');
+    expect(brief.questionPolicy).toEqual({
+      maxQuestions: 0,
+      reason: 'greeting_no_question',
+    });
+    expect(brief.mayInferFromBrevity).toBe(false);
+  });
+
+  it('maps social check-ins to a typed social reply response move', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'social_checkin',
+        latestUserSubstance: null,
+        topicAnchor: null,
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief.responseMove).toBe('social_reply');
+    expect(brief.questionPolicy).toEqual({
+      maxQuestions: 1,
+      reason: 'social_checkin_returns_question',
+    });
+    expect(brief.forbiddenMoves).toContain('operational_status');
+    expect(brief.mayInferFromBrevity).toBe(false);
+  });
+
   it('turns acknowledgements into continue-existing-thread without brevity inference', () => {
     const brief = buildReplyPlan({
       classification: base({

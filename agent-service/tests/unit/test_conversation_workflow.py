@@ -191,96 +191,22 @@ def test_workflow_regenerates_reply_once_for_deterministic_policy_violation() ->
     assert result["diagnostics"]["modelRetryCount"] == 1
 
 
-def test_workflow_regenerates_russian_emotional_action_plan_reply() -> None:
-    request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = (
-        "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
-    )
-    request_body["context"]["replyPolicy"] = {
-        "maxChars": 420,
-        "maxQuestions": 1,
-        "allowReflectiveOpener": False,
-        "allowListFormatting": False,
-    }
-    chat_client = SequentialFakeChatClient(
-        [
-            "Попробуй на 10 минут убрать всё лишнее и выбрать один маленький шаг.",
-            "Да, когда внимание всё время уводит в сторону, день быстро начинает вязнуть.",
-        ]
-    )
-    model_client = AgentFrameworkConversationModelClient(
-        chat_client=chat_client,
-        model_name="test-model",
-    )
-    workflow = ConversationWorkflow(model_client=model_client)
-
-    result = workflow.run(request_body)
-
-    assert result["classification"]["dialogueAct"] == "emotional_disclosure"
-    assert result["reply"] == {
-        "text": "Да, когда внимание всё время уводит в сторону, день быстро начинает вязнуть.",
-        "mode": "candidate",
-    }
-    assert chat_client.calls == 2
-    assert chat_client.last_user_message is not None
-    assert "support the emotion without advice" in chat_client.last_user_message
-    assert result["diagnostics"]["modelCalls"] == 2
-    assert result["diagnostics"]["modelRetryCount"] == 1
-
-
-def test_workflow_uses_deterministic_support_reply_after_emotional_retry_violation() -> None:
-    request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = (
-        "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
-    )
-    request_body["context"]["replyPolicy"] = {
-        "maxChars": 420,
-        "maxQuestions": 1,
-        "allowReflectiveOpener": False,
-        "allowListFormatting": False,
-    }
-    chat_client = SequentialFakeChatClient(
-        [
-            "Попробуй на 10 минут убрать всё лишнее и выбрать один маленький шаг.",
-            (
-                "Похоже, сегодня просто накопилась усталость. "
-                "Можно дать себе немного тишины."
-            ),
-        ]
-    )
-    model_client = AgentFrameworkConversationModelClient(
-        chat_client=chat_client,
-        model_name="test-model",
-    )
-    workflow = ConversationWorkflow(model_client=model_client)
-
-    result = workflow.run(request_body)
-
-    assert result["reply"] == {
-        "text": "Да, такой день быстро выматывает. Жаль, что фокус всё время рвётся.",
-        "mode": "candidate",
-    }
-    assert chat_client.calls == 2
-    assert result["diagnostics"]["modelCalls"] == 2
-    assert result["diagnostics"]["modelRetryCount"] == 1
-
-
-def test_workflow_uses_deterministic_social_reply_for_no_substance_acknowledgement() -> None:
+def test_workflow_uses_typed_social_reply_without_model_call() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>"
     request_body["context"]["replyPlan"] = {
-        "dialogueAct": "acknowledgement",
+        "dialogueAct": "social_checkin",
         "latestUserSubstance": None,
         "topicAnchor": None,
         "memoryAnchors": [],
-        "responseMove": "continue_existing_thread",
+        "responseMove": "social_reply",
         "mayInferFromBrevity": False,
         "questionPolicy": {
             "maxQuestions": 1,
-            "reason": "acknowledgement_no_new_substance",
+            "reason": "social_checkin_returns_question",
         },
         "requiredGrounding": [],
-        "forbiddenMoves": ["comment_on_brevity"],
+        "forbiddenMoves": ["operational_status"],
     }
     request_body["context"]["replyPolicy"] = {
         "maxChars": 120,

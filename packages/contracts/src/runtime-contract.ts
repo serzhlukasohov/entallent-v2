@@ -83,6 +83,8 @@ export type RuntimeReplyPlan = {
   topicAnchor: string | null;
   memoryAnchors: RuntimeReplyMemoryAnchor[];
   responseMove:
+    | 'social_greeting'
+    | 'social_reply'
     | 'address_new_substance'
     | 'continue_existing_thread'
     | 'answer_request'
@@ -103,6 +105,8 @@ export type RuntimeReplyQuestionPolicy = {
   maxQuestions: 0 | 1;
   reason:
     | 'strategy_disallows_questions'
+    | 'greeting_no_question'
+    | 'social_checkin_returns_question'
     | 'acknowledgement_no_new_substance'
     | 'asked_recently'
     | 'new_substance_allows_question';
@@ -119,6 +123,7 @@ export type RuntimeReplyForbiddenMove =
   | 'comment_on_brevity'
   | 'diagnose'
   | 'survey_probe'
+  | 'operational_status'
   | 'action_plan';
 
 export type RuntimeReplyPolicy = {

@@ -98,6 +98,28 @@ describe('buildRespondSystemPrompt session-aware greeting', () => {
 describe('buildRespondSystemPrompt reply plan', () => {
   const s = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] });
 
+  it('renders social check-in turns as a typed social contract', () => {
+    const p = buildRespondSystemPrompt(s(), {
+      userName: 'T',
+      replyPlan: {
+        dialogueAct: 'social_checkin',
+        latestUserSubstance: null,
+        topicAnchor: null,
+        memoryAnchors: [],
+        responseMove: 'social_reply',
+        mayInferFromBrevity: false,
+        questionPolicy: { maxQuestions: 1, reason: 'social_checkin_returns_question' },
+        requiredGrounding: [],
+        forbiddenMoves: ['operational_status', 'survey_probe'],
+      },
+    });
+
+    expect(p).toContain('dialogueAct: social_checkin');
+    expect(p).toContain('responseMove: social_reply');
+    expect(p).toContain('Social contract: answer socially and briefly');
+    expect(p).toContain('Forbidden moves for this turn: operational_status, survey_probe');
+  });
+
   it('renders acknowledgement turns as no-new-substance without brevity inference', () => {
     const p = buildRespondSystemPrompt(s(), {
       userName: 'T',

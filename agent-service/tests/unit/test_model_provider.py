@@ -30,6 +30,19 @@ class FakeChatClient:
         return ChatResponse(messages=[Message("assistant", ["Safe candidate reply."])])
 
 
+class CountingChatClient(FakeChatClient):
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def get_response(
+        self,
+        messages: Sequence[Message],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        self.call_count += 1
+        return await super().get_response(messages, **kwargs)
+
+
 def test_openai_compatible_response_rejects_content_filter_finish_reason() -> None:
     body: dict[str, Any] = {
         "choices": [
@@ -221,3 +234,56 @@ def test_model_client_blocks_output_system_prompt_leakage() -> None:
             ],
         },
     ]
+
+
+def test_model_client_renders_social_reply_from_reply_plan_without_model_call() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "A raw message the renderer must not classify."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "social_checkin",
+                        "latestUserSubstance": None,
+                        "topicAnchor": None,
+                        "memoryAnchors": [],
+                        "responseMove": "social_reply",
+                        "mayInferFromBrevity": False,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "social_checkin_returns_question",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["operational_status"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Нормально, спасибо. А ты как?"
+    assert chat_client.call_count == 0
+
+
+def test_model_client_does_not_classify_social_raw_text_without_reply_plan() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "как ты?"},
+                "context": {"memoryItems": [], "recentTurns": []},
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Safe candidate reply."
+    assert chat_client.call_count == 1

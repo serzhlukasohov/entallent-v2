@@ -34,6 +34,8 @@ export const ReminderRequestSchema = z.object({
 export type ReminderRequest = z.infer<typeof ReminderRequestSchema>;
 
 export const DialogueActSchema = z.enum([
+  'greeting',
+  'social_checkin',
   'new_substance',
   'acknowledgement',
   'continuation',

@@ -15,13 +15,15 @@ Return a JSON object with exactly these fields:
   "surveyAllowed": boolean,      // false if user appears distressed, in crisis, or if topic is sensitive
   "reasoningSummary": string,    // 1-2 sentence explanation
   "reminderRequest": null,       // see reminder rules below; null unless explicitly requested
-  "dialogueAct": string,         // one of: "new_substance","acknowledgement","continuation","correction","request","emotional_disclosure","closing"
+  "dialogueAct": string,         // one of: "greeting","social_checkin","new_substance","acknowledgement","continuation","correction","request","emotional_disclosure","closing"
   "latestUserSubstance": string|null, // what the latest employee message newly contributes; null for pure acknowledgements/backchannels
   "topicAnchor": string|null     // existing topic to continue when latestUserSubstance is null
 }
 
 Dialogue act rules:
 - Classify the LATEST employee message's contribution, not their personality or writing style.
+- Use "greeting" when the latest message only opens socially without asking about the mentor.
+- Use "social_checkin" when the latest message asks how the mentor/agent is doing without adding work substance.
 - Use "acknowledgement" for backchannels / minimal replies that add no new work substance ("ok", "yeah", "fine", "a bit", "sure", "thanks").
 - Use "continuation" when the latest message continues a known topic with some new detail.
 - Use "new_substance" when it introduces a new concrete fact, event, task, blocker, preference, or concern.

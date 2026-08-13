@@ -161,9 +161,15 @@ function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): s
     ? ''
     : '\nDo not infer mood, impatience, depth, personality, or unstated meaning from the employee being brief. Do not mention their brevity, one-word answer, or short wording. Do not quote the short acknowledgement as evidence. Continue from the topic anchor or close the thread naturally.';
 
+  const social = plan.responseMove === 'social_greeting'
+    ? '\nSocial contract: answer with a plain greeting only; do not offer help or start a support flow.'
+    : plan.responseMove === 'social_reply'
+      ? '\nSocial contract: answer socially and briefly, then return the check-in once; do not describe operational status or support capabilities.'
+      : '';
+
   return `\nReply plan (follow this typed policy over the raw surface form of the latest message):
   - dialogueAct: ${plan.dialogueAct}
-  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${forbiddenMoves}${brevity}
+  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${forbiddenMoves}${brevity}${social}
   `;
 }
 

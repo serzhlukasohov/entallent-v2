@@ -58,6 +58,10 @@ function selectMemoryAnchors(
 
 function responseMoveFor(dialogueAct: SituationClassification['dialogueAct']): ReplyPlan['responseMove'] {
   switch (dialogueAct) {
+    case 'greeting':
+      return 'social_greeting';
+    case 'social_checkin':
+      return 'social_reply';
     case 'acknowledgement':
     case 'continuation':
       return 'continue_existing_thread';
@@ -82,6 +86,14 @@ function buildQuestionPolicy(input: {
 }): ReplyPlan['questionPolicy'] {
   if (!input.includeFollowUpQuestion) {
     return { maxQuestions: 0, reason: 'strategy_disallows_questions' };
+  }
+
+  if (input.dialogueAct === 'greeting') {
+    return { maxQuestions: 0, reason: 'greeting_no_question' };
+  }
+
+  if (input.dialogueAct === 'social_checkin') {
+    return { maxQuestions: 1, reason: 'social_checkin_returns_question' };
   }
 
   if (input.dialogueAct === 'acknowledgement' && input.latestUserSubstance === null) {
@@ -130,6 +142,7 @@ function buildForbiddenMoves(input: {
 }): ReplyPlan['forbiddenMoves'] {
   const forbidden = new Set<ReplyPlan['forbiddenMoves'][number]>();
   if (!input.mayInferFromBrevity) forbidden.add('comment_on_brevity');
+  if (input.responseMove === 'social_reply') forbidden.add('operational_status');
   if (input.responseMove === 'support_emotion') forbidden.add('action_plan');
   if (input.sensitiveMode) {
     forbidden.add('diagnose');

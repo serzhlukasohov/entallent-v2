@@ -42,57 +42,6 @@ CONTROL_CONTEXT_MARKER_PATTERNS = (
     re.compile(r"\bMAF-regression-\d{8}T\d{6}Z-", re.IGNORECASE),
     re.compile(r"\bcontrol marker\b", re.IGNORECASE),
 )
-REFLECTIVE_REPLY_OPENER_PATTERNS = (
-    re.compile(
-        r"^that(?:'s|\s+is)?\s+(?:already\s+|starting\s+to\s+)?"
-        r"sound(?:s|ing)?\s+like\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"^(?:it\s+)?sounds\s+like\b", re.IGNORECASE),
-    re.compile(r"^(?:it\s+)?seems\s+like\b", re.IGNORECASE),
-    re.compile(
-        r"^what\s+you(?:'re|\s+are)\s+(?:describing|saying)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^so,?\s+(?:what\s+)?you(?:'re|\s+are)\s+saying\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"^that,\s+it\s+seems,\s+is\b", re.IGNORECASE),
-    re.compile(
-        r"^that(?:'s|\s+is)\s+(?:really\s+|probably\s+)?(?:the\s+)?"
-        r"(?:real\s+)?(?:root|core|crux|heart|problem|issue)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"^i\s+(?:understand|hear)\b", re.IGNORECASE),
-    re.compile(r"^glad\s+to\s+hear\s+back\b", re.IGNORECASE),
-    re.compile(r"^похоже\b", re.IGNORECASE),
-    re.compile(r"^(?:сегодня|это|так)\W+похоже\b", re.IGNORECASE),
-    re.compile(r"^кажется\b", re.IGNORECASE),
-    re.compile(r"^звучит\s+так\b", re.IGNORECASE),
-    re.compile(r"^понимаю\b", re.IGNORECASE),
-    re.compile(r"^я\s+(?:понимаю|слышу)\b", re.IGNORECASE),
-)
-ACTION_PLAN_PHRASE_PATTERNS = (
-    re.compile(r"\b(?:try|start by|you can|it may help to)\b", re.IGNORECASE),
-    re.compile(r"\b(?:step|plan|checklist)\b", re.IGNORECASE),
-    re.compile(r"\b(?:попробуй|попробовать|можно попробовать|начни с)\b", re.IGNORECASE),
-    re.compile(r"\b(?:можно|лучше|стоит)\b", re.IGNORECASE),
-    re.compile(r"\bнуж(?:ен|на|но|ны)\b", re.IGNORECASE),
-    re.compile(r"\b(?:постарайся|дай\s+себе)\b", re.IGNORECASE),
-    re.compile(r"\b(?:шаг|план|чеклист)\b", re.IGNORECASE),
-    re.compile(r"\b(?:можно|можешь)\s+(?:дать|сделать|выбрать|убрать)\b", re.IGNORECASE),
-    re.compile(r"\bесли\s+хочешь\b.*\bможем\b", re.IGNORECASE),
-    re.compile(r"\bможем\b.*\bвыбрать\b", re.IGNORECASE),
-    re.compile(r"\b(?:ближайшие\s+)?\d+\s*(?:[-–]\s*\d+\s*)?минут\b", re.IGNORECASE),
-    re.compile(r"\bпусть\b", re.IGNORECASE),
-)
-OPERATIONAL_SELF_STATUS_PATTERNS = (
-    re.compile(r"\b(?:working|operational|normal mode|how can i help)\b", re.IGNORECASE),
-    re.compile(r"\b(?:работаю|штатн(?:ом|ый) режим|чем могу помочь)\b", re.IGNORECASE),
-)
-
-
 @dataclass(frozen=True)
 class ConversationModelReply:
     text: str
@@ -146,7 +95,7 @@ class AgentFrameworkConversationModelClient:
         state: dict[str, Any],
     ) -> ConversationModelReply:
         self._safety_verdicts = []
-        social_reply = deterministic_social_checkin_reply(request)
+        social_reply = deterministic_social_reply_for_plan(request)
         if social_reply is not None:
             return ConversationModelReply(text=social_reply)
         prompt = build_candidate_reply_prompt(request=request, state=state)
@@ -217,9 +166,7 @@ class AgentFrameworkConversationModelClient:
                 state=state,
             )
             if remaining_violations:
-                fallback_text = deterministic_support_emotion_reply(request, state)
-                if fallback_text is None:
-                    fallback_text = deterministic_social_checkin_reply(request)
+                fallback_text = deterministic_social_reply_for_plan(request)
                 if fallback_text:
                     text = fallback_text
                     remaining_violations = candidate_reply_policy_violations(
@@ -528,10 +475,6 @@ def candidate_reply_policy_violations(
     policy = reply_gate_policy(request=request, state=state)
     violations: list[str] = []
     normalized = " ".join(text.split())
-    if not policy["allow_reflective_opener"] and has_reflective_reply_opener(text):
-        violations.append(
-            "open with substance, not formulaic validation or paraphrase"
-        )
     if len(normalized) > int(policy["max_chars"]):
         violations.append(f"keep the reply under {policy['max_chars']} characters")
     question_count = normalized.count("?")
@@ -542,50 +485,7 @@ def candidate_reply_policy_violations(
             violations.append("ask at most one question")
     if not policy["allow_list_formatting"] and contains_list_format(text):
         violations.append("remove bullets, numbered steps, and checklist formatting")
-    if (
-        forbids_action_plan(request) or state_supports_emotion(state)
-    ) and contains_action_plan_move(text):
-        violations.append("support the emotion without advice, steps, tactics, or an action plan")
-    if state_supports_emotion(state) and contains_reflective_marker_in_first_sentence(text):
-        violation = "open with substance, not formulaic validation or paraphrase"
-        if violation not in violations:
-            violations.append(violation)
-    if is_social_greeting_or_checkin(request) and contains_operational_self_status(text):
-        violations.append("answer socially, not with operational status or support-bot language")
     return violations
-
-
-def has_reflective_reply_opener(text: str) -> bool:
-    if not text:
-        return False
-    opener = first_substantive_reply_sentence(text)
-    return any(pattern.search(opener) for pattern in REFLECTIVE_REPLY_OPENER_PATTERNS)
-
-
-def contains_reflective_marker_in_first_sentence(text: str) -> bool:
-    sentence = first_substantive_reply_sentence(text).lower()
-    return any(
-        marker in sentence
-        for marker in (
-            "похоже",
-            "кажется",
-            "понимаю",
-            "звучит так",
-            "sounds like",
-            "seems like",
-            "i understand",
-        )
-    )
-
-
-def first_substantive_reply_sentence(text: str) -> str:
-    parts = [part.strip() for part in re.split(r"(?<=[.!?…])\s|\n", text.strip()) if part.strip()]
-    if not parts:
-        return ""
-    first = re.sub(r"[^a-zа-яё0-9 ]", " ", parts[0].lower()).strip()
-    if first in {"hi", "hello", "hey", "привет"} and len(parts) > 1:
-        return parts[1]
-    return parts[0]
 
 
 def reply_gate_policy(
@@ -707,84 +607,24 @@ def contains_list_format(text: str) -> bool:
     )
 
 
-def forbids_action_plan(request: dict[str, Any]) -> bool:
+def deterministic_social_reply_for_plan(request: dict[str, Any]) -> str | None:
+    response_move = reply_plan_response_move(request)
+    if response_move == "social_greeting":
+        return "Привет."
+    if response_move == "social_reply":
+        return "Нормально, спасибо. А ты как?"
+    return None
+
+
+def reply_plan_response_move(request: dict[str, Any]) -> str | None:
     context = request.get("context")
     if not isinstance(context, Mapping):
-        return False
+        return None
     plan = context.get("replyPlan")
     if not isinstance(plan, Mapping):
-        return False
-    forbidden_moves = plan.get("forbiddenMoves")
-    return isinstance(forbidden_moves, list) and "action_plan" in forbidden_moves
-
-
-def state_supports_emotion(state: dict[str, Any]) -> bool:
-    classification = state.get("classification")
-    if not isinstance(classification, Mapping):
-        return False
-    return classification.get("dialogueAct") == "emotional_disclosure"
-
-
-def deterministic_support_emotion_reply(
-    request: dict[str, Any],
-    state: dict[str, Any],
-) -> str | None:
-    if not state_supports_emotion(state):
         return None
-
-    text_parts: list[str] = []
-    classification = state.get("classification")
-    if isinstance(classification, Mapping):
-        latest = safe_context_text(classification.get("latestUserSubstance"), limit=240)
-        if latest:
-            text_parts.append(latest)
-    request_text = request_message_text(request)
-    if request_text:
-        text_parts.append(request_text)
-    normalized = " ".join(text_parts).lower()
-
-    if re.search(r"\b(?:устал|устала|усталость|вымотал|вымоталась|вымотался)\b", normalized):
-        return "Да, день правда вымотал. Жаль, что так навалилось."
-    if re.search(r"\b(?:фокус|сфокусироваться|отвлекаюсь|отвлекает)\b", normalized):
-        return "Да, такой день быстро выматывает. Жаль, что фокус всё время рвётся."
-    return "Да, тяжёлый момент. Жаль, что сейчас так давит."
-
-
-def deterministic_social_checkin_reply(request: dict[str, Any]) -> str | None:
-    if not is_social_greeting_or_checkin(request):
-        return None
-    text = request_message_text(request) or ""
-    normalized = re.sub(r"[^a-zа-яё0-9? ]", " ", text.lower()).strip()
-    if normalized in {"hi", "hello", "hey", "привет"}:
-        return "Привет."
-    return "Нормально, спасибо. А ты как?"
-
-
-def contains_action_plan_move(text: str) -> bool:
-    return any(pattern.search(text) for pattern in ACTION_PLAN_PHRASE_PATTERNS)
-
-
-def is_social_greeting_or_checkin(request: dict[str, Any]) -> bool:
-    text = request_message_text(request)
-    if text is None:
-        return False
-    normalized = re.sub(r"[^a-zа-яё0-9? ]", " ", text.lower()).strip()
-    return normalized in {
-        "hi",
-        "hello",
-        "hey",
-        "how are you",
-        "how are you?",
-        "привет",
-        "как дела",
-        "как дела?",
-        "как ты",
-        "как ты?",
-    }
-
-
-def contains_operational_self_status(text: str) -> bool:
-    return any(pattern.search(text) for pattern in OPERATIONAL_SELF_STATUS_PATTERNS)
+    response_move = plan.get("responseMove")
+    return response_move if isinstance(response_move, str) else None
 
 
 def chat_messages_payload(messages: Sequence[Message]) -> list[dict[str, str]]:

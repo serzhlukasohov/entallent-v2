@@ -147,6 +147,46 @@ describe('Runtime contract fixtures', () => {
     ).toEqual({ ok: true });
   });
 
+  it('accepts typed social reply plans on runtime context', () => {
+    const request = readJson(
+      'fixtures/valid/process-message-request.json',
+    ) as RuntimeProcessMessageRequest;
+
+    const withSocialPlan: RuntimeProcessMessageRequest = {
+      ...request,
+      context: {
+        ...request.context,
+        replyPlan: {
+          dialogueAct: 'social_checkin',
+          latestUserSubstance: null,
+          topicAnchor: null,
+          memoryAnchors: [],
+          responseMove: 'social_reply',
+          mayInferFromBrevity: false,
+          questionPolicy: {
+            maxQuestions: 1,
+            reason: 'social_checkin_returns_question',
+          },
+          requiredGrounding: [],
+          forbiddenMoves: ['operational_status', 'survey_probe'],
+        },
+        replyPolicy: {
+          maxChars: 120,
+          maxQuestions: 1,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
+      },
+    };
+
+    expect(
+      validateRuntimeProcessMessageRequest({
+        schemaDocument,
+        value: withSocialPlan,
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it.each(manifest.valid)('accepts valid $path', (fixture) => {
     const result = validateRuntimeContract({
       schemaDocument,
