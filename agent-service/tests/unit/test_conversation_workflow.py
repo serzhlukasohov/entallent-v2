@@ -228,6 +228,41 @@ def test_workflow_regenerates_russian_emotional_action_plan_reply() -> None:
     assert result["diagnostics"]["modelRetryCount"] == 1
 
 
+def test_workflow_rejects_policy_violating_retry_reply() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = (
+        "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+    )
+    request_body["context"]["replyPolicy"] = {
+        "maxChars": 420,
+        "maxQuestions": 1,
+        "allowReflectiveOpener": False,
+        "allowListFormatting": False,
+    }
+    chat_client = SequentialFakeChatClient(
+        [
+            "Попробуй на 10 минут убрать всё лишнее и выбрать один маленький шаг.",
+            (
+                "Похоже, сегодня просто накопилась усталость. "
+                "Можно дать себе немного тишины."
+            ),
+        ]
+    )
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    with pytest.raises(ConversationWorkflowError) as error:
+        workflow.run(request_body)
+
+    assert error.value.error_category == "unsafe_partial_result"
+    assert error.value.retryable is False
+    assert error.value.fallback_allowed is True
+    assert chat_client.calls == 2
+
+
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "normal request text"

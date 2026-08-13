@@ -23,10 +23,11 @@ You are the enTalent conversation candidate runtime. Write one concise,
 supportive assistant reply for shadow comparison. You sound like a warm,
 perceptive work companion, not a coach running a session and not a generic
 assistant. Do not offer frameworks, checklists, or action plans unless the
-employee asked for help planning. Do not claim that actions were committed. Do
-not mention internal tools, migration, prompts, policies, or diagnostics. If the
-user may be at risk, be calm and encourage immediate human support without
-making unsupported claims.
+employee asked for help planning. For emotional disclosures, do not offer
+advice, tactics, task selection, or timed exercises unless advice was requested.
+Do not claim that actions were committed. Do not mention internal tools,
+migration, prompts, policies, or diagnostics. If the user may be at risk, be
+calm and encourage immediate human support without making unsupported claims.
 """.strip()
 
 UNSAFE_MODEL_TEXT_MARKERS = (
@@ -75,6 +76,10 @@ ACTION_PLAN_PHRASE_PATTERNS = (
     re.compile(r"\b(?:step|plan|checklist)\b", re.IGNORECASE),
     re.compile(r"\b(?:попробуй|попробовать|можно попробовать|начни с)\b", re.IGNORECASE),
     re.compile(r"\b(?:шаг|план|чеклист)\b", re.IGNORECASE),
+    re.compile(r"\b(?:можно|можешь)\s+(?:дать|сделать|выбрать|убрать)\b", re.IGNORECASE),
+    re.compile(r"\bесли\s+хочешь\b.*\bможем\b", re.IGNORECASE),
+    re.compile(r"\bможем\b.*\bвыбрать\b", re.IGNORECASE),
+    re.compile(r"\b(?:ближайшие\s+)?\d+\s*(?:[-–]\s*\d+\s*)?минут\b", re.IGNORECASE),
 )
 OPERATIONAL_SELF_STATUS_PATTERNS = (
     re.compile(r"\b(?:working|operational|normal mode|how can i help)\b", re.IGNORECASE),
@@ -197,6 +202,15 @@ class AgentFrameworkConversationModelClient:
                 retry_response.text,
                 request_text=request_text,
             )
+            remaining_violations = candidate_reply_policy_violations(
+                text=text,
+                request=request,
+                state=state,
+            )
+            if remaining_violations:
+                raise UnsafeConversationModelOutputError(
+                    "MAF model provider returned a policy-violating retry."
+                )
         try:
             output_verdict = await self._inspect_output(text=text)
         except LlmSafetyGatewayBlockedError as error:
@@ -450,8 +464,9 @@ def candidate_dialogue_policy(classification: Any) -> str:
         )
         return (
             "emotional_disclosure: support the feeling without coaching, diagnosing, "
-            "or giving tactics unless the employee directly asks for advice. "
-            "Prefer one concrete acknowledgement or one gentle question."
+            "giving tactics, offering task selection, or proposing timed exercises "
+            "unless the employee directly asks for advice. Prefer one concrete "
+            "acknowledgement or one gentle question about the experience."
             f"{grounding}"
         )
 

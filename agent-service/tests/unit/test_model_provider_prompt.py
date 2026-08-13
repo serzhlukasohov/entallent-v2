@@ -237,6 +237,8 @@ def test_candidate_reply_prompt_supports_emotion_without_coaching() -> None:
     )
 
     assert "emotional_disclosure: support the feeling without coaching" in prompt
+    assert "offering task selection" in prompt
+    assert "proposing timed exercises" in prompt
     assert "unless the employee directly asks for advice" in prompt
 
 
@@ -335,6 +337,54 @@ def test_candidate_reply_policy_violations_find_emotional_state_action_plan_move
     )
 
     assert violations == [
+        "support the emotion without advice, steps, tactics, or an action plan",
+    ]
+
+
+def test_candidate_reply_policy_violations_find_soft_coaching_offers() -> None:
+    request = {
+        "message": {
+            "text": "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+        },
+        "context": {
+            "replyPolicy": {
+                "maxChars": 420,
+                "maxQuestions": 1,
+                "allowReflectiveOpener": False,
+                "allowListFormatting": False,
+            },
+        },
+    }
+    state = {
+        "classification": {
+            "dialogueAct": "emotional_disclosure",
+            "latestUserSubstance": (
+                "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+            ),
+        },
+    }
+
+    task_selection_violations = candidate_reply_policy_violations(
+        text=(
+            "Сегодняшний фокус просел. Если хочешь, можем просто вместе выбрать "
+            "один самый важный кусок на ближайшие 20 минут."
+        ),
+        request=request,
+        state=state,
+    )
+    rest_tactic_violations = candidate_reply_policy_violations(
+        text=(
+            "Сегодня просто накопилась усталость. Можно дать себе немного тишины "
+            "и не требовать от себя больше, чем есть сейчас."
+        ),
+        request=request,
+        state=state,
+    )
+
+    assert task_selection_violations == [
+        "support the emotion without advice, steps, tactics, or an action plan",
+    ]
+    assert rest_tactic_violations == [
         "support the emotion without advice, steps, tactics, or an action plan",
     ]
 
