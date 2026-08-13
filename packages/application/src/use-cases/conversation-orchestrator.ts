@@ -262,8 +262,7 @@ export class ConversationOrchestrator {
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
     const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
     const sessionStart = isSessionStart(lastPriorAt, new Date());
-    const lastOutbound = [...dbMessages].reverse().find((m) => m.direction === 'outbound');
-    const lastReplyAskedQuestion = (lastOutbound?.text ?? '').includes('?');
+    const lastReplyAskedQuestion = lastOutboundReplyShapeAskedQuestion(dbMessages);
     const replyPlan = confirmationRequest
       ? undefined
       : buildReplyPlan({
@@ -303,8 +302,12 @@ export class ConversationOrchestrator {
       occurredAt: new Date(),
       traceId: input.traceId,
       metadata: generated.containsSurveyProbe
-        ? { containsSurveyProbe: true, surveyProbeQuestionId: generated.surveyProbeQuestionId }
-        : undefined,
+        ? {
+            containsSurveyProbe: true,
+            surveyProbeQuestionId: generated.surveyProbeQuestionId,
+            ...replyShapeMetadata(replyPlan),
+          }
+        : replyShapeMetadata(replyPlan),
     });
 
     if (surfacedGroup && this.surveyRepo) {
@@ -573,6 +576,30 @@ function applyTerseStyle(
 function applyReplyPlanToStrategy(strategy: ReplyStrategy, plan: ResponseContext['replyPlan']): ReplyStrategy {
   if (!plan || plan.questionPolicy.maxQuestions > 0) return strategy;
   return { ...strategy, includeFollowUpQuestion: false };
+}
+
+function replyShapeMetadata(plan: ResponseContext['replyPlan']): Record<string, unknown> | undefined {
+  if (!plan) return undefined;
+  return {
+    replyShape: {
+      askedQuestion: plan.questionPolicy.maxQuestions > 0,
+      maxQuestions: plan.questionPolicy.maxQuestions,
+      questionPolicyReason: plan.questionPolicy.reason,
+    },
+  };
+}
+
+function lastOutboundReplyShapeAskedQuestion(messages: Array<{ direction: string; metadata?: Record<string, unknown> }>): boolean {
+  const lastOutbound = [...messages].reverse().find((message) => message.direction === 'outbound');
+  return typedReplyShapeAskedQuestion(lastOutbound?.metadata);
+}
+
+function typedReplyShapeAskedQuestion(metadata: Record<string, unknown> | undefined): boolean {
+  const replyShape = metadata?.['replyShape'];
+  if (typeof replyShape !== 'object' || replyShape === null) {
+    return false;
+  }
+  return (replyShape as Record<string, unknown>)['askedQuestion'] === true;
 }
 
 /**

@@ -11,6 +11,16 @@ export interface ConversationRecord {
   userTimezoneUpdatedAt?: Date;
 }
 
+export interface MessageMetadata {
+  containsSurveyProbe?: boolean;
+  surveyProbeQuestionId?: string;
+  replyShape?: {
+    askedQuestion?: boolean;
+    maxQuestions?: 0 | 1;
+    questionPolicyReason?: string;
+  };
+}
+
 export interface MessageRecord {
   id: string;
   conversationId: string;
@@ -22,7 +32,7 @@ export interface MessageRecord {
   externalThreadId?: string;
   occurredAt: Date;
   createdAt: Date;
-  metadata?: Record<string, unknown>;
+  metadata?: MessageMetadata & Record<string, unknown>;
 }
 
 export interface WorkspaceConnectionRecord {

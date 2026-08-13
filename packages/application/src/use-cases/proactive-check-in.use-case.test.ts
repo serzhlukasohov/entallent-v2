@@ -104,8 +104,9 @@ const BASE_INPUT = {
 
 describe('ProactiveCheckInUseCase', () => {
   it('returns a result with the outbound message', async () => {
+    const conversationRepo = makeConversationRepo();
     const useCase = new ProactiveCheckInUseCase(
-      makeConversationRepo(),
+      conversationRepo,
       makeAiProvider(),
       makeOutbox(),
       undefined,
@@ -116,6 +117,15 @@ describe('ProactiveCheckInUseCase', () => {
 
     expect(result.outboundMessageId).toBe('out-1');
     expect(result.responseText).toContain('Hey Alex');
+    expect(conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: {
+        replyShape: {
+          askedQuestion: true,
+          maxQuestions: 1,
+          questionPolicyReason: 'reply_strategy',
+        },
+      },
+    }));
   });
 
   it('passes probeQuestion to AI when backlog returns a question', async () => {

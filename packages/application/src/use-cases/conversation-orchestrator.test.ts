@@ -230,11 +230,17 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
 
-  it('terse user is shortened while reply plan skips the question when the agent just asked one', async () => {
+  it('terse user is shortened while reply plan skips the question when reply metadata says the agent just asked one', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
-      { id: 'o-1', direction: 'outbound', text: 'what exactly is holding you back?', occurredAt: new Date(), metadata: undefined },
+      {
+        id: 'o-1',
+        direction: 'outbound',
+        text: 'what exactly is holding you back?',
+        occurredAt: new Date(),
+        metadata: { replyShape: { askedQuestion: true, maxQuestions: 1, questionPolicyReason: 'new_substance_allows_question' } },
+      },
     ]);
     m.aiProvider.classifySituation.mockResolvedValue({
       primaryIntent: 'casual_conversation',
@@ -262,11 +268,11 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     expect(ctxArg.replyPlan.questionPolicy).toEqual({ maxQuestions: 0, reason: 'asked_recently' });
   });
 
-  it('terse user asks a follow-up when the previous reply had no question', async () => {
+  it('ignores legacy punctuation when previous reply has no reply-shape metadata', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
-      { id: 'o-1', direction: 'outbound', text: 'got it, sounds draining.', occurredAt: new Date(), metadata: undefined },
+      { id: 'o-1', direction: 'outbound', text: 'what exactly is holding you back?', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -275,7 +281,25 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     await orch.orchestrate(INPUT);
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     expect(strategyArg.maxResponseLength).toBe('short');
-    expect(strategyArg.includeFollowUpQuestion).toBe(true); // didn't just ask → may ask
+    expect(strategyArg.includeFollowUpQuestion).toBe(true);
+  });
+
+  it('persists reply-shape metadata from the typed reply plan', async () => {
+    const m = baseMocks();
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+    await orch.orchestrate(INPUT);
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: {
+        replyShape: {
+          askedQuestion: true,
+          maxQuestions: 1,
+          questionPolicyReason: 'new_substance_allows_question',
+        },
+      },
+    }));
   });
 
   it('does not shorten for a non-terse user (verbosity near base)', async () => {

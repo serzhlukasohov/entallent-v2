@@ -319,6 +319,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       const recentRows = await this.db.client
         .select({
           text: messages.text,
+          metadata: messages.metadata,
           senderType: messages.senderType,
           direction: messages.direction,
           occurredAt: messages.occurredAt,
@@ -369,6 +370,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         timezone: normalizeOptionalString(currentMessage.userTimezone),
         turns: recentTurns,
         memoryItems: runtimeMemoryItems,
+        lastReplyAskedQuestion: lastOutboundReplyShapeAskedQuestion(recentRows),
       });
 
       return {
@@ -435,6 +437,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     const recentRows = await this.db.client
       .select({
         text: messages.text,
+        metadata: messages.metadata,
         senderType: messages.senderType,
         direction: messages.direction,
         occurredAt: messages.occurredAt,
@@ -527,6 +530,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     timezone?: string;
     turns: RuntimeContext['recentTurns'];
     memoryItems: RuntimeContext['memoryItems'];
+    lastReplyAskedQuestion: boolean;
   }): Promise<Pick<RuntimeContext, 'replyPlan' | 'replyPlanning' | 'replyPolicy'>> {
     try {
       const turns = input.turns.map((turn): ConversationTurn => ({
@@ -544,7 +548,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         classification,
         memoryItems: input.memoryItems,
         includeFollowUpQuestion,
-        lastReplyAskedQuestion: lastAssistantTurnAskedQuestion(input.turns),
+        lastReplyAskedQuestion: input.lastReplyAskedQuestion,
         sensitiveMode: isSensitiveClassification(classification),
       });
       const maxQuestions = replyPlan.questionPolicy.maxQuestions;
@@ -696,12 +700,21 @@ function maxReplyCharsForReplyPlan(
   return defaultMaxChars;
 }
 
-function lastAssistantTurnAskedQuestion(turns: RuntimeContext['recentTurns']): boolean {
-  for (const turn of [...turns].reverse()) {
-    if (turn.role !== 'assistant') {
-      continue;
-    }
-    return turn.content.includes('?');
+function lastOutboundReplyShapeAskedQuestion(rows: Array<{
+  direction: string;
+  metadata: unknown;
+}>): boolean {
+  const lastOutbound = rows.find((row) => row.direction === 'outbound');
+  return typedReplyShapeAskedQuestion(lastOutbound?.metadata);
+}
+
+function typedReplyShapeAskedQuestion(metadata: unknown): boolean {
+  if (typeof metadata !== 'object' || metadata === null) {
+    return false;
   }
-  return false;
+  const replyShape = (metadata as Record<string, unknown>)['replyShape'];
+  if (typeof replyShape !== 'object' || replyShape === null) {
+    return false;
+  }
+  return (replyShape as Record<string, unknown>)['askedQuestion'] === true;
 }

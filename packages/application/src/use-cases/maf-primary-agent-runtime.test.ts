@@ -140,6 +140,11 @@ describe('MafPrimaryAgentRuntime', () => {
         replyPlanResponseMove: 'social_reply',
         replyPlanMaxQuestions: 1,
         replyPlanQuestionReason: 'social_checkin_returns_question',
+        replyShape: {
+          askedQuestion: true,
+          maxQuestions: 1,
+          questionPolicyReason: 'social_checkin_returns_question',
+        },
       },
     });
     expect(outbox.enqueueMessageSend).toHaveBeenCalledWith({
@@ -206,6 +211,17 @@ it('uses Python-supplied classification when available', async () => {
     const proactiveRequest: ProcessMessageRequest = {
       ...REQUEST,
       requestPurpose: 'proactive_check_in',
+      runtimeContext: {
+        recentTurns: [],
+        memoryItems: [],
+        goals: [],
+        replyPolicy: {
+          maxChars: 360,
+          maxQuestions: 1,
+          allowReflectiveOpener: false,
+          allowListFormatting: false,
+        },
+      },
       proactiveContext: {
         reason: 'pulse_check_in',
         probeQuestion: {
@@ -243,6 +259,11 @@ it('uses Python-supplied classification when available', async () => {
         runtimeMode: 'maf_primary',
         containsSurveyProbe: true,
         surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+        replyShape: {
+          askedQuestion: true,
+          maxQuestions: 1,
+          questionPolicyReason: 'reply_policy',
+        },
       }),
     }));
     expect(outbox.enqueueMessageSend).toHaveBeenCalled();

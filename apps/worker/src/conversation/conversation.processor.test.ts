@@ -410,6 +410,93 @@ describe('ConversationProcessor runtime ledger recording', () => {
     }));
   });
 
+  it('derives asked-recently reply planning only from outbound reply-shape metadata', async () => {
+    const agentRuntime = {
+      processMessage: vi.fn(async () => runtimeResult),
+    };
+    const currentQuery = {
+      from: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [
+        {
+          text: 'same blocker',
+          occurredAt: new Date('2026-08-13T14:05:39.000Z'),
+          externalThreadId: null,
+          userPreferredName: 'Serhii',
+          userTimezone: 'Europe/Warsaw',
+          userLocale: 'ru-RU',
+        },
+      ]),
+    };
+    const recentQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [
+        {
+          text: 'same blocker',
+          metadata: {},
+          senderType: 'user',
+          direction: 'inbound',
+          occurredAt: new Date('2026-08-13T14:05:39.000Z'),
+        },
+        {
+          text: 'what exactly is holding you back?',
+          metadata: { replyShape: { askedQuestion: true, maxQuestions: 1 } },
+          senderType: 'agent',
+          direction: 'outbound',
+          occurredAt: new Date('2026-08-13T14:04:39.000Z'),
+        },
+        {
+          text: 'older statement.',
+          metadata: { replyShape: { askedQuestion: false, maxQuestions: 0 } },
+          senderType: 'agent',
+          direction: 'outbound',
+          occurredAt: new Date('2026-08-13T14:03:39.000Z'),
+        },
+      ]),
+    };
+    const memoryQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => []),
+    };
+    const db = {
+      client: {
+        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
+      },
+    };
+    const ai = {
+      classifySituation: vi.fn(async () => ({
+        ...runtimeResult.classification,
+        dialogueAct: 'continuation',
+        latestUserSubstance: 'same blocker',
+        topicAnchor: 'blocker',
+      })),
+    };
+    const { processor } = createProcessor({ agentRuntime, db, ai });
+
+    await processor.process({
+      id: 'job-1',
+      name: 'process',
+      attemptsMade: 0,
+      data: jobData,
+    } as Job<ConversationJob>);
+
+    expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeContext: expect.objectContaining({
+        replyPlan: expect.objectContaining({
+          questionPolicy: {
+            maxQuestions: 0,
+            reason: 'asked_recently',
+          },
+        }),
+      }),
+    }));
+  });
+
   it('marks reply planning unavailable when the typed classifier fails', async () => {
     const agentRuntime = {
       processMessage: vi.fn(async () => runtimeResult),

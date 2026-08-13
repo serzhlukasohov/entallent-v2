@@ -481,13 +481,18 @@ function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequ
 function toReplyPlanMetadata(request: ProcessMessageRequest): Record<string, unknown> {
   const planning = request.runtimeContext?.replyPlanning;
   const plan = request.runtimeContext?.replyPlan;
+  const replyShape = replyShapeMetadataFromRequest(request);
   if (!plan) {
-    return planning
+    const planningMetadata = planning
       ? {
           replyPlanStatus: planning.status,
           ...(planning.reason ? { replyPlanUnavailableReason: planning.reason } : {}),
         }
       : {};
+    return {
+      ...planningMetadata,
+      ...replyShape,
+    };
   }
 
   return {
@@ -496,7 +501,34 @@ function toReplyPlanMetadata(request: ProcessMessageRequest): Record<string, unk
     replyPlanResponseMove: plan.responseMove,
     replyPlanMaxQuestions: plan.questionPolicy.maxQuestions,
     replyPlanQuestionReason: plan.questionPolicy.reason,
+    ...replyShape,
   };
+}
+
+function replyShapeMetadataFromRequest(request: ProcessMessageRequest): Record<string, unknown> {
+  const plan = request.runtimeContext?.replyPlan;
+  if (plan) {
+    return {
+      replyShape: {
+        askedQuestion: plan.questionPolicy.maxQuestions > 0,
+        maxQuestions: plan.questionPolicy.maxQuestions,
+        questionPolicyReason: plan.questionPolicy.reason,
+      },
+    };
+  }
+
+  const maxQuestions = request.runtimeContext?.replyPolicy?.maxQuestions;
+  if (maxQuestions === 0 || maxQuestions === 1) {
+    return {
+      replyShape: {
+        askedQuestion: maxQuestions > 0,
+        maxQuestions,
+        questionPolicyReason: 'reply_policy',
+      },
+    };
+  }
+
+  return {};
 }
 
 function toReplyMetadata(candidate: RuntimeResult): ProcessMessageResult['replyMetadata'] {

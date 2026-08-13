@@ -128,8 +128,12 @@ export class ProactiveCheckInUseCase {
       traceId: input.traceId,
       messageType: 'proactive_check_in',
       metadata: generated.containsSurveyProbe
-        ? { containsSurveyProbe: true, surveyProbeQuestionId: generated.surveyProbeQuestionId }
-        : undefined,
+        ? {
+            containsSurveyProbe: true,
+            surveyProbeQuestionId: generated.surveyProbeQuestionId,
+            ...replyShapeMetadataFromStrategy(strategy),
+          }
+        : replyShapeMetadataFromStrategy(strategy),
     });
 
     await this.outbox.enqueueMessageSend({
@@ -165,4 +169,15 @@ export class ProactiveCheckInUseCase {
         : null,
     };
   }
+}
+
+function replyShapeMetadataFromStrategy(strategy: ReplyStrategy): Record<string, unknown> {
+  const maxQuestions = strategy.includeFollowUpQuestion ? 1 : 0;
+  return {
+    replyShape: {
+      askedQuestion: maxQuestions > 0,
+      maxQuestions,
+      questionPolicyReason: 'reply_strategy',
+    },
+  };
 }
