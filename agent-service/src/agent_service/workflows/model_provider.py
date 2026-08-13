@@ -442,6 +442,19 @@ def candidate_dialogue_policy(classification: Any) -> str:
             f"{anchor}"
         )
 
+    if dialogue_act == "emotional_disclosure":
+        grounding = (
+            f" Stay grounded in this substance: {latest_substance}."
+            if latest_substance
+            else ""
+        )
+        return (
+            "emotional_disclosure: support the feeling without coaching, diagnosing, "
+            "or giving tactics unless the employee directly asks for advice. "
+            "Prefer one concrete acknowledgement or one gentle question."
+            f"{grounding}"
+        )
+
     if latest_substance:
         return (
             "new_substance: respond to the actual substance with one concrete observation "
@@ -494,7 +507,9 @@ def candidate_reply_policy_violations(
             violations.append("ask at most one question")
     if not policy["allow_list_formatting"] and contains_list_format(text):
         violations.append("remove bullets, numbered steps, and checklist formatting")
-    if forbids_action_plan(request) and contains_action_plan_move(text):
+    if (
+        forbids_action_plan(request) or state_supports_emotion(state)
+    ) and contains_action_plan_move(text):
         violations.append("support the emotion without advice, steps, tactics, or an action plan")
     if is_social_greeting_or_checkin(request) and contains_operational_self_status(text):
         violations.append("answer socially, not with operational status or support-bot language")
@@ -646,6 +661,13 @@ def forbids_action_plan(request: dict[str, Any]) -> bool:
         return False
     forbidden_moves = plan.get("forbiddenMoves")
     return isinstance(forbidden_moves, list) and "action_plan" in forbidden_moves
+
+
+def state_supports_emotion(state: dict[str, Any]) -> bool:
+    classification = state.get("classification")
+    if not isinstance(classification, Mapping):
+        return False
+    return classification.get("dialogueAct") == "emotional_disclosure"
 
 
 def contains_action_plan_move(text: str) -> bool:

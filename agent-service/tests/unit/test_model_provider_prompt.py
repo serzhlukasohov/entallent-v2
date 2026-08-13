@@ -216,6 +216,30 @@ def test_candidate_reply_prompt_bans_generic_assistant_moves() -> None:
     assert "do not describe operational status" in prompt
 
 
+def test_candidate_reply_prompt_supports_emotion_without_coaching() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "message": {
+                "text": "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+            },
+            "context": {"memoryItems": [], "recentTurns": []},
+        },
+        state={
+            "classification": {
+                "dialogueAct": "emotional_disclosure",
+                "latestUserSubstance": (
+                    "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+                ),
+            },
+            "riskAssessment": {"severity": "none"},
+            "policyDecision": "allow",
+        },
+    )
+
+    assert "emotional_disclosure: support the feeling without coaching" in prompt
+    assert "unless the employee directly asks for advice" in prompt
+
+
 def test_candidate_reply_policy_violations_find_old_provider_gates() -> None:
     violations = candidate_reply_policy_violations(
         text=(
@@ -280,6 +304,37 @@ def test_candidate_reply_policy_violations_find_russian_reflective_and_action_pl
 
     assert violations == [
         "open with substance, not formulaic validation or paraphrase",
+        "support the emotion without advice, steps, tactics, or an action plan",
+    ]
+
+
+def test_candidate_reply_policy_violations_find_emotional_state_action_plan_moves() -> None:
+    violations = candidate_reply_policy_violations(
+        text="Попробуй на 10 минут убрать всё лишнее и выбрать один маленький шаг.",
+        request={
+            "message": {
+                "text": "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+            },
+            "context": {
+                "replyPolicy": {
+                    "maxChars": 420,
+                    "maxQuestions": 1,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
+        },
+        state={
+            "classification": {
+                "dialogueAct": "emotional_disclosure",
+                "latestUserSubstance": (
+                    "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+                ),
+            },
+        },
+    )
+
+    assert violations == [
         "support the emotion without advice, steps, tactics, or an action plan",
     ]
 

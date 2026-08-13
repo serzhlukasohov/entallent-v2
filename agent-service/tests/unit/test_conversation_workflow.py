@@ -191,6 +191,43 @@ def test_workflow_regenerates_reply_once_for_deterministic_policy_violation() ->
     assert result["diagnostics"]["modelRetryCount"] == 1
 
 
+def test_workflow_regenerates_russian_emotional_action_plan_reply() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = (
+        "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+    )
+    request_body["context"]["replyPolicy"] = {
+        "maxChars": 420,
+        "maxQuestions": 1,
+        "allowReflectiveOpener": False,
+        "allowListFormatting": False,
+    }
+    chat_client = SequentialFakeChatClient(
+        [
+            "Попробуй на 10 минут убрать всё лишнее и выбрать один маленький шаг.",
+            "Да, когда внимание всё время уводит в сторону, день быстро начинает вязнуть.",
+        ]
+    )
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    result = workflow.run(request_body)
+
+    assert result["classification"]["dialogueAct"] == "emotional_disclosure"
+    assert result["reply"] == {
+        "text": "Да, когда внимание всё время уводит в сторону, день быстро начинает вязнуть.",
+        "mode": "candidate",
+    }
+    assert chat_client.calls == 2
+    assert chat_client.last_user_message is not None
+    assert "support the emotion without advice" in chat_client.last_user_message
+    assert result["diagnostics"]["modelCalls"] == 2
+    assert result["diagnostics"]["modelRetryCount"] == 1
+
+
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "normal request text"
