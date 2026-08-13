@@ -27,6 +27,7 @@ import { attachTeamDisplayNames } from './team-users';
 
 const DEFAULT_DAYS = 14;
 const MAX_DAYS = 120;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class ManagerDashboardReadModel {
@@ -35,22 +36,23 @@ export class ManagerDashboardReadModel {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
-  async getTeamOverview(tenantId: string): Promise<AdminManagerTeamResponse> {
+  async getTeamOverview(tenantId: unknown): Promise<AdminManagerTeamResponse> {
+    const input = resolveManagerTeamInput(tenantId);
     const [userRows, channelAccountRows] = await Promise.all([
       this.db.client
         .select({ id: users.id, preferredName: users.preferredName })
         .from(users)
-        .where(and(eq(users.tenantId, tenantId), eq(users.status, 'active'))),
+        .where(and(eq(users.tenantId, input.tenantId), eq(users.status, 'active'))),
       this.db.client
         .select({ userId: channelAccounts.userId, displayName: channelAccounts.displayName })
         .from(channelAccounts)
-        .where(eq(channelAccounts.tenantId, tenantId)),
+        .where(eq(channelAccounts.tenantId, input.tenantId)),
     ]);
 
     const teamUsers = attachTeamDisplayNames(userRows, channelAccountRows);
 
     if (!teamUsers.length) {
-      return buildEmptyTeamOverview(tenantId);
+      return buildEmptyTeamOverview(input.tenantId);
     }
 
     const [lastMessages, activeRiskUserIds, surveyRows, evidenceRows] = await Promise.all([
@@ -62,7 +64,7 @@ export class ManagerDashboardReadModel {
         .from(messages)
         .where(
           and(
-            eq(messages.tenantId, tenantId),
+            eq(messages.tenantId, input.tenantId),
             eq(messages.direction, 'inbound'),
             isNull(messages.deletedAt),
           ),
@@ -72,7 +74,7 @@ export class ManagerDashboardReadModel {
       this.db.client
         .selectDistinctOn([riskSignals.userId], { userId: riskSignals.userId })
         .from(riskSignals)
-        .where(and(eq(riskSignals.tenantId, tenantId), eq(riskSignals.status, 'active'))),
+        .where(and(eq(riskSignals.tenantId, input.tenantId), eq(riskSignals.status, 'active'))),
 
       this.db.client
         .select({
@@ -88,7 +90,7 @@ export class ManagerDashboardReadModel {
         .from(surveyAssessments)
         .innerJoin(surveyWindows, eq(surveyAssessments.surveyWindowId, surveyWindows.id))
         .innerJoin(surveyQuestions, eq(surveyAssessments.surveyQuestionId, surveyQuestions.id))
-        .where(and(eq(surveyWindows.tenantId, tenantId), eq(surveyWindows.status, 'active'))),
+        .where(and(eq(surveyWindows.tenantId, input.tenantId), eq(surveyWindows.status, 'active'))),
 
       this.db.client
         .select({
@@ -104,7 +106,7 @@ export class ManagerDashboardReadModel {
         .innerJoin(surveyWindows, eq(surveyEvidence.surveyWindowId, surveyWindows.id))
         .where(
           and(
-            eq(surveyWindows.tenantId, tenantId),
+            eq(surveyWindows.tenantId, input.tenantId),
             eq(surveyWindows.status, 'active'),
             isNull(surveyEvidence.supersededAt),
           ),
@@ -121,14 +123,14 @@ export class ManagerDashboardReadModel {
     });
 
     return {
-      tenantId,
+      tenantId: input.tenantId,
       teamSize: teamUsers.length,
       employees,
       generatedAt: new Date().toISOString(),
     };
   }
 
-  async getTrends(tenantId: string | undefined, daysRaw?: string): Promise<TrendsResult> {
+  async getTrends(tenantId: unknown, daysRaw?: unknown): Promise<TrendsResult> {
     const input = resolveManagerTrendsInput(
       tenantId,
       daysRaw,
@@ -202,24 +204,57 @@ export function buildEmptyTeamOverview(tenantId: string): AdminManagerTeamRespon
   return { tenantId, teamSize: 0, employees: [], generatedAt: new Date().toISOString() };
 }
 
+export function resolveManagerTeamInput(tenantId: unknown): { tenantId: string } {
+  return { tenantId: normalizeTenantId(tenantId, 'tenantId query param is required') };
+}
+
 export function resolveManagerTrendsInput(
-  tenantId: string | undefined,
-  daysRaw: string | undefined,
-  defaultTenantId: string | undefined,
+  tenantId: unknown,
+  daysRaw: unknown,
+  defaultTenantId: unknown,
 ): { tenantId: string; days: number } {
-  const resolvedTenantId = tenantId ?? defaultTenantId;
-  if (!resolvedTenantId) {
-    throw new BadRequestException('tenantId query param is required');
-  }
+  const tenantSource = tenantId === undefined ? defaultTenantId : tenantId;
 
   return {
-    tenantId: resolvedTenantId,
-    days: clampDays(daysRaw),
+    tenantId: normalizeTenantId(tenantSource, 'tenantId query param is required'),
+    days: resolveDays(daysRaw),
   };
 }
 
-function clampDays(raw?: string): number {
-  const n = raw ? parseInt(raw, 10) : DEFAULT_DAYS;
-  if (isNaN(n) || n < 1) return DEFAULT_DAYS;
+function normalizeTenantId(value: unknown, missingMessage: string): string {
+  if (value === undefined) {
+    throw new BadRequestException(missingMessage);
+  }
+  if (typeof value !== 'string') {
+    throw new BadRequestException('tenantId query param must be a valid UUID');
+  }
+
+  const tenantId = value.trim();
+  if (!tenantId) {
+    throw new BadRequestException(missingMessage);
+  }
+  if (!UUID_RE.test(tenantId)) {
+    throw new BadRequestException('tenantId query param must be a valid UUID');
+  }
+
+  return tenantId;
+}
+
+function resolveDays(raw?: unknown): number {
+  if (raw !== undefined && typeof raw !== 'string') {
+    throw new BadRequestException('days query param must be an integer');
+  }
+  if (raw === undefined || raw.trim() === '') return DEFAULT_DAYS;
+
+  const normalized = raw.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new BadRequestException('days query param must be an integer');
+  }
+
+  const n = Number(normalized);
+  if (n < 1) {
+    throw new BadRequestException('days query param must be at least 1');
+  }
+
   return Math.min(n, MAX_DAYS);
 }
