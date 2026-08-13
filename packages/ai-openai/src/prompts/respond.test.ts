@@ -171,5 +171,32 @@ describe('buildRespondSystemPrompt reply plan', () => {
     expect(p).toContain('Required grounding (hard contract)');
     expect(p).toContain('defending the payments architecture on Friday');
     expect(p).toMatch(/do not collapse it into only time\/place\/generalities/i);
+    expect(p).toContain('Support-emotion contract: use plain presence, not coaching');
+    expect(p).toContain('overrides the general invitation to name what is between the lines');
+    expect(p).toContain("Do not open by labeling or diagnosing the employee's state");
+    expect(p).toContain('Do not prescribe even small tactics');
+  });
+
+  it('keeps no-question emotional support from becoming unsolicited advice', () => {
+    const p = buildRespondSystemPrompt(s(), {
+      userName: 'T',
+      replyPlan: {
+        dialogueAct: 'emotional_disclosure',
+        latestUserSubstance: 'I am exhausted today',
+        topicAnchor: null,
+        memoryAnchors: [],
+        responseMove: 'support_emotion',
+        mayInferFromBrevity: true,
+        questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+        requiredGrounding: [],
+        forbiddenMoves: ['action_plan', 'survey_probe'],
+      },
+    });
+
+    expect(p).toContain('Question policy (hard contract): ask zero questions this turn');
+    expect(p).toContain('Support-emotion contract: use plain presence, not coaching');
+    expect(p).toContain('push back, or offer a different angle');
+    expect(p).toContain('If questions are disallowed, leave room with a short acknowledgement');
+    expect(p).toContain('Forbidden moves for this turn: action_plan, survey_probe');
   });
 });

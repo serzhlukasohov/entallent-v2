@@ -166,10 +166,13 @@ function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): s
     : plan.responseMove === 'social_reply'
       ? '\nSocial contract: answer socially and briefly, then return the check-in once; do not describe operational status or support capabilities.'
       : '';
+  const emotionalSupport = plan.responseMove === 'support_emotion'
+    ? '\nSupport-emotion contract: use plain presence, not coaching. This typed contract overrides the general invitation to name what is between the lines, push back, or offer a different angle. Do not open by labeling or diagnosing the employee\'s state. Do not prescribe even small tactics, task selection, timed exercises, or a "try/do this" move. If questions are disallowed, leave room with a short acknowledgement instead of substituting advice.'
+    : '';
 
   return `\nReply plan (follow this typed policy over the raw surface form of the latest message):
   - dialogueAct: ${plan.dialogueAct}
-  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${forbiddenMoves}${brevity}${social}
+  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${forbiddenMoves}${brevity}${social}${emotionalSupport}
   `;
 }
 

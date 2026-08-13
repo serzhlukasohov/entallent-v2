@@ -235,10 +235,48 @@ def test_candidate_reply_prompt_supports_emotion_without_coaching() -> None:
         },
     )
 
-    assert "emotional_disclosure: support the feeling without coaching" in prompt
-    assert "offering task selection" in prompt
-    assert "proposing timed exercises" in prompt
-    assert "unless the employee directly asks for advice" in prompt
+    assert "emotional_disclosure: support the feeling with plain presence" in prompt
+    assert "Do not open by labeling or diagnosing the employee's state" in prompt
+    assert "Do not prescribe even small tactics" in prompt
+    assert "task selection" in prompt
+    assert "timed exercises" in prompt
+    assert "try/do this" in prompt
+    assert "If questions are disallowed, leave room with a short acknowledgement" in prompt
+
+
+def test_candidate_reply_prompt_uses_support_emotion_reply_plan_policy() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "message": {"text": "сегодня тяжело собраться"},
+            "context": {
+                "memoryItems": [],
+                "recentTurns": [],
+                "replyPlan": {
+                    "dialogueAct": "emotional_disclosure",
+                    "latestUserSubstance": "сегодня тяжело собраться",
+                    "topicAnchor": None,
+                    "memoryAnchors": [],
+                    "responseMove": "support_emotion",
+                    "mayInferFromBrevity": True,
+                    "questionPolicy": {
+                        "maxQuestions": 0,
+                        "reason": "strategy_disallows_questions",
+                    },
+                    "requiredGrounding": [],
+                    "forbiddenMoves": ["action_plan"],
+                },
+            },
+        },
+        state={
+            "riskAssessment": {"severity": "none"},
+            "policyDecision": "allow",
+        },
+    )
+
+    assert "emotional_disclosure: support the feeling with plain presence" in prompt
+    assert "ask zero questions" in prompt
+    assert "questionPolicy=maxQuestions=0,reason=strategy_disallows_questions" in prompt
+    assert "forbiddenMoves=action_plan" in prompt
 
 
 def test_candidate_reply_policy_violations_find_old_provider_gates() -> None:

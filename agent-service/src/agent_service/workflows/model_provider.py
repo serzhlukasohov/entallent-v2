@@ -304,7 +304,10 @@ def build_candidate_reply_prompt(
     classification = state.get("classification")
     reference_context = candidate_reference_context(request)
     proactive_instruction = proactive_check_in_instruction(request)
-    dialogue_policy = candidate_dialogue_policy(classification)
+    dialogue_policy = candidate_dialogue_policy(
+        classification=classification,
+        request=request,
+    )
     reply_constraints = candidate_reply_constraints(request=request, state=state)
     current_message_line = (
         "current user message: "
@@ -387,13 +390,19 @@ def candidate_reply_constraints(
     state: dict[str, Any],
 ) -> str:
     policy = reply_gate_policy(request=request, state=state)
+    typed_max_questions = explicit_reply_plan_max_questions(request)
+    max_questions = (
+        typed_max_questions
+        if typed_max_questions is not None
+        else int(policy["max_questions"])
+    )
     pieces = [
         f"max {policy['max_chars']} characters",
         "plain prose, no bullets or numbered lists",
     ]
-    if policy["max_questions"] == 0:
+    if max_questions == 0:
         pieces.append("ask zero questions")
-    elif policy["max_questions"] == 1:
+    elif max_questions == 1:
         pieces.append("ask at most one question")
     if policy["reason"]:
         pieces.append(f"reason: {policy['reason']}")
@@ -403,8 +412,15 @@ def candidate_reply_constraints(
     return "; ".join(pieces)
 
 
-def candidate_dialogue_policy(classification: Any) -> str:
+def candidate_dialogue_policy(
+    classification: Any,
+    *,
+    request: dict[str, Any] | None = None,
+) -> str:
+    reply_plan_move = reply_plan_response_move(request or {})
     if not isinstance(classification, Mapping):
+        if reply_plan_move == "support_emotion":
+            return support_emotion_dialogue_policy(None)
         return "normal: keep it brief, specific, and conversational."
 
     dialogue_act = classification.get("dialogueAct")
@@ -427,19 +443,8 @@ def candidate_dialogue_policy(classification: Any) -> str:
             f"{anchor}"
         )
 
-    if dialogue_act == "emotional_disclosure":
-        grounding = (
-            f" Stay grounded in this substance: {latest_substance}."
-            if latest_substance
-            else ""
-        )
-        return (
-            "emotional_disclosure: support the feeling without coaching, diagnosing, "
-            "giving tactics, offering task selection, or proposing timed exercises "
-            "unless the employee directly asks for advice. Prefer one concrete "
-            "acknowledgement or one gentle question about the experience."
-            f"{grounding}"
-        )
+    if dialogue_act == "emotional_disclosure" or reply_plan_move == "support_emotion":
+        return support_emotion_dialogue_policy(latest_substance)
 
     if latest_substance:
         return (
@@ -448,6 +453,22 @@ def candidate_dialogue_policy(classification: Any) -> str:
         )
 
     return "normal: keep it brief, specific, and conversational."
+
+
+def support_emotion_dialogue_policy(latest_substance: str | None) -> str:
+    grounding = (
+        f" Stay grounded in this substance: {latest_substance}."
+        if latest_substance
+        else ""
+    )
+    return (
+        "emotional_disclosure: support the feeling with plain presence, not coaching. "
+        "Do not open by labeling or diagnosing the employee's state. Do not prescribe "
+        "even small tactics, task selection, timed exercises, or a 'try/do this' move. "
+        "If questions are disallowed, leave room with a short acknowledgement instead "
+        "of substituting advice."
+        f"{grounding}"
+    )
 
 
 def candidate_reply_retry_instruction(
@@ -615,6 +636,15 @@ def candidate_reply_plan_summary(request: dict[str, Any]) -> str | None:
         parts.append(f"latestUserSubstance={latest_substance}")
     if topic_anchor:
         parts.append(f"topicAnchor={topic_anchor}")
+    question_policy = plan.get("questionPolicy")
+    if isinstance(question_policy, Mapping):
+        max_questions = question_policy.get("maxQuestions")
+        reason = safe_context_text(question_policy.get("reason"), limit=80)
+        if max_questions in (0, 1):
+            question_part = f"maxQuestions={max_questions}"
+            if reason:
+                question_part = f"{question_part},reason={reason}"
+            parts.append(f"questionPolicy={question_part}")
 
     forbidden_moves = plan.get("forbiddenMoves")
     if isinstance(forbidden_moves, list):
