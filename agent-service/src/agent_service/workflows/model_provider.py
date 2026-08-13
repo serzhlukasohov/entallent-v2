@@ -78,6 +78,7 @@ ACTION_PLAN_PHRASE_PATTERNS = (
     re.compile(r"\b(?:step|plan|checklist)\b", re.IGNORECASE),
     re.compile(r"\b(?:попробуй|попробовать|можно попробовать|начни с)\b", re.IGNORECASE),
     re.compile(r"\b(?:можно|лучше|стоит)\b", re.IGNORECASE),
+    re.compile(r"\bнуж(?:ен|на|но|ны)\b", re.IGNORECASE),
     re.compile(r"\b(?:постарайся|дай\s+себе)\b", re.IGNORECASE),
     re.compile(r"\b(?:шаг|план|чеклист)\b", re.IGNORECASE),
     re.compile(r"\b(?:можно|можешь)\s+(?:дать|сделать|выбрать|убрать)\b", re.IGNORECASE),
@@ -540,6 +541,10 @@ def candidate_reply_policy_violations(
         forbids_action_plan(request) or state_supports_emotion(state)
     ) and contains_action_plan_move(text):
         violations.append("support the emotion without advice, steps, tactics, or an action plan")
+    if state_supports_emotion(state) and contains_reflective_marker_in_first_sentence(text):
+        violation = "open with substance, not formulaic validation or paraphrase"
+        if violation not in violations:
+            violations.append(violation)
     if is_social_greeting_or_checkin(request) and contains_operational_self_status(text):
         violations.append("answer socially, not with operational status or support-bot language")
     return violations
@@ -550,6 +555,22 @@ def has_reflective_reply_opener(text: str) -> bool:
         return False
     opener = first_substantive_reply_sentence(text)
     return any(pattern.search(opener) for pattern in REFLECTIVE_REPLY_OPENER_PATTERNS)
+
+
+def contains_reflective_marker_in_first_sentence(text: str) -> bool:
+    sentence = first_substantive_reply_sentence(text).lower()
+    return any(
+        marker in sentence
+        for marker in (
+            "похоже",
+            "кажется",
+            "понимаю",
+            "звучит так",
+            "sounds like",
+            "seems like",
+            "i understand",
+        )
+    )
 
 
 def first_substantive_reply_sentence(text: str) -> str:
