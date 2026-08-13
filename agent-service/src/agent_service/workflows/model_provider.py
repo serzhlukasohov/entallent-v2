@@ -213,9 +213,18 @@ class AgentFrameworkConversationModelClient:
                 state=state,
             )
             if remaining_violations:
-                raise UnsafeConversationModelOutputError(
-                    "MAF model provider returned a policy-violating retry."
-                )
+                fallback_text = deterministic_support_emotion_reply(request, state)
+                if fallback_text:
+                    text = fallback_text
+                    remaining_violations = candidate_reply_policy_violations(
+                        text=text,
+                        request=request,
+                        state=state,
+                    )
+                if remaining_violations:
+                    raise UnsafeConversationModelOutputError(
+                        "MAF model provider returned a policy-violating retry."
+                    )
         try:
             output_verdict = await self._inspect_output(text=text)
         except LlmSafetyGatewayBlockedError as error:
@@ -688,6 +697,31 @@ def state_supports_emotion(state: dict[str, Any]) -> bool:
     if not isinstance(classification, Mapping):
         return False
     return classification.get("dialogueAct") == "emotional_disclosure"
+
+
+def deterministic_support_emotion_reply(
+    request: dict[str, Any],
+    state: dict[str, Any],
+) -> str | None:
+    if not state_supports_emotion(state):
+        return None
+
+    text_parts: list[str] = []
+    classification = state.get("classification")
+    if isinstance(classification, Mapping):
+        latest = safe_context_text(classification.get("latestUserSubstance"), limit=240)
+        if latest:
+            text_parts.append(latest)
+    request_text = request_message_text(request)
+    if request_text:
+        text_parts.append(request_text)
+    normalized = " ".join(text_parts).lower()
+
+    if re.search(r"\b(?:устал|устала|усталость|вымотал|вымоталась|вымотался)\b", normalized):
+        return "Да, день правда вымотал. Жаль, что так навалилось."
+    if re.search(r"\b(?:фокус|сфокусироваться|отвлекаюсь|отвлекает)\b", normalized):
+        return "Да, такой день быстро выматывает. Жаль, что фокус всё время рвётся."
+    return "Да, тяжёлый момент. Жаль, что сейчас так давит."
 
 
 def contains_action_plan_move(text: str) -> bool:

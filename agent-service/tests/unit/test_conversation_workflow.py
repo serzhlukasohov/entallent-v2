@@ -228,7 +228,7 @@ def test_workflow_regenerates_russian_emotional_action_plan_reply() -> None:
     assert result["diagnostics"]["modelRetryCount"] == 1
 
 
-def test_workflow_rejects_policy_violating_retry_reply() -> None:
+def test_workflow_uses_deterministic_support_reply_after_emotional_retry_violation() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = (
         "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
@@ -254,13 +254,15 @@ def test_workflow_rejects_policy_violating_retry_reply() -> None:
     )
     workflow = ConversationWorkflow(model_client=model_client)
 
-    with pytest.raises(ConversationWorkflowError) as error:
-        workflow.run(request_body)
+    result = workflow.run(request_body)
 
-    assert error.value.error_category == "unsafe_partial_result"
-    assert error.value.retryable is False
-    assert error.value.fallback_allowed is True
+    assert result["reply"] == {
+        "text": "Да, такой день быстро выматывает. Жаль, что фокус всё время рвётся.",
+        "mode": "candidate",
+    }
     assert chat_client.calls == 2
+    assert result["diagnostics"]["modelCalls"] == 2
+    assert result["diagnostics"]["modelRetryCount"] == 1
 
 
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:
