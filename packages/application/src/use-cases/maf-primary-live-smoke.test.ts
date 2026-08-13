@@ -82,6 +82,35 @@ describe('runMafPrimaryLiveSmoke', () => {
     expect(JSON.stringify(evidence)).not.toContain('candidate risk evidence');
   });
 
+  it('accepts zero model calls for deterministic renderer primary evidence', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ...CANDIDATE_RESULT,
+        diagnostics: {
+          ...CANDIDATE_RESULT.diagnostics,
+          modelCalls: 0,
+          replyRenderer: 'deterministic_support_emotion_reply',
+        },
+      }),
+    }));
+
+    await expect(
+      runMafPrimaryLiveSmoke({
+        serviceUrl: 'http://127.0.0.1:8001',
+        fetch: fetchImpl,
+      }),
+    ).resolves.toMatchObject({
+      status: 'valid',
+      validationStatus: 'contract_valid',
+      primary: {
+        mode: 'maf_primary',
+        modelCalls: 0,
+      },
+    });
+  });
+
   it('fails closed with a safe reason when the runtime response is invalid', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,

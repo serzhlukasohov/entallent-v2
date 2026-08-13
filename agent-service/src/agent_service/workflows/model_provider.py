@@ -96,11 +96,25 @@ class AgentFrameworkConversationModelClient:
         state: dict[str, Any],
     ) -> ConversationModelReply:
         self._safety_verdicts = []
-        social_reply = deterministic_social_reply_for_plan(request)
-        if social_reply is not None:
+        deterministic_reply = deterministic_reply_for_plan(request)
+        if deterministic_reply is not None:
+            request_text = request_message_text(request)
+            text = normalize_model_reply_text(
+                deterministic_reply[0],
+                request_text=request_text,
+            )
+            try:
+                output_verdict = await self._inspect_output(text=text)
+            except LlmSafetyGatewayBlockedError as error:
+                self._safety_verdicts.append(error.verdict)
+                raise UnsafeConversationModelOutputError(
+                    "MAF LLM safety gateway blocked output safely.",
+                ) from error
+            if output_verdict is not None:
+                self._safety_verdicts.append(output_verdict)
             return ConversationModelReply(
-                text=social_reply,
-                renderer_path="deterministic_social_reply",
+                text=text,
+                renderer_path=deterministic_reply[1],
             )
         prompt = build_candidate_reply_prompt(request=request, state=state)
         try:
@@ -599,6 +613,14 @@ def explicit_reply_policy(request: dict[str, Any]) -> dict[str, int | str | bool
     }
 
 
+def explicit_reply_policy_max_chars(request: dict[str, Any]) -> int | None:
+    policy = explicit_reply_policy(request)
+    if policy is None:
+        return None
+    max_chars = policy.get("max_chars")
+    return max_chars if isinstance(max_chars, int) else None
+
+
 def explicit_reply_plan_max_questions(request: dict[str, Any]) -> int | None:
     context = request.get("context")
     if not isinstance(context, Mapping):
@@ -610,9 +632,11 @@ def explicit_reply_plan_max_questions(request: dict[str, Any]) -> int | None:
     if not isinstance(question_policy, Mapping):
         return None
     max_questions = question_policy.get("maxQuestions")
+    if not isinstance(max_questions, int) or isinstance(max_questions, bool):
+        return None
     if max_questions not in (0, 1):
         return None
-    return int(max_questions)
+    return max_questions
 
 
 def candidate_reply_plan_summary(request: dict[str, Any]) -> str | None:
@@ -679,6 +703,57 @@ def deterministic_social_reply_for_plan(request: dict[str, Any]) -> str | None:
     return None
 
 
+def deterministic_reply_for_plan(request: dict[str, Any]) -> tuple[str, str] | None:
+    social_reply = deterministic_social_reply_for_plan(request)
+    if social_reply is not None:
+        return social_reply, "deterministic_social_reply"
+
+    support_reply = deterministic_support_emotion_reply_for_plan(request)
+    if support_reply is not None:
+        return support_reply, "deterministic_support_emotion_reply"
+
+    return None
+
+
+def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str | None:
+    if reply_plan_response_move(request) != "support_emotion":
+        return None
+    if reply_plan_dialogue_act(request) != "emotional_disclosure":
+        return None
+    if explicit_reply_plan_max_questions(request) != 0:
+        return None
+    if not reply_plan_forbidden_move(request, "action_plan"):
+        return None
+
+    base_reply = "Да, тяжелый момент. Жаль, что сейчас так давит."
+    max_chars = explicit_reply_policy_max_chars(request)
+    if max_chars is not None and len(base_reply) > max_chars:
+        return None
+
+    grounding = first_required_grounding_content(request)
+    if not grounding:
+        return base_reply
+
+    grounded_reply = (
+        f"Да, тяжелый момент, особенно на фоне {grounding}. "
+        "Жаль, что сейчас так давит."
+    )
+    if max_chars is not None and len(grounded_reply) > max_chars:
+        return base_reply
+    return grounded_reply
+
+
+def reply_plan_dialogue_act(request: dict[str, Any]) -> str | None:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return None
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return None
+    dialogue_act = plan.get("dialogueAct")
+    return dialogue_act if isinstance(dialogue_act, str) else None
+
+
 def reply_plan_response_move(request: dict[str, Any]) -> str | None:
     context = request.get("context")
     if not isinstance(context, Mapping):
@@ -688,6 +763,40 @@ def reply_plan_response_move(request: dict[str, Any]) -> str | None:
         return None
     response_move = plan.get("responseMove")
     return response_move if isinstance(response_move, str) else None
+
+
+def reply_plan_forbidden_move(request: dict[str, Any], move: str) -> bool:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return False
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return False
+    forbidden_moves = plan.get("forbiddenMoves")
+    return isinstance(forbidden_moves, list) and move in forbidden_moves
+
+
+def first_required_grounding_content(request: dict[str, Any]) -> str | None:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return None
+    plan = context.get("replyPlan")
+    if not isinstance(plan, Mapping):
+        return None
+    required_grounding = plan.get("requiredGrounding")
+    if not isinstance(required_grounding, list):
+        return None
+    for item in required_grounding:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("requirement") != "mention_explicitly":
+            continue
+        content = safe_context_text(item.get("content"), limit=80)
+        if content and "?" in content:
+            continue
+        if content:
+            return content
+    return None
 
 
 def chat_messages_payload(messages: Sequence[Message]) -> list[dict[str, str]]:

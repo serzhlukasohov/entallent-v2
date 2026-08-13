@@ -101,7 +101,7 @@ export async function runMafPrimaryLiveSmoke(
   }
 
   const metadata = recorder.savedOutbound?.metadata;
-  if (!isPrimaryMetadata(metadata) || metadata.modelCalls !== 1) {
+  if (!isPrimaryMetadata(metadata) || !hasValidSmokeModelCalls(metadata.modelCalls, metadata.replyRenderer)) {
     return {
       status: 'invalid',
       validationStatus: isPrimaryMetadata(metadata) ? 'contract_valid' : 'not_run',
@@ -188,6 +188,7 @@ function isPrimaryMetadata(value: unknown): value is {
   modelCalls: number;
   toolCalls: number;
   retryCount: number;
+  replyRenderer?: string;
 } {
   return (
     typeof value === 'object'
@@ -200,7 +201,18 @@ function isPrimaryMetadata(value: unknown): value is {
     && typeof (value as { toolCalls?: unknown }).toolCalls === 'number'
     && 'retryCount' in value
     && typeof (value as { retryCount?: unknown }).retryCount === 'number'
+    && (
+      !('replyRenderer' in value)
+      || typeof (value as { replyRenderer?: unknown }).replyRenderer === 'string'
+    )
   );
+}
+
+function hasValidSmokeModelCalls(modelCalls: number, replyRenderer?: string): boolean {
+  if (replyRenderer?.startsWith('deterministic_')) {
+    return modelCalls === 0;
+  }
+  return modelCalls === 1;
 }
 
 const SAFE_TRACE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;

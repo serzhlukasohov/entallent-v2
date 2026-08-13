@@ -277,6 +277,55 @@ def test_workflow_uses_typed_social_reply_without_model_call() -> None:
     assert result["diagnostics"]["replyRenderer"] == "deterministic_social_reply"
 
 
+def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = "сегодня тяжело собраться tone-contract-marker"
+    request_body["context"]["replyPlan"] = {
+        "dialogueAct": "emotional_disclosure",
+        "latestUserSubstance": "сегодня тяжело собраться",
+        "topicAnchor": None,
+        "memoryAnchors": [],
+        "responseMove": "support_emotion",
+        "mayInferFromBrevity": True,
+        "questionPolicy": {
+            "maxQuestions": 0,
+            "reason": "strategy_disallows_questions",
+        },
+        "requiredGrounding": [],
+        "forbiddenMoves": ["action_plan", "survey_probe"],
+    }
+    request_body["context"]["replyPolicy"] = {
+        "maxChars": 120,
+        "maxQuestions": 0,
+        "allowReflectiveOpener": False,
+        "allowListFormatting": False,
+    }
+    chat_client = SequentialFakeChatClient(
+        [
+            (
+                "Похоже, день сейчас идет тяжело. Можно просто не требовать от себя "
+                "слишком многого."
+            ),
+        ]
+    )
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    result = workflow.run(request_body)
+
+    assert result["reply"] == {
+        "text": "Да, тяжелый момент. Жаль, что сейчас так давит.",
+        "mode": "candidate",
+    }
+    assert chat_client.calls == 0
+    assert result["diagnostics"]["modelCalls"] == 0
+    assert result["diagnostics"]["modelRetryCount"] == 0
+    assert result["diagnostics"]["replyRenderer"] == "deterministic_support_emotion_reply"
+
+
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "normal request text"

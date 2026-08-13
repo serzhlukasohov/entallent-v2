@@ -187,6 +187,24 @@ describe('Runtime contract fixtures', () => {
     ).toEqual({ ok: true });
   });
 
+  it('accepts deterministic support-emotion renderer diagnostics', () => {
+    const result = readJson('fixtures/valid/runtime-result.json') as RuntimeResult;
+    const withSupportRenderer: RuntimeResult = {
+      ...result,
+      diagnostics: {
+        ...result.diagnostics,
+        replyRenderer: 'deterministic_support_emotion_reply',
+      },
+    };
+
+    expect(
+      validateRuntimeResult({
+        schemaDocument,
+        value: withSupportRenderer,
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it.each(manifest.valid)('accepts valid $path', (fixture) => {
     const result = validateRuntimeContract({
       schemaDocument,

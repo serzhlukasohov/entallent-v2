@@ -165,7 +165,10 @@ async def run_live_model_smoke(
 
     diagnostics = response.body.get("diagnostics", {})
     model_calls = diagnostics.get("modelCalls") if isinstance(diagnostics, dict) else None
-    if model_calls != 1:
+    reply_renderer = (
+        diagnostics.get("replyRenderer") if isinstance(diagnostics, dict) else None
+    )
+    if not valid_smoke_model_calls(model_calls, reply_renderer):
         return LiveModelSmokeResult(
             ok=False,
             status="model_call_count_invalid",
@@ -183,6 +186,14 @@ async def run_live_model_smoke(
         exit_code=0,
         evidence=build_success_evidence(response.body),
     )
+
+
+def valid_smoke_model_calls(model_calls: Any, reply_renderer: Any) -> bool:
+    if not isinstance(model_calls, int) or isinstance(model_calls, bool):
+        return False
+    if isinstance(reply_renderer, str) and reply_renderer.startswith("deterministic_"):
+        return model_calls == 0
+    return model_calls == 1
 
 
 def collect_missing_model_config_keys(settings: Settings) -> list[str]:

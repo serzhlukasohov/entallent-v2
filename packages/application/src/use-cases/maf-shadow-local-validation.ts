@@ -33,6 +33,7 @@ export interface MafShadowLocalValidationEvidence {
     decisionSource: 'shadow_flag';
     runtimeVersion?: string;
     modelCalls?: number;
+    replyRenderer?: string;
     toolCalls?: number;
     retryCount?: number;
     riskSeverity?: string;
@@ -150,6 +151,9 @@ function redactedCandidateEvidence(
   return {
     runtimeVersion: safeRuntimeVersion(candidateResult.diagnostics.runtimeVersion),
     modelCalls: candidateResult.diagnostics.modelCalls,
+    ...(candidateResult.diagnostics.replyRenderer
+      ? { replyRenderer: safeEnumEvidenceValue(candidateResult.diagnostics.replyRenderer) }
+      : {}),
     toolCalls: candidateResult.diagnostics.toolCalls,
     retryCount: candidateResult.diagnostics.retryCount,
     ...(candidateResult.riskAssessment?.severity

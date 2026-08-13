@@ -170,6 +170,34 @@ def test_live_model_smoke_success_evidence_is_redacted() -> None:
     assert "actionPayload" not in serialized
 
 
+def test_live_model_smoke_accepts_deterministic_zero_model_calls() -> None:
+    request_body = load_valid_request()
+    runtime_result = asyncio.run(build_model_runtime_result(request_body))
+    runtime_result["diagnostics"]["modelCalls"] = 0
+    runtime_result["diagnostics"]["replyRenderer"] = (
+        "deterministic_support_emotion_reply"
+    )
+
+    async def fake_post_json(_: dict[str, Any]) -> LiveModelSmokeHttpResponse:
+        return LiveModelSmokeHttpResponse(status_code=200, body=runtime_result)
+
+    result = asyncio.run(
+        run_live_model_smoke(
+            settings=Settings(
+                model_provider="openai",
+                model_name="gpt-4o",
+                openai_api_key="sk-secret-value",
+            ),
+            request_body=request_body,
+            post_json=fake_post_json,
+        )
+    )
+
+    assert result.ok is True
+    assert result.status == "valid"
+    assert result.evidence["modelCalls"] == 0
+
+
 def test_live_model_smoke_uses_in_process_runtime_endpoint(
     monkeypatch: MonkeyPatch,
 ) -> None:

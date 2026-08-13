@@ -139,7 +139,10 @@ export async function runMafShadowLiveSmoke(
     };
   }
 
-  if (localEvidence.shadow.modelCalls !== 1) {
+  if (!hasValidSmokeModelCalls(
+    localEvidence.shadow.modelCalls,
+    localEvidence.shadow.replyRenderer,
+  )) {
     return {
       status: 'invalid',
       validationStatus: 'contract_valid',
@@ -157,6 +160,16 @@ export async function runMafShadowLiveSmoke(
     userFacing: localEvidence.userFacing,
     shadow: localEvidence.shadow,
   };
+}
+
+function hasValidSmokeModelCalls(modelCalls: number | undefined, replyRenderer?: string): boolean {
+  if (typeof modelCalls !== 'number') {
+    return false;
+  }
+  if (replyRenderer?.startsWith('deterministic_')) {
+    return modelCalls === 0;
+  }
+  return modelCalls === 1;
 }
 
 export function resolveMafShadowLiveSmokeEnv(

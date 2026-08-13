@@ -312,7 +312,11 @@ export type RuntimeDiagnostics = {
   modelRetryCount: number;
   toolRetryCount: number;
   httpRetryCount: number;
-  replyRenderer?: 'workflow_static' | 'llm' | 'deterministic_social_reply';
+  replyRenderer?:
+    | 'workflow_static'
+    | 'llm'
+    | 'deterministic_social_reply'
+    | 'deterministic_support_emotion_reply';
 };
 
 export type RuntimeErrorCategory =

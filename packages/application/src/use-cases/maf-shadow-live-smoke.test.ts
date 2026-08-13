@@ -126,6 +126,36 @@ describe('runMafShadowLiveSmoke', () => {
     expect(JSON.stringify(evidence)).not.toContain('TypeScript user-facing smoke reply');
   });
 
+  it('returns valid redacted evidence when deterministic renderer has zero model calls', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ...CANDIDATE_RESULT,
+        diagnostics: {
+          ...CANDIDATE_RESULT.diagnostics,
+          modelCalls: 0,
+          replyRenderer: 'deterministic_support_emotion_reply',
+        },
+      }),
+    }));
+
+    const evidence = await runMafShadowLiveSmoke({
+      serviceUrl: 'http://127.0.0.1:8001',
+      fetch: fetchImpl,
+    });
+
+    expect(evidence).toMatchObject({
+      status: 'valid',
+      validationStatus: 'contract_valid',
+      shadow: {
+        modelCalls: 0,
+        replyRenderer: 'deterministic_support_emotion_reply',
+      },
+    });
+    expect(JSON.stringify(evidence)).not.toContain('candidate text');
+  });
+
   it('fails when the candidate is contract-valid but modelCalls is not 1', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
