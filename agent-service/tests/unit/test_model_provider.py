@@ -797,7 +797,7 @@ def test_model_client_does_not_render_unsafe_support_grounding() -> None:
     ]
 
 
-def test_model_client_keeps_allowed_question_support_emotion_on_model_path() -> None:
+def test_model_client_renders_question_support_emotion_without_model_call() -> None:
     chat_client = CountingChatClient()
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
 
@@ -820,6 +820,133 @@ def test_model_client_keeps_allowed_question_support_emotion_on_model_path() -> 
                             "reason": "new_substance_allows_question",
                         },
                         "requiredGrounding": [],
+                        "forbiddenMoves": ["action_plan", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Да, тяжелый момент. Что сейчас сильнее всего давит?"
+    assert reply.renderer_path == "deterministic_support_emotion_reply"
+    assert chat_client.call_count == 0
+
+
+def test_model_client_respects_zero_question_reply_policy_for_support_checkin() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "сегодня тяжело собраться"},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPolicy": {
+                        "maxChars": 120,
+                        "maxQuestions": 0,
+                        "allowReflectiveOpener": False,
+                        "allowListFormatting": False,
+                    },
+                    "replyPlan": {
+                        "dialogueAct": "emotional_disclosure",
+                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "topicAnchor": None,
+                        "memoryAnchors": [],
+                        "responseMove": "support_emotion",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "new_substance_allows_question",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["action_plan", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert "?" not in reply.text
+    assert reply.renderer_path == "deterministic_support_emotion_reply"
+    assert chat_client.call_count == 0
+
+
+def test_model_client_keeps_survey_support_question_on_model_path() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "сегодня тяжело собраться"},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "emotional_disclosure",
+                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "topicAnchor": None,
+                        "memoryAnchors": [],
+                        "responseMove": "support_emotion",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "new_substance_allows_question",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["action_plan"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
+def test_model_client_keeps_grounded_support_question_on_model_path() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "сегодня тяжело собраться"},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "emotional_disclosure",
+                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "topicAnchor": None,
+                        "memoryAnchors": [
+                            {
+                                "category": "stressor",
+                                "content": "тяжелый релиз",
+                            },
+                        ],
+                        "responseMove": "support_emotion",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "new_substance_allows_question",
+                        },
+                        "requiredGrounding": [
+                            {
+                                "source": "memory",
+                                "category": "stressor",
+                                "content": "тяжелый релиз",
+                                "requirement": "mention_explicitly",
+                            },
+                        ],
                         "forbiddenMoves": ["action_plan", "survey_probe"],
                     },
                 },

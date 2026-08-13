@@ -326,6 +326,55 @@ def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
     assert result["diagnostics"]["replyRenderer"] == "deterministic_support_emotion_reply"
 
 
+def test_workflow_uses_typed_support_emotion_checkin_without_model_call() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = "вроде ок, но день какой-то рассыпанный"
+    request_body["context"]["replyPlan"] = {
+        "dialogueAct": "emotional_disclosure",
+        "latestUserSubstance": "день какой-то рассыпанный",
+        "topicAnchor": None,
+        "memoryAnchors": [],
+        "responseMove": "support_emotion",
+        "mayInferFromBrevity": True,
+        "questionPolicy": {
+            "maxQuestions": 1,
+            "reason": "new_substance_allows_question",
+        },
+        "requiredGrounding": [],
+        "forbiddenMoves": ["action_plan", "survey_probe"],
+    }
+    request_body["context"]["replyPolicy"] = {
+        "maxChars": 120,
+        "maxQuestions": 1,
+        "allowReflectiveOpener": False,
+        "allowListFormatting": False,
+    }
+    chat_client = SequentialFakeChatClient(
+        [
+            (
+                "Похоже, день просто не держится в одной линии. "
+                "Можно немного побыть в таком темпе. Что сейчас выбивает?"
+            ),
+        ]
+    )
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    result = workflow.run(request_body)
+
+    assert result["reply"] == {
+        "text": "Да, тяжелый момент. Что сейчас сильнее всего давит?",
+        "mode": "candidate",
+    }
+    assert chat_client.calls == 0
+    assert result["diagnostics"]["modelCalls"] == 0
+    assert result["diagnostics"]["modelRetryCount"] == 0
+    assert result["diagnostics"]["replyRenderer"] == "deterministic_support_emotion_reply"
+
+
 def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "понял"

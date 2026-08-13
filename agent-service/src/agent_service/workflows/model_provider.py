@@ -621,6 +621,14 @@ def explicit_reply_policy_max_chars(request: dict[str, Any]) -> int | None:
     return max_chars if isinstance(max_chars, int) else None
 
 
+def explicit_reply_policy_max_questions(request: dict[str, Any]) -> int | None:
+    policy = explicit_reply_policy(request)
+    if policy is None:
+        return None
+    max_questions = policy.get("max_questions")
+    return max_questions if max_questions in (0, 1) else None
+
+
 def explicit_reply_plan_max_questions(request: dict[str, Any]) -> int | None:
     context = request.get("context")
     if not isinstance(context, Mapping):
@@ -724,12 +732,25 @@ def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str
         return None
     if reply_plan_dialogue_act(request) != "emotional_disclosure":
         return None
-    if explicit_reply_plan_max_questions(request) != 0:
-        return None
     if not reply_plan_forbidden_move(request, "action_plan"):
         return None
 
-    base_reply = "Да, тяжелый момент. Жаль, что сейчас так давит."
+    max_questions = explicit_reply_policy_max_questions(request)
+    if max_questions is None:
+        max_questions = explicit_reply_plan_max_questions(request)
+    if max_questions == 0:
+        base_reply = "Да, тяжелый момент. Жаль, что сейчас так давит."
+    elif (
+        max_questions == 1
+        and reply_plan_forbidden_move(request, "survey_probe")
+        and reply_plan_required_grounding_is_empty(request)
+        and reply_plan_may_infer_from_brevity(request) is True
+        and reply_plan_latest_user_substance(request) is not None
+    ):
+        base_reply = "Да, тяжелый момент. Что сейчас сильнее всего давит?"
+    else:
+        return None
+
     max_chars = explicit_reply_policy_max_chars(request)
     if max_chars is not None and len(base_reply) > max_chars:
         return None
