@@ -28,6 +28,20 @@ const REQUEST: ProcessMessageRequest = {
     recentTurns: [],
     memoryItems: [],
     goals: [],
+    replyPlan: {
+      dialogueAct: 'social_checkin',
+      latestUserSubstance: null,
+      topicAnchor: null,
+      memoryAnchors: [],
+      responseMove: 'social_reply',
+      mayInferFromBrevity: false,
+      questionPolicy: {
+        maxQuestions: 1,
+        reason: 'social_checkin_returns_question',
+      },
+      requiredGrounding: [],
+      forbiddenMoves: ['operational_status'],
+    },
   },
 };
 
@@ -119,6 +133,10 @@ describe('MafPrimaryAgentRuntime', () => {
         memoryCandidateCount: 0,
         proposedActionsDeferred: false,
         memoryCandidatesDeferred: false,
+        replyPlanDialogueAct: 'social_checkin',
+        replyPlanResponseMove: 'social_reply',
+        replyPlanMaxQuestions: 1,
+        replyPlanQuestionReason: 'social_checkin_returns_question',
       },
     });
     expect(outbox.enqueueMessageSend).toHaveBeenCalledWith({

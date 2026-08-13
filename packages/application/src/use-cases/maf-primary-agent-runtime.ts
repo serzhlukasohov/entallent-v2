@@ -76,7 +76,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
       occurredAt: new Date(),
       traceId: request.traceId,
       ...(request.requestPurpose === 'proactive_check_in' ? { messageType: 'proactive_check_in' } : {}),
-      metadata: toPrimaryMetadata(candidate),
+      metadata: toPrimaryMetadata(candidate, request),
     });
 
     await this.outbox.enqueueMessageSend({
@@ -454,8 +454,9 @@ function parseActionDueAt(value: string): Date | null {
   return Number.isNaN(dueAt.getTime()) ? null : dueAt;
 }
 
-function toPrimaryMetadata(candidate: RuntimeResult): Record<string, unknown> {
+function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequest): Record<string, unknown> {
   const replyMetadata = toReplyMetadata(candidate);
+  const replyPlanMetadata = toReplyPlanMetadata(request);
   return {
     runtimeMode: 'maf_primary',
     runtimeVersion: candidate.diagnostics.runtimeVersion,
@@ -466,12 +467,27 @@ function toPrimaryMetadata(candidate: RuntimeResult): Record<string, unknown> {
     memoryCandidateCount: candidate.memoryCandidates.length,
     proposedActionsDeferred: candidate.proposedActions.length > 0,
     memoryCandidatesDeferred: candidate.memoryCandidates.length > 0,
+    ...replyPlanMetadata,
     ...(replyMetadata?.containsSurveyProbe !== undefined
       ? { containsSurveyProbe: replyMetadata.containsSurveyProbe }
       : {}),
     ...(replyMetadata?.surveyProbeQuestionId
       ? { surveyProbeQuestionId: replyMetadata.surveyProbeQuestionId }
       : {}),
+  };
+}
+
+function toReplyPlanMetadata(request: ProcessMessageRequest): Record<string, unknown> {
+  const plan = request.runtimeContext?.replyPlan;
+  if (!plan) {
+    return {};
+  }
+
+  return {
+    replyPlanDialogueAct: plan.dialogueAct,
+    replyPlanResponseMove: plan.responseMove,
+    replyPlanMaxQuestions: plan.questionPolicy.maxQuestions,
+    replyPlanQuestionReason: plan.questionPolicy.reason,
   };
 }
 
