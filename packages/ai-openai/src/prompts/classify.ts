@@ -22,8 +22,10 @@ Return a JSON object with exactly these fields:
 
 Dialogue act rules:
 - Classify the LATEST employee message's contribution, not their personality or writing style.
+- The LATEST EMPLOYEE MESSAGE block in the user prompt is authoritative for dialogueAct.
+- Do not let older transcript turns, repeated test messages, or the mentor's previous answer change the dialogueAct of the latest employee message.
 - Use "greeting" when the latest message only opens socially without asking about the mentor.
-- Use "social_checkin" when the latest message asks how the mentor/agent is doing without adding work substance.
+- Use "social_checkin" when the latest message asks how the mentor/agent is doing without adding work substance, even if earlier turns discussed stress, wellbeing, or the mentor's operational status.
 - Use "acknowledgement" for backchannels / minimal replies that add no new work substance ("ok", "yeah", "fine", "a bit", "sure", "thanks").
 - Use "continuation" when the latest message continues a known topic with some new detail.
 - Use "new_substance" when it introduces a new concrete fact, event, task, blocker, preference, or concern.
@@ -46,6 +48,7 @@ Output only valid JSON, no markdown.${INJECTION_GUARD}`;
 }
 
 export function buildClassifyUserPrompt(turns: ConversationTurn[], context: ClassifyContext): string {
+  const latestEmployeeMessage = latestUserTurnContent(turns) ?? '';
   const transcript = turns
     .slice(-15)
     .map((t) => `${t.role === 'user' ? context.userName : 'Mentor'}: ${sanitizeTurnContent(t.content)}`)
@@ -59,5 +62,19 @@ export function buildClassifyUserPrompt(turns: ConversationTurn[], context: Clas
 Classify this conversation for employee "${context.userName}":
 
 ${transcript || '(no prior messages — this is the first message)'}
---- UNTRUSTED CONVERSATION TRANSCRIPT END ---`;
+--- UNTRUSTED CONVERSATION TRANSCRIPT END ---
+
+--- LATEST EMPLOYEE MESSAGE TO CLASSIFY ---
+${latestEmployeeMessage ? sanitizeTurnContent(latestEmployeeMessage) : '(none)'}
+--- END LATEST EMPLOYEE MESSAGE ---`;
+}
+
+function latestUserTurnContent(turns: ConversationTurn[]): string | null {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn?.role === 'user') {
+      return turn.content;
+    }
+  }
+  return null;
 }

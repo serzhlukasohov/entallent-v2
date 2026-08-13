@@ -59,6 +59,47 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
   });
 });
 
+describe('OpenAiProvider.classifySituation', () => {
+  beforeEach(() => createMock.mockReset());
+
+  it('uses deterministic temperature for dialogue act classification', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: ['neutral'],
+            urgency: 'low',
+            confidence: 0.94,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The latest employee message is a social check-in.',
+            reminderRequest: null,
+            dialogueAct: 'social_checkin',
+            latestUserSubstance: null,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const provider = makeProvider();
+    const result = await provider.classifySituation(
+      [{ role: 'user', content: 'как ты?', timestamp: new Date('2026-08-13T12:02:00.000Z') }],
+      { userName: 'Serhii' },
+    );
+
+    expect(result.dialogueAct).toBe('social_checkin');
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock.mock.calls[0][0]).toMatchObject({
+      temperature: 0,
+      max_completion_tokens: 2048,
+    });
+  });
+});
+
 describe('OpenAiProvider.generateResponse opener gate', () => {
   beforeEach(() => createMock.mockReset());
   const strat = { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] } as ReplyStrategy;

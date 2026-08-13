@@ -159,6 +159,8 @@ export class OpenAiProvider implements AiProviderPort {
       buildClassifySystemPrompt(),
       buildClassifyUserPrompt(turns, context),
       this.analysisModel,
+      2048,
+      0,
     );
     return SituationClassificationSchema.parse(JSON.parse(raw));
   }
@@ -311,6 +313,7 @@ export class OpenAiProvider implements AiProviderPort {
     userPrompt: string,
     model: string,
     maxTokens = 2048,
+    temperature = 0.3,
   ): Promise<string> {
     return this.breaker.call(async () => {
       const response = await this.client.chat.completions.create({
@@ -321,7 +324,7 @@ export class OpenAiProvider implements AiProviderPort {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.3,
+        temperature,
         max_completion_tokens: maxTokens,
       });
 
