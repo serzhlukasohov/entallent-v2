@@ -276,6 +276,59 @@ def test_candidate_reply_policy_violations_find_old_provider_gates() -> None:
     ]
 
 
+def test_candidate_reply_policy_violations_require_typed_reply_policy() -> None:
+    violations = candidate_reply_policy_violations(
+        text=(
+            "That, it seems, is the real root: overload.\n"
+            "- First, write a plan?\n"
+            "- Then align with your manager?"
+        ),
+        request={
+            "message": {"text": "ok"},
+            "context": {"memoryItems": [], "recentTurns": []},
+        },
+        state={
+            "classification": {
+                "dialogueAct": "acknowledgement",
+                "latestUserSubstance": None,
+            },
+            "riskAssessment": {"severity": "none"},
+        },
+    )
+
+    assert violations == []
+
+
+def test_candidate_reply_policy_violations_use_typed_reply_plan_question_policy() -> None:
+    violations = candidate_reply_policy_violations(
+        text="What changed?",
+        request={
+            "message": {"text": "ok"},
+            "context": {
+                "memoryItems": [],
+                "recentTurns": [],
+                "replyPlan": {
+                    "dialogueAct": "acknowledgement",
+                    "latestUserSubstance": None,
+                    "topicAnchor": "too much to do",
+                    "memoryAnchors": [],
+                    "responseMove": "continue_existing_thread",
+                    "mayInferFromBrevity": False,
+                    "questionPolicy": {
+                        "maxQuestions": 0,
+                        "reason": "acknowledgement_no_new_substance",
+                    },
+                    "requiredGrounding": [],
+                    "forbiddenMoves": ["comment_on_brevity"],
+                },
+            },
+        },
+        state={},
+    )
+
+    assert violations == ["ask no questions in this turn"]
+
+
 def test_candidate_reply_policy_violations_apply_social_checkin_reply_policy() -> None:
     violations = candidate_reply_policy_violations(
         text=(

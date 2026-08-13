@@ -191,6 +191,41 @@ def test_workflow_regenerates_reply_once_for_deterministic_policy_violation() ->
     assert result["diagnostics"]["modelRetryCount"] == 1
 
 
+def test_workflow_does_not_retry_text_gate_without_typed_reply_policy() -> None:
+    request_body = read_fixture("valid/process-message-request.json")
+    request_body["message"]["text"] = "ok"
+    request_body["context"].pop("replyPolicy", None)
+    chat_client = SequentialFakeChatClient(
+        [
+            (
+                "That, it seems, is the real root: overload.\n"
+                "- First, write a plan?\n"
+                "- Then align with your manager?"
+            ),
+            "This retry should not be used.",
+        ]
+    )
+    model_client = AgentFrameworkConversationModelClient(
+        chat_client=chat_client,
+        model_name="test-model",
+    )
+    workflow = ConversationWorkflow(model_client=model_client)
+
+    result = workflow.run(request_body)
+
+    assert result["reply"] == {
+        "text": (
+            "That, it seems, is the real root: overload.\n"
+            "- First, write a plan?\n"
+            "- Then align with your manager?"
+        ),
+        "mode": "candidate",
+    }
+    assert chat_client.calls == 1
+    assert result["diagnostics"]["modelCalls"] == 1
+    assert result["diagnostics"]["modelRetryCount"] == 0
+
+
 def test_workflow_uses_typed_social_reply_without_model_call() -> None:
     request_body = read_fixture("valid/process-message-request.json")
     request_body["message"]["text"] = "как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>"

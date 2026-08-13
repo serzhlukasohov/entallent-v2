@@ -476,18 +476,31 @@ def candidate_reply_policy_violations(
     request: dict[str, Any],
     state: dict[str, Any],
 ) -> list[str]:
-    policy = reply_gate_policy(request=request, state=state)
+    _ = state
+    policy = explicit_reply_policy(request)
+
     violations: list[str] = []
     normalized = " ".join(text.split())
-    if len(normalized) > int(policy["max_chars"]):
+    if policy is not None and len(normalized) > int(policy["max_chars"]):
         violations.append(f"keep the reply under {policy['max_chars']} characters")
+    max_questions = (
+        int(policy["max_questions"])
+        if policy is not None
+        else explicit_reply_plan_max_questions(request)
+    )
+    if max_questions is None:
+        return violations
     question_count = normalized.count("?")
-    if question_count > int(policy["max_questions"]):
-        if int(policy["max_questions"]) == 0:
+    if question_count > max_questions:
+        if max_questions == 0:
             violations.append("ask no questions in this turn")
         else:
             violations.append("ask at most one question")
-    if not policy["allow_list_formatting"] and contains_list_format(text):
+    if (
+        policy is not None
+        and not policy["allow_list_formatting"]
+        and contains_list_format(text)
+    ):
         violations.append("remove bullets, numbered steps, and checklist formatting")
     return violations
 
@@ -563,6 +576,22 @@ def explicit_reply_policy(request: dict[str, Any]) -> dict[str, int | str | bool
         "allow_list_formatting": policy.get("allowListFormatting") is True,
         "reason": reason,
     }
+
+
+def explicit_reply_plan_max_questions(request: dict[str, Any]) -> int | None:
+    context = request.get("context")
+    if not isinstance(context, Mapping):
+        return None
+    reply_plan = context.get("replyPlan")
+    if not isinstance(reply_plan, Mapping):
+        return None
+    question_policy = reply_plan.get("questionPolicy")
+    if not isinstance(question_policy, Mapping):
+        return None
+    max_questions = question_policy.get("maxQuestions")
+    if max_questions not in (0, 1):
+        return None
+    return int(max_questions)
 
 
 def candidate_reply_plan_summary(request: dict[str, Any]) -> str | None:

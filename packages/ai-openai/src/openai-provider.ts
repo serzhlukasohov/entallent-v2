@@ -42,7 +42,6 @@ import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
 import { buildConfirmInterpretSystemPrompt, buildConfirmInterpretUserPrompt } from './prompts/confirm-interpret';
 import { buildGroupReportSystemPrompt, buildGroupReportUserPrompt } from './prompts/group-report';
-import { hasReflectiveOpener } from './prompts/style-antipatterns';
 
 export interface ModelConfig {
   /** Used for classification and risk detection (structured, lower cost). Default: gpt-4o-mini */
@@ -71,9 +70,6 @@ export interface AzureOpenAiConfig {
 
 export type OpenAiProviderConfig = DirectOpenAiConfig | AzureOpenAiConfig;
 
-const OPENER_RETRY_INSTRUCTION =
-  '\n\nYour previous draft OPENED by labeling what the employee just said (a "verdict on their words"). Do NOT do that. Delete that opening sentence entirely and start with the substance — a specific observation or one sharp question.';
-
 const QUESTION_RETRY_INSTRUCTION =
   '\n\nYour previous draft ended with a question. This turn must NOT ask one — respond to what they said and leave the space open. Remove the trailing question.';
 
@@ -85,9 +81,7 @@ function lengthRetryInstruction(maxChars: number): string {
 
 /**
  * Hard length ceiling (characters) per reply-length tier, tightened for a clearly terse
- * user. This is the structural backstop the persona won't honour from a soft prompt hint —
- * the same reason the reflective-opener gate exists. Verbosity comes from the observed
- * style profile already carried in the response context.
+ * user. Verbosity comes from the observed style profile already carried in the response context.
  */
 function maxReplyChars(strategy: ReplyStrategy, context: ResponseContext): number {
   const verbosity = context.styleAdaptation?.dimensions.verbosity;
@@ -105,6 +99,12 @@ function maxReplyChars(strategy: ReplyStrategy, context: ResponseContext): numbe
 /** True when the reply's final visible character is a question mark (allowing closing quotes/brackets). */
 function endsWithQuestion(text: string): boolean {
   return /\?["'”’)\]]*\s*$/.test(text.trim());
+}
+
+function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext): 0 | 1 {
+  const replyPlan = context.replyPlan ?? context.replyBrief;
+  if (replyPlan) return replyPlan.questionPolicy.maxQuestions;
+  return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
 }
 
 /** Structural shape of a Zod schema's safeParse — lets keepValid stay decoupled from zod. */
@@ -231,16 +231,13 @@ export class OpenAiProvider implements AiProviderPort {
     // exempt them from every post-generation gate.
     if (context.confirmationRequest) return first;
 
-    // Deterministic invariants the persona won't respect from a soft prompt hint. Same
-    // backstop pattern as the reflective-opener gate: collect what fired, do ONE corrective
-    // regeneration addressing all of it, return unconditionally (no loop). The common path
-    // fires nothing and returns immediately.
+    // Deterministic invariants the persona won't respect from a soft prompt hint. Collect
+    // what fired, do ONE corrective regeneration addressing all of it, and return unconditionally.
     const retries: string[] = [];
-    if (hasReflectiveOpener(first.text)) retries.push(OPENER_RETRY_INSTRUCTION);
     if (first.text.length > maxReplyChars(strategy, context)) {
       retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
     }
-    if (!strategy.includeFollowUpQuestion && !context.proactiveCheckIn && endsWithQuestion(first.text)) {
+    if (maxAllowedQuestions(strategy, context) === 0 && endsWithQuestion(first.text)) {
       retries.push(QUESTION_RETRY_INSTRUCTION);
     }
     if (retries.length === 0) return first;

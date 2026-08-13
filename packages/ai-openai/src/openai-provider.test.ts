@@ -12,7 +12,7 @@ vi.mock('openai', () => {
 
 import { OpenAiProvider } from './openai-provider';
 import { ReplyStrategy } from '@entalent/contracts';
-import type { MemoryContext } from '@entalent/application';
+import type { MemoryContext, ResponseContext } from '@entalent/application';
 
 function makeProvider() {
   return new OpenAiProvider({ azure: false, apiKey: 'test', model: 'gpt-test' });
@@ -100,18 +100,33 @@ describe('OpenAiProvider.classifySituation', () => {
   });
 });
 
-describe('OpenAiProvider.generateResponse opener gate', () => {
+function replyPlan(maxQuestions: 0 | 1): NonNullable<ResponseContext['replyPlan']> {
+  return {
+    dialogueAct: 'new_substance',
+    latestUserSubstance: 'chaos',
+    topicAnchor: null,
+    memoryAnchors: [],
+    responseMove: 'address_new_substance',
+    mayInferFromBrevity: true,
+    questionPolicy: {
+      maxQuestions,
+      reason: maxQuestions === 0 ? 'acknowledgement_no_new_substance' : 'new_substance_allows_question',
+    },
+    requiredGrounding: [],
+    forbiddenMoves: [],
+  };
+}
+
+describe('OpenAiProvider.generateResponse opener behavior', () => {
   beforeEach(() => createMock.mockReset());
   const strat = { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] } as ReplyStrategy;
 
-  it('regenerates once when the first draft opens with a reflective label', async () => {
-    createMock
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}' } }] })
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"What is stopping you from cutting that off first?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+  it('does not regenerate when the first draft opens with a reflective label', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
     const res = await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, { userName: 'X' });
-    expect(createMock).toHaveBeenCalledTimes(2);
-    expect(res.text).toBe('What is stopping you from cutting that off first?');
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toBe('That, it seems, is the real root: noise.');
   });
 
   it('does not regenerate when the first draft is clean', async () => {
@@ -133,18 +148,29 @@ describe('OpenAiProvider.generateResponse opener gate', () => {
     expect(res.text).toContain('did I get that right');
   });
 
-  it('returns the regenerated draft unconditionally even if it also opens reflectively (no loop)', async () => {
-    createMock
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}' } }] })
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Sounds like an overload, honestly.","confidence":0.9,"containsSurveyProbe":false}' } }] });
+  it('does not use the reflective-opener regex gate when a typed reply plan is present', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}',
+        },
+      }],
+    });
     const provider = makeProvider();
+    const context: ResponseContext = {
+      userName: 'X',
+      replyPlan: replyPlan(1),
+    };
+
     const res = await provider.generateResponse(
       [{ role: 'user', content: 'chaos', timestamp: new Date() }],
-      { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] },
-      { userName: 'X' },
+      strat,
+      context,
     );
-    expect(createMock).toHaveBeenCalledTimes(2);
-    expect(res.text).toBe('Sounds like an overload, honestly.');
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toBe('That, it seems, is the real root: noise.');
   });
 });
 
@@ -189,6 +215,32 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     );
     expect(createMock).toHaveBeenCalledTimes(2);
     expect(res.text).toBe('Makes sense.');
+  });
+
+  it('uses typed replyPlan question policy instead of the legacy strategy flag', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What changes first?', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse(
+      [{ role: 'user', content: 'chaos', timestamp: new Date() }],
+      { mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      { userName: 'X', replyPlan: replyPlan(1) },
+    );
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toBe('What changes first?');
+  });
+
+  it('enforces typed replyPlan no-question policy even when the legacy strategy allows questions', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What changes first?', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'That tracks.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse(
+      [{ role: 'user', content: 'ok', timestamp: new Date() }],
+      { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      { userName: 'X', replyPlan: replyPlan(0) },
+    );
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('That tracks.');
   });
 });
 
