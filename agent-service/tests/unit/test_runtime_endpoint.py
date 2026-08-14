@@ -193,7 +193,7 @@ def test_runtime_endpoint_uses_configured_model_client(
     assert body["diagnostics"]["modelCalls"] == 1
 
 
-def test_runtime_endpoint_marks_proactive_probe_only_when_reply_matches_probe(
+def test_runtime_endpoint_marks_proactive_probe_from_model_metadata(
     monkeypatch: MonkeyPatch,
 ) -> None:
     request_body = read_fixture("valid/proactive-check-in-request.json")
@@ -208,6 +208,10 @@ def test_runtime_endpoint_marks_proactive_probe_only_when_reply_matches_probe(
             _ = state
             return ConversationModelReply(
                 text="Quick pulse: what would success look like for you this week?",
+                metadata={
+                    "containsSurveyProbe": True,
+                    "surveyProbeQuestionId": "88888888-8888-4888-8888-888888888888",
+                },
             )
 
     monkeypatch.setattr(runtime_api, "build_model_client", lambda _: FakeModelClient())
@@ -222,6 +226,84 @@ def test_runtime_endpoint_marks_proactive_probe_only_when_reply_matches_probe(
         "containsSurveyProbe": True,
         "surveyProbeQuestionId": "88888888-8888-4888-8888-888888888888",
     }
+
+
+def test_runtime_endpoint_marks_localized_professional_growth_probe(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    request_body = read_fixture("valid/proactive-check-in-request.json")
+    request_body["message"]["text"] = "Start a proactive pulse check-in about Professional Growth."
+    request_body["proactiveContext"]["probeQuestion"] = {
+        "id": "99999999-9999-4999-8999-999999999999",
+        "stableKey": "professional_growth",
+        "title": "Professional Growth",
+        "group": "growth",
+        "probeStrategies": [
+            "Ask what the employee has learned recently.",
+            "Ask whether that learning moves them toward career goals.",
+        ],
+    }
+
+    class FakeModelClient:
+        async def generate_reply(
+            self,
+            request: dict[str, Any],
+            state: dict[str, Any],
+        ) -> ConversationModelReply:
+            _ = request
+            _ = state
+            return ConversationModelReply(
+                text=(
+                    "Что нового ты за последнее время реально узнал в работе — "
+                    "и чувствуешь ли, что это двигает тебя к твоим карьерным целям?"
+                ),
+                metadata={
+                    "containsSurveyProbe": True,
+                    "surveyProbeQuestionId": "99999999-9999-4999-8999-999999999999",
+                },
+            )
+
+    monkeypatch.setattr(runtime_api, "build_model_client", lambda _: FakeModelClient())
+    client = TestClient(create_app())
+
+    response = client.post("/runtime/process-message", json=request_body)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert validate_runtime_result(body) == {"ok": True}
+    assert body["reply"]["metadata"] == {
+        "containsSurveyProbe": True,
+        "surveyProbeQuestionId": "99999999-9999-4999-8999-999999999999",
+    }
+
+
+def test_runtime_endpoint_honors_model_declared_generic_check_in(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    request_body = read_fixture("valid/proactive-check-in-request.json")
+
+    class FakeModelClient:
+        async def generate_reply(
+            self,
+            request: dict[str, Any],
+            state: dict[str, Any],
+        ) -> ConversationModelReply:
+            _ = request
+            _ = state
+            return ConversationModelReply(
+                text="Quick pulse: what would success look like for you this week?",
+                metadata={"containsSurveyProbe": False},
+            )
+
+    monkeypatch.setattr(runtime_api, "build_model_client", lambda _: FakeModelClient())
+    client = TestClient(create_app())
+
+    response = client.post("/runtime/process-message", json=request_body)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert validate_runtime_result(body) == {"ok": True}
+    assert "metadata" not in body["reply"]
 
 
 def test_runtime_endpoint_does_not_mark_generic_proactive_reply_as_probe_sent(

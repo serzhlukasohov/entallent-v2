@@ -12,6 +12,7 @@ from agent_service.workflows.model_provider import (
     UnsafeConversationModelOutputError,
     normalize_model_reply_text,
     parse_openai_compatible_response,
+    parse_model_reply_payload,
 )
 
 
@@ -41,6 +42,21 @@ class CountingChatClient(FakeChatClient):
     ) -> ChatResponse:
         self.call_count += 1
         return await super().get_response(messages, **kwargs)
+
+
+class JsonProbeChatClient:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.messages: Sequence[Message] = []
+
+    async def get_response(
+        self,
+        messages: Sequence[Message],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        _ = kwargs
+        self.messages = messages
+        return ChatResponse(messages=[Message("assistant", [self.content])])
 
 
 def test_openai_compatible_response_rejects_content_filter_finish_reason() -> None:
@@ -192,6 +208,112 @@ def test_model_client_safety_verdicts_are_per_call() -> None:
         {"stage": "input", "blocked": False, "findings": []},
         {"stage": "output", "blocked": False, "findings": []},
     ]
+
+
+def test_model_client_parses_structured_proactive_probe_metadata() -> None:
+    chat_client = JsonProbeChatClient(
+        '{"replyText":"Что нового ты реально узнал в работе?","usesProbe":true}'
+    )
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "requestPurpose": "proactive_check_in",
+                "message": {
+                    "text": "Start a proactive pulse check-in about Professional Growth."
+                },
+                "proactiveContext": {
+                    "reason": "pulse_check_in",
+                    "probeQuestion": {
+                        "id": "99999999-9999-4999-8999-999999999999",
+                        "stableKey": "professional_growth",
+                        "title": "Professional Growth",
+                        "probeStrategies": [
+                            "Ask what the employee has learned recently.",
+                        ],
+                    },
+                },
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPolicy": {
+                        "maxChars": 240,
+                        "maxQuestions": 1,
+                        "allowReflectiveOpener": False,
+                        "allowListFormatting": False,
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Что нового ты реально узнал в работе?"
+    assert reply.metadata == {
+        "containsSurveyProbe": True,
+        "surveyProbeQuestionId": "99999999-9999-4999-8999-999999999999",
+    }
+    assert "Return only a compact JSON object" in chat_client.messages[0].text
+
+
+def test_model_client_preserves_structured_generic_check_in_decision() -> None:
+    chat_client = JsonProbeChatClient(
+        '{"replyText":"Привет, хотел коротко свериться, как у тебя сегодня дела?","usesProbe":false}'
+    )
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "requestPurpose": "proactive_check_in",
+                "message": {
+                    "text": "Start a proactive pulse check-in about Professional Growth."
+                },
+                "proactiveContext": {
+                    "reason": "pulse_check_in",
+                    "probeQuestion": {
+                        "id": "99999999-9999-4999-8999-999999999999",
+                        "title": "Professional Growth",
+                        "probeStrategies": [
+                            "Ask what the employee has learned recently.",
+                        ],
+                    },
+                },
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPolicy": {
+                        "maxChars": 240,
+                        "maxQuestions": 1,
+                        "allowReflectiveOpener": False,
+                        "allowListFormatting": False,
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Привет, хотел коротко свериться, как у тебя сегодня дела?"
+    assert reply.metadata == {"containsSurveyProbe": False}
+
+
+def test_parse_model_reply_payload_keeps_legacy_plain_text_without_metadata() -> None:
+    reply = parse_model_reply_payload(
+        "Quick pulse: what would success look like for you this week?",
+        request={
+            "requestPurpose": "proactive_check_in",
+            "proactiveContext": {
+                "probeQuestion": {
+                    "id": "88888888-8888-4888-8888-888888888888",
+                },
+            },
+        },
+    )
+
+    assert reply.text == "Quick pulse: what would success look like for you this week?"
+    assert reply.metadata is None
 
 
 def test_model_client_blocks_output_system_prompt_leakage() -> None:

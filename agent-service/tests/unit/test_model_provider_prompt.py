@@ -123,7 +123,43 @@ def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
                     ],
                 },
             },
-            "context": {"memoryItems": [], "recentTurns": []},
+            "context": {
+                "memoryItems": [
+                    {
+                        "category": "project_context",
+                        "content": (
+                            "User is leading the onboarding rollout and cares "
+                            "about clear ownership."
+                        ),
+                    },
+                    {
+                        "category": "communication_preference",
+                        "content": "User prefers concise check-ins with one concrete question.",
+                    },
+                ],
+                "recentTurns": [
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Last week you said the rollout was blocked by unclear "
+                            "ownership."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "I am trying to define what success looks like for the "
+                            "onboarding rollout."
+                        ),
+                    },
+                ],
+                "replyPolicy": {
+                    "maxChars": 360,
+                    "maxQuestions": 1,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
         },
         state={},
     )
@@ -134,6 +170,16 @@ def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
     assert "Probe topic: Role Clarity." in prompt
     assert "Ask what success looks like this week." in prompt
     assert "Do not mention survey mechanics, assessment language" in prompt
+    assert "ask at most one question" in prompt
+    assert "memory[project_context]" in prompt
+    assert "onboarding rollout" in prompt
+    assert "clear ownership" in prompt
+    assert "memory[communication_preference]" in prompt
+    assert "one concrete question" in prompt
+    assert "recent_assistant: Last week you said the rollout was blocked" in prompt
+    assert "recent_user: I am trying to define what success looks like" in prompt
+    assert "Return only a compact JSON object" in prompt
+    assert '"replyText":"assistant reply text","usesProbe":true|false' in prompt
 
 
 def test_candidate_reply_prompt_includes_acknowledgement_policy() -> None:

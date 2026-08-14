@@ -271,6 +271,28 @@ it('uses Python-supplied classification when available', async () => {
     expect(outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
+  it('marks replyShape askedQuestion from the actual reply text, not only the question policy', async () => {
+    const { runtime, conversationRepo } = createRuntime({
+      runtimeResult: {
+        ...RUNTIME_RESULT,
+        reply: {
+          ...RUNTIME_RESULT.reply,
+          text: 'Похоже, тут важнее зафиксировать один явный фильтр для решений.',
+        },
+      },
+    });
+
+    await runtime.processMessage(REQUEST);
+
+    expect(conversationRepo.saveMessage.mock.calls[0]?.[0].metadata).toEqual(expect.objectContaining({
+      replyShape: {
+        askedQuestion: false,
+        maxQuestions: 1,
+        questionPolicyReason: 'social_checkin_returns_question',
+      },
+    }));
+  });
+
   it('does not commit inbound-evidence side effects for proactive check-in synthetic message ids', async () => {
     const proactiveRequest: ProcessMessageRequest = {
       ...REQUEST,

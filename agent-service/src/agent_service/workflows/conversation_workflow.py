@@ -498,7 +498,11 @@ class ConversationWorkflow:
         state["reply"] = {
             "text": reply.text,
             "mode": "candidate",
-            **self._reply_metadata_for_request(state, reply.text),
+            **self._reply_metadata_for_request(
+                state,
+                reply.text,
+                getattr(reply, "metadata", None),
+            ),
         }
         return state
 
@@ -506,6 +510,7 @@ class ConversationWorkflow:
         self,
         state: ConversationWorkflowState,
         reply_text: str,
+        model_metadata: Any = None,
     ) -> dict[str, Any]:
         request = self._request_from_state(state)
         if request.get("requestPurpose") != "proactive_check_in":
@@ -521,6 +526,19 @@ class ConversationWorkflow:
 
         question_id = probe_question.get("id")
         if not isinstance(question_id, str) or not question_id.strip():
+            return {}
+
+        if isinstance(model_metadata, dict):
+            if (
+                model_metadata.get("containsSurveyProbe") is True
+                and model_metadata.get("surveyProbeQuestionId") == question_id
+            ):
+                return {
+                    "metadata": {
+                        "containsSurveyProbe": True,
+                        "surveyProbeQuestionId": question_id,
+                    },
+                }
             return {}
 
         if not _reply_contains_probe_content(reply_text, probe_question):
@@ -1031,6 +1049,9 @@ def _reply_contains_probe_content(reply_text: str, probe_question: dict[str, Any
     if not reply_tokens:
         return False
 
+    if _reply_matches_probe_alias(reply_text, probe_question):
+        return True
+
     title = probe_question.get("title")
     title_tokens = _significant_probe_tokens(title) if isinstance(title, str) else set()
     if title_tokens and len(reply_tokens & title_tokens) >= min(2, len(title_tokens)):
@@ -1052,6 +1073,56 @@ def _reply_contains_probe_content(reply_text: str, probe_question: dict[str, Any
     return False
 
 
+PROBE_ALIASES_BY_STABLE_KEY: dict[str, tuple[str, ...]] = {
+    "professional_growth": (
+        "career",
+        "карьер",
+        "growth",
+        "рост",
+        "learn",
+        "узнал",
+        "науч",
+        "develop",
+        "разви",
+        "skill",
+        "навык",
+    ),
+    "role_clarity": (
+        "role",
+        "роль",
+        "clarity",
+        "ясн",
+        "expectation",
+        "ожидан",
+        "ownership",
+        "ответствен",
+    ),
+    "q12_expectations": (
+        "expectation",
+        "ожидан",
+        "priority",
+        "приоритет",
+        "success",
+        "успех",
+        "важн",
+    ),
+}
+
+
+def _reply_matches_probe_alias(reply_text: str, probe_question: dict[str, Any]) -> bool:
+    stable_key = probe_question.get("stableKey")
+    if not isinstance(stable_key, str):
+        return False
+
+    aliases = PROBE_ALIASES_BY_STABLE_KEY.get(stable_key)
+    if not aliases:
+        return False
+
+    normalized = reply_text.lower()
+    hits = sum(1 for alias in aliases if alias in normalized)
+    return hits >= 2 and bool(re.search(r"[?？؟]", reply_text))
+
+
 def _significant_probe_tokens(value: str) -> set[str]:
     stop_words = {
         "about",
@@ -1070,7 +1141,7 @@ def _significant_probe_tokens(value: str) -> set[str]:
         "your",
     }
     tokens: set[str] = set()
-    for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_'-]{2,}", value.lower()):
+    for token in re.findall(r"[^\W\d_][^\W\d_0-9'-]{2,}", value.lower()):
         if token in stop_words:
             continue
         if len(token) > 3 and token.endswith("s"):

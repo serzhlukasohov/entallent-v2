@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -42,11 +43,20 @@ CONTROL_CONTEXT_MARKER_PATTERNS = (
     re.compile(r"\bMAF-regression-\d{8}T\d{6}Z-", re.IGNORECASE),
     re.compile(r"\bcontrol marker\b", re.IGNORECASE),
 )
+
+
 @dataclass(frozen=True)
 class ConversationModelReply:
     text: str
     retry_count: int = 0
     renderer_path: str = "llm"
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ParsedModelReplyPayload:
+    text: str
+    metadata: dict[str, Any] | None = None
 
 
 class ConversationModelClient(Protocol):
@@ -147,7 +157,13 @@ class AgentFrameworkConversationModelClient:
                 "MAF agent model provider failed safely.",
             ) from error
 
-        text = normalize_model_reply_text(response.text, request_text=request_text)
+        parsed_reply = parse_model_reply_payload(
+            response.text,
+            request=request,
+            request_text=request_text,
+        )
+        text = parsed_reply.text
+        metadata = parsed_reply.metadata
         retry_count = 0
         retry_instruction = candidate_reply_retry_instruction(
             text=text,
@@ -174,10 +190,13 @@ class AgentFrameworkConversationModelClient:
                 raise ConversationModelProviderError(
                     "MAF agent model provider failed safely.",
                 ) from error
-            text = normalize_model_reply_text(
+            parsed_reply = parse_model_reply_payload(
                 retry_response.text,
+                request=request,
                 request_text=request_text,
             )
+            text = parsed_reply.text
+            metadata = parsed_reply.metadata
             remaining_violations = candidate_reply_policy_violations(
                 text=text,
                 request=request,
@@ -187,6 +206,7 @@ class AgentFrameworkConversationModelClient:
                 fallback_text = deterministic_social_reply_for_plan(request)
                 if fallback_text:
                     text = fallback_text
+                    metadata = None
                     remaining_violations = candidate_reply_policy_violations(
                         text=text,
                         request=request,
@@ -205,7 +225,11 @@ class AgentFrameworkConversationModelClient:
             ) from error
         if output_verdict is not None:
             self._safety_verdicts.append(output_verdict)
-        return ConversationModelReply(text=text, retry_count=retry_count)
+        return ConversationModelReply(
+            text=text,
+            retry_count=retry_count,
+            metadata=metadata,
+        )
 
     @property
     def safety_verdicts(self) -> list[dict[str, Any]]:
@@ -349,6 +373,7 @@ def build_candidate_reply_prompt(
             "If the employee only greets you or asks how you are, answer socially "
             "and briefly; do not describe operational status or say how you can help.",
             "Do not say that memory, follow-ups, goals, surveys, or Slack messages were saved.",
+            candidate_reply_output_format(request),
         ],
     )
 
@@ -396,6 +421,20 @@ def proactive_check_in_instruction(request: dict[str, Any]) -> str:
         "or HR terminology."
     )
     return " ".join(parts)
+
+
+def candidate_reply_output_format(request: dict[str, Any]) -> str:
+    probe_question_id = proactive_probe_question_id(request)
+    if probe_question_id is None:
+        return "Return only the assistant reply text."
+
+    return (
+        "Return only a compact JSON object with this exact shape: "
+        '{"replyText":"assistant reply text","usesProbe":true|false}. '
+        "Set usesProbe=true only when replyText intentionally asks the selected "
+        "pulse probe question; set false for a generic check-in. Do not include "
+        "the probe ID or any other fields."
+    )
 
 
 def candidate_reply_constraints(
@@ -916,6 +955,51 @@ def parse_openai_compatible_response(body: Any) -> str:
     return normalize_model_reply_text(message.get("content"))
 
 
+def parse_model_reply_payload(
+    value: Any,
+    *,
+    request: dict[str, Any],
+    request_text: str | None = None,
+) -> ParsedModelReplyPayload:
+    probe_question_id = proactive_probe_question_id(request)
+    if probe_question_id is None:
+        return ParsedModelReplyPayload(
+            text=normalize_model_reply_text(value, request_text=request_text),
+        )
+
+    raw_text = value.strip() if isinstance(value, str) else ""
+    if not raw_text:
+        raise UnsafeConversationModelOutputError("MAF model provider returned empty text.")
+
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return ParsedModelReplyPayload(
+            text=normalize_model_reply_text(raw_text, request_text=request_text),
+        )
+
+    if not isinstance(payload, Mapping):
+        raise UnsafeConversationModelOutputError("MAF model provider response was unsafe.")
+
+    reply_text = normalize_model_reply_text(
+        payload.get("replyText"),
+        request_text=request_text,
+    )
+    uses_probe = payload.get("usesProbe")
+    if not isinstance(uses_probe, bool):
+        raise UnsafeConversationModelOutputError("MAF model provider response was unsafe.")
+
+    metadata = (
+        {
+            "containsSurveyProbe": True,
+            "surveyProbeQuestionId": probe_question_id,
+        }
+        if uses_probe
+        else {"containsSurveyProbe": False}
+    )
+    return ParsedModelReplyPayload(text=reply_text, metadata=metadata)
+
+
 def normalize_model_reply_text(value: Any, *, request_text: str | None = None) -> str:
     text = value.strip() if isinstance(value, str) else ""
     if not text:
@@ -950,6 +1034,26 @@ def request_message_text(request: dict[str, Any]) -> str | None:
         "",
         text,
     ).strip()
+    return normalized if normalized else None
+
+
+def proactive_probe_question_id(request: dict[str, Any]) -> str | None:
+    if request.get("requestPurpose") != "proactive_check_in":
+        return None
+
+    proactive_context = request.get("proactiveContext")
+    if not isinstance(proactive_context, Mapping):
+        return None
+
+    probe_question = proactive_context.get("probeQuestion")
+    if not isinstance(probe_question, Mapping):
+        return None
+
+    question_id = probe_question.get("id")
+    if not isinstance(question_id, str):
+        return None
+
+    normalized = question_id.strip()
     return normalized if normalized else None
 
 

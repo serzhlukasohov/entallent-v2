@@ -456,7 +456,7 @@ function parseActionDueAt(value: string): Date | null {
 
 function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequest): Record<string, unknown> {
   const replyMetadata = toReplyMetadata(candidate);
-  const replyPlanMetadata = toReplyPlanMetadata(request);
+  const replyPlanMetadata = toReplyPlanMetadata(request, candidate.reply.text);
   return {
     runtimeMode: 'maf_primary',
     runtimeVersion: candidate.diagnostics.runtimeVersion,
@@ -478,10 +478,10 @@ function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequ
   };
 }
 
-function toReplyPlanMetadata(request: ProcessMessageRequest): Record<string, unknown> {
+function toReplyPlanMetadata(request: ProcessMessageRequest, replyText: string): Record<string, unknown> {
   const planning = request.runtimeContext?.replyPlanning;
   const plan = request.runtimeContext?.replyPlan;
-  const replyShape = replyShapeMetadataFromRequest(request);
+  const replyShape = replyShapeMetadataFromRequest(request, replyText);
   if (!plan) {
     const planningMetadata = planning
       ? {
@@ -505,12 +505,12 @@ function toReplyPlanMetadata(request: ProcessMessageRequest): Record<string, unk
   };
 }
 
-function replyShapeMetadataFromRequest(request: ProcessMessageRequest): Record<string, unknown> {
+function replyShapeMetadataFromRequest(request: ProcessMessageRequest, replyText: string): Record<string, unknown> {
   const plan = request.runtimeContext?.replyPlan;
   if (plan) {
     return {
       replyShape: {
-        askedQuestion: plan.questionPolicy.maxQuestions > 0,
+        askedQuestion: replyTextContainsQuestion(replyText),
         maxQuestions: plan.questionPolicy.maxQuestions,
         questionPolicyReason: plan.questionPolicy.reason,
       },
@@ -521,7 +521,7 @@ function replyShapeMetadataFromRequest(request: ProcessMessageRequest): Record<s
   if (maxQuestions === 0 || maxQuestions === 1) {
     return {
       replyShape: {
-        askedQuestion: maxQuestions > 0,
+        askedQuestion: replyTextContainsQuestion(replyText),
         maxQuestions,
         questionPolicyReason: 'reply_policy',
       },
@@ -529,6 +529,10 @@ function replyShapeMetadataFromRequest(request: ProcessMessageRequest): Record<s
   }
 
   return {};
+}
+
+function replyTextContainsQuestion(text: string): boolean {
+  return /[?？؟]/u.test(text);
 }
 
 function toReplyMetadata(candidate: RuntimeResult): ProcessMessageResult['replyMetadata'] {

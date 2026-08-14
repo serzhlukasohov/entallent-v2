@@ -598,10 +598,16 @@ describe('ConversationProcessor runtime ledger recording', () => {
       orderBy: vi.fn().mockReturnThis(),
       limit: vi.fn(async () => [
         {
-          text: 'Recent user context',
+          text: 'I am trying to define what success looks like for the onboarding rollout.',
           senderType: 'user',
           direction: 'inbound',
           occurredAt: new Date('2026-08-11T08:00:00.000Z'),
+        },
+        {
+          text: 'Last week you said the rollout was blocked by unclear ownership.',
+          senderType: 'agent',
+          direction: 'outbound',
+          occurredAt: new Date('2026-08-11T07:55:00.000Z'),
         },
       ]),
     };
@@ -609,7 +615,20 @@ describe('ConversationProcessor runtime ledger recording', () => {
       from: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => []),
+      limit: vi.fn(async () => [
+        {
+          id: 'memory-onboarding-rollout',
+          category: 'project_context',
+          content: 'User is leading the onboarding rollout and cares about clear ownership.',
+          importance: '0.92',
+        },
+        {
+          id: 'memory-prefers-concise-checkins',
+          category: 'communication_preference',
+          content: 'User prefers concise check-ins with one concrete question.',
+          importance: '0.84',
+        },
+      ]),
     };
     const insertValues = vi.fn(async () => undefined);
     const db = {
@@ -675,11 +694,18 @@ describe('ConversationProcessor runtime ledger recording', () => {
     }));
     expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
       requestPurpose: 'proactive_check_in',
+      externalWorkspaceId: 'workspace-1',
+      externalConversationId: 'channel-1',
       conversationId: '44444444-4444-4444-8444-444444444444',
       userId: '55555555-5555-4555-8555-555555555555',
       runtimeAttempt: 1,
       traceId: 'trace-check-in-1',
       messageText: 'Start a proactive pulse check-in about Role Clarity.',
+      userDisplayName: 'Test User',
+      userTimezone: 'Europe/Warsaw',
+      userLocale: 'en-US',
+      conversationSessionKey:
+        'workspace-1:55555555-5555-4555-8555-555555555555:channel-1:dm',
       proactiveContext: {
         reason: 'pulse_check_in',
         probeQuestion: {
@@ -691,6 +717,33 @@ describe('ConversationProcessor runtime ledger recording', () => {
         },
       },
       runtimeContext: expect.objectContaining({
+        recentTurns: [
+          {
+            role: 'assistant',
+            content: 'Last week you said the rollout was blocked by unclear ownership.',
+            timestamp: '2026-08-11T07:55:00.000Z',
+          },
+          {
+            role: 'user',
+            content: 'I am trying to define what success looks like for the onboarding rollout.',
+            timestamp: '2026-08-11T08:00:00.000Z',
+          },
+        ],
+        memoryItems: [
+          {
+            id: 'memory-onboarding-rollout',
+            category: 'project_context',
+            content: 'User is leading the onboarding rollout and cares about clear ownership.',
+            importance: 0.92,
+          },
+          {
+            id: 'memory-prefers-concise-checkins',
+            category: 'communication_preference',
+            content: 'User prefers concise check-ins with one concrete question.',
+            importance: 0.84,
+          },
+        ],
+        goals: [],
         replyPolicy: {
           maxChars: 360,
           maxQuestions: 1,
