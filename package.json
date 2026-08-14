@@ -30,6 +30,7 @@
     "maf:live:slack:dev:ngrok": "START_NGROK=1 pnpm run maf:live:slack:dev",
     "maf:prod:acceptance": "bash scripts/maf-production-acceptance.sh",
     "maf:prod:selected-probe-smoke": "pnpm exec tsx scripts/maf-proactive-selected-probe-smoke.ts",
+    "prod:test-data:reset": "pnpm exec tsx scripts/reset-production-test-data.ts",
     "maf:prod:regression": "bash scripts/maf-production-regression.sh",
     "maf:agent-service:readiness": "bash scripts/verify-agent-service-readiness.sh",
     "dashboard:prod:verify": "dotenv -e .env -- pnpm exec tsx scripts/verify-production-dashboard.ts",
