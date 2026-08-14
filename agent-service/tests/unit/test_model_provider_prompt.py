@@ -166,7 +166,8 @@ def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
 
     assert "agent initiated context" in prompt
     assert "Start a short, human pulse check-in" in prompt
-    assert "Do not force the probe" in prompt
+    assert "Use the selected probe topic" in prompt
+    assert "do not replace it with a generic check-in" in prompt
     assert "Probe topic: Role Clarity." in prompt
     assert "Ask what success looks like this week." in prompt
     assert "Do not mention survey mechanics, assessment language" in prompt

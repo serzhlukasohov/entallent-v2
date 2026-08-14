@@ -408,7 +408,7 @@ def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "Понял.",
+        "text": "Понял. Оставлю без лишних вопросов; вернемся к теме, если понадобится.",
         "mode": "candidate",
     }
     assert chat_client.calls == 0

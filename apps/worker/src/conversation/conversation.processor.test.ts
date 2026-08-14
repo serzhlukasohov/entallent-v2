@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Job } from 'bullmq';
-import { ConversationProcessor, type CheckInJob, type ConversationJob } from './conversation.processor';
+import {
+  ConversationProcessor,
+  resolveEffectiveLocale,
+  type CheckInJob,
+  type ConversationJob,
+} from './conversation.processor';
 
 const jobData: ConversationJob = {
   requestId: 'request-1',
@@ -44,6 +49,32 @@ const runtimeResult = {
     reasoningSummary: 'none',
   },
 };
+
+describe('resolveEffectiveLocale', () => {
+  it('prefers recent Cyrillic user language over the stored locale', () => {
+    expect(
+      resolveEffectiveLocale('en', [
+        {
+          role: 'user',
+          content: 'сегодня нужно быть максимально продуктивной и закрыть отчеты',
+          timestamp: '2026-08-14T09:00:00.000Z',
+        },
+      ]),
+    ).toBe('ru');
+  });
+
+  it('keeps the stored locale when recent user language is not clearly Cyrillic', () => {
+    expect(
+      resolveEffectiveLocale('en', [
+        {
+          role: 'user',
+          content: 'everything is clear',
+          timestamp: '2026-08-14T09:00:00.000Z',
+        },
+      ]),
+    ).toBe('en');
+  });
+});
 
 function createProcessor(options: {
   agentRuntime?: { processMessage: ReturnType<typeof vi.fn> };
@@ -568,7 +599,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
     }));
   });
 
-  it('routes proactive check-in jobs through MAF primary and records sent probe metadata', async () => {
+  it('routes Russian proactive check-in jobs through MAF primary with selected probe metadata despite stored English locale', async () => {
     const checkInJobData: CheckInJob = {
       conversationId: '44444444-4444-4444-8444-444444444444',
       userId: '55555555-5555-4555-8555-555555555555',
@@ -598,13 +629,13 @@ describe('ConversationProcessor runtime ledger recording', () => {
       orderBy: vi.fn().mockReturnThis(),
       limit: vi.fn(async () => [
         {
-          text: 'I am trying to define what success looks like for the onboarding rollout.',
+          text: 'Я пытаюсь понять, что именно будет считаться успехом для онбординга на этой неделе.',
           senderType: 'user',
           direction: 'inbound',
           occurredAt: new Date('2026-08-11T08:00:00.000Z'),
         },
         {
-          text: 'Last week you said the rollout was blocked by unclear ownership.',
+          text: 'На прошлой неделе ты говорил, что rollout застрял из-за неясной ответственности.',
           senderType: 'agent',
           direction: 'outbound',
           occurredAt: new Date('2026-08-11T07:55:00.000Z'),
@@ -690,6 +721,11 @@ describe('ConversationProcessor runtime ledger recording', () => {
         runtimePurpose: 'proactive_check_in',
         synthetic: true,
         hiddenFromConversationContext: true,
+        userLocale: 'ru',
+        surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+        surveyProbeStableKey: 'role_clarity',
+        surveyProbeTitle: 'Role Clarity',
+        surveyProbeQuestionGroup: 'growth',
       },
     }));
     expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
@@ -703,7 +739,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
       messageText: 'Start a proactive pulse check-in about Role Clarity.',
       userDisplayName: 'Test User',
       userTimezone: 'Europe/Warsaw',
-      userLocale: 'en-US',
+      userLocale: 'ru',
       conversationSessionKey:
         'workspace-1:55555555-5555-4555-8555-555555555555:channel-1:dm',
       proactiveContext: {
@@ -720,12 +756,12 @@ describe('ConversationProcessor runtime ledger recording', () => {
         recentTurns: [
           {
             role: 'assistant',
-            content: 'Last week you said the rollout was blocked by unclear ownership.',
+            content: 'На прошлой неделе ты говорил, что rollout застрял из-за неясной ответственности.',
             timestamp: '2026-08-11T07:55:00.000Z',
           },
           {
             role: 'user',
-            content: 'I am trying to define what success looks like for the onboarding rollout.',
+            content: 'Я пытаюсь понять, что именно будет считаться успехом для онбординга на этой неделе.',
             timestamp: '2026-08-11T08:00:00.000Z',
           },
         ],

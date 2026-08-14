@@ -49,7 +49,8 @@ export interface PulseBacklogRepositoryPort {
 
   /**
    * Finds all 'active' entries where proactive_sent_at is older than ignoreAfterHours
-   * AND no inbound message from the user exists after proactive_sent_at.
+   * AND either no inbound message exists after proactive_sent_at or no survey evidence
+   * was captured from the response.
    * Moves them back to 'pending' at the end of the queue and increments ignore_count.
    * Returns the resolved entries.
    */

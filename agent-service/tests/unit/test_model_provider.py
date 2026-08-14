@@ -257,46 +257,44 @@ def test_model_client_parses_structured_proactive_probe_metadata() -> None:
     assert "Return only a compact JSON object" in chat_client.messages[0].text
 
 
-def test_model_client_preserves_structured_generic_check_in_decision() -> None:
+def test_model_client_rejects_structured_generic_check_in_when_probe_selected() -> None:
     chat_client = JsonProbeChatClient(
         '{"replyText":"Привет, хотел коротко свериться, как у тебя сегодня дела?","usesProbe":false}'
     )
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
 
-    reply = run_async(
-        client.generate_reply(
-            {
-                "requestPurpose": "proactive_check_in",
-                "message": {
-                    "text": "Start a proactive pulse check-in about Professional Growth."
-                },
-                "proactiveContext": {
-                    "reason": "pulse_check_in",
-                    "probeQuestion": {
-                        "id": "99999999-9999-4999-8999-999999999999",
-                        "title": "Professional Growth",
-                        "probeStrategies": [
-                            "Ask what the employee has learned recently.",
-                        ],
+    with pytest.raises(UnsafeConversationModelOutputError):
+        run_async(
+            client.generate_reply(
+                {
+                    "requestPurpose": "proactive_check_in",
+                    "message": {
+                        "text": "Start a proactive pulse check-in about Professional Growth."
+                    },
+                    "proactiveContext": {
+                        "reason": "pulse_check_in",
+                        "probeQuestion": {
+                            "id": "99999999-9999-4999-8999-999999999999",
+                            "title": "Professional Growth",
+                            "probeStrategies": [
+                                "Ask what the employee has learned recently.",
+                            ],
+                        },
+                    },
+                    "context": {
+                        "memoryItems": [],
+                        "recentTurns": [],
+                        "replyPolicy": {
+                            "maxChars": 240,
+                            "maxQuestions": 1,
+                            "allowReflectiveOpener": False,
+                            "allowListFormatting": False,
+                        },
                     },
                 },
-                "context": {
-                    "memoryItems": [],
-                    "recentTurns": [],
-                    "replyPolicy": {
-                        "maxChars": 240,
-                        "maxQuestions": 1,
-                        "allowReflectiveOpener": False,
-                        "allowListFormatting": False,
-                    },
-                },
-            },
-            {},
+                {},
+            )
         )
-    )
-
-    assert reply.text == "Привет, хотел коротко свериться, как у тебя сегодня дела?"
-    assert reply.metadata == {"containsSurveyProbe": False}
 
 
 def test_parse_model_reply_payload_keeps_legacy_plain_text_without_metadata() -> None:
@@ -389,6 +387,43 @@ def test_model_client_renders_social_reply_from_reply_plan_without_model_call() 
         )
     )
 
+    assert reply.text == "Doing okay, thanks. How are you?"
+    assert reply.renderer_path == "deterministic_social_reply"
+    assert chat_client.call_count == 0
+
+
+def test_model_client_renders_social_reply_in_user_locale() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "user": {"locale": "ru"},
+                "message": {"text": "A raw message the renderer must not classify."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "social_checkin",
+                        "latestUserSubstance": None,
+                        "topicAnchor": None,
+                        "memoryAnchors": [],
+                        "responseMove": "social_reply",
+                        "mayInferFromBrevity": False,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "social_checkin_returns_question",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["operational_status"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
     assert reply.text == "Нормально, спасибо. А ты как?"
     assert reply.renderer_path == "deterministic_social_reply"
     assert chat_client.call_count == 0
@@ -425,7 +460,48 @@ def test_model_client_renders_acknowledgement_from_reply_plan_without_model_call
         )
     )
 
-    assert reply.text == "Понял."
+    assert reply.text == (
+        "Got it. I’ll leave it there for now; if it gets fuzzy again, we can come back to it."
+    )
+    assert reply.renderer_path == "deterministic_acknowledgement_reply"
+    assert chat_client.call_count == 0
+
+
+def test_model_client_renders_acknowledgement_in_user_locale() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "user": {"locale": "ru-RU"},
+                "message": {"text": "A raw acknowledgement the renderer must not classify."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPlan": {
+                        "dialogueAct": "acknowledgement",
+                        "latestUserSubstance": None,
+                        "topicAnchor": "prior task planning",
+                        "memoryAnchors": [],
+                        "responseMove": "continue_existing_thread",
+                        "mayInferFromBrevity": False,
+                        "questionPolicy": {
+                            "maxQuestions": 0,
+                            "reason": "acknowledgement_no_new_substance",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["comment_on_brevity", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == (
+        "Понял. Оставлю это без лишних вопросов; если тема снова станет мутной, вернемся к ней."
+    )
     assert reply.renderer_path == "deterministic_acknowledgement_reply"
     assert chat_client.call_count == 0
 
