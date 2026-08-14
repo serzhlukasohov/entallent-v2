@@ -92,6 +92,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
     });
 
     if (hasPersistedInboundMessage) {
+      await this.enqueueUserReminderIfRequested(candidate, request, conversation);
       await this.enqueueMafFollowUpProposals(
         candidate,
         request,
@@ -118,6 +119,63 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
       risk,
       ...(replyMetadata ? { replyMetadata } : {}),
     };
+  }
+
+  private async enqueueUserReminderIfRequested(
+    candidate: RuntimeResult,
+    request: ProcessMessageRequest,
+    conversation: {
+      channelType: string;
+      externalConversationId: string;
+      userTimezone?: string | null;
+    },
+  ): Promise<void> {
+    if (!this.scheduledActionRepo) {
+      return;
+    }
+
+    const reminder = resolveReminderRequest(candidate, request);
+    if (!reminder) {
+      return;
+    }
+
+    const dueAt = parseActionDueAt(reminder.dueAt);
+    if (!dueAt) {
+      return;
+    }
+
+    const deduplicationKey =
+      `${request.userId}:user_reminder:${slugify(reminder.intent)}:${dueAt.getTime()}`;
+    if (await this.scheduledActionRepo.existsByDeduplicationKey(deduplicationKey)) {
+      return;
+    }
+
+    const scheduledAction = await this.scheduledActionRepo.save({
+      tenantId: request.tenantId,
+      userId: request.userId,
+      conversationId: request.conversationId,
+      type: 'user_reminder',
+      intent: reminder.intent,
+      context: {
+        channelType: conversation.channelType,
+        externalConversationId: request.externalConversationId,
+        reminderIntent: reminder.intent,
+      },
+      reason: 'Employee explicitly asked to be reminded',
+      dueAt,
+      timezone: conversation.userTimezone ?? request.userTimezone ?? 'UTC',
+      cancellationConditions: [],
+      deduplicationKey,
+      sourceMessageIds: [request.messageId],
+    });
+
+    await this.outbox.enqueueFollowUpExecution({
+      scheduledActionId: scheduledAction.id,
+      tenantId: request.tenantId,
+      userId: request.userId,
+      traceId: `reminder-${scheduledAction.id}`,
+      dueAt,
+    });
   }
 
   private async enqueueMafFollowUpProposals(
@@ -453,6 +511,58 @@ function normalizeNonEmptyStrings(values: string[]): string[] {
 function parseActionDueAt(value: string): Date | null {
   const dueAt = new Date(value);
   return Number.isNaN(dueAt.getTime()) ? null : dueAt;
+}
+
+function resolveReminderRequest(
+  candidate: RuntimeResult,
+  request: ProcessMessageRequest,
+): { intent: string; dueAt: string } | null {
+  const classified = candidate.classification.reminderRequest;
+  if (classified?.intent && classified.dueAt) {
+    return classified;
+  }
+
+  return parseExplicitReminderRequest(request.messageText, request.messageCreatedAt);
+}
+
+function parseExplicitReminderRequest(
+  text: string | undefined,
+  createdAt: string | undefined,
+): { intent: string; dueAt: string } | null {
+  const message = text?.trim();
+  if (!message) {
+    return null;
+  }
+
+  const match = message.match(/\bremind me\s+(?:(tomorrow morning|tomorrow)\s+)?to\s+(.+)/i);
+  if (!match) {
+    return null;
+  }
+
+  const intent = match[2]?.trim().replace(/[.!?]+$/, '');
+  if (!intent) {
+    return null;
+  }
+
+  const base = createdAt ? new Date(createdAt) : new Date();
+  if (Number.isNaN(base.getTime())) {
+    return null;
+  }
+
+  const dueAt = new Date(base);
+  if (match[1]?.toLowerCase().startsWith('tomorrow')) {
+    // ponytail: UTC morning heuristic; replace with timezone-aware NLP when reminder parsing broadens.
+    dueAt.setUTCDate(dueAt.getUTCDate() + 1);
+    dueAt.setUTCHours(match[1].toLowerCase() === 'tomorrow morning' ? 9 : 12, 0, 0, 0);
+  } else {
+    dueAt.setUTCMinutes(dueAt.getUTCMinutes() + 1);
+  }
+
+  return { intent, dueAt: dueAt.toISOString() };
+}
+
+function slugify(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 32);
 }
 
 function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequest): Record<string, unknown> {

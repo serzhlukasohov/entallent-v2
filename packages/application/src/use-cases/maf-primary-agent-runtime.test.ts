@@ -638,6 +638,49 @@ it('uses Python-supplied classification when available', async () => {
     });
   });
 
+  it('schedules an explicit user reminder request on the MAF primary path', async () => {
+    const request: ProcessMessageRequest = {
+      ...REQUEST,
+      messageText: 'Please remind me tomorrow morning to ask my manager to rank the top three priorities.',
+    };
+    const { runtime, scheduledActionRepo, outbox } = createRuntime({
+      runtimeResult: {
+        ...RUNTIME_RESULT,
+        reply: {
+          text: "I can do that. Tomorrow morning, I'll remind you.",
+          mode: 'normal',
+        },
+      },
+    });
+
+    await runtime.processMessage(request);
+
+    expect(scheduledActionRepo.save).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1',
+      userId: '55555555-5555-4555-8555-555555555555',
+      conversationId: '44444444-4444-4444-8444-444444444444',
+      type: 'user_reminder',
+      intent: 'ask my manager to rank the top three priorities',
+      context: {
+        channelType: 'slack',
+        externalConversationId: 'channel-1',
+        reminderIntent: 'ask my manager to rank the top three priorities',
+      },
+      reason: 'Employee explicitly asked to be reminded',
+      dueAt: new Date('2026-08-07T09:00:00.000Z'),
+      timezone: 'Europe/Warsaw',
+      cancellationConditions: [],
+      sourceMessageIds: ['33333333-3333-4333-8333-333333333333'],
+    }));
+    expect(outbox.enqueueFollowUpExecution).toHaveBeenCalledWith({
+      scheduledActionId: 'action-id-1',
+      tenantId: 'tenant-1',
+      userId: '55555555-5555-4555-8555-555555555555',
+      traceId: 'reminder-action-id-1',
+      dueAt: new Date('2026-08-07T09:00:00.000Z'),
+    });
+  });
+
   it('saves valid Python memory proposals through the memory repository', async () => {
     const { runtime, memoryRepo } = createRuntime({
       runtimeResult: {
