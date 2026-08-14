@@ -271,6 +271,83 @@ it('uses Python-supplied classification when available', async () => {
     expect(outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
+  it('rejects selected proactive probes when the MAF reply does not confirm probe usage', async () => {
+    const proactiveRequest: ProcessMessageRequest = {
+      ...REQUEST,
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: {
+        reason: 'pulse_check_in',
+        probeQuestion: {
+          id: '88888888-8888-4888-8888-888888888888',
+          stableKey: 'role_clarity',
+          title: 'Role Clarity',
+          group: 'growth',
+          probeStrategies: ['Ask what success looks like this week.'],
+        },
+      },
+    };
+    const { runtime, conversationRepo, outbox } = createRuntime({
+      runtimeResult: {
+        ...RUNTIME_RESULT,
+        reply: {
+          ...RUNTIME_RESULT.reply,
+          metadata: {
+            containsSurveyProbe: false,
+          },
+        },
+      },
+    });
+
+    await expect(runtime.processMessage(proactiveRequest)).rejects.toMatchObject({
+      reasonCode: 'maf_runtime_response_invalid',
+      safeDiagnostic: {
+        invalidFields: [
+          'reply.metadata.containsSurveyProbe',
+          'reply.metadata.surveyProbeQuestionId',
+        ],
+      },
+    });
+
+    expect(conversationRepo.saveMessage).not.toHaveBeenCalled();
+    expect(outbox.enqueueMessageSend).not.toHaveBeenCalled();
+  });
+
+  it('rejects selected proactive probes when the MAF reply references a different probe', async () => {
+    const proactiveRequest: ProcessMessageRequest = {
+      ...REQUEST,
+      requestPurpose: 'proactive_check_in',
+      proactiveContext: {
+        reason: 'pulse_check_in',
+        probeQuestion: {
+          id: '88888888-8888-4888-8888-888888888888',
+          stableKey: 'role_clarity',
+          title: 'Role Clarity',
+          group: 'growth',
+          probeStrategies: ['Ask what success looks like this week.'],
+        },
+      },
+    };
+    const { runtime, conversationRepo, outbox } = createRuntime({
+      runtimeResult: {
+        ...RUNTIME_RESULT,
+        reply: {
+          ...RUNTIME_RESULT.reply,
+          metadata: {
+            containsSurveyProbe: true,
+            surveyProbeQuestionId: '99999999-9999-4999-8999-999999999999',
+          },
+        },
+      },
+    });
+
+    await expect(runtime.processMessage(proactiveRequest)).rejects.toMatchObject({
+      reasonCode: 'maf_runtime_response_invalid',
+    });
+
+    expect(conversationRepo.saveMessage).not.toHaveBeenCalled();
+    expect(outbox.enqueueMessageSend).not.toHaveBeenCalled();
+  });
+
   it('marks replyShape askedQuestion from the actual reply text, not only the question policy', async () => {
     const { runtime, conversationRepo } = createRuntime({
       runtimeResult: {

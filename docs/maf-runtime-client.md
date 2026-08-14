@@ -161,6 +161,30 @@ TypeScript still owns durable side effects: the outbound message row is saved by
 TypeScript, and the message-send, memory extraction, style analysis, and survey
 evidence jobs are queued by TypeScript.
 
+### Primary Runtime Ownership Contract
+
+Python/MAF owns candidate generation and classification. TypeScript/application
+owns all durable commits, state transitions, outbox writes, and product
+invariants that decide whether a candidate is safe to commit.
+
+For proactive pulse check-ins, the worker may select a concrete pulse backlog
+probe and pass it to MAF through `proactiveContext.probeQuestion`. In that case,
+`MafPrimaryAgentRuntime` must reject the candidate before saving an outbound
+message unless the reply metadata confirms both:
+
+- `containsSurveyProbe === true`
+- `surveyProbeQuestionId` exactly matches the selected probe question id
+
+This guard intentionally duplicates Python-side prompt and candidate validation.
+The Python layer should produce a good localized reply, but the TypeScript layer
+is the commit boundary and must fail closed if the candidate drops or replaces a
+selected pulse probe.
+
+The worker also resolves the effective user locale for proactive check-ins from
+recent user turns. Meaningful recent Cyrillic user text overrides a stale stored
+English locale so proactive MAF requests remain language-aligned with the actual
+conversation.
+
 The local primary smoke command is:
 
 ```bash

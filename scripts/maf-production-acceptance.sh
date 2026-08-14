@@ -90,9 +90,20 @@ since="${MAF_ACCEPTANCE_SINCE:-$default_since}"
 [[ -n "$since" ]] || fail "could not resolve latest agent-service deployment timestamp"
 failure_count="$(
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtAX -c \
-    "SELECT count(*) FROM runtime_attempts WHERE created_at >= '${since}' AND (runtime_mode <> 'maf_primary' OR phase <> 'reply_committed' OR failure_reason IS NOT NULL);"
+    "SELECT count(*)
+     FROM (
+       SELECT trace_id
+       FROM runtime_attempts
+       WHERE created_at >= '${since}'
+       GROUP BY trace_id
+       HAVING count(*) FILTER (
+         WHERE runtime_mode = 'maf_primary'
+           AND phase IN ('reply_committed', 'actions_committed')
+           AND failure_reason IS NULL
+       ) = 0
+     ) failed_traces;"
 )"
-[[ "$failure_count" == "0" ]] || fail "found $failure_count non-primary/failed runtime attempts since $since"
+[[ "$failure_count" == "0" ]] || fail "found $failure_count traces without a committed MAF primary attempt since $since"
 
 latest_attempts="$(
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -P pager=off -c \
@@ -112,22 +123,48 @@ proactive_bad_count="$(
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtAX -c \
     "SELECT count(*)
      FROM messages m
-     LEFT JOIN runtime_attempts r ON r.trace_id = m.trace_id
      WHERE m.occurred_at >= '${since}'
        AND m.direction = 'outbound'
        AND m.message_type = 'proactive_check_in'
        AND (
          m.metadata->>'runtimeMode' IS DISTINCT FROM 'maf_primary'
-         OR r.trace_id IS NULL
-         OR r.runtime_mode <> 'maf_primary'
-         OR r.phase <> 'reply_committed'
-         OR r.failure_reason IS NOT NULL
+         OR NOT EXISTS (
+           SELECT 1
+           FROM runtime_attempts r
+           WHERE r.trace_id = m.trace_id
+             AND r.runtime_mode = 'maf_primary'
+             AND r.phase = 'reply_committed'
+             AND r.failure_reason IS NULL
+         )
        );"
 )"
 [[ "$proactive_bad_count" == "0" ]] || fail "found $proactive_bad_count proactive_check_in messages without MAF primary evidence since $since"
 if [[ "${MAF_ACCEPTANCE_REQUIRE_PROACTIVE_CHECKIN:-0}" == "1" ]]; then
   [[ "$proactive_total" != "0" ]] || fail "no recent proactive_check_in MAF primary evidence since $since"
 fi
+
+log "Checking proactive pulse probe quality evidence"
+probe_drop_count="$(
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtAX -c \
+    "SELECT count(*)
+     FROM messages req
+     JOIN messages out
+       ON out.trace_id = req.trace_id
+      AND out.tenant_id = req.tenant_id
+      AND out.user_id = req.user_id
+      AND out.direction = 'outbound'
+      AND out.message_type = 'proactive_check_in'
+     WHERE req.occurred_at >= '${since}'
+       AND req.direction = 'inbound'
+       AND req.sender_type = 'system'
+       AND req.message_type = 'proactive_check_in_request'
+       AND req.metadata ? 'surveyProbeQuestionId'
+       AND (
+         out.metadata->>'containsSurveyProbe' IS DISTINCT FROM 'true'
+         OR out.metadata->>'surveyProbeQuestionId' IS DISTINCT FROM req.metadata->>'surveyProbeQuestionId'
+       );"
+)"
+[[ "$probe_drop_count" == "0" ]] || fail "found $probe_drop_count proactive check-ins that selected a pulse probe but did not commit matching probe evidence since $since"
 
 log "Production MAF acceptance checks passed"
 printf '\nDashboard surface summary:\n'

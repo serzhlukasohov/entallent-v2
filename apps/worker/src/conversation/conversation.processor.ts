@@ -150,6 +150,15 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       messageId,
       text: mafCandidateContext.messageText ?? 'Start a proactive pulse check-in.',
       occurredAt: now,
+      userLocale: normalizeOptionalString(mafCandidateContext.userLocale),
+      probeQuestion: probeResult?.question
+        ? {
+            id: probeResult.question.id,
+            stableKey: probeResult.question.stableKey,
+            title: probeResult.question.title,
+            questionGroup: probeResult.question.questionGroup,
+          }
+        : null,
     });
 
     const result = await this.agentRuntime.processMessage({
@@ -195,6 +204,13 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       messageId: string;
       text: string;
       occurredAt: Date;
+      userLocale?: string;
+      probeQuestion: {
+        id: string;
+        stableKey: string;
+        title: string;
+        questionGroup: string;
+      } | null;
     },
   ): Promise<void> {
     await this.db.client.insert(messages).values({
@@ -211,6 +227,15 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         runtimePurpose: 'proactive_check_in',
         synthetic: true,
         hiddenFromConversationContext: true,
+        ...(request.userLocale ? { userLocale: request.userLocale } : {}),
+        ...(request.probeQuestion
+          ? {
+              surveyProbeQuestionId: request.probeQuestion.id,
+              surveyProbeStableKey: request.probeQuestion.stableKey,
+              surveyProbeTitle: request.probeQuestion.title,
+              surveyProbeQuestionGroup: request.probeQuestion.questionGroup,
+            }
+          : {}),
       },
       occurredAt: request.occurredAt,
       receivedAt: request.occurredAt,
@@ -476,6 +501,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       .slice()
       .reverse()
       .flatMap((row) => toRecentTurn(row));
+    const effectiveLocale = resolveEffectiveLocale(
+      normalizeOptionalString(conversationRow?.userLocale),
+      recentTurns,
+    );
     const runtimeMemoryItems = memoryRows.map((row) => ({
       id: row.id,
       category: row.category,
@@ -490,7 +519,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       messageCreatedAt: options.messageCreatedAt.toISOString(),
       userDisplayName: normalizeOptionalString(conversationRow?.userPreferredName),
       userTimezone: normalizeOptionalString(conversationRow?.userTimezone),
-      userLocale: normalizeOptionalString(conversationRow?.userLocale),
+      userLocale: effectiveLocale,
       conversationSessionKey: [
         job.externalWorkspaceId,
         job.userId,
@@ -584,6 +613,29 @@ export function runtimeAttemptNumberFromJob(job: Pick<Job, 'attemptsMade'>): num
 function normalizeOptionalString(value: string | null | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+export function resolveEffectiveLocale(
+  storedLocale: string | undefined,
+  recentTurns: RuntimeContext['recentTurns'],
+): string | undefined {
+  const recentUserText = recentTurns
+    .filter((turn) => turn.role === 'user')
+    .slice(-5)
+    .map((turn) => turn.content)
+    .join('\n');
+
+  if (hasMeaningfulCyrillicText(recentUserText)) {
+    return 'ru';
+  }
+
+  return storedLocale;
+}
+
+function hasMeaningfulCyrillicText(value: string): boolean {
+  const cyrillicChars = value.match(/[А-Яа-яЁё]/g)?.length ?? 0;
+  const latinChars = value.match(/[A-Za-z]/g)?.length ?? 0;
+  return cyrillicChars >= 12 && cyrillicChars > latinChars;
 }
 
 function normalizeMafRuntimeEventId(eventId: string | undefined, fallbackEventId?: string): string | undefined {

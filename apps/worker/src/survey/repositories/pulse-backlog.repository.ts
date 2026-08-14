@@ -70,7 +70,7 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
 
     if (!activeEntries.length) return [];
 
-    // For each active entry, check if user sent ANY inbound message after the probe
+    // Requeue stale probes that either got no response or got no usable survey evidence.
     const toIgnore: typeof activeEntries = [];
     for (const entry of activeEntries) {
       const [inbound] = await this.db.client
@@ -86,7 +86,9 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
         )
         .limit(1);
 
-      if (!inbound) toIgnore.push(entry);
+      if (shouldRequeueStaleActiveEntry(Boolean(inbound), entry.evidenceCapturedCount)) {
+        toIgnore.push(entry);
+      }
     }
 
     if (!toIgnore.length) return [];
@@ -240,4 +242,11 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
         .onConflictDoNothing(); // UNIQUE constraint prevents duplicates — idempotent
     }
   }
+}
+
+export function shouldRequeueStaleActiveEntry(
+  hasInboundAfterProbe: boolean,
+  evidenceCapturedCount: number,
+): boolean {
+  return !hasInboundAfterProbe || evidenceCapturedCount <= 0;
 }

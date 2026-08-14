@@ -167,6 +167,7 @@ class AgentFrameworkConversationModelClient:
         retry_count = 0
         retry_instruction = candidate_reply_retry_instruction(
             text=text,
+            metadata=metadata,
             request=request,
             state=state,
         )
@@ -199,6 +200,7 @@ class AgentFrameworkConversationModelClient:
             metadata = parsed_reply.metadata
             remaining_violations = candidate_reply_policy_violations(
                 text=text,
+                metadata=metadata,
                 request=request,
                 state=state,
             )
@@ -209,6 +211,7 @@ class AgentFrameworkConversationModelClient:
                     metadata = None
                     remaining_violations = candidate_reply_policy_violations(
                         text=text,
+                        metadata=metadata,
                         request=request,
                         state=state,
                     )
@@ -409,8 +412,8 @@ def proactive_check_in_instruction(request: dict[str, Any]) -> str:
     parts = [
         "Start a short, human pulse check-in.",
         "Ask at most one question.",
-        "Do not force the probe; collecting pulse evidence is long-horizon, "
-        "and staying natural wins.",
+        "Use the selected probe topic as the reason for the question; stay natural, "
+        "but do not replace it with a generic check-in.",
     ]
     if title or stable_key:
         parts.append(f"Probe topic: {title or stable_key}.")
@@ -527,11 +530,13 @@ def support_emotion_dialogue_policy(latest_substance: str | None) -> str:
 def candidate_reply_retry_instruction(
     *,
     text: str,
+    metadata: dict[str, Any] | None = None,
     request: dict[str, Any],
     state: dict[str, Any],
 ) -> str | None:
     violations = candidate_reply_policy_violations(
         text=text,
+        metadata=metadata,
         request=request,
         state=state,
     )
@@ -540,13 +545,23 @@ def candidate_reply_retry_instruction(
     return (
         "\n\nRegenerate the reply once. Fix these hard policy violations: "
         + "; ".join(violations)
-        + ". Return only the revised reply text."
+        + candidate_reply_retry_output_format(request)
     )
+
+
+def candidate_reply_retry_output_format(request: dict[str, Any]) -> str:
+    if proactive_probe_question_id(request) is not None:
+        return (
+            '. Return only the revised compact JSON object with '
+            '{"replyText":"assistant reply text","usesProbe":true}.'
+        )
+    return ". Return only the revised reply text."
 
 
 def candidate_reply_policy_violations(
     *,
     text: str,
+    metadata: dict[str, Any] | None = None,
     request: dict[str, Any],
     state: dict[str, Any],
 ) -> list[str]:
@@ -557,6 +572,9 @@ def candidate_reply_policy_violations(
     normalized = " ".join(text.split())
     if policy is not None and len(normalized) > int(policy["max_chars"]):
         violations.append(f"keep the reply under {policy['max_chars']} characters")
+    if proactive_probe_question_id(request) is not None:
+        if not isinstance(metadata, Mapping) or metadata.get("containsSurveyProbe") is not True:
+            violations.append("ask the selected pulse probe question instead of a generic check-in")
     max_questions = (
         int(policy["max_questions"])
         if policy is not None
@@ -742,11 +760,16 @@ def contains_list_format(text: str) -> bool:
 
 
 def deterministic_social_reply_for_plan(request: dict[str, Any]) -> str | None:
+    language = response_language(request)
     response_move = reply_plan_response_move(request)
     if response_move == "social_greeting":
-        return "Привет."
+        return "Привет." if language == "ru" else "Hi."
     if response_move == "social_reply":
-        return "Нормально, спасибо. А ты как?"
+        return (
+            "Нормально, спасибо. А ты как?"
+            if language == "ru"
+            else "Doing okay, thanks. How are you?"
+        )
     return None
 
 
@@ -774,11 +797,16 @@ def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str
     if not reply_plan_forbidden_move(request, "action_plan"):
         return None
 
+    language = response_language(request)
     max_questions = explicit_reply_policy_max_questions(request)
     if max_questions is None:
         max_questions = explicit_reply_plan_max_questions(request)
     if max_questions == 0:
-        base_reply = "Да, тяжелый момент. Жаль, что сейчас так давит."
+        base_reply = (
+            "Да, тяжелый момент. Жаль, что сейчас так давит."
+            if language == "ru"
+            else "Yes, that is a heavy moment. I’m sorry it is pressing like this right now."
+        )
     elif (
         max_questions == 1
         and reply_plan_forbidden_move(request, "survey_probe")
@@ -786,7 +814,11 @@ def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str
         and reply_plan_may_infer_from_brevity(request) is True
         and reply_plan_latest_user_substance(request) is not None
     ):
-        base_reply = "Да, тяжелый момент. Что сейчас сильнее всего давит?"
+        base_reply = (
+            "Да, тяжелый момент. Что сейчас сильнее всего давит?"
+            if language == "ru"
+            else "Yes, that is a heavy moment. What is pressing the most right now?"
+        )
     else:
         return None
 
@@ -815,12 +847,61 @@ def deterministic_acknowledgement_reply_for_plan(
     if not reply_plan_required_grounding_is_empty(request):
         return None
 
-    base_reply = "Понял."
+    language = response_language(request)
+    base_reply = (
+        "Понял. Оставлю это без лишних вопросов; если тема снова станет мутной, вернемся к ней."
+        if language == "ru"
+        else "Got it. I’ll leave it there for now; if it gets fuzzy again, we can come back to it."
+    )
     max_chars = explicit_reply_policy_max_chars(request)
+    if max_chars is not None and len(base_reply) > max_chars:
+        base_reply = (
+            "Понял. Оставлю без лишних вопросов; вернемся к теме, если понадобится."
+            if language == "ru"
+            else "Got it. I’ll leave it there; we can come back to it if needed."
+        )
     if max_chars is not None and len(base_reply) > max_chars:
         return None
 
     return base_reply
+
+
+def response_language(request: dict[str, Any]) -> str:
+    user = request.get("user")
+    locale = user.get("locale") if isinstance(user, Mapping) else None
+    if isinstance(locale, str) and locale.lower().startswith("ru"):
+        return "ru"
+    if request_contains_meaningful_cyrillic_text(request):
+        return "ru"
+    return "en"
+
+
+def request_contains_meaningful_cyrillic_text(request: dict[str, Any]) -> bool:
+    snippets: list[str] = []
+    message = request.get("message")
+    if isinstance(message, Mapping):
+        text = message.get("text")
+        if isinstance(text, str):
+            snippets.append(text)
+
+    context = request.get("context")
+    recent_turns = context.get("recentTurns") if isinstance(context, Mapping) else None
+    if isinstance(recent_turns, list):
+        for turn in recent_turns[-5:]:
+            if not isinstance(turn, Mapping) or turn.get("role") != "user":
+                continue
+            content = turn.get("content")
+            if isinstance(content, str):
+                snippets.append(content)
+
+    for snippet in snippets:
+        if len(re.findall(r"[А-Яа-яЁё]", snippet)) >= 3:
+            return True
+
+    value = "\n".join(snippets)
+    cyrillic_chars = len(re.findall(r"[А-Яа-яЁё]", value))
+    latin_chars = len(re.findall(r"[A-Za-z]", value))
+    return cyrillic_chars >= 6 and cyrillic_chars > latin_chars
 
 
 def reply_plan_dialogue_act(request: dict[str, Any]) -> str | None:

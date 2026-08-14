@@ -53,6 +53,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
     }
 
     const candidate = await this.mafRuntime.processCandidate(request);
+    assertProactiveProbeInvariant(request, candidate);
     const conversation = await this.conversationRepo.findById(request.conversationId, request.tenantId);
     if (!conversation) {
       throw new Error(`Conversation ${request.conversationId} not found`);
@@ -476,6 +477,29 @@ function toPrimaryMetadata(candidate: RuntimeResult, request: ProcessMessageRequ
       ? { surveyProbeQuestionId: replyMetadata.surveyProbeQuestionId }
       : {}),
   };
+}
+
+function assertProactiveProbeInvariant(request: ProcessMessageRequest, candidate: RuntimeResult): void {
+  const selectedProbeQuestionId = request.proactiveContext?.probeQuestion?.id?.trim();
+  if (request.requestPurpose !== 'proactive_check_in' || !selectedProbeQuestionId) {
+    return;
+  }
+
+  const metadata = candidate.reply.metadata;
+  const candidateProbeQuestionId = typeof metadata?.surveyProbeQuestionId === 'string'
+    ? metadata.surveyProbeQuestionId.trim()
+    : undefined;
+  if (metadata?.containsSurveyProbe === true && candidateProbeQuestionId === selectedProbeQuestionId) {
+    return;
+  }
+
+  throw new MafAgentRuntimeConfigurationError({
+    reasonCode: 'maf_runtime_response_invalid',
+    invalidFields: [
+      'reply.metadata.containsSurveyProbe',
+      'reply.metadata.surveyProbeQuestionId',
+    ],
+  });
 }
 
 function toReplyPlanMetadata(request: ProcessMessageRequest, replyText: string): Record<string, unknown> {
