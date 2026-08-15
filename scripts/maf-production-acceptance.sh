@@ -74,12 +74,15 @@ pulse="$(api_get '/api/v1/admin/pulse/overview')"
 trends="$(api_get '/api/v1/admin/manager/trends?days=7')"
 
 users_total="$(printf '%s' "$analytics" | jq -r '.users.total // empty')"
+analytics_cohort_insufficient="$(printf '%s' "$analytics" | jq -r '.cohortInsufficient // false')"
 employees_count="$(printf '%s' "$pulse" | jq -r '.employees | length')"
 signal_days="$(printf '%s' "$trends" | jq -r '.signalCapture | length')"
 question_sentiment_count="$(printf '%s' "$trends" | jq -r '.questionSentiment | length')"
 
-[[ "$users_total" =~ ^[0-9]+$ ]] || fail "analytics.users.total is missing"
-(( users_total > 0 )) || fail "analytics has no users"
+if [[ "$analytics_cohort_insufficient" != "true" ]]; then
+  [[ "$users_total" =~ ^[0-9]+$ ]] || fail "analytics.users.total is missing"
+  (( users_total > 0 )) || fail "analytics has no users"
+fi
 (( employees_count > 0 )) || fail "pulse overview has no employees"
 (( signal_days > 0 )) || fail "manager trends has no signalCapture rows"
 (( question_sentiment_count > 0 )) || fail "manager trends has no questionSentiment rows"
@@ -168,7 +171,8 @@ probe_drop_count="$(
 
 log "Production MAF acceptance checks passed"
 printf '\nDashboard surface summary:\n'
-printf '  users.total=%s\n' "$users_total"
+printf '  analytics.cohortInsufficient=%s\n' "$analytics_cohort_insufficient"
+printf '  users.total=%s\n' "${users_total:-suppressed}"
 printf '  pulse.employees=%s\n' "$employees_count"
 printf '  trends.signalCapture.days=%s\n' "$signal_days"
 printf '  trends.questionSentiment.rows=%s\n' "$question_sentiment_count"
