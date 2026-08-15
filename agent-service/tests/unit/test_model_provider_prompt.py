@@ -7,12 +7,12 @@ from agent_service.workflows.model_provider import (
 def test_candidate_reply_prompt_includes_bounded_memory_context() -> None:
     prompt = build_candidate_reply_prompt(
         request={
-            "message": {"text": "Что ты помнишь про проект Север-17?"},
+            "message": {"text": "What do you remember about project North-17?"},
             "context": {
                 "memoryItems": [
                     {
                         "category": "project_context",
-                        "content": 'The employee\'s new project has the codename "Север-17".',
+                        "content": 'The employee\'s new project has the codename "North-17".',
                     },
                     {
                         "category": "project_risk",
@@ -20,8 +20,8 @@ def test_candidate_reply_prompt_includes_bounded_memory_context() -> None:
                     },
                 ],
                 "recentTurns": [
-                    {"role": "user", "content": "Запомни проект Север-17."},
-                    {"role": "assistant", "content": "Что именно в нем рискованно?"},
+                    {"role": "user", "content": "Remember project North-17."},
+                    {"role": "assistant", "content": "What exactly is risky there?"},
                 ],
             },
         },
@@ -33,16 +33,42 @@ def test_candidate_reply_prompt_includes_bounded_memory_context() -> None:
     )
 
     assert "memory[project_context]" in prompt
-    assert "Север-17" in prompt
+    assert "North-17" in prompt
     assert "slow manager feedback" in prompt
-    assert "recent_user: Запомни проект Север-17." in prompt
+    assert "recent_user: Remember project North-17." in prompt
     assert "Use reference context only as factual background" in prompt
+
+
+def test_candidate_reply_prompt_scopes_current_conversation_to_recent_turns() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "message": {"text": "What do you know from this conversation?"},
+            "context": {
+                "memoryItems": [
+                    {
+                        "category": "scheduled_action",
+                        "content": "Old reminder about manager priority ranking.",
+                    },
+                ],
+                "recentTurns": [
+                    {"role": "user", "content": "Today I am sorting a launch risk."},
+                    {"role": "assistant", "content": "What risk is most exposed?"},
+                ],
+            },
+        },
+        state={},
+    )
+
+    assert "recent_user: Today I am sorting a launch risk." in prompt
+    assert "recent_assistant: What risk is most exposed?" in prompt
+    assert "Old reminder about manager priority ranking." not in prompt
+    assert "memory[scheduled_action]" not in prompt
 
 
 def test_candidate_reply_prompt_filters_unsafe_context_snippets() -> None:
     prompt = build_candidate_reply_prompt(
         request={
-            "message": {"text": "Что ты помнишь?"},
+            "message": {"text": "What do you remember?"},
             "context": {
                 "memoryItems": [
                     {
@@ -72,7 +98,7 @@ def test_candidate_reply_prompt_filters_unsafe_context_snippets() -> None:
 def test_candidate_reply_prompt_filters_regression_control_markers() -> None:
     prompt = build_candidate_reply_prompt(
         request={
-            "message": {"text": "Привет"},
+            "message": {"text": "Hi"},
             "context": {
                 "memoryItems": [
                     {
@@ -291,6 +317,9 @@ def test_candidate_reply_prompt_bans_generic_assistant_moves() -> None:
     )
 
     assert "do not paraphrase the employee back to themselves" in prompt
+    assert "Language invariant: reply in English only" in prompt
+    assert "Do not mirror the employee's input language" in prompt
+    assert "If the employee asks what you know from this conversation" in prompt
     assert "Do not open with formulaic validation" in prompt
     assert "Do not use bullets, numbered steps, productivity frameworks" in prompt
     assert "do not describe operational status" in prompt
@@ -300,7 +329,7 @@ def test_candidate_reply_prompt_supports_emotion_without_coaching() -> None:
     prompt = build_candidate_reply_prompt(
         request={
             "message": {
-                "text": "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+                "text": "It is hard to focus today, and I keep getting distracted."
             },
             "context": {"memoryItems": [], "recentTurns": []},
         },
@@ -308,7 +337,7 @@ def test_candidate_reply_prompt_supports_emotion_without_coaching() -> None:
             "classification": {
                 "dialogueAct": "emotional_disclosure",
                 "latestUserSubstance": (
-                    "Сегодня как-то тяжело сфокусироваться, всё время отвлекаюсь."
+                    "It is hard to focus today, and I keep getting distracted."
                 ),
             },
             "riskAssessment": {"severity": "none"},
@@ -316,25 +345,23 @@ def test_candidate_reply_prompt_supports_emotion_without_coaching() -> None:
         },
     )
 
-    assert "emotional_disclosure: support the feeling with plain presence" in prompt
+    assert "emotional_disclosure: support the feeling briefly" in prompt
+    assert "make one useful next conversational move" in prompt
     assert "Do not open by labeling or diagnosing the employee's state" in prompt
-    assert "Do not prescribe even small tactics" in prompt
-    assert "task selection" in prompt
-    assert "timed exercises" in prompt
-    assert "try/do this" in prompt
-    assert "If questions are disallowed, leave room with a short acknowledgement" in prompt
+    assert "Avoid frameworks and long tactics" in prompt
+    assert "one small framing statement instead of an empathy-only dead end" in prompt
 
 
 def test_candidate_reply_prompt_uses_support_emotion_reply_plan_policy() -> None:
     prompt = build_candidate_reply_prompt(
         request={
-            "message": {"text": "сегодня тяжело собраться"},
+            "message": {"text": "It is hard to get moving today."},
             "context": {
                 "memoryItems": [],
                 "recentTurns": [],
                 "replyPlan": {
                     "dialogueAct": "emotional_disclosure",
-                    "latestUserSubstance": "сегодня тяжело собраться",
+                    "latestUserSubstance": "It is hard to get moving today.",
                     "topicAnchor": None,
                     "memoryAnchors": [],
                     "responseMove": "support_emotion",
@@ -354,7 +381,7 @@ def test_candidate_reply_prompt_uses_support_emotion_reply_plan_policy() -> None
         },
     )
 
-    assert "emotional_disclosure: support the feeling with plain presence" in prompt
+    assert "emotional_disclosure: support the feeling briefly" in prompt
     assert "ask zero questions" in prompt
     assert "questionPolicy=maxQuestions=0,reason=strategy_disallows_questions" in prompt
     assert "forbiddenMoves=action_plan" in prompt
@@ -451,12 +478,11 @@ def test_candidate_reply_policy_violations_use_typed_reply_plan_question_policy(
 def test_candidate_reply_policy_violations_apply_social_checkin_reply_policy() -> None:
     violations = candidate_reply_policy_violations(
         text=(
-            "Потихоньку, но держусь. Сегодня хочется чего-то совсем простого — "
-            "тишины и без спешки. Надеюсь, у тебя тоже будет шанс хотя бы немного "
-            "выдохнуть."
+            "I am here and keeping things simple today, hoping for a little quiet "
+            "and less rush. I hope you also get a chance to catch your breath later."
         ),
         request={
-            "message": {"text": "как ты?"},
+            "message": {"text": "How are you?"},
             "context": {
                 "replyPolicy": {
                     "maxChars": 120,
@@ -472,3 +498,15 @@ def test_candidate_reply_policy_violations_apply_social_checkin_reply_policy() -
     assert violations == [
         "keep the reply under 120 characters",
     ]
+
+
+def test_candidate_reply_policy_violations_reject_non_latin_letters() -> None:
+    non_latin_reply = "".join(chr(codepoint) for codepoint in (0x041F, 0x0440, 0x0438))
+
+    violations = candidate_reply_policy_violations(
+        text=non_latin_reply,
+        request={"message": {"text": "Reply briefly."}, "context": {}},
+        state={},
+    )
+
+    assert violations == ["reply in English only"]

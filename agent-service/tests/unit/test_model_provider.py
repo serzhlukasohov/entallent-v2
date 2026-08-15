@@ -11,8 +11,8 @@ from agent_service.workflows.model_provider import (
     ConversationModelProviderError,
     UnsafeConversationModelOutputError,
     normalize_model_reply_text,
-    parse_openai_compatible_response,
     parse_model_reply_payload,
+    parse_openai_compatible_response,
 )
 
 
@@ -212,7 +212,7 @@ def test_model_client_safety_verdicts_are_per_call() -> None:
 
 def test_model_client_parses_structured_proactive_probe_metadata() -> None:
     chat_client = JsonProbeChatClient(
-        '{"replyText":"Что нового ты реально узнал в работе?","usesProbe":true}'
+        '{"replyText":"What have you genuinely learned at work recently?","usesProbe":true}'
     )
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
 
@@ -249,7 +249,7 @@ def test_model_client_parses_structured_proactive_probe_metadata() -> None:
         )
     )
 
-    assert reply.text == "Что нового ты реально узнал в работе?"
+    assert reply.text == "What have you genuinely learned at work recently?"
     assert reply.metadata == {
         "containsSurveyProbe": True,
         "surveyProbeQuestionId": "99999999-9999-4999-8999-999999999999",
@@ -259,7 +259,7 @@ def test_model_client_parses_structured_proactive_probe_metadata() -> None:
 
 def test_model_client_rejects_structured_generic_check_in_when_probe_selected() -> None:
     chat_client = JsonProbeChatClient(
-        '{"replyText":"Привет, хотел коротко свериться, как у тебя сегодня дела?","usesProbe":false}'
+        '{"replyText":"Hi, I wanted to quickly check how your day is going.","usesProbe":false}'
     )
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
 
@@ -387,12 +387,12 @@ def test_model_client_renders_social_reply_from_reply_plan_without_model_call() 
         )
     )
 
-    assert reply.text == "Doing okay, thanks. How are you?"
+    assert reply.text == "Doing okay. What is the main thing on your plate right now?"
     assert reply.renderer_path == "deterministic_social_reply"
     assert chat_client.call_count == 0
 
 
-def test_model_client_renders_social_reply_in_user_locale() -> None:
+def test_model_client_renders_social_reply_in_english_for_any_user_locale() -> None:
     chat_client = CountingChatClient()
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
 
@@ -424,7 +424,7 @@ def test_model_client_renders_social_reply_in_user_locale() -> None:
         )
     )
 
-    assert reply.text == "Нормально, спасибо. А ты как?"
+    assert reply.text == "Doing okay. What is the main thing on your plate right now?"
     assert reply.renderer_path == "deterministic_social_reply"
     assert chat_client.call_count == 0
 
@@ -461,20 +461,20 @@ def test_model_client_renders_acknowledgement_from_reply_plan_without_model_call
     )
 
     assert reply.text == (
-        "Got it. I’ll leave it there for now; if it gets fuzzy again, we can come back to it."
+        "Got it. I will leave it there for now."
     )
     assert reply.renderer_path == "deterministic_acknowledgement_reply"
     assert chat_client.call_count == 0
 
 
-def test_model_client_renders_acknowledgement_in_user_locale() -> None:
+def test_model_client_renders_acknowledgement_in_english_for_any_user_locale() -> None:
     chat_client = CountingChatClient()
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
 
     reply = run_async(
         client.generate_reply(
             {
-                "user": {"locale": "ru-RU"},
+                "user": {"locale": "non-English"},
                 "message": {"text": "A raw acknowledgement the renderer must not classify."},
                 "context": {
                     "memoryItems": [],
@@ -499,9 +499,7 @@ def test_model_client_renders_acknowledgement_in_user_locale() -> None:
         )
     )
 
-    assert reply.text == (
-        "Понял. Оставлю это без лишних вопросов; если тема снова станет мутной, вернемся к ней."
-    )
+    assert reply.text == "Got it. I will leave it there for now."
     assert reply.renderer_path == "deterministic_acknowledgement_reply"
     assert chat_client.call_count == 0
 
@@ -513,13 +511,13 @@ def test_model_client_keeps_substantive_acknowledgement_on_model_path() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "понял, давай завтра"},
+                "message": {"text": "Got it, let us do tomorrow."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "acknowledgement",
-                        "latestUserSubstance": "давай завтра",
+                        "latestUserSubstance": "let us do tomorrow",
                         "topicAnchor": "follow-up timing",
                         "memoryAnchors": [],
                         "responseMove": "continue_existing_thread",
@@ -587,7 +585,7 @@ def test_model_client_keeps_non_plain_acknowledgement_on_model_path(
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "понял"},
+                "message": {"text": "Got it."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
@@ -610,7 +608,7 @@ def test_model_client_keeps_missing_substance_field_acknowledgement_on_model_pat
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "понял"},
+                "message": {"text": "Got it."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
@@ -645,13 +643,13 @@ def test_model_client_renders_no_question_support_emotion_without_model_call() -
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "сегодня тяжело собраться tone-contract-marker"},
+                "message": {"text": "It is hard to get moving today tone-contract-marker"},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "latestUserSubstance": "It is hard to get moving today.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -669,7 +667,7 @@ def test_model_client_renders_no_question_support_emotion_without_model_call() -
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert reply.text == "That is a heavy moment. Keep it to one pressure point for now."
     assert reply.renderer_path == "deterministic_support_emotion_reply"
     assert chat_client.call_count == 0
 
@@ -681,13 +679,13 @@ def test_model_client_omits_support_emotion_grounding_without_renderable_phrase(
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "я выгорел"},
+                "message": {"text": "I am burned out."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "я выгорел",
+                        "latestUserSubstance": "I am burned out.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -712,7 +710,7 @@ def test_model_client_omits_support_emotion_grounding_without_renderable_phrase(
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
     assert reply.renderer_path == "deterministic_support_emotion_reply"
     assert chat_client.call_count == 0
 
@@ -724,13 +722,13 @@ def test_model_client_omits_unsafe_support_emotion_grounding() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "я выгорел"},
+                "message": {"text": "I am burned out."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "я выгорел",
+                        "latestUserSubstance": "I am burned out.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -755,7 +753,7 @@ def test_model_client_omits_unsafe_support_emotion_grounding() -> None:
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
     assert "main-memory-marker" not in reply.text
     assert reply.renderer_path == "deterministic_support_emotion_reply"
     assert chat_client.call_count == 0
@@ -768,13 +766,13 @@ def test_model_client_omits_question_grounding_for_no_question_support() -> None
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "я выгорел"},
+                "message": {"text": "I am burned out."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "я выгорел",
+                        "latestUserSubstance": "I am burned out.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -787,7 +785,7 @@ def test_model_client_omits_question_grounding_for_no_question_support() -> None
                             {
                                 "source": "memory",
                                 "category": "stressor",
-                                "content": "неясного вопроса?",
+                                "content": "an unclear question?",
                                 "requirement": "mention_explicitly",
                             },
                         ],
@@ -799,7 +797,7 @@ def test_model_client_omits_question_grounding_for_no_question_support() -> None
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
     assert "?" not in reply.text
     assert chat_client.call_count == 0
 
@@ -811,7 +809,7 @@ def test_model_client_omits_grounding_that_would_exceed_max_chars() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "я выгорел"},
+                "message": {"text": "I am burned out."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
@@ -823,7 +821,7 @@ def test_model_client_omits_grounding_that_would_exceed_max_chars() -> None:
                     },
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "я выгорел",
+                        "latestUserSubstance": "I am burned out.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -836,7 +834,7 @@ def test_model_client_omits_grounding_that_would_exceed_max_chars() -> None:
                             {
                                 "source": "memory",
                                 "category": "stressor",
-                                "content": "очень длинного релиза с большим количеством контекста",
+                                "content": "a very long release with a lot of context",
                                 "requirement": "mention_explicitly",
                             },
                         ],
@@ -848,7 +846,7 @@ def test_model_client_omits_grounding_that_would_exceed_max_chars() -> None:
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
     assert len(reply.text) <= 70
     assert chat_client.call_count == 0
 
@@ -863,7 +861,7 @@ def test_model_client_keeps_tiny_max_chars_support_on_model_path() -> None:
             self.call_count += 1
             _ = messages
             _ = kwargs
-            return ChatResponse(messages=[Message("assistant", ["Коротко."])])
+            return ChatResponse(messages=[Message("assistant", ["Briefly."])])
 
     chat_client = ShortCountingChatClient()
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
@@ -871,7 +869,7 @@ def test_model_client_keeps_tiny_max_chars_support_on_model_path() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "я выгорел"},
+                "message": {"text": "I am burned out."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
@@ -883,7 +881,7 @@ def test_model_client_keeps_tiny_max_chars_support_on_model_path() -> None:
                     },
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "я выгорел",
+                        "latestUserSubstance": "I am burned out.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -901,7 +899,7 @@ def test_model_client_keeps_tiny_max_chars_support_on_model_path() -> None:
         )
     )
 
-    assert reply.text == "Коротко."
+    assert reply.text == "Briefly."
     assert reply.renderer_path == "llm"
     assert chat_client.call_count == 1
 
@@ -913,13 +911,13 @@ def test_model_client_keeps_boolean_zero_question_support_on_model_path() -> Non
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "сегодня тяжело собраться"},
+                "message": {"text": "It is hard to get moving today."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "latestUserSubstance": "It is hard to get moving today.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -952,13 +950,13 @@ def test_model_client_does_not_render_unsafe_support_grounding() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "я выгорел"},
+                "message": {"text": "I am burned out."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "я выгорел",
+                        "latestUserSubstance": "I am burned out.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -983,7 +981,7 @@ def test_model_client_does_not_render_unsafe_support_grounding() -> None:
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
     assert reply.renderer_path == "deterministic_support_emotion_reply"
     assert chat_client.call_count == 0
     assert client.safety_verdicts == [
@@ -1002,13 +1000,13 @@ def test_model_client_renders_question_support_emotion_without_model_call() -> N
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "сегодня тяжело собраться"},
+                "message": {"text": "It is hard to get moving today."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "latestUserSubstance": "It is hard to get moving today.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -1026,7 +1024,7 @@ def test_model_client_renders_question_support_emotion_without_model_call() -> N
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Что сейчас сильнее всего давит?"
+    assert reply.text == "That is a heavy moment. What is pressing the most right now?"
     assert reply.renderer_path == "deterministic_support_emotion_reply"
     assert chat_client.call_count == 0
 
@@ -1038,7 +1036,7 @@ def test_model_client_respects_zero_question_reply_policy_for_support_checkin() 
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "сегодня тяжело собраться"},
+                "message": {"text": "It is hard to get moving today."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
@@ -1050,7 +1048,7 @@ def test_model_client_respects_zero_question_reply_policy_for_support_checkin() 
                     },
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "latestUserSubstance": "It is hard to get moving today.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -1068,7 +1066,7 @@ def test_model_client_respects_zero_question_reply_policy_for_support_checkin() 
         )
     )
 
-    assert reply.text == "Да, тяжелый момент. Жаль, что сейчас так давит."
+    assert reply.text == "That is a heavy moment. Keep it to one pressure point for now."
     assert "?" not in reply.text
     assert reply.renderer_path == "deterministic_support_emotion_reply"
     assert chat_client.call_count == 0
@@ -1081,13 +1079,13 @@ def test_model_client_keeps_survey_support_question_on_model_path() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "сегодня тяжело собраться"},
+                "message": {"text": "It is hard to get moving today."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "latestUserSubstance": "It is hard to get moving today.",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -1117,18 +1115,18 @@ def test_model_client_keeps_grounded_support_question_on_model_path() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "сегодня тяжело собраться"},
+                "message": {"text": "It is hard to get moving today."},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "emotional_disclosure",
-                        "latestUserSubstance": "сегодня тяжело собраться",
+                        "latestUserSubstance": "It is hard to get moving today.",
                         "topicAnchor": None,
                         "memoryAnchors": [
                             {
                                 "category": "stressor",
-                                "content": "тяжелый релиз",
+                                "content": "heavy release",
                             },
                         ],
                         "responseMove": "support_emotion",
@@ -1141,7 +1139,7 @@ def test_model_client_keeps_grounded_support_question_on_model_path() -> None:
                             {
                                 "source": "memory",
                                 "category": "stressor",
-                                "content": "тяжелый релиз",
+                                "content": "heavy release",
                                 "requirement": "mention_explicitly",
                             },
                         ],
@@ -1165,13 +1163,13 @@ def test_model_client_keeps_answer_request_on_model_path() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "что мне сделать, если тяжело собраться?"},
+                "message": {"text": "What should I do if it is hard to get moving?"},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "request",
-                        "latestUserSubstance": "что мне сделать, если тяжело собраться?",
+                        "latestUserSubstance": "What should I do if it is hard to get moving?",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "answer_request",
@@ -1201,13 +1199,13 @@ def test_model_client_keeps_request_dialogue_act_on_model_path() -> None:
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "что мне сделать, если тяжело собраться?"},
+                "message": {"text": "What should I do if it is hard to get moving?"},
                 "context": {
                     "memoryItems": [],
                     "recentTurns": [],
                     "replyPlan": {
                         "dialogueAct": "request",
-                        "latestUserSubstance": "что мне сделать, если тяжело собраться?",
+                        "latestUserSubstance": "What should I do if it is hard to get moving?",
                         "topicAnchor": None,
                         "memoryAnchors": [],
                         "responseMove": "support_emotion",
@@ -1237,7 +1235,7 @@ def test_model_client_does_not_classify_social_raw_text_without_reply_plan() -> 
     reply = run_async(
         client.generate_reply(
             {
-                "message": {"text": "как ты?"},
+                "message": {"text": "How are you?"},
                 "context": {"memoryItems": [], "recentTurns": []},
             },
             {},

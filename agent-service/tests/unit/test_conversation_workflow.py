@@ -228,7 +228,7 @@ def test_workflow_does_not_retry_text_gate_without_typed_reply_policy() -> None:
 
 def test_workflow_uses_typed_social_reply_without_model_call() -> None:
     request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = "как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>"
+    request_body["message"]["text"] = "How are you?\n*Sent using* <@U0BPHHA21GC|ChatGPT>"
     request_body["context"]["replyPlan"] = {
         "dialogueAct": "social_checkin",
         "latestUserSubstance": None,
@@ -251,12 +251,8 @@ def test_workflow_uses_typed_social_reply_without_model_call() -> None:
     }
     chat_client = SequentialFakeChatClient(
         [
-            (
-                "Потихоньку, но держусь. Сегодня хочется чего-то совсем простого — "
-                "тишины и без спешки. Надеюсь, у тебя тоже будет шанс хотя бы немного "
-                "выдохнуть."
-            ),
-            "Потихоньку, но держусь. Сегодня всё ещё хочется тишины.",
+            "I am steady enough. Today I would prefer a simple pace.",
+            "I am steady enough. I still want a simple pace today.",
         ]
     )
     model_client = AgentFrameworkConversationModelClient(
@@ -268,7 +264,7 @@ def test_workflow_uses_typed_social_reply_without_model_call() -> None:
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "Нормально, спасибо. А ты как?",
+        "text": "Doing okay. What is the main thing on your plate right now?",
         "mode": "candidate",
     }
     assert chat_client.calls == 0
@@ -279,10 +275,10 @@ def test_workflow_uses_typed_social_reply_without_model_call() -> None:
 
 def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
     request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = "сегодня тяжело собраться tone-contract-marker"
+    request_body["message"]["text"] = "It is hard to get moving today tone-contract-marker"
     request_body["context"]["replyPlan"] = {
         "dialogueAct": "emotional_disclosure",
-        "latestUserSubstance": "сегодня тяжело собраться",
+        "latestUserSubstance": "It is hard to get moving today",
         "topicAnchor": None,
         "memoryAnchors": [],
         "responseMove": "support_emotion",
@@ -300,14 +296,7 @@ def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
         "allowReflectiveOpener": False,
         "allowListFormatting": False,
     }
-    chat_client = SequentialFakeChatClient(
-        [
-            (
-                "Похоже, день сейчас идет тяжело. Можно просто не требовать от себя "
-                "слишком многого."
-            ),
-        ]
-    )
+    chat_client = SequentialFakeChatClient(["Today sounds heavy. Keep the next step small."])
     model_client = AgentFrameworkConversationModelClient(
         chat_client=chat_client,
         model_name="test-model",
@@ -317,7 +306,7 @@ def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "Да, тяжелый момент. Жаль, что сейчас так давит.",
+        "text": "That is a heavy moment. Keep it to one pressure point for now.",
         "mode": "candidate",
     }
     assert chat_client.calls == 0
@@ -328,10 +317,10 @@ def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
 
 def test_workflow_uses_typed_support_emotion_checkin_without_model_call() -> None:
     request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = "вроде ок, но день какой-то рассыпанный"
+    request_body["message"]["text"] = "I am mostly okay, but the day feels scattered."
     request_body["context"]["replyPlan"] = {
         "dialogueAct": "emotional_disclosure",
-        "latestUserSubstance": "день какой-то рассыпанный",
+        "latestUserSubstance": "the day feels scattered",
         "topicAnchor": None,
         "memoryAnchors": [],
         "responseMove": "support_emotion",
@@ -350,12 +339,7 @@ def test_workflow_uses_typed_support_emotion_checkin_without_model_call() -> Non
         "allowListFormatting": False,
     }
     chat_client = SequentialFakeChatClient(
-        [
-            (
-                "Похоже, день просто не держится в одной линии. "
-                "Можно немного побыть в таком темпе. Что сейчас выбивает?"
-            ),
-        ]
+        ["The day sounds scattered. What is pulling it off track?"]
     )
     model_client = AgentFrameworkConversationModelClient(
         chat_client=chat_client,
@@ -366,7 +350,7 @@ def test_workflow_uses_typed_support_emotion_checkin_without_model_call() -> Non
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "Да, тяжелый момент. Что сейчас сильнее всего давит?",
+        "text": "That sounds hard to settle. What is pressing the most right now?",
         "mode": "candidate",
     }
     assert chat_client.calls == 0
@@ -377,7 +361,7 @@ def test_workflow_uses_typed_support_emotion_checkin_without_model_call() -> Non
 
 def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
     request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = "понял"
+    request_body["message"]["text"] = "got it"
     request_body["context"]["replyPlan"] = {
         "dialogueAct": "acknowledgement",
         "latestUserSubstance": None,
@@ -398,7 +382,7 @@ def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
         "allowReflectiveOpener": False,
         "allowListFormatting": False,
     }
-    chat_client = SequentialFakeChatClient(["Понял, держимся короткого шага."])
+    chat_client = SequentialFakeChatClient(["Got it, we will keep the step short."])
     model_client = AgentFrameworkConversationModelClient(
         chat_client=chat_client,
         model_name="test-model",
@@ -408,7 +392,7 @@ def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "Понял. Оставлю без лишних вопросов; вернемся к теме, если понадобится.",
+        "text": "Got it. I will leave it there for now.",
         "mode": "candidate",
     }
     assert chat_client.calls == 0
@@ -419,10 +403,10 @@ def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
 
 def test_workflow_does_not_render_internal_support_grounding() -> None:
     request_body = read_fixture("valid/process-message-request.json")
-    request_body["message"]["text"] = "сегодня тяжело собраться"
+    request_body["message"]["text"] = "It is hard to get moving today."
     request_body["context"]["replyPlan"] = {
         "dialogueAct": "emotional_disclosure",
-        "latestUserSubstance": "сегодня тяжело собраться",
+        "latestUserSubstance": "It is hard to get moving today.",
         "topicAnchor": None,
         "memoryAnchors": [
             {
@@ -462,7 +446,7 @@ def test_workflow_does_not_render_internal_support_grounding() -> None:
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "Да, тяжелый момент. Жаль, что сейчас так давит.",
+        "text": "That is a heavy moment. Keep it to one pressure point for now.",
         "mode": "candidate",
     }
     assert chat_client.calls == 0
