@@ -406,7 +406,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         eventId: normalizeMafRuntimeEventId(job.eventId, job.requestId),
         userDisplayName: normalizeOptionalString(currentMessage.userPreferredName),
         userTimezone: normalizeOptionalString(currentMessage.userTimezone),
-        userLocale: normalizeOptionalString(currentMessage.userLocale),
+        userLocale: resolveEffectiveLocale(normalizeOptionalString(currentMessage.userLocale), recentTurns),
         conversationThreadId: threadId,
         conversationSessionKey: [
           job.externalWorkspaceId,

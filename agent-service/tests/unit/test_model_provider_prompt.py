@@ -317,8 +317,8 @@ def test_candidate_reply_prompt_bans_generic_assistant_moves() -> None:
     )
 
     assert "do not paraphrase the employee back to themselves" in prompt
-    assert "Language invariant: reply in English only" in prompt
-    assert "Do not mirror the employee's input language" in prompt
+    assert "Language invariant: reply in the employee's language" in prompt
+    assert "If the current user message is in a different language" in prompt
     assert "If the employee asks what you know from this conversation" in prompt
     assert "Do not open with formulaic validation" in prompt
     assert "Do not use bullets, numbered steps, productivity frameworks" in prompt
@@ -447,6 +447,29 @@ def test_candidate_reply_policy_violations_require_typed_reply_policy() -> None:
     assert violations == []
 
 
+def test_candidate_reply_policy_violations_allow_user_language() -> None:
+    violations = candidate_reply_policy_violations(
+        text="Понял, давай просто удержим фокус на самом срочном.",
+        request={
+            "message": {"text": "слишком много задач"},
+            "user": {"locale": "ru"},
+            "context": {
+                "memoryItems": [],
+                "recentTurns": [],
+                "replyPolicy": {
+                    "maxChars": 180,
+                    "maxQuestions": 0,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
+        },
+        state={},
+    )
+
+    assert violations == []
+
+
 def test_candidate_reply_policy_violations_use_typed_reply_plan_question_policy() -> None:
     violations = candidate_reply_policy_violations(
         text="What changed?",
@@ -502,7 +525,7 @@ def test_candidate_reply_policy_violations_apply_social_checkin_reply_policy() -
     ]
 
 
-def test_candidate_reply_policy_violations_reject_non_latin_letters() -> None:
+def test_candidate_reply_policy_violations_allow_non_latin_letters() -> None:
     non_latin_reply = "".join(chr(codepoint) for codepoint in (0x041F, 0x0440, 0x0438))
 
     violations = candidate_reply_policy_violations(
@@ -511,4 +534,4 @@ def test_candidate_reply_policy_violations_reject_non_latin_letters() -> None:
         state={},
     )
 
-    assert violations == ["reply in English only"]
+    assert violations == []
