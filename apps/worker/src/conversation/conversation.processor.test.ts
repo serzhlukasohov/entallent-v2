@@ -63,12 +63,36 @@ describe('resolveEffectiveLocale', () => {
     ).toBe('ru');
   });
 
+  it('prefers recent Ukrainian user language over the stored locale', () => {
+    expect(
+      resolveEffectiveLocale('en', [
+        {
+          role: 'user',
+          content: 'я думаю що давати напрямок моя найсильніша сторона',
+          timestamp: '2026-08-14T09:00:00.000Z',
+        },
+      ]),
+    ).toBe('uk');
+  });
+
   it('keeps the stored locale when recent user language is not clearly Cyrillic', () => {
     expect(
       resolveEffectiveLocale('en', [
         {
           role: 'user',
           content: 'everything is clear',
+          timestamp: '2026-08-14T09:00:00.000Z',
+        },
+      ]),
+    ).toBe('en');
+  });
+
+  it('keeps the stored locale for too-short text', () => {
+    expect(
+      resolveEffectiveLocale('en', [
+        {
+          role: 'user',
+          content: 'ok',
           timestamp: '2026-08-14T09:00:00.000Z',
         },
       ]),

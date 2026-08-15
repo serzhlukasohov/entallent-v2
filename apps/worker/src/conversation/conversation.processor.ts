@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { Job } from 'bullmq';
 import { and, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
+import { detect as detectLanguage } from 'tinyld';
 import {
   AGENT_RUNTIME_PORT,
   FEATURE_FLAGS,
@@ -630,17 +631,11 @@ export function resolveEffectiveLocale(
     .map((turn) => turn.content)
     .join('\n');
 
-  if (hasMeaningfulCyrillicText(recentUserText)) {
-    return 'ru';
+  const detectedLocale = normalizeOptionalString(detectLanguage(recentUserText));
+  if (!detectedLocale || detectedLocale === storedLocale?.split('-')[0]) {
+    return storedLocale;
   }
-
-  return storedLocale;
-}
-
-function hasMeaningfulCyrillicText(value: string): boolean {
-  const cyrillicChars = value.match(/[А-Яа-яЁё]/g)?.length ?? 0;
-  const latinChars = value.match(/[A-Za-z]/g)?.length ?? 0;
-  return cyrillicChars >= 12 && cyrillicChars > latinChars;
+  return detectedLocale;
 }
 
 function normalizeMafRuntimeEventId(eventId: string | undefined, fallbackEventId?: string): string | undefined {
