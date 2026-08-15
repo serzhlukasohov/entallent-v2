@@ -667,9 +667,108 @@ def test_model_client_renders_no_question_support_emotion_without_model_call() -
         )
     )
 
-    assert reply.text == "That is a heavy moment. Keep it to one pressure point for now."
-    assert reply.renderer_path == "deterministic_support_emotion_reply"
-    assert chat_client.call_count == 0
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
+def test_model_client_routes_guilt_context_support_to_model_path() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "I feel like I am letting the team down."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [
+                        {
+                            "role": "assistant",
+                            "content": "A short feedback reply can unblock the team.",
+                        },
+                    ],
+                    "replyPolicy": {
+                        "maxChars": 70,
+                        "maxQuestions": 1,
+                        "allowReflectiveOpener": False,
+                        "allowListFormatting": False,
+                    },
+                    "replyPlan": {
+                        "dialogueAct": "emotional_disclosure",
+                        "latestUserSubstance": (
+                            "I feel like I am letting the team down."
+                        ),
+                        "topicAnchor": "team feedback is blocking teammates",
+                        "memoryAnchors": [],
+                        "responseMove": "support_emotion",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "new_substance_allows_question",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["action_plan", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
+def test_model_client_routes_generic_reply_pushback_to_model_path() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "That sounds too generic."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [
+                        {
+                            "role": "assistant",
+                            "content": "That is a heavy moment.",
+                        },
+                    ],
+                    "replyPolicy": {
+                        "maxChars": 70,
+                        "maxQuestions": 1,
+                        "allowReflectiveOpener": False,
+                        "allowListFormatting": False,
+                    },
+                    "replyPlan": {
+                        "dialogueAct": "emotional_disclosure",
+                        "latestUserSubstance": (
+                            "The previous reply was too generic, and I do not want "
+                            "to feel guilty toward the team."
+                        ),
+                        "topicAnchor": "guilt about team feedback",
+                        "memoryAnchors": [],
+                        "responseMove": "support_emotion",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "new_substance_allows_question",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["action_plan", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
 
 
 def test_model_client_omits_support_emotion_grounding_without_renderable_phrase() -> None:
@@ -710,9 +809,9 @@ def test_model_client_omits_support_emotion_grounding_without_renderable_phrase(
         )
     )
 
-    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
-    assert reply.renderer_path == "deterministic_support_emotion_reply"
-    assert chat_client.call_count == 0
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
 
 
 def test_model_client_omits_unsafe_support_emotion_grounding() -> None:
@@ -753,10 +852,10 @@ def test_model_client_omits_unsafe_support_emotion_grounding() -> None:
         )
     )
 
-    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
+    assert reply.text == "Safe candidate reply."
     assert "main-memory-marker" not in reply.text
-    assert reply.renderer_path == "deterministic_support_emotion_reply"
-    assert chat_client.call_count == 0
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
 
 
 def test_model_client_omits_question_grounding_for_no_question_support() -> None:
@@ -797,9 +896,10 @@ def test_model_client_omits_question_grounding_for_no_question_support() -> None
         )
     )
 
-    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
+    assert reply.text == "Safe candidate reply."
     assert "?" not in reply.text
-    assert chat_client.call_count == 0
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
 
 
 def test_model_client_omits_grounding_that_would_exceed_max_chars() -> None:
@@ -846,9 +946,70 @@ def test_model_client_omits_grounding_that_would_exceed_max_chars() -> None:
         )
     )
 
-    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
+    assert reply.text == "Safe candidate reply."
     assert len(reply.text) <= 70
-    assert chat_client.call_count == 0
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
+def test_model_client_renders_compact_tiny_support_fallback() -> None:
+    class LongCountingChatClient(CountingChatClient):
+        async def get_response(
+            self,
+            messages: Sequence[Message],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            self.call_count += 1
+            _ = messages
+            _ = kwargs
+            return ChatResponse(
+                messages=[
+                    Message(
+                        "assistant",
+                        ["This reply is too long for the tight support policy."],
+                    )
+                ]
+            )
+
+    chat_client = LongCountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "I am burned out."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [],
+                    "replyPolicy": {
+                        "maxChars": 40,
+                        "maxQuestions": 0,
+                        "allowReflectiveOpener": False,
+                        "allowListFormatting": False,
+                    },
+                    "replyPlan": {
+                        "dialogueAct": "emotional_disclosure",
+                        "latestUserSubstance": "I am burned out.",
+                        "topicAnchor": None,
+                        "memoryAnchors": [],
+                        "responseMove": "support_emotion",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 0,
+                            "reason": "strategy_disallows_questions",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["action_plan"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "That sounds heavy."
+    assert reply.renderer_path == "deterministic_support_emotion_reply"
+    assert chat_client.call_count == 2
 
 
 def test_model_client_keeps_tiny_max_chars_support_on_model_path() -> None:
@@ -981,15 +1142,20 @@ def test_model_client_does_not_render_unsafe_support_grounding() -> None:
         )
     )
 
-    assert reply.text == "That sounds heavy. Keep it to one pressure point for now."
-    assert reply.renderer_path == "deterministic_support_emotion_reply"
-    assert chat_client.call_count == 0
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
     assert client.safety_verdicts == [
+        {
+            "stage": "input",
+            "blocked": False,
+            "findings": [],
+        },
         {
             "stage": "output",
             "blocked": False,
             "findings": [],
-        }
+        },
     ]
 
 
@@ -1024,9 +1190,9 @@ def test_model_client_renders_question_support_emotion_without_model_call() -> N
         )
     )
 
-    assert reply.text == "That is a heavy moment. What is pressing the most right now?"
-    assert reply.renderer_path == "deterministic_support_emotion_reply"
-    assert chat_client.call_count == 0
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
 
 
 def test_model_client_respects_zero_question_reply_policy_for_support_checkin() -> None:
@@ -1066,10 +1232,9 @@ def test_model_client_respects_zero_question_reply_policy_for_support_checkin() 
         )
     )
 
-    assert reply.text == "That is a heavy moment. Keep it to one pressure point for now."
-    assert "?" not in reply.text
-    assert reply.renderer_path == "deterministic_support_emotion_reply"
-    assert chat_client.call_count == 0
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
 
 
 def test_model_client_keeps_survey_support_question_on_model_path() -> None:

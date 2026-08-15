@@ -348,6 +348,8 @@ def test_candidate_reply_prompt_supports_emotion_without_coaching() -> None:
     assert "emotional_disclosure: support the feeling briefly" in prompt
     assert "make one useful next conversational move" in prompt
     assert "Do not open by labeling or diagnosing the employee's state" in prompt
+    assert "Avoid stock support phrases" in prompt
+    assert "too generic" in prompt
     assert "Avoid frameworks and long tactics" in prompt
     assert "one small framing statement instead of an empathy-only dead end" in prompt
 

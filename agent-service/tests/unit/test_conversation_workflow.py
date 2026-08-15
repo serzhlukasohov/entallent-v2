@@ -306,13 +306,13 @@ def test_workflow_uses_typed_support_emotion_without_model_call() -> None:
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "That is a heavy moment. Keep it to one pressure point for now.",
+        "text": "Today sounds heavy. Keep the next step small.",
         "mode": "candidate",
     }
-    assert chat_client.calls == 0
-    assert result["diagnostics"]["modelCalls"] == 0
+    assert chat_client.calls == 1
+    assert result["diagnostics"]["modelCalls"] == 1
     assert result["diagnostics"]["modelRetryCount"] == 0
-    assert result["diagnostics"]["replyRenderer"] == "deterministic_support_emotion_reply"
+    assert result["diagnostics"]["replyRenderer"] == "llm"
 
 
 def test_workflow_uses_typed_support_emotion_checkin_without_model_call() -> None:
@@ -350,13 +350,13 @@ def test_workflow_uses_typed_support_emotion_checkin_without_model_call() -> Non
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "That sounds hard to settle. What is pressing the most right now?",
+        "text": "The day sounds scattered. What is pulling it off track?",
         "mode": "candidate",
     }
-    assert chat_client.calls == 0
-    assert result["diagnostics"]["modelCalls"] == 0
+    assert chat_client.calls == 1
+    assert result["diagnostics"]["modelCalls"] == 1
     assert result["diagnostics"]["modelRetryCount"] == 0
-    assert result["diagnostics"]["replyRenderer"] == "deterministic_support_emotion_reply"
+    assert result["diagnostics"]["replyRenderer"] == "llm"
 
 
 def test_workflow_uses_typed_acknowledgement_without_model_call() -> None:
@@ -446,12 +446,12 @@ def test_workflow_does_not_render_internal_support_grounding() -> None:
     result = workflow.run(request_body)
 
     assert result["reply"] == {
-        "text": "That is a heavy moment. Keep it to one pressure point for now.",
+        "text": "unused",
         "mode": "candidate",
     }
-    assert chat_client.calls == 0
-    assert result["diagnostics"]["modelCalls"] == 0
-    assert result["diagnostics"]["replyRenderer"] == "deterministic_support_emotion_reply"
+    assert chat_client.calls == 1
+    assert result["diagnostics"]["modelCalls"] == 1
+    assert result["diagnostics"]["replyRenderer"] == "llm"
 
 
 def test_workflow_model_failure_raises_safe_error_without_provider_detail() -> None:

@@ -166,6 +166,7 @@ class AgentFrameworkConversationModelClient:
         )
         text = parsed_reply.text
         metadata = parsed_reply.metadata
+        renderer_path = "llm"
         retry_count = 0
         retry_instruction = candidate_reply_retry_instruction(
             text=text,
@@ -208,9 +209,14 @@ class AgentFrameworkConversationModelClient:
             )
             if remaining_violations:
                 fallback_text = deterministic_social_reply_for_plan(request)
+                fallback_renderer_path = "deterministic_social_reply"
+                if fallback_text is None:
+                    fallback_text = deterministic_support_emotion_reply_for_plan(request)
+                    fallback_renderer_path = "deterministic_support_emotion_reply"
                 if fallback_text:
                     text = fallback_text
                     metadata = None
+                    renderer_path = fallback_renderer_path
                     remaining_violations = candidate_reply_policy_violations(
                         text=text,
                         metadata=metadata,
@@ -232,6 +238,7 @@ class AgentFrameworkConversationModelClient:
             self._safety_verdicts.append(output_verdict)
         return ConversationModelReply(
             text=text,
+            renderer_path=renderer_path,
             retry_count=retry_count,
             metadata=metadata,
         )
@@ -529,8 +536,11 @@ def support_emotion_dialogue_policy(latest_substance: str | None) -> str:
     return (
         "emotional_disclosure: support the feeling briefly, then make one useful "
         "next conversational move. Do not open by labeling or diagnosing the employee's "
-        "state. Avoid frameworks and long tactics. If questions are disallowed, use "
-        "one small framing statement instead of an empathy-only dead end."
+        "state. Avoid stock support phrases such as 'That is a heavy moment' when "
+        "the employee gives concrete context. If the employee says a prior reply was "
+        "too generic, address that correction directly. Avoid frameworks and long "
+        "tactics. If questions are disallowed, use one small framing statement instead "
+        "of an empathy-only dead end."
         f"{grounding}"
     )
 
@@ -804,10 +814,6 @@ def deterministic_reply_for_plan(request: dict[str, Any]) -> tuple[str, str] | N
     if acknowledgement_reply is not None:
         return acknowledgement_reply, "deterministic_acknowledgement_reply"
 
-    support_reply = deterministic_support_emotion_reply_for_plan(request)
-    if support_reply is not None:
-        return support_reply, "deterministic_support_emotion_reply"
-
     return None
 
 
@@ -817,6 +823,12 @@ def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str
     if reply_plan_dialogue_act(request) != "emotional_disclosure":
         return None
     if not reply_plan_forbidden_move(request, "action_plan"):
+        return None
+
+    max_chars = explicit_reply_policy_max_chars(request)
+    if max_chars is None or max_chars > 70:
+        return None
+    if support_emotion_requires_model_path(request):
         return None
 
     max_questions = explicit_reply_policy_max_questions(request)
@@ -837,11 +849,63 @@ def deterministic_support_emotion_reply_for_plan(request: dict[str, Any]) -> str
     else:
         return None
 
-    max_chars = explicit_reply_policy_max_chars(request)
-    if max_chars is not None and len(base_reply) > max_chars:
-        return None
+    if len(base_reply) > max_chars:
+        base_reply = compact_support_emotion_reply(request, max_questions=max_questions)
+        if base_reply is None or len(base_reply) > max_chars:
+            return None
 
     return base_reply
+
+
+def support_emotion_requires_model_path(request: dict[str, Any]) -> bool:
+    context = request.get("context")
+    plan = context.get("replyPlan") if isinstance(context, Mapping) else None
+    topic_anchor = plan.get("topicAnchor") if isinstance(plan, Mapping) else None
+    message = request.get("message")
+    message_text = message.get("text") if isinstance(message, Mapping) else None
+    snippets = [
+        reply_plan_latest_user_substance(request),
+        topic_anchor if isinstance(topic_anchor, str) else None,
+        message_text if isinstance(message_text, str) else None,
+    ]
+    if isinstance(context, Mapping):
+        recent_turns = context.get("recentTurns")
+        if isinstance(recent_turns, list):
+            for turn in recent_turns[-2:]:
+                if isinstance(turn, Mapping):
+                    content = turn.get("content")
+                    if isinstance(content, str):
+                        snippets.append(content)
+
+    text = " ".join(snippet for snippet in snippets if snippet).lower()
+    return any(
+        marker in text
+        for marker in (
+            "too generic",
+            "generic",
+            "guilt",
+            "guilty",
+            "letting the team down",
+            "let the team down",
+            "team feedback",
+            "blocking teammates",
+            "block the team",
+            "responsibility",
+        )
+    )
+
+
+def compact_support_emotion_reply(
+    request: dict[str, Any],
+    *,
+    max_questions: int | None,
+) -> str | None:
+    opening = support_emotion_opening(request)
+    if max_questions == 0:
+        return opening
+    if max_questions == 1:
+        return "What is pressing most right now?"
+    return None
 
 
 def support_emotion_opening(request: dict[str, Any]) -> str:
