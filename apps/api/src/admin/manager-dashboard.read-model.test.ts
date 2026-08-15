@@ -165,6 +165,74 @@ describe('manager dashboard read model boundary', () => {
     expect(client.selectDistinctOn).not.toHaveBeenCalled();
     expect(client.execute).not.toHaveBeenCalled();
   });
+
+  it('Manager Trends maf_primary regression aggregates MAF-created messages and survey evidence', async () => {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setUTCDate(today.getUTCDate() - 1);
+    const todayKey = today.toISOString().slice(0, 10);
+    const yesterdayKey = yesterday.toISOString().slice(0, 10);
+    const client = {
+      select: vi.fn(),
+      selectDistinctOn: vi.fn(),
+      execute: vi.fn()
+        .mockResolvedValueOnce([
+          { day: yesterdayKey, activeUsers: 2, inboundMessages: 5 },
+          { day: todayKey, activeUsers: 1, inboundMessages: 3 },
+        ])
+        .mockResolvedValueOnce([
+          { day: yesterdayKey, polarity: 'positive', count: 2 },
+          { day: yesterdayKey, polarity: 'negative', count: 1 },
+          { day: todayKey, polarity: 'mixed', count: 1, evidenceSummary: 'raw MAF evidence' },
+        ])
+        .mockResolvedValueOnce([
+          { status: 'scored', count: 2 },
+          { status: 'insufficient_evidence', count: 1 },
+        ])
+        .mockResolvedValueOnce([
+          {
+            stableKey: 'role_clarity',
+            title: 'Role clarity',
+            dimension: 'engagement',
+            polarity: 'positive',
+            count: 2,
+          },
+          {
+            stableKey: 'burnout_load',
+            title: 'Burnout load',
+            dimension: 'safety',
+            polarity: 'negative',
+            count: 2,
+          },
+        ]),
+    };
+    const readModel = new ManagerDashboardReadModel(
+      { client } as never,
+      { get: vi.fn() } as never,
+    );
+
+    const response = await readModel.getTrends(TENANT_ID, '2');
+
+    expect(client.execute).toHaveBeenCalledTimes(4);
+    expect(response.engagement).toEqual([
+      { date: yesterdayKey, activeUsers: 2, inboundMessages: 5 },
+      { date: todayKey, activeUsers: 1, inboundMessages: 3 },
+    ]);
+    expect(response.signalCapture).toEqual([
+      { date: yesterdayKey, total: 3, positive: 2, negative: 1, mixed: 0, neutral: 0 },
+      { date: todayKey, total: 1, positive: 0, negative: 0, mixed: 1, neutral: 0 },
+    ]);
+    expect(response.coverageFunnel).toMatchObject({
+      unknown: 0,
+      insufficient_evidence: 1,
+      scored: 2,
+    });
+    expect(response.questionSentiment).toEqual([
+      expect.objectContaining({ stableKey: 'burnout_load', total: 2, net: -1 }),
+      expect.objectContaining({ stableKey: 'role_clarity', total: 2, net: 1 }),
+    ]);
+    expect(JSON.stringify(response)).not.toContain('raw MAF evidence');
+  });
 });
 
 function queryRows(rows: unknown[]) {

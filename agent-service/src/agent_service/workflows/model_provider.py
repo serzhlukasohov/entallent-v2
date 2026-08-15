@@ -1155,6 +1155,10 @@ def candidate_reference_context(request: dict[str, Any]) -> str:
                 continue
             snippets.append(f"memory[{category or 'unknown'}]: {content}")
 
+    style_context = candidate_style_context(context)
+    if style_context is not None:
+        snippets.append(style_context)
+
     recent_turns = context.get("recentTurns")
     if isinstance(recent_turns, list):
         for turn in recent_turns[-4:]:
@@ -1169,6 +1173,55 @@ def candidate_reference_context(request: dict[str, Any]) -> str:
             snippets.append(f"recent_{role}: {content}")
 
     return " | ".join(snippets) if snippets else "none"
+
+
+def candidate_style_context(context: Mapping[str, Any]) -> str | None:
+    style = context.get("styleAdaptation")
+    if not isinstance(style, Mapping):
+        return None
+
+    dimensions = style.get("dimensions")
+    if not isinstance(dimensions, Mapping):
+        return None
+
+    bounded_dimensions = {
+        key: clamp_unit_float(dimensions.get(key))
+        for key in ("register", "humor", "verbosity", "emoji")
+    }
+    if any(value is None for value in bounded_dimensions.values()):
+        return None
+
+    weight = clamp_float(style.get("weight"), minimum=0.0, maximum=0.4)
+    if weight is None or weight <= 0:
+        return None
+
+    phrases = style.get("phrases")
+    safe_phrases: list[str] = []
+    if isinstance(phrases, list):
+        for phrase in phrases[:5]:
+            text = safe_context_text(phrase, limit=40)
+            if text:
+                safe_phrases.append(text)
+
+    dimension_text = ", ".join(
+        f"{key}={value:.2f}" for key, value in bounded_dimensions.items() if value is not None
+    )
+    phrase_text = f"; phrases={', '.join(safe_phrases)}" if safe_phrases else ""
+    return f"style: weight={weight:.2f}; {dimension_text}{phrase_text}"
+
+
+def clamp_unit_float(value: Any) -> float | None:
+    return clamp_float(value, minimum=0.0, maximum=1.0)
+
+
+def clamp_float(value: Any, *, minimum: float, maximum: float) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value < minimum:
+        return minimum
+    if value > maximum:
+        return maximum
+    return float(value)
 
 
 def candidate_safety_documents(request: dict[str, Any]) -> list[str]:

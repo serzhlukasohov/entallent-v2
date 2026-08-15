@@ -176,6 +176,16 @@ describe('Runtime contract fixtures', () => {
           allowReflectiveOpener: false,
           allowListFormatting: false,
         },
+        styleAdaptation: {
+          dimensions: {
+            register: 0.8,
+            humor: 0.45,
+            verbosity: 0.25,
+            emoji: 0.1,
+          },
+          weight: 0.3,
+          phrases: ['quick read', 'net-net'],
+        },
       },
     };
 

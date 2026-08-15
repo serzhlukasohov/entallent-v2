@@ -160,6 +160,52 @@ describe('InternalMafContextService', () => {
     await expect(missingWorkspaceService.readContext(makeRequest())).resolves.toEqual(emptyResponse());
   });
 
+  it('keeps post-deletion data out of MAF runtime context', async () => {
+    const service = new InternalMafContextService({
+      client: makeDb([
+        [{ id: userId, preferredName: 'Ada' }],
+        [{ id: conversationId }],
+        [{ id: 'account-1' }],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+      ]),
+    } as never);
+
+    await expect(service.readContext({ ...makeRequest(), traceId: 'trace-deletion' })).resolves.toEqual({
+      userProfile: {
+        id: userId,
+        preferredName: 'Ada',
+        timezone: undefined,
+        locale: undefined,
+        proactiveMessagingEnabled: undefined,
+        onboardingStatus: undefined,
+        consentState: undefined,
+        createdAt: null,
+        updatedAt: null,
+        styleProfile: null,
+      },
+      memoryItems: [],
+      goals: [],
+      recentTurns: [],
+      surveyState: null,
+      riskSignals: [],
+      diagnostics: {
+        traceId: 'trace-deletion',
+        counts: {
+          memoryItems: 0,
+          goals: 0,
+          recentTurns: 0,
+          riskSignals: 0,
+          surveyWindows: 0,
+        },
+      },
+    });
+  });
+
   it('does not expose sensitive memory content', async () => {
     const service = new InternalMafContextService({
       client: makeDb([
@@ -286,6 +332,31 @@ describe('InternalMafContextService', () => {
     expect(hasParamValue(threadWhere, '1700000000.001')).toBe(false);
     expect(hasThreadColumn(threadWhere)).toBe(true);
   });
+
+  it('filters expired memory and risk state out of MAF context queries', async () => {
+    const whereCalls = [] as Array<Record<string, unknown> | undefined>;
+    const service = new InternalMafContextService({
+      client: makeDbTrackingWhere(
+        [
+          [{ id: userId }],
+          [{ id: conversationId }],
+          [{ id: 'account-1' }],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+        ],
+        whereCalls,
+      ),
+    } as never);
+
+    await service.readContext(makeRequest());
+
+    expect(hasColumnChunk(whereCalls[4], 'expires_at')).toBe(true);
+    expect(hasColumnChunk(whereCalls[6], 'expires_at')).toBe(true);
+  });
 });
 
 function makeRequest() {
@@ -381,6 +452,18 @@ function hasExternalThreadChunk(chunks: unknown[]): boolean {
   return chunks.some((chunk) => isExternalThreadChunk(chunk) || hasNestedExternalThreadChunk(chunk));
 }
 
+function hasColumnChunk(whereClause: Record<string, unknown> | undefined, columnName: string): boolean {
+  if (!whereClause || !Array.isArray(whereClause['queryChunks'])) {
+    return false;
+  }
+
+  return hasColumnInChunks(whereClause['queryChunks'] as unknown[], columnName);
+}
+
+function hasColumnInChunks(chunks: unknown[], columnName: string): boolean {
+  return chunks.some((chunk) => isColumnChunk(chunk, columnName) || hasNestedColumnChunk(chunk, columnName));
+}
+
 function hasParamValueInChunks(chunks: unknown[], expected: string): boolean {
   return chunks.some((chunk) => isMatchingParamChunk(chunk, expected) || hasNestedMatchingParamChunk(chunk, expected));
 }
@@ -393,6 +476,19 @@ function hasNestedExternalThreadChunk(chunk: unknown): boolean {
   const nested = (chunk as { queryChunks?: unknown[] }).queryChunks;
   if (Array.isArray(nested)) {
     return hasExternalThreadChunk(nested);
+  }
+
+  return false;
+}
+
+function hasNestedColumnChunk(chunk: unknown, columnName: string): boolean {
+  if (!chunk || typeof chunk !== 'object') {
+    return false;
+  }
+
+  const nested = (chunk as { queryChunks?: unknown[] }).queryChunks;
+  if (Array.isArray(nested)) {
+    return hasColumnInChunks(nested, columnName);
   }
 
   return false;
@@ -416,6 +512,14 @@ function isExternalThreadChunk(chunk: unknown): boolean {
     !!chunk &&
     typeof chunk === 'object' &&
     (chunk as { name?: string }).name === 'external_thread_id'
+  );
+}
+
+function isColumnChunk(chunk: unknown, columnName: string): boolean {
+  return (
+    !!chunk &&
+    typeof chunk === 'object' &&
+    (chunk as { name?: string }).name === columnName
   );
 }
 

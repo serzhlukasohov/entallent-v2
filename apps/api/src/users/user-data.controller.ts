@@ -109,6 +109,18 @@ export class UserDataController {
       .set({ status: 'deleted', content: '[deleted]', updatedAt: new Date() })
       .where(and(eq(memoryItems.userId, userId), eq(memoryItems.tenantId, tenantId)));
 
+    // Delete goals
+    await this.db.client
+      .update(userGoals)
+      .set({
+        title: '[deleted]',
+        description: null,
+        status: 'cancelled',
+        sourceMessageIds: [],
+        updatedAt: new Date(),
+      })
+      .where(and(eq(userGoals.userId, userId), eq(userGoals.tenantId, tenantId)));
+
     // Cancel scheduled actions
     await this.db.client
       .update(scheduledActions)
@@ -130,7 +142,18 @@ export class UserDataController {
     // Soft-delete user
     await this.db.client
       .update(users)
-      .set({ status: 'deleted', deletedAt: new Date(), updatedAt: new Date() })
+      .set({
+        status: 'deleted',
+        preferredName: null,
+        timezone: null,
+        timezoneUpdatedAt: null,
+        communicationPreferences: {},
+        proactiveMessagingEnabled: false,
+        quietHours: { enabled: false },
+        consentState: {},
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)));
 
     this.logger.log(`Data deletion completed for user ${userId}`);

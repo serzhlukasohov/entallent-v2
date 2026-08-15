@@ -100,7 +100,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
         conversation.userTimezone ?? 'UTC',
       );
       await this.enqueueMafMemoryAndGoalProposals(candidate, request);
-      await this.enqueueTypeScriptOwnedExtractionJobs(request, outbound.id, conversation.channelType);
+      await this.enqueueTypeScriptOwnedExtractionJobs(request, outbound.id, conversation.channelType, risk);
     }
     if (this.onPostCandidateResult) {
       await this.onPostCandidateResult({
@@ -400,6 +400,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
     request: ProcessMessageRequest,
     outboundMessageId: string,
     channelType: string,
+    risk: RiskDetection,
   ): Promise<void> {
     const flagContext = { tenantId: request.tenantId, userId: request.userId };
     const memoryEnabled = this.featureFlags
@@ -432,7 +433,7 @@ export class MafPrimaryAgentRuntime implements AgentRuntimePort {
       }
     }
 
-    if (surveyEnabled) {
+    if (surveyEnabled && !risk.surveyMustBeBlocked) {
       try {
         await this.outbox.enqueueSurveyEvidence({
           conversationId: request.conversationId,

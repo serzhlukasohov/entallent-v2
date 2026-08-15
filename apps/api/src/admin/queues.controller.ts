@@ -27,9 +27,11 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     const redisUrl = new URL(this.config.get('REDIS_URL', { infer: true }));
+    const db = parseRedisDatabase(redisUrl.pathname);
     const connection = {
       host: redisUrl.hostname,
       port: Number(redisUrl.port) || 6379,
+      db,
       ...(redisUrl.password ? { password: decodeURIComponent(redisUrl.password) } : {}),
     };
     this.queues = ALL_QUEUE_NAMES.map((name) => new Queue(name, { connection }) as AdminQueue);
@@ -113,4 +115,14 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Retried job ${jobId} in queue ${queue.name}`);
     return { retried: true, queue: queue.name };
   }
+}
+
+function parseRedisDatabase(pathname: string): number {
+  const raw = pathname.slice(1);
+  if (!raw) return 0;
+  const db = Number(raw);
+  if (!Number.isInteger(db) || db < 0) {
+    throw new Error('invalid_redis_database');
+  }
+  return db;
 }

@@ -266,6 +266,9 @@
           "replyPlanning": {
             "$ref": "#/components/schemas/RuntimeReplyPlanningDiagnostics"
           },
+          "styleAdaptation": {
+            "$ref": "#/components/schemas/RuntimeStyleAdaptation"
+          },
           "replyPolicy": {
             "$ref": "#/components/schemas/RuntimeReplyPolicy"
           }
@@ -346,6 +349,46 @@
           "status": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      },
+      "RuntimeStyleAdaptation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimensions",
+          "weight",
+          "phrases"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "register",
+              "humor",
+              "verbosity",
+              "emoji"
+            ],
+            "properties": {
+              "register": { "type": "number", "minimum": 0, "maximum": 1 },
+              "humor": { "type": "number", "minimum": 0, "maximum": 1 },
+              "verbosity": { "type": "number", "minimum": 0, "maximum": 1 },
+              "emoji": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 0.4
+          },
+          "phrases": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       },

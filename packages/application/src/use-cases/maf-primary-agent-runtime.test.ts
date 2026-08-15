@@ -207,6 +207,44 @@ it('uses Python-supplied classification when available', async () => {
     expect(outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
+  it('Conversational Pulse maf_primary regression queues survey evidence after the MAF reply', async () => {
+    const { runtime, mafRuntime, conversationRepo, outbox } = createRuntime({
+      runtimeResult: {
+        ...RUNTIME_RESULT,
+        reply: {
+          ...RUNTIME_RESULT.reply,
+          metadata: {
+            containsSurveyProbe: true,
+            surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+          },
+        },
+      },
+    });
+
+    await expect(runtime.processMessage(REQUEST)).resolves.toMatchObject({
+      replyMetadata: {
+        containsSurveyProbe: true,
+        surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+      },
+    });
+
+    expect(mafRuntime.processCandidate).toHaveBeenCalledWith(REQUEST);
+    expect(conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        runtimeMode: 'maf_primary',
+        containsSurveyProbe: true,
+        surveyProbeQuestionId: '88888888-8888-4888-8888-888888888888',
+      }),
+    }));
+    expect(outbox.enqueueSurveyEvidence).toHaveBeenCalledWith({
+      conversationId: '44444444-4444-4444-8444-444444444444',
+      userId: '55555555-5555-4555-8555-555555555555',
+      tenantId: 'tenant-1',
+      inboundMessageId: '33333333-3333-4333-8333-333333333333',
+      traceId: 'trace-1',
+    });
+  });
+
   it('persists proactive check-in replies with MAF metadata and skips inbound-owned extraction jobs', async () => {
     const proactiveRequest: ProcessMessageRequest = {
       ...REQUEST,
@@ -460,7 +498,7 @@ it('uses Python-supplied classification when available', async () => {
     expect(goalRepo.updateStatus).not.toHaveBeenCalled();
   });
 
-  it('persists risk signals and raises escalation through TypeScript-owned ports', async () => {
+  it('Safety / risk maf_primary regression persists risk, escalates, and suppresses survey evidence', async () => {
     const criticalResult: RuntimeResult = {
       ...RUNTIME_RESULT,
       riskAssessment: {
@@ -474,7 +512,7 @@ it('uses Python-supplied classification when available', async () => {
         proactiveMessagesMustBePaused: true,
       },
     };
-    const { runtime, riskSignalRepo, escalation } = createRuntime({ runtimeResult: criticalResult });
+    const { runtime, riskSignalRepo, escalation, outbox } = createRuntime({ runtimeResult: criticalResult });
 
     await expect(runtime.processMessage(REQUEST)).resolves.toMatchObject({
       risk: {
@@ -484,6 +522,8 @@ it('uses Python-supplied classification when available', async () => {
         evidence: [],
         immediateResponseRequired: true,
         escalationRecommended: true,
+        surveyMustBeBlocked: true,
+        proactiveMessagesMustBePaused: true,
       },
     });
 
@@ -507,6 +547,7 @@ it('uses Python-supplied classification when available', async () => {
       messageIds: ['33333333-3333-4333-8333-333333333333'],
       traceId: 'trace-1',
     });
+    expect(outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
   it('records non-empty Python proposals as redacted deferred counts only', async () => {
@@ -580,7 +621,7 @@ it('uses Python-supplied classification when available', async () => {
     }));
   });
 
-  it('schedules valid Python follow-up proposals through scheduled action repository', async () => {
+  it('Profile hydration maf_primary regression uses hydrated timezone for MAF follow-up side effects', async () => {
     const { runtime, scheduledActionRepo, outbox } = createRuntime({
       runtimeResult: {
         ...RUNTIME_RESULT,
@@ -609,6 +650,7 @@ it('uses Python-supplied classification when available', async () => {
     await runtime.processMessage(REQUEST);
 
     expect(scheduledActionRepo.existsByDeduplicationKey).toHaveBeenCalledWith('followup:action-1');
+    expect(outbox.enqueueProfileHydration).not.toHaveBeenCalled();
     expect(scheduledActionRepo.save).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
       userId: '55555555-5555-4555-8555-555555555555',
@@ -636,6 +678,31 @@ it('uses Python-supplied classification when available', async () => {
       traceId: 'maf-follow-up-action-1',
       dueAt: new Date('2026-08-06T19:00:00.000Z'),
     });
+  });
+
+  it('continues MAF primary reply when profile hydration enqueue fails', async () => {
+    const { runtime, conversationRepo, outbox } = createRuntime({
+      conversation: {
+        userTimezone: undefined,
+        userTimezoneUpdatedAt: undefined,
+      },
+      profileHydrationFailure: true,
+    });
+
+    await expect(runtime.processMessage(REQUEST)).resolves.toMatchObject({
+      outboundMessageId: 'outbound-1',
+      responseText: RUNTIME_RESULT.reply.text,
+    });
+
+    expect(outbox.enqueueProfileHydration).toHaveBeenCalledWith({
+      userId: '55555555-5555-4555-8555-555555555555',
+      tenantId: 'tenant-1',
+      channelType: 'slack',
+      externalWorkspaceId: 'workspace-1',
+      traceId: 'trace-1',
+    });
+    expect(conversationRepo.saveMessage).toHaveBeenCalled();
+    expect(outbox.enqueueMessageSend).toHaveBeenCalled();
   });
 
   it('schedules an explicit user reminder request on the MAF primary path', async () => {
@@ -940,6 +1007,12 @@ it('uses Python-supplied classification when available', async () => {
 function createRuntime(options: {
   runtimeResult?: RuntimeResult | Promise<RuntimeResult>;
   conversationFound?: boolean;
+  conversation?: {
+    userDisplayName?: string;
+    userTimezone?: string;
+    userTimezoneUpdatedAt?: Date;
+  };
+  profileHydrationFailure?: boolean;
   featureFlags?: { isEnabled(flag: string, context: { tenantId: string; userId?: string }): Promise<boolean> };
   existingScheduledAction?: boolean;
   existingMemoryCandidate?: {
@@ -976,8 +1049,10 @@ function createRuntime(options: {
             channelType: 'slack',
             externalConversationId: 'channel-1',
             status: 'active',
+            userDisplayName: 'Test User',
             userTimezone: 'Europe/Warsaw',
             userTimezoneUpdatedAt: new Date(),
+            ...options.conversation,
           }
     )),
     findRecentMessages: vi.fn(async () => []),
@@ -996,7 +1071,11 @@ function createRuntime(options: {
     enqueueSurveyEvidence: vi.fn(async () => undefined),
     enqueueGroupReport: vi.fn(async () => undefined),
     enqueueStyleAnalysis: vi.fn(async () => undefined),
-    enqueueProfileHydration: vi.fn(async () => undefined),
+    enqueueProfileHydration: vi.fn(async () => {
+      if (options.profileHydrationFailure) {
+        throw new Error('profile hydration queue unavailable');
+      }
+    }),
   } satisfies OutboxPort;
   const featureFlags = options.featureFlags ?? {
     isEnabled: vi.fn(async () => true),

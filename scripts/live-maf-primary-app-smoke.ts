@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { and, desc, eq } from 'drizzle-orm';
 import { Queue } from 'bullmq';
 import { getDbClient, messages, runtimeAttempts } from '@entalent/database';
-import type { AdminQueuesResponse } from '@entalent/contracts';
+import { QUEUE_NAMES } from '@entalent/contracts';
+import type { QueueName } from '@entalent/contracts';
 import { resolveMafShadowLiveSmokeEnv } from '../packages/application/src/use-cases/maf-shadow-live-smoke';
 
 type MafShadowLiveSmokeEnvResolution = ReturnType<typeof resolveMafShadowLiveSmokeEnv>;
@@ -17,7 +19,7 @@ const agentServiceDir = join(repoRoot, 'agent-service');
 const pythonPath = join(agentServiceDir, '.venv', 'bin', 'python');
 const apiPort = process.env.API_PORT ?? '3000';
 const DEFAULT_API_HOST = `http://127.0.0.1:${apiPort}`;
-const API_BASE = resolveApiBase(process.env.MAF_RUNTIME_API_BASE, DEFAULT_API_HOST);
+let API_BASE = resolveApiBase(process.env.MAF_RUNTIME_API_BASE, DEFAULT_API_HOST);
 const IS_REMOTE_SMOKE = isRemoteMode(
   process.env.MAF_PRIMARY_APP_SMOKE_REMOTE,
   API_BASE,
@@ -30,6 +32,14 @@ const QUEUE_POLL_TIMEOUT_MS = 30_000;
 const QUEUE_POLL_INTERVAL_MS = 500;
 const SECRET_LIKE_PATTERN =
   /(api[_-]?key|bearer|password|secret|token|xox[abprs]-|sk-[A-Za-z0-9_-]+)/i;
+const DIAGNOSTIC_SECRET_PATTERN =
+  /((?:api[_-]?key|password|secret|token)\s*[=:]\s*)\S+|bearer\s+\S+|xox[abprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]+/gi;
+export const MAF_PRIMARY_APP_SMOKE_REGRESSION = {
+  feature: 'Slack AI mentor',
+  runtimeMode: 'maf_primary',
+  path: 'Slack/API event -> queue -> worker -> MAF runtime -> TypeScript validation/persistence -> outbound/send/audit/runtime_attempts',
+  command: 'pnpm maf:primary:app:smoke',
+} as const;
 
 type ChildHandle = ChildProcessWithoutNullStreams;
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -103,6 +113,7 @@ interface RuntimeEvidence {
   inboundMessageId: string;
   outboundMessageId: string | null;
   runtimeAttempt: RuntimeAttemptRecord | null;
+  runtimeAttemptCount: number | null;
   outboundMetadata: Record<string, unknown> | null;
   messageSendJobFound: boolean | null;
   messageSendJobState: string | null;
@@ -111,6 +122,17 @@ interface RuntimeEvidence {
   runtimeMetadataChecked: boolean;
   runtimeAttemptChecked: boolean;
   queueChecksRequested: boolean;
+  productChecks?: {
+    devApiAuthCovered: boolean;
+    inboundPersisted: boolean;
+    conversationJobQueued: boolean | null;
+    conversationJobProcessed: boolean;
+    outboundPersisted: boolean;
+    primaryRuntimeMetadataPersisted: boolean;
+    primaryRuntimeAttemptCommitted: boolean;
+    runtimeAttemptIdempotent: boolean;
+    messageSendQueued: boolean | null;
+  };
   failureReason?: string;
 }
 
@@ -119,6 +141,7 @@ let workerReadyMarker = false;
 let dbHandle: ReturnType<typeof getDbClient> | null = null;
 let priorPrimaryFlag: FeatureFlag | null = null;
 let priorDisabledFlag: FeatureFlag | null = null;
+const childLogLines: string[] = [];
 
 async function main(): Promise<void> {
   registerSignalHandlers();
@@ -132,6 +155,7 @@ async function main(): Promise<void> {
       inboundMessageId: 'redacted',
       outboundMessageId: null,
       runtimeAttempt: null,
+      runtimeAttemptCount: null,
       outboundMetadata: null,
       messageSendJobFound: null,
       messageSendJobState: null,
@@ -162,6 +186,7 @@ async function main(): Promise<void> {
       inboundMessageId: 'redacted',
       outboundMessageId: null,
       runtimeAttempt: null,
+      runtimeAttemptCount: null,
       outboundMetadata: null,
       messageSendJobFound: null,
       messageSendJobState: null,
@@ -186,6 +211,7 @@ async function main(): Promise<void> {
       inboundMessageId: 'redacted',
       outboundMessageId: null,
       runtimeAttempt: null,
+      runtimeAttemptCount: null,
       outboundMetadata: null,
       messageSendJobFound: null,
       messageSendJobState: null,
@@ -209,6 +235,7 @@ async function main(): Promise<void> {
       inboundMessageId: 'redacted',
       outboundMessageId: null,
       runtimeAttempt: null,
+      runtimeAttemptCount: null,
       outboundMetadata: null,
       messageSendJobFound: null,
       messageSendJobState: null,
@@ -230,6 +257,7 @@ async function main(): Promise<void> {
     inboundMessageId: 'redacted',
     outboundMessageId: null,
     runtimeAttempt: null,
+    runtimeAttemptCount: null,
     outboundMetadata: null,
     messageSendJobFound: null,
     messageSendJobState: null,
@@ -245,20 +273,43 @@ async function main(): Promise<void> {
 
   try {
     if (!IS_REMOTE_SMOKE) {
+      const localApiPort = await reserveLoopbackPort();
       const agentPort = await reserveLoopbackPort();
+      const workerPort = await reserveLoopbackPort();
+      API_BASE = `http://${SERVICE_HOST}:${localApiPort}/api/v1`;
       const serviceUrl = `http://${SERVICE_HOST}:${agentPort}`;
+      const localInternalAuthEnv = resolveLocalInternalAuthEnv();
+      const localAdminEnv = resolveLocalAdminEnv();
+      process.env.ADMIN_API_KEY = localAdminEnv.ADMIN_API_KEY;
+      const localRedisUrl = withRedisDatabase(process.env.REDIS_URL, 15);
+      if (localRedisUrl) {
+        process.env.REDIS_URL = localRedisUrl;
+      }
 
-      serviceChild = await startAgentService(agentPort, envResolution.env);
+      serviceChild = await startAgentService(agentPort, {
+        ...envResolution.env,
+        ...localInternalAuthEnv,
+        AGENT_SERVICE_INTERNAL_API_URL: API_BASE,
+      });
       activeChildren.add(serviceChild);
       await waitForHealth(`${serviceUrl}/health/ready`, 'agent-service', HEALTH_TIMEOUT_MS);
 
-      const sharedRuntimeEnv = buildRuntimeEnvironment(envResolution.env, serviceUrl);
+      const sharedRuntimeEnv = buildRuntimeEnvironment({
+        ...envResolution.env,
+        ...localInternalAuthEnv,
+        ...localAdminEnv,
+        ...(localRedisUrl ? { REDIS_URL: localRedisUrl } : {}),
+      }, serviceUrl);
 
-      apiChild = spawnService('api', ['--filter', '@entalent/api', 'dev'], sharedRuntimeEnv);
+      apiChild = spawnService(
+        'api',
+        ['--filter', '@entalent/api', 'dev'],
+        { ...sharedRuntimeEnv, API_PORT: String(localApiPort) },
+      );
       workerChild = spawnService(
         'worker',
         ['--filter', '@entalent/worker', 'dev'],
-        sharedRuntimeEnv,
+        { ...sharedRuntimeEnv, WORKER_PORT: String(workerPort) },
       );
       activeChildren.add(apiChild);
       activeChildren.add(workerChild);
@@ -311,8 +362,10 @@ function buildRuntimeEnvironment(
     ...(process.env.AGENT_SERVICE_TIMEOUT_MS
       ? { AGENT_SERVICE_TIMEOUT_MS: process.env.AGENT_SERVICE_TIMEOUT_MS }
       : {}),
-    ...(process.env.INTERNAL_SERVICE_AUTH_SECRET
-      ? { INTERNAL_SERVICE_AUTH_SECRET: process.env.INTERNAL_SERVICE_AUTH_SECRET }
+    ...(envResolution['INTERNAL_SERVICE_AUTH_SECRET']
+      ? { INTERNAL_SERVICE_AUTH_SECRET: envResolution['INTERNAL_SERVICE_AUTH_SECRET'] }
+      : process.env.INTERNAL_SERVICE_AUTH_SECRET
+        ? { INTERNAL_SERVICE_AUTH_SECRET: process.env.INTERNAL_SERVICE_AUTH_SECRET }
       : {}),
     ...(envResolution['AGENT_SERVICE_MODEL_PROVIDER']
       ? { AGENT_SERVICE_MODEL_PROVIDER: envResolution['AGENT_SERVICE_MODEL_PROVIDER'] }
@@ -343,9 +396,35 @@ function buildRuntimeEnvironment(
   };
 }
 
+function resolveLocalInternalAuthEnv(): Record<string, string> {
+  const configured =
+    process.env.INTERNAL_SERVICE_AUTH_SECRET?.trim()
+    || process.env.AGENT_SERVICE_INTERNAL_SERVICE_AUTH_SECRET?.trim();
+  const secret = configured || `local-smoke-${randomUUID()}-${randomUUID()}`;
+  return {
+    INTERNAL_SERVICE_AUTH_SECRET: secret,
+    AGENT_SERVICE_INTERNAL_SERVICE_AUTH_SECRET: secret,
+  };
+}
+
+function resolveLocalAdminEnv(): { ADMIN_API_KEY: string } {
+  return {
+    ADMIN_API_KEY: process.env.ADMIN_API_KEY?.trim() || `local-smoke-admin-${randomUUID()}`,
+  };
+}
+
+function withRedisDatabase(redisUrl: string | undefined, db: number): string | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+  const parsed = new URL(redisUrl);
+  parsed.pathname = `/${db}`;
+  return parsed.toString();
+}
+
 function resolveRuntimeCheckConfig(isRemoteSmoke: boolean): RuntimeCheckConfig {
   const remoteDbAvailable = Boolean(process.env.DATABASE_URL);
-  const remoteQueueAvailable = Boolean(process.env.REDIS_URL) || Boolean(process.env.ADMIN_API_KEY);
+  const remoteQueueAvailable = Boolean(process.env.REDIS_URL);
 
   const includePersistenceChecks = isRemoteSmoke
     ? (parseBoolean(process.env.MAF_PRIMARY_APP_SMOKE_CHECK_DB) ?? remoteDbAvailable)
@@ -438,14 +517,19 @@ function spawnService(
   if (label === 'worker') {
     child.stdout?.on('data', (chunk) => {
       const text = chunk.toString();
+      captureChildLog(label, text);
       if (/Nest application successfully started/.test(text)) {
         workerReadyMarker = true;
       }
     });
+  } else {
+    child.stdout?.on('data', (chunk) => {
+      captureChildLog(label, chunk.toString());
+    });
   }
 
-  child.stderr?.on('data', () => {
-    // drain stderr to avoid pipe blocking
+  child.stderr?.on('data', (chunk) => {
+    captureChildLog(label, chunk.toString());
   });
 
   return child;
@@ -480,8 +564,11 @@ async function startAgentService(
     },
   );
 
-  child.stderr?.on('data', () => {
-    // Drain stderr so provider warnings do not block the subprocess.
+  child.stderr?.on('data', (chunk) => {
+    captureChildLog('agent-service', chunk.toString());
+  });
+  child.stdout?.on('data', (chunk) => {
+    captureChildLog('agent-service', chunk.toString());
   });
 
   return child;
@@ -500,6 +587,7 @@ async function runConversationSmoke(
     inboundMessageId: 'redacted',
     outboundMessageId: null,
     runtimeAttempt: null,
+    runtimeAttemptCount: null,
     outboundMetadata: null,
     messageSendJobFound: null,
     messageSendJobState: null,
@@ -519,6 +607,34 @@ async function runConversationSmoke(
   evidence.traceId = safeTraceId(inbound.traceId);
   evidence.conversationId = inbound.conversationId;
   evidence.inboundMessageId = inbound.messageId;
+  evidence.productChecks = {
+    devApiAuthCovered: Boolean(process.env.ADMIN_API_KEY),
+    inboundPersisted: Boolean(inbound.messageId),
+    conversationJobQueued: null,
+    conversationJobProcessed: false,
+    outboundPersisted: false,
+    primaryRuntimeMetadataPersisted: false,
+    primaryRuntimeAttemptCommitted: false,
+    runtimeAttemptIdempotent: false,
+    messageSendQueued: null,
+  };
+
+  if (checks.includeQueueChecks) {
+    const queueEvidence = await pollForQueueJob(QUEUE_NAMES.CONVERSATION, inbound.messageId);
+    if (!queueEvidence.checked) {
+      evidence.failureReason = queueEvidence.reason ?? 'conversation_queue_evidence_not_available';
+      return evidence;
+    }
+    if (!queueEvidence.found) {
+      evidence.failureReason = 'conversation_queue_missing';
+      return evidence;
+    }
+    if (queueEvidence.state === 'failed') {
+      evidence.failureReason = 'conversation_job_failed';
+      return evidence;
+    }
+    evidence.productChecks.conversationJobQueued = true;
+  }
 
   const outbound = await pollForOutboundMessage(
     inbound.conversationId,
@@ -531,22 +647,27 @@ async function runConversationSmoke(
   }
 
   evidence.outboundMessageId = outbound.id;
+  evidence.productChecks.conversationJobProcessed = true;
+  evidence.productChecks.outboundPersisted = true;
 
   if (checks.includePersistenceChecks) {
     const outboundDbRow = await fetchOutboundMetadataFromDb(outbound.id, tenantId);
     evidence.outboundMetadata = outboundDbRow?.metadata ?? null;
     evidence.runtimeMetadataChecked = true;
 
-    evidence.runtimeAttempt = await fetchRuntimeAttempt(
+    const runtimeAttemptRows = await fetchRuntimeAttempts(
       inbound.messageId,
       inbound.traceId,
       tenantId,
     );
+    evidence.runtimeAttempt = runtimeAttemptRows[0] ?? null;
+    evidence.runtimeAttemptCount = runtimeAttemptRows.length;
     evidence.runtimeAttemptChecked = true;
     if (!isPrimaryOutboundMetadata(evidence.outboundMetadata)) {
       evidence.failureReason = 'runtime_metadata_invalid';
       return evidence;
     }
+    evidence.productChecks.primaryRuntimeMetadataPersisted = true;
 
     if (!evidence.runtimeAttempt || evidence.runtimeAttempt.runtimeMode !== 'maf_primary') {
       evidence.failureReason = 'runtime_attempt_missing_or_wrong_mode';
@@ -557,10 +678,21 @@ async function runConversationSmoke(
       evidence.failureReason = 'runtime_attempt_phase_not_committed';
       return evidence;
     }
+    evidence.productChecks.primaryRuntimeAttemptCommitted = true;
+
+    if (runtimeAttemptRows.length !== 1) {
+      evidence.failureReason = 'runtime_attempt_idempotency_violation';
+      return evidence;
+    }
+    evidence.productChecks.runtimeAttemptIdempotent = true;
   }
 
   if (checks.includeQueueChecks) {
-    const queueEvidence = await findMessageSendJob(outbound.id, checks.allowAdminQueueCheck);
+    const queueEvidence = await pollForQueueJob(
+      QUEUE_NAMES.MESSAGE_SEND,
+      outbound.id,
+      checks.allowAdminQueueCheck,
+    );
     evidence.messageSendQueueChecked = queueEvidence.checked;
     evidence.messageSendQueueSource = queueEvidence.source;
     evidence.messageSendJobFound = queueEvidence.found;
@@ -575,6 +707,7 @@ async function runConversationSmoke(
       evidence.failureReason = 'message_send_queue_missing';
       return evidence;
     }
+    evidence.productChecks.messageSendQueued = true;
 
     if (queueEvidence.state === 'failed') {
       evidence.failureReason = 'message_send_job_failed';
@@ -616,7 +749,7 @@ async function fetchOutboundMetadataFromDb(
     return null;
   }
 
-  const [row] = await dbHandle.client
+  const [row] = await dbHandle.db
     .select({ id: messages.id, metadata: messages.metadata, traceId: messages.traceId })
     .from(messages)
     .where(and(eq(messages.id, messageId), eq(messages.tenantId, tenantId)))
@@ -625,16 +758,16 @@ async function fetchOutboundMetadataFromDb(
   return row ? { ...row, metadata: toRecord(row.metadata) } : null;
 }
 
-async function fetchRuntimeAttempt(
+async function fetchRuntimeAttempts(
   messageId: string,
   traceId: string,
   tenantId: string,
-): Promise<RuntimeAttemptRecord | null> {
+): Promise<RuntimeAttemptRecord[]> {
   if (!dbHandle) {
-    return null;
+    return [];
   }
 
-  const [row] = await dbHandle.client
+  return dbHandle.db
     .select({
       id: runtimeAttempts.id,
       runtimeMode: runtimeAttempts.runtimeMode,
@@ -650,14 +783,13 @@ async function fetchRuntimeAttempt(
       ),
     )
     .orderBy(desc(runtimeAttempts.createdAt))
-    .limit(1);
-
-  return row ?? null;
+    .limit(10);
 }
 
-async function findMessageSendJob(
-  outboundMessageId: string,
-  allowAdminFallback: boolean,
+async function findQueueJob(
+  queueName: QueueName,
+  messageId: string,
+  allowAdminFallback = false,
 ): Promise<QueueCheckResult> {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) {
@@ -675,14 +807,14 @@ async function findMessageSendJob(
   }
 
   const connection = parseRedisConnection(redisUrl);
-  const queue = new Queue<MessageSendJobData>('message-send', { connection });
+  const queue = new Queue<MessageSendJobData>(queueName, { connection });
   const states: QueueState[] = ['waiting', 'active', 'delayed', 'completed', 'failed'];
 
   try {
     const jobs = await queue.getJobs(states, 0, 200);
     const match = jobs.find((job) => {
       const data = job.data as Partial<MessageSendJobData> | undefined;
-      return data?.messageId === outboundMessageId;
+      return data?.messageId === messageId;
     });
     if (!match) {
       return { checked: true, found: false, state: null, source: 'redis' };
@@ -706,48 +838,31 @@ async function findMessageSendJob(
   }
 }
 
-async function findMessageSendJobFromAdminEndpoint(): Promise<QueueCheckResult> {
-  try {
-    const queueStats = await request<AdminQueuesResponse>('/admin/queues', 'GET');
-    const messageSendQueue = queueStats.queues.find((entry) => entry.name === 'message-send');
-    if (!messageSendQueue) {
-      return {
-        checked: true,
-        found: false,
-        state: null,
-        source: 'admin',
-        reason: 'admin_queue_list_missing',
-      };
+async function pollForQueueJob(
+  queueName: QueueName,
+  messageId: string,
+  allowAdminFallback = false,
+): Promise<QueueCheckResult> {
+  const deadline = Date.now() + QUEUE_POLL_TIMEOUT_MS;
+  let last: QueueCheckResult = { checked: false, found: false, state: null, source: 'none' };
+  while (Date.now() < deadline) {
+    last = await findQueueJob(queueName, messageId, allowAdminFallback);
+    if (!last.checked || last.found) {
+      return last;
     }
-
-    return {
-      checked: true,
-      found: true,
-      state: `queue_counts:${serializeQueueCounts(messageSendQueue.counts)}`,
-      source: 'admin',
-    };
-  } catch {
-    return {
-      checked: false,
-      found: false,
-      state: null,
-      source: 'none',
-      reason: 'admin_queue_check_failed',
-    };
+    await delay(QUEUE_POLL_INTERVAL_MS);
   }
+  return last;
 }
 
-function serializeQueueCounts(counts: Record<string, number | string>): string {
-  const total = Object.values(counts).reduce((total, value) => total + toSafeNumber(value), 0);
-  return `${total}`;
-}
-
-function toSafeNumber(value: number | string): number {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : 0;
-  }
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? 0 : parsed;
+async function findMessageSendJobFromAdminEndpoint(): Promise<QueueCheckResult> {
+  return {
+    checked: false,
+    found: false,
+    state: null,
+    source: 'none',
+    reason: 'job_specific_queue_evidence_unavailable',
+  };
 }
 
 async function pollForOutboundMessage(
@@ -924,13 +1039,27 @@ function existsPythonRuntime(): boolean {
   return existsSync(pythonPath);
 }
 
-function parseRedisConnection(redisUrl: string): { host: string; port: number; password?: string } {
+export function parseRedisConnection(
+  redisUrl: string,
+): { host: string; port: number; db: number; password?: string } {
   const parsed = new URL(redisUrl);
+  const db = parseRedisDatabase(parsed.pathname);
   return {
     host: parsed.hostname,
     port: Number(parsed.port) || 6379,
+    db,
     ...(parsed.password ? { password: decodeURIComponent(parsed.password) } : {}),
   };
+}
+
+function parseRedisDatabase(pathname: string): number {
+  const raw = pathname.slice(1);
+  if (!raw) return 0;
+  const db = Number(raw);
+  if (!Number.isInteger(db) || db < 0) {
+    throw new Error('invalid_redis_database');
+  }
+  return db;
 }
 
 function safeTraceId(traceId: string): string {
@@ -940,15 +1069,35 @@ function safeTraceId(traceId: string): string {
 }
 
 function safeFailureReason(error: unknown): string {
-  if (
-    error instanceof Error &&
-    SAFE_TRACE_ID_PATTERN.test(error.message) &&
-    !SECRET_LIKE_PATTERN.test(error.message)
-  ) {
-    return error.message;
+  if (error instanceof Error) {
+    return safeDiagnosticText(error.message);
   }
 
   return 'live_primary_app_smoke_failed';
+}
+
+export function safeDiagnosticText(text: string): string {
+  const redacted = safeTrimmed(text).replace(
+    DIAGNOSTIC_SECRET_PATTERN,
+    (match, keyPrefix: string | undefined) => keyPrefix ? `${keyPrefix}[redacted]` : '[redacted]',
+  );
+  return redacted || 'live_primary_app_smoke_failed';
+}
+
+function captureChildLog(label: string, text: string): void {
+  for (const line of text.split(/\r?\n/)) {
+    const safeLine = safeDiagnosticText(line);
+    if (safeLine === 'live_primary_app_smoke_failed') {
+      continue;
+    }
+    if (safeLine.includes('ADMIN_[redacted] not set') || safeLine.includes('[redacted]Guard')) {
+      continue;
+    }
+    childLogLines.push(`${label}: ${safeLine}`);
+  }
+  while (childLogLines.length > 20) {
+    childLogLines.shift();
+  }
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -1040,7 +1189,11 @@ function registerSignalHandlers(): void {
 }
 
 function printEvidence(evidence: RuntimeEvidence): void {
-  console.log(JSON.stringify(evidence, null, 2));
+  console.log(JSON.stringify({
+    regression: MAF_PRIMARY_APP_SMOKE_REGRESSION,
+    ...(childLogLines.length > 0 ? { diagnosticLogs: childLogLines } : {}),
+    ...evidence,
+  }, null, 2));
 }
 
 function safeTrimmed(text: string): string {
@@ -1049,24 +1202,27 @@ function safeTrimmed(text: string): string {
 
 const SAFE_TRACE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 
-main().catch((error: unknown) => {
-  printEvidence({
-    status: 'invalid',
-    validationStatus: 'failed',
-    traceId: 'redacted',
-    tenantId: tenantIdFromEnv(),
-    conversationId: 'redacted',
-    inboundMessageId: 'redacted',
-    outboundMessageId: null,
-    runtimeAttempt: null,
-    outboundMetadata: null,
-    messageSendJobFound: null,
-    messageSendJobState: null,
-    messageSendQueueChecked: false,
-    runtimeMetadataChecked: false,
-    runtimeAttemptChecked: false,
-    queueChecksRequested: false,
-    failureReason: safeFailureReason(error),
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error: unknown) => {
+    printEvidence({
+      status: 'invalid',
+      validationStatus: 'failed',
+      traceId: 'redacted',
+      tenantId: tenantIdFromEnv(),
+      conversationId: 'redacted',
+      inboundMessageId: 'redacted',
+      outboundMessageId: null,
+      runtimeAttempt: null,
+      runtimeAttemptCount: null,
+      outboundMetadata: null,
+      messageSendJobFound: null,
+      messageSendJobState: null,
+      messageSendQueueChecked: false,
+      runtimeMetadataChecked: false,
+      runtimeAttemptChecked: false,
+      queueChecksRequested: false,
+      failureReason: safeFailureReason(error),
+    });
+    process.exit(1);
   });
-  process.exit(1);
-});
+}

@@ -12,9 +12,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     const rawUrl = this.config.get('REDIS_URL', { infer: true });
     const redisUrl = new URL(rawUrl);
+    const db = parseRedisDatabase(redisUrl.pathname);
     this._client = new IORedis({
       host: redisUrl.hostname,
       port: Number(redisUrl.port) || 6379,
+      db,
       ...(redisUrl.password ? { password: decodeURIComponent(redisUrl.password) } : {}),
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
@@ -28,4 +30,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   get client(): IORedis {
     return this._client;
   }
+}
+
+function parseRedisDatabase(pathname: string): number {
+  const raw = pathname.slice(1);
+  if (!raw) return 0;
+  const db = Number(raw);
+  if (!Number.isInteger(db) || db < 0) {
+    throw new Error('invalid_redis_database');
+  }
+  return db;
 }

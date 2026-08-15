@@ -200,7 +200,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
     );
   });
 
-  it('enriches the runtime request with bounded MAF candidate context from tenant-scoped message rows', async () => {
+  it('Style adaptation maf_primary regression enriches the runtime request without sentinel turns', async () => {
     const agentRuntime = {
       processMessage: vi.fn(async () => runtimeResult),
     };
@@ -219,6 +219,21 @@ describe('ConversationProcessor runtime ledger recording', () => {
           userPreferredName: 'Test User',
           userTimezone: 'Europe/Warsaw',
           userLocale: 'en-US',
+          styleDimensions: {
+            register: 1.8,
+            humor: 0.45,
+            verbosity: -0.25,
+            emoji: 0.1,
+          },
+          stylePhrases: [
+            { text: 'quick read', count: 3 },
+            { text: 'net-net', count: 2 },
+            { text: 'ship it', count: 1 },
+            { text: 'extra phrase', count: 1 },
+            { text: 'fifth phrase', count: 1 },
+            { text: 'sixth phrase', count: 1 },
+          ],
+          styleAdaptationWeight: '0.30',
         },
       ]),
     };
@@ -254,9 +269,15 @@ describe('ConversationProcessor runtime ledger recording', () => {
       limit: vi.fn(async () => [
         {
           id: 'memory-1',
+          tenantId: 'tenant-1',
+          userId: 'user-1',
           category: 'project_context',
           content: 'The project codename is Север-17.',
           importance: '0.80',
+          status: 'active',
+          expiresAt: null,
+          supersededById: null,
+          createdAt: new Date('2026-08-06T17:00:00.000Z'),
         },
       ]),
     };
@@ -312,6 +333,16 @@ describe('ConversationProcessor runtime ledger recording', () => {
           },
         ],
         goals: [],
+        styleAdaptation: {
+          dimensions: {
+            register: 1,
+            humor: 0.45,
+            verbosity: 0,
+            emoji: 0.1,
+          },
+          weight: 0.3,
+          phrases: ['quick read', 'net-net', 'ship it', 'extra phrase', 'fifth phrase'],
+        },
         replyPlan: expect.objectContaining({
           dialogueAct: 'acknowledgement',
           latestUserSubstance: null,
@@ -349,6 +380,192 @@ describe('ConversationProcessor runtime ledger recording', () => {
       },
     );
     expect(db.client.select).toHaveBeenCalledTimes(3);
+  });
+
+  it('Long-term memory maf_primary regression excludes inactive memory and keeps deterministic order', async () => {
+    const agentRuntime = {
+      processMessage: vi.fn(async () => runtimeResult),
+    };
+    const llmRunRepo = {
+      record: vi.fn(async () => undefined),
+    };
+    const currentQuery = {
+      from: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [
+        {
+          text: 'Can you help me decide what to do next?',
+          occurredAt: new Date('2026-08-06T18:00:00.000Z'),
+          externalThreadId: null,
+          userPreferredName: 'Test User',
+          userTimezone: 'Europe/Warsaw',
+          userLocale: 'en-US',
+        },
+      ]),
+    };
+    const recentQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async () => [
+        {
+          text: 'Can you help me decide what to do next?',
+          senderType: 'user',
+          direction: 'inbound',
+          occurredAt: new Date('2026-08-06T18:00:00.000Z'),
+        },
+      ]),
+    };
+    const included = Array.from({ length: 13 }, (_, index) => ({
+      id: `memory-active-${index + 1}`,
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      category: 'project_context',
+      content: `Active memory ${index + 1}`,
+      importance: index >= 11 ? '0.99' : String((0.5 + index / 100).toFixed(2)),
+      status: 'active',
+      expiresAt: null,
+      supersededById: null,
+      createdAt: new Date(index >= 11 ? '2026-08-06T17:59:30.000Z' : `2026-08-06T17:${String(index).padStart(2, '0')}:00.000Z`),
+    }));
+    const dbMemoryRows = [
+      included[0],
+      {
+        id: 'memory-deleted',
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        category: 'project_context',
+        content: 'Deleted memory must not reach MAF.',
+        importance: '1.00',
+        status: 'deleted',
+        expiresAt: null,
+        supersededById: null,
+        createdAt: new Date('2026-08-06T17:59:00.000Z'),
+      },
+      {
+        id: 'memory-superseded',
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        category: 'project_context',
+        content: 'Superseded memory must not reach MAF.',
+        importance: '0.99',
+        status: 'active',
+        expiresAt: null,
+        supersededById: 'memory-active-13',
+        createdAt: new Date('2026-08-06T17:58:00.000Z'),
+      },
+      {
+        id: 'memory-expired',
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        category: 'project_context',
+        content: 'Expired memory must not reach MAF.',
+        importance: '0.98',
+        status: 'active',
+        expiresAt: new Date('2020-01-01T00:00:00.000Z'),
+        supersededById: null,
+        createdAt: new Date('2026-08-06T17:57:00.000Z'),
+      },
+      {
+        id: 'memory-other-tenant',
+        tenantId: 'tenant-2',
+        userId: 'user-1',
+        category: 'project_context',
+        content: 'Other tenant memory must not reach MAF.',
+        importance: '0.97',
+        status: 'active',
+        expiresAt: null,
+        supersededById: null,
+        createdAt: new Date('2026-08-06T17:56:00.000Z'),
+      },
+      {
+        id: 'memory-other-user',
+        tenantId: 'tenant-1',
+        userId: 'user-2',
+        category: 'project_context',
+        content: 'Other user memory must not reach MAF.',
+        importance: '0.96',
+        status: 'active',
+        expiresAt: null,
+        supersededById: null,
+        createdAt: new Date('2026-08-06T17:55:00.000Z'),
+      },
+      ...included.slice(1),
+    ];
+    const memoryCutoff = new Date('2026-08-06T18:00:00.000Z');
+    const memoryQuery = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn(async (limit: number) =>
+        dbMemoryRows
+          .filter(
+            (row) =>
+              row.tenantId === 'tenant-1' &&
+              row.userId === 'user-1' &&
+              row.status === 'active' &&
+              !row.supersededById &&
+              (!row.expiresAt || row.expiresAt > memoryCutoff),
+          )
+          .sort(
+            (a, b) =>
+              Number(b.importance) - Number(a.importance) ||
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              b.id.localeCompare(a.id),
+          )
+          .slice(0, limit),
+      ),
+    };
+    const db = {
+      client: {
+        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
+      },
+    };
+    const { processor } = createProcessor({ agentRuntime, llmRunRepo, db });
+
+    await processor.process({
+      id: 'job-1',
+      name: 'process',
+      attemptsMade: 0,
+      data: jobData,
+    } as Job<ConversationJob>);
+
+    const request = (agentRuntime.processMessage.mock.calls as unknown as Array<[
+      { runtimeContext: { memoryItems: Array<{ id: string }> } },
+    ]>)[0][0];
+    expect(request.runtimeContext.memoryItems).toHaveLength(12);
+    expect(request.runtimeContext.memoryItems.map((item: { id: string }) => item.id)).toEqual([
+      'memory-active-13',
+      'memory-active-12',
+      'memory-active-11',
+      'memory-active-10',
+      'memory-active-9',
+      'memory-active-8',
+      'memory-active-7',
+      'memory-active-6',
+      'memory-active-5',
+      'memory-active-4',
+      'memory-active-3',
+      'memory-active-2',
+    ]);
+    expect(request.runtimeContext.memoryItems[0]).toEqual({
+      id: 'memory-active-13',
+      category: 'project_context',
+      content: 'Active memory 13',
+      importance: 0.99,
+    });
+    expect(request.runtimeContext.memoryItems).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'memory-deleted' }),
+        expect.objectContaining({ id: 'memory-superseded' }),
+        expect.objectContaining({ id: 'memory-expired' }),
+        expect.objectContaining({ id: 'memory-other-tenant' }),
+        expect.objectContaining({ id: 'memory-other-user' }),
+        expect.objectContaining({ id: 'memory-active-1' }),
+      ]),
+    );
+    expect(memoryQuery.limit).toHaveBeenCalledWith(12);
   });
 
   it('builds typed social reply context when the classifier returns social_checkin intent', async () => {
@@ -599,7 +816,7 @@ describe('ConversationProcessor runtime ledger recording', () => {
     }));
   });
 
-  it('routes Russian proactive check-in jobs through MAF primary with selected probe metadata despite stored English locale', async () => {
+  it('Proactive check-ins maf_primary regression routes selected probe metadata despite stored English locale', async () => {
     const checkInJobData: CheckInJob = {
       conversationId: '44444444-4444-4444-8444-444444444444',
       userId: '55555555-5555-4555-8555-555555555555',
@@ -649,15 +866,27 @@ describe('ConversationProcessor runtime ledger recording', () => {
       limit: vi.fn(async () => [
         {
           id: 'memory-onboarding-rollout',
+          tenantId: '66666666-6666-4666-8666-666666666666',
+          userId: '55555555-5555-4555-8555-555555555555',
           category: 'project_context',
           content: 'User is leading the onboarding rollout and cares about clear ownership.',
           importance: '0.92',
+          status: 'active',
+          expiresAt: null,
+          supersededById: null,
+          createdAt: new Date('2026-08-11T07:50:00.000Z'),
         },
         {
           id: 'memory-prefers-concise-checkins',
+          tenantId: '66666666-6666-4666-8666-666666666666',
+          userId: '55555555-5555-4555-8555-555555555555',
           category: 'communication_preference',
           content: 'User prefers concise check-ins with one concrete question.',
           importance: '0.84',
+          status: 'active',
+          expiresAt: null,
+          supersededById: null,
+          createdAt: new Date('2026-08-11T07:45:00.000Z'),
         },
       ]),
     };

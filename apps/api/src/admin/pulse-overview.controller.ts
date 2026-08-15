@@ -216,7 +216,7 @@ export class PulseOverviewController {
     const active = employees.filter((e) =>
       e.groups.some(
         (g) => g.status !== null || g.questions.some((q) => q.assessmentStatus !== null),
-      ),
+      ) || e.backlog.doneCount > 0 || e.backlog.pendingCount > 0,
     );
 
     return {

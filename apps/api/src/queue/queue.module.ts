@@ -16,10 +16,12 @@ export { QUEUE_NAMES };
         const redisUrl = new URL(
           config.get('REDIS_URL', { infer: true }) ?? 'redis://localhost:6379',
         );
+        const db = parseRedisDatabase(redisUrl.pathname);
         return {
           connection: {
             host: redisUrl.hostname,
             port: Number(redisUrl.port) || 6379,
+            db,
             ...(redisUrl.password ? { password: decodeURIComponent(redisUrl.password) } : {}),
           },
           defaultJobOptions: {
@@ -46,3 +48,13 @@ export { QUEUE_NAMES };
   exports: [BullModule, RedisService],
 })
 export class QueueModule {}
+
+function parseRedisDatabase(pathname: string): number {
+  const raw = pathname.slice(1);
+  if (!raw) return 0;
+  const db = Number(raw);
+  if (!Number.isInteger(db) || db < 0) {
+    throw new Error('invalid_redis_database');
+  }
+  return db;
+}

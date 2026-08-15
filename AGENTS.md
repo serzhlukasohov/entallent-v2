@@ -14,6 +14,24 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 ## Project Memory
 
 - Railway deployment rules live in the Deployment section below.
+- When context is getting close to compaction and there is enough warning to act, prepare a concise handoff prompt with current goal, files changed, decisions made, commands run, blockers, and next steps; offer it to the user so they can start a new session and continue cleanly.
+
+## Diagnostic Loop
+
+Treat agent failures as harness defects. When a task fails, add or update an entry in `docs/agent-failures.md` before finishing.
+
+After each implementation, review, debugging, or operations task, add one row to `docs/agent-task-log.md` with the task date, task summary, result, failure layer if any, verification run, and the next harness fix. Keep entries short.
+
+For each failure, record:
+
+- Symptom: what went wrong.
+- Expected: what should have happened.
+- Root cause layer: instructions, context, architecture, verification, environment, workflow, or tooling.
+- Harness fix: the smallest durable fix, such as an AGENTS.md rule, doc update, script, fixture, test, or verification command.
+- Regression check: the smallest command or review step that catches this class next time.
+- Status: `open` or `fixed`.
+
+If the same failure class appears twice, prefer updating the harness over repeating manual recovery.
 
 ## Deployment
 

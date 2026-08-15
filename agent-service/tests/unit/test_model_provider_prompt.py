@@ -106,6 +106,40 @@ def test_candidate_reply_prompt_filters_regression_control_markers() -> None:
     assert "control marker" not in prompt
 
 
+def test_candidate_reply_prompt_includes_bounded_style_context() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "message": {"text": "Quick update please"},
+            "context": {
+                "memoryItems": [],
+                "recentTurns": [],
+                "styleAdaptation": {
+                    "dimensions": {
+                        "register": 1.8,
+                        "humor": 0.45,
+                        "verbosity": -0.25,
+                        "emoji": 0.1,
+                    },
+                    "weight": 0.8,
+                    "phrases": [
+                        "quick read",
+                        "net-net",
+                        "secret token should not leak",
+                    ],
+                },
+            },
+        },
+        state={},
+    )
+
+    assert "style: weight=0.40" in prompt
+    assert "register=1.00" in prompt
+    assert "verbosity=0.00" in prompt
+    assert "quick read" in prompt
+    assert "net-net" in prompt
+    assert "secret token should not leak" not in prompt
+
+
 def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
     prompt = build_candidate_reply_prompt(
         request={

@@ -54,6 +54,7 @@ export type RuntimeContext = {
   recentTurns: RuntimeRecentTurn[];
   memoryItems: RuntimeMemoryItem[];
   goals: RuntimeGoal[];
+  styleAdaptation?: RuntimeStyleAdaptation;
   replyPlan?: RuntimeReplyPlan;
   replyPlanning?: RuntimeReplyPlanningDiagnostics;
   replyPolicy?: RuntimeReplyPolicy;
@@ -76,6 +77,17 @@ export type RuntimeGoal = {
   id: string;
   title: string;
   status: string;
+};
+
+export type RuntimeStyleAdaptation = {
+  dimensions: {
+    register: number;
+    humor: number;
+    verbosity: number;
+    emoji: number;
+  };
+  weight: number;
+  phrases: string[];
 };
 
 export type RuntimeReplyPlan = {

@@ -2,7 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Job } from 'bullmq';
-import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import {
   AGENT_RUNTIME_PORT,
@@ -14,7 +14,7 @@ import {
 } from '@entalent/application';
 import type { AgentRuntimePort, ConversationTurn, ProactivePulseConfig } from '@entalent/application';
 import type { RuntimeContext, SituationClassification } from '@entalent/contracts';
-import { conversations, memoryItems, messages, tenants, users } from '@entalent/database';
+import { conversations, memoryItems, messages, tenants, userStyleProfiles, users } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { AiService } from './ai.service';
 import { LlmRunRepository } from './llm-run.repository';
@@ -37,6 +37,7 @@ export type ConversationJob = {
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;
 
 const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { engagementUnlockDays: 14, ignoreWindowHours: 48 };
+const MAF_MEMORY_CONTEXT_LIMIT = 12;
 
 @Processor(QUEUE_NAMES.CONVERSATION)
 export class ConversationProcessor extends WorkerHost implements OnApplicationShutdown {
@@ -323,9 +324,13 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           userPreferredName: users.preferredName,
           userTimezone: users.timezone,
           userLocale: users.locale,
+          styleDimensions: userStyleProfiles.dimensions,
+          stylePhrases: userStyleProfiles.phrases,
+          styleAdaptationWeight: userStyleProfiles.adaptationWeight,
         })
         .from(messages)
         .leftJoin(users, and(eq(users.id, messages.userId), eq(users.tenantId, messages.tenantId)))
+        .leftJoin(userStyleProfiles, and(eq(userStyleProfiles.userId, messages.userId), eq(userStyleProfiles.tenantId, messages.tenantId)))
         .where(
           and(
             eq(messages.id, job.messageId),
@@ -361,35 +366,32 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         .orderBy(desc(messages.occurredAt))
         .limit(8);
 
+      const memoryContextNow = new Date();
       const memoryRows = await this.db.client
         .select({
           id: memoryItems.id,
+          tenantId: memoryItems.tenantId,
+          userId: memoryItems.userId,
           category: memoryItems.category,
           content: memoryItems.content,
           importance: memoryItems.importance,
+          status: memoryItems.status,
+          expiresAt: memoryItems.expiresAt,
+          supersededById: memoryItems.supersededById,
+          createdAt: memoryItems.createdAt,
         })
         .from(memoryItems)
-        .where(
-          and(
-            eq(memoryItems.tenantId, job.tenantId),
-            eq(memoryItems.userId, job.userId),
-            eq(memoryItems.status, 'active'),
-          ),
-        )
-        .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt))
-        .limit(12);
+        .where(mafMemoryContextWhere(job, memoryContextNow))
+        .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt), desc(memoryItems.id))
+        .limit(MAF_MEMORY_CONTEXT_LIMIT);
 
       const threadId = normalizeOptionalString(currentMessage.externalThreadId);
       const recentTurns = recentRows
         .slice()
         .reverse()
         .flatMap((row) => toRecentTurn(row));
-      const runtimeMemoryItems = memoryRows.map((row) => ({
-        id: row.id,
-        category: row.category,
-        content: row.content,
-        importance: Number(row.importance),
-      }));
+      const runtimeMemoryItems = toRuntimeMemoryItems(memoryRows, job, memoryContextNow);
+      const styleAdaptation = toRuntimeStyleAdaptation(currentMessage);
       const replyContext = await this.buildInboundReplyContext({
         userName: normalizeOptionalString(currentMessage.userPreferredName) ?? 'there',
         timezone: normalizeOptionalString(currentMessage.userTimezone),
@@ -416,6 +418,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           recentTurns,
           memoryItems: runtimeMemoryItems,
           goals: [],
+          ...(styleAdaptation ? { styleAdaptation } : {}),
           ...replyContext,
         },
       };
@@ -443,9 +446,13 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         userPreferredName: users.preferredName,
         userTimezone: users.timezone,
         userLocale: users.locale,
+        styleDimensions: userStyleProfiles.dimensions,
+        stylePhrases: userStyleProfiles.phrases,
+        styleAdaptationWeight: userStyleProfiles.adaptationWeight,
       })
       .from(conversations)
       .leftJoin(users, and(eq(users.id, conversations.userId), eq(users.tenantId, conversations.tenantId)))
+      .leftJoin(userStyleProfiles, and(eq(userStyleProfiles.userId, conversations.userId), eq(userStyleProfiles.tenantId, conversations.tenantId)))
       .where(
         and(
           eq(conversations.id, job.conversationId),
@@ -479,23 +486,24 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       .orderBy(desc(messages.occurredAt))
       .limit(8);
 
+    const memoryContextNow = new Date();
     const memoryRows = await this.db.client
       .select({
         id: memoryItems.id,
+        tenantId: memoryItems.tenantId,
+        userId: memoryItems.userId,
         category: memoryItems.category,
         content: memoryItems.content,
         importance: memoryItems.importance,
+        status: memoryItems.status,
+        expiresAt: memoryItems.expiresAt,
+        supersededById: memoryItems.supersededById,
+        createdAt: memoryItems.createdAt,
       })
       .from(memoryItems)
-      .where(
-        and(
-          eq(memoryItems.tenantId, job.tenantId),
-          eq(memoryItems.userId, job.userId),
-          eq(memoryItems.status, 'active'),
-        ),
-      )
-      .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt))
-      .limit(12);
+      .where(mafMemoryContextWhere(job, memoryContextNow))
+      .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt), desc(memoryItems.id))
+      .limit(MAF_MEMORY_CONTEXT_LIMIT);
 
     const recentTurns = recentRows
       .slice()
@@ -505,12 +513,8 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       normalizeOptionalString(conversationRow?.userLocale),
       recentTurns,
     );
-    const runtimeMemoryItems = memoryRows.map((row) => ({
-      id: row.id,
-      category: row.category,
-      content: row.content,
-      importance: Number(row.importance),
-    }));
+    const runtimeMemoryItems = toRuntimeMemoryItems(memoryRows, job, memoryContextNow);
+    const styleAdaptation = toRuntimeStyleAdaptation(conversationRow);
 
     return {
       messageText: options.probeQuestion
@@ -530,6 +534,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         recentTurns,
         memoryItems: runtimeMemoryItems,
         goals: [],
+        ...(styleAdaptation ? { styleAdaptation } : {}),
         replyPolicy: {
           maxChars: maxReplyChars('short'),
           maxQuestions: 1,
@@ -666,6 +671,112 @@ function threadScopePredicate(externalThreadId: string | null): SQL {
       sql`${messages.externalThreadId} = ${messages.externalMessageId}`,
     ),
   ) ?? isNull(messages.externalThreadId);
+}
+
+function mafMemoryContextWhere(job: Pick<ConversationJob, 'tenantId' | 'userId'>, now: Date): SQL {
+  return and(
+    eq(memoryItems.tenantId, job.tenantId),
+    eq(memoryItems.userId, job.userId),
+    eq(memoryItems.status, 'active'),
+    isNull(memoryItems.supersededById),
+    or(isNull(memoryItems.expiresAt), gt(memoryItems.expiresAt, now)),
+  ) as SQL;
+}
+
+function toRuntimeMemoryItems(rows: Array<{
+  id: string;
+  tenantId?: string;
+  userId?: string;
+  category: string;
+  content: string;
+  importance: string | number;
+  status?: string;
+  expiresAt?: Date | string | null;
+  supersededById?: string | null;
+  createdAt?: Date | string;
+}>, job: Pick<ConversationJob, 'tenantId' | 'userId'>, now: Date): RuntimeContext['memoryItems'] {
+  const nowMs = now.getTime();
+  return rows
+    .filter((row) => {
+      const expiresAtMs = toOptionalMillis(row.expiresAt);
+      return (
+        row.tenantId === job.tenantId &&
+        row.userId === job.userId &&
+        row.status === 'active' &&
+        !row.supersededById &&
+        (expiresAtMs === null || expiresAtMs > nowMs)
+      );
+    })
+    .sort(
+      (a, b) =>
+        Number(b.importance) - Number(a.importance) ||
+        toMillis(b.createdAt) - toMillis(a.createdAt) ||
+        b.id.localeCompare(a.id),
+    )
+    .slice(0, MAF_MEMORY_CONTEXT_LIMIT)
+    .map((row) => ({
+      id: row.id,
+      category: row.category,
+      content: row.content,
+      importance: Number(row.importance),
+    }));
+}
+
+function toRuntimeStyleAdaptation(row: {
+  styleDimensions?: unknown;
+  stylePhrases?: unknown;
+  styleAdaptationWeight?: string | number | null;
+}): RuntimeContext['styleAdaptation'] | undefined {
+  const dimensions = toStyleDimensions(row.styleDimensions);
+  if (!dimensions) {
+    return undefined;
+  }
+  const weight = Math.max(0, Math.min(0.4, Number(row.styleAdaptationWeight ?? 0)));
+  if (!Number.isFinite(weight) || weight <= 0) {
+    return undefined;
+  }
+  const phrases = Array.isArray(row.stylePhrases)
+    ? row.stylePhrases
+        .map((phrase) => typeof phrase === 'string' ? phrase : (phrase as { text?: unknown })?.text)
+        .filter((text): text is string => typeof text === 'string' && text.trim().length > 0)
+        .slice(0, 5)
+    : [];
+  return { dimensions, weight, phrases };
+}
+
+function toStyleDimensions(value: unknown): NonNullable<RuntimeContext['styleAdaptation']>['dimensions'] | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const register = clampStyleDimension(record['register']);
+  const humor = clampStyleDimension(record['humor']);
+  const verbosity = clampStyleDimension(record['verbosity']);
+  const emoji = clampStyleDimension(record['emoji']);
+  if (register === null || humor === null || verbosity === null || emoji === null) {
+    return undefined;
+  }
+  return { register, humor, verbosity, emoji };
+}
+
+function clampStyleDimension(value: unknown): number | null {
+  const dimension = Number(value);
+  if (!Number.isFinite(dimension)) {
+    return null;
+  }
+  return Math.max(0, Math.min(1, dimension));
+}
+
+function toMillis(value: Date | string | undefined): number {
+  return value ? new Date(value).getTime() : 0;
+}
+
+function toOptionalMillis(value: Date | string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const millis = new Date(value).getTime();
+  return Number.isFinite(millis) ? millis : 0;
 }
 
 function toRecentTurn(row: {

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, or } from 'drizzle-orm';
 import {
   channelAccounts,
   conversations,
@@ -116,6 +116,7 @@ export class InternalMafContextService {
       return emptyContextResponse(request.traceId);
     }
 
+    const now = new Date();
     const [styleProfileRows, memoryRows, goalRows, riskRows, surveyWindowRows, recentTurnRows] =
       await Promise.all([
       this.db.client
@@ -154,6 +155,7 @@ export class InternalMafContextService {
             eq(memoryItems.tenantId, request.tenantId),
             eq(memoryItems.status, 'active'),
             isNull(memoryItems.supersededById),
+            or(isNull(memoryItems.expiresAt), gt(memoryItems.expiresAt, now)),
           ),
         )
         .orderBy(desc(memoryItems.importance))
@@ -196,6 +198,7 @@ export class InternalMafContextService {
             eq(riskSignals.userId, request.userId),
             eq(riskSignals.tenantId, request.tenantId),
             eq(riskSignals.status, 'active'),
+            or(isNull(riskSignals.expiresAt), gt(riskSignals.expiresAt, now)),
           ),
         )
         .orderBy(desc(riskSignals.detectedAt))
