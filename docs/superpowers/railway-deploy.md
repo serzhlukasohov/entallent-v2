@@ -1,12 +1,17 @@
 # Railway Deploy Memory
 
-Last verified: 2026-08-12.
+Last verified: 2026-08-15.
 
 Project: `reasonable-adaptation`.
 Environment: `production`.
 App services: `api`, `worker`, `agent-service`, `dashboard`.
 
-GitHub auto-deploy is currently working for pushes to `main` from `serzhlukasohov/entallent-v2`.
+GitHub auto-deploy is currently working for pushes to `main` from `serzhlukasohov/entallent-v2`
+for `api`, `worker`, and `dashboard`.
+
+`agent-service` is registered in Railway production, but it is not currently
+connected to a GitHub source (`source.repo: null`). Deploy it manually until
+that service is explicitly moved to GitHub auto-deploy.
 
 Evidence from 2026-08-09:
 
@@ -108,3 +113,14 @@ railway up --service api --detach
 railway up --service worker --detach
 railway up --service dashboard --detach
 ```
+
+Manual `agent-service` deploy:
+
+```sh
+railway up --service agent-service --environment production --detach --path-as-root agent-service
+```
+
+Run the command from the repository root. `--path-as-root agent-service`
+keeps `agent-service/Dockerfile` at archive `/Dockerfile`; running
+`railway up` from inside `agent-service/` can make Railway choose Railpack
+instead of the Dockerfile.
