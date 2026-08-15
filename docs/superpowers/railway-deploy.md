@@ -6,12 +6,18 @@ Project: `reasonable-adaptation`.
 Environment: `production`.
 App services: `api`, `worker`, `agent-service`, `dashboard`.
 
-GitHub auto-deploy is currently working for pushes to `main` from `serzhlukasohov/entallent-v2`
-for `api`, `worker`, and `dashboard`.
+GitHub auto-deploy is currently working for pushes to `main` from
+`serzhlukasohov/entallent-v2` for `api`, `worker`, `agent-service`, and
+`dashboard`.
 
-`agent-service` is registered in Railway production, but it is not currently
-connected to a GitHub source (`source.repo: null`). Deploy it manually until
-that service is explicitly moved to GitHub auto-deploy.
+`agent-service` source was connected on 2026-08-15:
+
+- Service ID: `8728516f-7a7d-4658-9482-fb7168ee4767`.
+- Source: `serzhlukasohov/entallent-v2`, branch `main`.
+- Root directory: `agent-service`.
+- Dockerfile path: `Dockerfile`.
+- First GitHub-source deployment: `8eab961a-ffe2-4d2f-8bd9-ce07e46639f4`
+  (`SUCCESS`, commit `372a4818deb4a51eed94899eef0535ddb76268e5`).
 
 Evidence from 2026-08-09:
 
@@ -25,10 +31,11 @@ Evidence from 2026-08-09:
 - `worker`: latest deploy `1671fa4f-a444-4d32-bf6f-2fd476f38ac0` (`SUCCESS`).
 - `dashboard`: latest deploy `936d186b-cde8-4d09-8900-1217ef41bea3` (`SUCCESS`).
 
-Readiness verification is now codified in a helper script. In addition to service
+Readiness verification is codified in a helper script. In addition to service
 registration, variables, and health checks, it validates deployment envelope
-evidence (`agent-service/Dockerfile` via build metadata) and checks that a
-writable `/data/agent-service` mount is configured for sqlite shadow state.
+evidence (`agent-service/Dockerfile`, `/Dockerfile`, or GitHub-source
+`Dockerfile` via build metadata) and checks that a writable
+`/data/agent-service` mount is configured for sqlite shadow state.
 
 Run:
 
@@ -114,7 +121,21 @@ railway up --service worker --detach
 railway up --service dashboard --detach
 ```
 
-Manual `agent-service` deploy:
+If `agent-service` loses its GitHub source binding, reconnect it before falling
+back to manual deploy:
+
+```sh
+railway service source connect \
+  --service agent-service \
+  --environment production \
+  --project 5a061a54-e6fb-4b24-b8ec-3a23fccc6800 \
+  --repo serzhlukasohov/entallent-v2 \
+  --branch main
+railway api 'mutation serviceInstanceUpdate($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input) }' \
+  --variables '{"serviceId":"8728516f-7a7d-4658-9482-fb7168ee4767","environmentId":"7929ecae-ef51-4618-824c-8b17221c27a8","input":{"rootDirectory":"agent-service","dockerfilePath":"Dockerfile"}}'
+```
+
+Manual `agent-service` deploy fallback:
 
 ```sh
 railway up --service agent-service --environment production --detach --path-as-root agent-service
