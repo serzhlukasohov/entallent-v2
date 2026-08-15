@@ -891,6 +891,7 @@ def support_emotion_requires_model_path(request: dict[str, Any]) -> bool:
             "blocking teammates",
             "block the team",
             "responsibility",
+            "that is a heavy moment",
         )
     )
 

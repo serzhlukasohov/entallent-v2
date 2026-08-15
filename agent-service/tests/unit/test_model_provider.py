@@ -771,6 +771,58 @@ def test_model_client_routes_generic_reply_pushback_to_model_path() -> None:
     assert chat_client.call_count == 1
 
 
+def test_model_client_routes_after_stock_support_reply_to_model_path() -> None:
+    chat_client = CountingChatClient()
+    client = AgentFrameworkConversationModelClient(chat_client=chat_client)
+
+    reply = run_async(
+        client.generate_reply(
+            {
+                "message": {"text": "I still feel responsible for the team."},
+                "context": {
+                    "memoryItems": [],
+                    "recentTurns": [
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "That is a heavy moment. "
+                                "What is pressing the most right now?"
+                            ),
+                        },
+                    ],
+                    "replyPolicy": {
+                        "maxChars": 70,
+                        "maxQuestions": 1,
+                        "allowReflectiveOpener": False,
+                        "allowListFormatting": False,
+                    },
+                    "replyPlan": {
+                        "dialogueAct": "emotional_disclosure",
+                        "latestUserSubstance": (
+                            "I still feel responsible for the team."
+                        ),
+                        "topicAnchor": None,
+                        "memoryAnchors": [],
+                        "responseMove": "support_emotion",
+                        "mayInferFromBrevity": True,
+                        "questionPolicy": {
+                            "maxQuestions": 1,
+                            "reason": "new_substance_allows_question",
+                        },
+                        "requiredGrounding": [],
+                        "forbiddenMoves": ["action_plan", "survey_probe"],
+                    },
+                },
+            },
+            {},
+        )
+    )
+
+    assert reply.text == "Safe candidate reply."
+    assert reply.renderer_path == "llm"
+    assert chat_client.call_count == 1
+
+
 def test_model_client_omits_support_emotion_grounding_without_renderable_phrase() -> None:
     chat_client = CountingChatClient()
     client = AgentFrameworkConversationModelClient(chat_client=chat_client)
