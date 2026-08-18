@@ -5,6 +5,7 @@ import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.re
 import type { FollowUpContextPort } from '../ports/follow-up-context.port';
 import type { OutboxPort, FollowUpExecutionPayload } from '../ports/outbox.port';
 import { isInQuietHours, getLocalHour } from '../utils/quiet-hours';
+import { resolveLanguagePolicy } from '../utils/language-policy';
 
 export interface FollowUpExecutionInput {
   scheduledActionId: string;
@@ -142,6 +143,7 @@ export class FollowUpExecutionUseCase {
 
     const generated = await this.ai.generateResponse(turns, strategy, {
       userName: ctx.user.preferredName ?? 'there',
+      languagePolicy: resolveLanguagePolicy(turns, ctx.conversation.userLocale),
       ...(isReminder
         ? { reminderIntent: actionCtx.reminderIntent ?? action.intent }
         : { followUpIntent: `${actionCtx.originalReason} — ${actionCtx.messageStrategy}` }),

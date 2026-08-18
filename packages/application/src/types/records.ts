@@ -6,6 +6,7 @@ export interface ConversationRecord {
   externalConversationId: string;
   status: string;
   userDisplayName?: string;
+  userLocale?: string;
   /** IANA timezone of the conversation's user, if known */
   userTimezone?: string;
   userTimezoneUpdatedAt?: Date;

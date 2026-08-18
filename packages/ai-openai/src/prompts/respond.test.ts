@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildRespondSystemPrompt } from './respond';
 import { RESPOND_STYLE_EXAMPLES } from './respond-examples';
 import type { ReplyStrategy } from '@entalent/contracts';
+import type { LanguagePolicy, ResponseContext } from '@entalent/application';
 
 const strategy: ReplyStrategy = {
   mode: 'confirmation',
@@ -11,21 +12,32 @@ const strategy: ReplyStrategy = {
   forbiddenPatterns: [],
 };
 
+const defaultLanguagePolicy: LanguagePolicy = {
+  responseLanguage: 'en',
+  source: 'tenant_default',
+  confidence: 0.4,
+  shouldUpdateUserLocale: false,
+};
+
+function context(overrides: Omit<ResponseContext, 'languagePolicy'> & Partial<Pick<ResponseContext, 'languagePolicy'>>): ResponseContext {
+  return { languagePolicy: defaultLanguagePolicy, ...overrides };
+}
+
 describe('buildRespondSystemPrompt confirmation branch', () => {
   it('emits confirm-only instructions when confirmationRequest is set', () => {
-    const prompt = buildRespondSystemPrompt(strategy, {
+    const prompt = buildRespondSystemPrompt(strategy, context({
       userName: 'Test',
       confirmationRequest: {
         questionGroup: 'autonomy',
         evidence: [{ stableKey: 'q12', evidenceSummary: 'values ownership', polarity: 'positive' }],
       },
-    });
+    }));
     expect(prompt).toMatch(/only one question/i);
     expect(prompt).toContain('autonomy');
   });
 
   it('does not emit confirm instructions otherwise', () => {
-    const prompt = buildRespondSystemPrompt(strategy, { userName: 'Test' });
+    const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
     expect(prompt).not.toMatch(/did i get that right/i);
   });
 });
@@ -36,7 +48,7 @@ describe('buildRespondSystemPrompt few-shot exemplars', () => {
     maxResponseLength: 'medium', forbiddenPatterns: [],
   };
   it('includes the BAD→GOOD exemplars block', () => {
-    const prompt = buildRespondSystemPrompt(strat, { userName: 'Test' });
+    const prompt = buildRespondSystemPrompt(strat, context({ userName: 'Test' }));
     expect(prompt).toContain(RESPOND_STYLE_EXAMPLES.trim().slice(0, 24));
   });
   it('exemplars demonstrate leading with substance, not labeling', () => {
@@ -52,13 +64,13 @@ describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', (
   });
 
   it('encourages a question when includeFollowUpQuestion is true', () => {
-    const p = buildRespondSystemPrompt(normal(true), { userName: 'T' });
+    const p = buildRespondSystemPrompt(normal(true), context({ userName: 'T' }));
     expect(p).toMatch(/one sharp question/i);
     expect(p).toContain('What else is on your mind right now'); // rhythm exit question available
   });
 
   it('suppresses questions across the persona body when false (not just the trailing note)', () => {
-    const p = buildRespondSystemPrompt(normal(false), { userName: 'T' });
+    const p = buildRespondSystemPrompt(normal(false), context({ userName: 'T' }));
     expect(p).toMatch(/Do NOT ask a question this turn/i);
     expect(p).not.toMatch(/one sharp question/i);
     expect(p).not.toContain('What else is on your mind right now');
@@ -68,29 +80,62 @@ describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', (
 describe('buildRespondSystemPrompt local time', () => {
   const base = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
   it('includes local time + greeting guidance when localTime is set and isSessionStart is true', () => {
-    const p = buildRespondSystemPrompt(base(), { userName: 'T', localTime: 'Saturday, 09:15 (morning)', isSessionStart: true });
+    const p = buildRespondSystemPrompt(base(), context({ userName: 'T', localTime: 'Saturday, 09:15 (morning)', isSessionStart: true }));
     expect(p).toContain('Saturday, 09:15 (morning)');
     expect(p).toMatch(/good morning|greeting|sign-off/i);
   });
   it('omits the time hint when localTime is absent', () => {
-    const p = buildRespondSystemPrompt(base(), { userName: 'T' });
+    const p = buildRespondSystemPrompt(base(), context({ userName: 'T' }));
     expect(p).not.toMatch(/current local time/i);
+  });
+});
+
+describe('buildRespondSystemPrompt language policy', () => {
+  const base = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
+
+  it('uses the typed response language instead of hardcoded English', () => {
+    const p = buildRespondSystemPrompt(base(), context({
+      userName: 'T',
+      languagePolicy: {
+        responseLanguage: 'ru',
+        source: 'current_turn',
+        confidence: 0.95,
+        shouldUpdateUserLocale: true,
+      },
+    }));
+
+    expect(p).toContain('Write in Russian.');
+    expect(p).not.toContain('Write in English.');
+  });
+
+  it('renders valid profile locale codes as language names', () => {
+    const p = buildRespondSystemPrompt(base(), context({
+      userName: 'T',
+      languagePolicy: {
+        responseLanguage: 'pt',
+        source: 'user_profile',
+        confidence: 0.6,
+        shouldUpdateUserLocale: false,
+      },
+    }));
+
+    expect(p).toContain('Write in Portuguese.');
   });
 });
 
 describe('buildRespondSystemPrompt session-aware greeting', () => {
   const s = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
   it('offers a greeting at session start with known time', () => {
-    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: true });
+    const p = buildRespondSystemPrompt(s(), context({ userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: true }));
     expect(p).toMatch(/start of a session/i);
     expect(p).toContain('Saturday, 09:00 (morning)');
   });
   it('suppresses greeting mid-session', () => {
-    const p = buildRespondSystemPrompt(s(), { userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: false });
+    const p = buildRespondSystemPrompt(s(), context({ userName: 'T', localTime: 'Saturday, 09:00 (morning)', isSessionStart: false }));
     expect(p).toMatch(/do NOT open with a greeting/i);
   });
   it('no time hint when tz unknown', () => {
-    const p = buildRespondSystemPrompt(s(), { userName: 'T', isSessionStart: true });
+    const p = buildRespondSystemPrompt(s(), context({ userName: 'T', isSessionStart: true }));
     expect(p).not.toMatch(/current local time/i);
   });
 });
@@ -99,7 +144,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
   const s = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] });
 
   it('renders social check-in turns as a typed social contract', () => {
-    const p = buildRespondSystemPrompt(s(), {
+    const p = buildRespondSystemPrompt(s(), context({
       userName: 'T',
       replyPlan: {
         dialogueAct: 'social_checkin',
@@ -112,7 +157,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
         requiredGrounding: [],
         forbiddenMoves: ['operational_status', 'survey_probe'],
       },
-    });
+    }));
 
     expect(p).toContain('dialogueAct: social_checkin');
     expect(p).toContain('responseMove: social_reply');
@@ -121,7 +166,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
   });
 
   it('renders greeting turns as a warm opener when questions are allowed', () => {
-    const p = buildRespondSystemPrompt(s(), {
+    const p = buildRespondSystemPrompt(s(), context({
       userName: 'T',
       replyPlan: {
         dialogueAct: 'greeting',
@@ -134,7 +179,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
         requiredGrounding: [],
         forbiddenMoves: ['survey_probe'],
       },
-    });
+    }));
 
     expect(p).toContain('dialogueAct: greeting');
     expect(p).toContain('brief greeting and one easy, low-pressure opener');
@@ -142,7 +187,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
   });
 
   it('renders acknowledgement turns as no-new-substance without brevity inference', () => {
-    const p = buildRespondSystemPrompt(s(), {
+    const p = buildRespondSystemPrompt(s(), context({
       userName: 'T',
       replyPlan: {
         dialogueAct: 'acknowledgement',
@@ -155,7 +200,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
         requiredGrounding: [],
         forbiddenMoves: ['comment_on_brevity'],
       },
-    });
+    }));
 
     expect(p).toContain('Reply plan');
     expect(p).toContain('dialogueAct: acknowledgement');
@@ -169,7 +214,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
   });
 
   it('renders required memory grounding as a hard contract', () => {
-    const p = buildRespondSystemPrompt(s(), {
+    const p = buildRespondSystemPrompt(s(), context({
       userName: 'T',
       replyPlan: {
         dialogueAct: 'emotional_disclosure',
@@ -187,7 +232,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
         }],
         forbiddenMoves: [],
       },
-    });
+    }));
 
     expect(p).toContain('Required grounding (hard contract)');
     expect(p).toContain('defending the payments architecture on Friday');
@@ -199,7 +244,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
   });
 
   it('keeps no-question emotional support from becoming unsolicited advice', () => {
-    const p = buildRespondSystemPrompt(s(), {
+    const p = buildRespondSystemPrompt(s(), context({
       userName: 'T',
       replyPlan: {
         dialogueAct: 'emotional_disclosure',
@@ -212,7 +257,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
         requiredGrounding: [],
         forbiddenMoves: ['action_plan', 'survey_probe'],
       },
-    });
+    }));
 
     expect(p).toContain('Question policy (hard contract): ask zero questions this turn');
     expect(p).toContain('Support-emotion contract: use plain presence, not coaching');

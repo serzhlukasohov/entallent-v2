@@ -39,7 +39,11 @@ export class FollowUpContextRepository implements FollowUpContextPort {
         ? this.db.client
             .select()
             .from(conversations)
-            .where(eq(conversations.id, params.conversationId))
+            .where(and(
+              eq(conversations.id, params.conversationId),
+              eq(conversations.tenantId, params.tenantId),
+              eq(conversations.userId, params.userId),
+            ))
             .limit(1)
         : Promise.resolve([]),
 
@@ -103,6 +107,7 @@ export class FollowUpContextRepository implements FollowUpContextPort {
           channelType: convRow.channelType,
           externalConversationId: convRow.externalConversationId,
           status: convRow.status,
+          userLocale: userRow?.locale,
         }
       : null;
 

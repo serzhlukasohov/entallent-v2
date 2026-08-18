@@ -7,6 +7,7 @@ import { buildStyleAdaptationBlock } from './style-render';
 export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: ResponseContext): string {
   const lengthMap = { short: 'one short sentence, two at most (aim for under 25 words)', medium: '2-4 sentences', long: '4-6 sentences' };
   const lengthGuide = lengthMap[strategy.maxResponseLength];
+  const languageName = responseLanguageName(context.languagePolicy.responseLanguage);
 
   const forbidden = strategy.forbiddenPatterns.length > 0
     ? `\nNever mention: ${strategy.forbiddenPatterns.join(', ')}.`
@@ -109,7 +110,7 @@ ${strategy.includeFollowUpQuestion
 
 Thread-following: people often drop hints mid-sentence and don't develop them — "I want something with more life to it", "my lead says yes, but...", "I actually wanted to suggest it, but didn't". These side remarks are often more important than the main topic they're talking about. When you catch one, follow it: it's an invitation. Don't let it disappear while you keep drilling the current subject.
 
-Length: ${lengthGuide}. Write in English.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${checkInHint}${probeHint}${timeHint}
+Length: ${lengthGuide}. Write in ${languageName}.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${checkInHint}${probeHint}${timeHint}
 
 ${replyPlanBlock}${RESPOND_STYLE_EXAMPLES}${styleBlock}
 
@@ -133,6 +134,14 @@ Return JSON:
 }
 
 Output only valid JSON, no markdown.${INJECTION_GUARD}`;
+}
+
+function responseLanguageName(language: string): string {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language' }).of(language) ?? 'English';
+  } catch {
+    return 'English';
+  }
 }
 
 function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): string {

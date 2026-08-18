@@ -9,6 +9,7 @@ import type { ProactivePulseConfig } from '../ports/pulse-backlog.repository.por
 import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import type { SurveyQuestionRecord } from '../types/records';
+import { resolveLanguagePolicy } from '../utils/language-policy';
 
 export interface ProactiveCheckInInput {
   conversationId: string;
@@ -97,6 +98,7 @@ export class ProactiveCheckInUseCase {
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
+      languagePolicy: resolveLanguagePolicy(turns, conversation.userLocale),
       memoryContext:
         memoryItems.length > 0
           ? {

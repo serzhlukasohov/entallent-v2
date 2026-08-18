@@ -12,13 +12,24 @@ vi.mock('openai', () => {
 
 import { OpenAiProvider } from './openai-provider';
 import { ReplyStrategy } from '@entalent/contracts';
-import type { MemoryContext, ResponseContext } from '@entalent/application';
+import type { LanguagePolicy, MemoryContext, ResponseContext } from '@entalent/application';
 
 function makeProvider() {
   return new OpenAiProvider({ azure: false, apiKey: 'test', model: 'gpt-test' });
 }
 
 const turns = [{ role: 'user' as const, content: 'hi', timestamp: new Date() }];
+const defaultLanguagePolicy: LanguagePolicy = {
+  responseLanguage: 'en',
+  source: 'tenant_default',
+  confidence: 0.4,
+  shouldUpdateUserLocale: false,
+};
+
+function responseContext(overrides: Omit<ResponseContext, 'languagePolicy'> & Partial<Pick<ResponseContext, 'languagePolicy'>>): ResponseContext {
+  return { languagePolicy: defaultLanguagePolicy, ...overrides };
+}
+
 const questions = [
   {
     id: 'q1',
@@ -124,7 +135,7 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
   it('does not regenerate when the first draft opens with a reflective label', async () => {
     createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"That, it seems, is the real root: noise.","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
-    const res = await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, { userName: 'X' });
+    const res = await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, responseContext({ userName: 'X' }));
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(res.text).toBe('That, it seems, is the real root: noise.');
   });
@@ -132,7 +143,7 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
   it('does not regenerate when the first draft is clean', async () => {
     createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"What is stopping you from cutting that off first?","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
-    await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, { userName: 'X' });
+    await provider.generateResponse([{ role: 'user', content: 'chaos', timestamp: new Date() }], strat, responseContext({ userName: 'X' }));
     expect(createMock).toHaveBeenCalledTimes(1);
   });
 
@@ -142,7 +153,7 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
     const res = await provider.generateResponse(
       [{ role: 'user', content: 'yes', timestamp: new Date() }],
       { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
-      { userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
     );
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(res.text).toContain('did I get that right');
@@ -160,6 +171,7 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
     const provider = makeProvider();
     const context: ResponseContext = {
       userName: 'X',
+      languagePolicy: defaultLanguagePolicy,
       replyPlan: replyPlan(1),
     };
 
@@ -176,10 +188,10 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
 
 describe('OpenAiProvider.generateResponse length + question gates', () => {
   beforeEach(() => createMock.mockReset());
-  const terseContext = {
+  const terseContext = responseContext({
     userName: 'X',
     styleAdaptation: { dimensions: { register: 0.5, humor: 0.3, verbosity: 0.08, emoji: 0.2 }, weight: 0.4, phrases: [] },
-  };
+  });
   const shortNoQuestion = {
     mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'short', forbiddenPatterns: [],
   } as ReplyStrategy;
@@ -211,7 +223,7 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     const res = await provider.generateResponse(
       [{ role: 'user', content: 'ok', timestamp: new Date() }],
       { mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
-      { userName: 'X' },
+      responseContext({ userName: 'X' }),
     );
     expect(createMock).toHaveBeenCalledTimes(2);
     expect(res.text).toBe('Makes sense.');
@@ -223,7 +235,7 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     const res = await provider.generateResponse(
       [{ role: 'user', content: 'chaos', timestamp: new Date() }],
       { mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
-      { userName: 'X', replyPlan: replyPlan(1) },
+      responseContext({ userName: 'X', replyPlan: replyPlan(1) }),
     );
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(res.text).toBe('What changes first?');
@@ -237,7 +249,7 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     const res = await provider.generateResponse(
       [{ role: 'user', content: 'ok', timestamp: new Date() }],
       { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] },
-      { userName: 'X', replyPlan: replyPlan(0) },
+      responseContext({ userName: 'X', replyPlan: replyPlan(0) }),
     );
     expect(createMock).toHaveBeenCalledTimes(2);
     expect(res.text).toBe('That tracks.');

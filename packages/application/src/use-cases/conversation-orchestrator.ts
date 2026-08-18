@@ -22,6 +22,7 @@ import type { SurveyQuestionRecord } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isSessionStart } from '../utils/session';
+import { resolveLanguagePolicy } from '../utils/language-policy';
 import type {
   ProcessMessageRequest,
   ProcessMessageResult,
@@ -277,6 +278,7 @@ export class ConversationOrchestrator {
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
+      languagePolicy: resolveLanguagePolicy(turns, conversation.userLocale),
       memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
       reminderConfirmation,
       surveyProbeQuestion: probeQuestion

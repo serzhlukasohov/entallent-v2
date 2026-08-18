@@ -81,9 +81,17 @@ export interface ReplyPlan {
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
 export type ReplyBrief = ReplyPlan;
 
+export interface LanguagePolicy {
+  responseLanguage: string;
+  source: 'current_turn' | 'recent_turns' | 'user_profile' | 'tenant_default';
+  confidence: number;
+  shouldUpdateUserLocale: boolean;
+}
+
 export interface ResponseContext {
   userName: string;
   tenantContext?: string;
+  languagePolicy: LanguagePolicy;
   memoryContext?: MemoryContext;
   /** For proactive follow-ups: the original reason + message strategy hint for the LLM */
   followUpIntent?: string;

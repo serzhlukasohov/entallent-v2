@@ -3,7 +3,7 @@ import { ConversationOrchestrator } from './conversation-orchestrator';
 
 function baseMocks() {
   const conversationRepo = {
-    findById: vi.fn().mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userTimezone: 'UTC' }),
+    findById: vi.fn().mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC' }),
     findRecentMessages: vi.fn().mockResolvedValue([
       { id: 'm-1', direction: 'inbound', text: 'hey', occurredAt: new Date(), metadata: undefined },
     ]),
@@ -148,6 +148,150 @@ describe('ConversationOrchestrator reply plan', () => {
     expect(ctxArg.replyBrief).toBe(ctxArg.replyPlan);
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     expect(strategyArg.includeFollowUpQuestion).toBe(false);
+  });
+});
+
+describe('ConversationOrchestrator language policy', () => {
+  it('uses the current Russian inbound turn over an English user profile locale', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', direction: 'inbound', text: 'Привет', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.languagePolicy).toMatchObject({
+      responseLanguage: 'ru',
+      source: 'current_turn',
+      shouldUpdateUserLocale: true,
+    });
+  });
+
+  it('uses recent Russian user turns when the current turn is ambiguous', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-0', direction: 'inbound', text: 'Я переживаю из-за Atlas-9', occurredAt: new Date(), metadata: undefined },
+      { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', direction: 'inbound', text: 'ok', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.languagePolicy).toMatchObject({
+      responseLanguage: 'ru',
+      source: 'recent_turns',
+      shouldUpdateUserLocale: true,
+    });
+  });
+
+  it('treats a Latin product token as ambiguous and keeps recent Russian context', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-0', direction: 'inbound', text: 'Я переживаю из-за автономии', occurredAt: new Date(), metadata: undefined },
+      { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', direction: 'inbound', text: 'Atlas-9', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.languagePolicy).toMatchObject({
+      responseLanguage: 'ru',
+      source: 'recent_turns',
+    });
+  });
+
+  it('preserves Ukrainian profile language for Cyrillic current turns', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1',
+      channelType: 'slack',
+      userDisplayName: 'Sam',
+      userLocale: 'uk',
+      userTimezone: 'UTC',
+    });
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', direction: 'inbound', text: 'я думаю що це важливо', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.languagePolicy).toMatchObject({
+      responseLanguage: 'uk',
+      source: 'current_turn',
+      shouldUpdateUserLocale: false,
+    });
+  });
+
+  it('uses other valid stored profile languages', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1',
+      channelType: 'slack',
+      userDisplayName: 'Sam',
+      userLocale: 'pt-BR',
+      userTimezone: 'UTC',
+    });
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.languagePolicy).toMatchObject({
+      responseLanguage: 'pt',
+      source: 'user_profile',
+    });
+  });
+
+  it('ignores malformed stored locale values', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1',
+      channelType: 'slack',
+      userDisplayName: 'Sam',
+      userLocale: '123',
+      userTimezone: 'UTC',
+    });
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.languagePolicy).toMatchObject({
+      responseLanguage: 'en',
+      source: 'tenant_default',
+    });
   });
 });
 

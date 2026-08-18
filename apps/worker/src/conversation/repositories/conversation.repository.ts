@@ -18,6 +18,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         externalConversationId: conversations.externalConversationId,
         status: conversations.status,
         userDisplayName: users.preferredName,
+        userLocale: users.locale,
         userTimezone: users.timezone,
         userTimezoneUpdatedAt: users.timezoneUpdatedAt,
       })
@@ -36,6 +37,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
       externalConversationId: row.externalConversationId,
       status: row.status,
       userDisplayName: row.userDisplayName ?? undefined,
+      userLocale: row.userLocale ?? undefined,
       userTimezone: row.userTimezone ?? undefined,
       userTimezoneUpdatedAt: row.userTimezoneUpdatedAt ?? undefined,
     };
