@@ -48,15 +48,20 @@ export function resolveLanguagePolicy(turns: ConversationTurn[], userLocale?: st
 }
 
 function inferLanguage(text: string, profileLanguage?: LanguageCode | null): LanguageCode | null {
-  const cyrillic = (text.match(/\p{Script=Cyrillic}/gu) ?? []).length;
-  const latin = (text.match(/\p{Script=Latin}/gu) ?? []).length;
+  const userText = stripSlackConnectorAttribution(text);
+  const cyrillic = (userText.match(/\p{Script=Cyrillic}/gu) ?? []).length;
+  const latin = (userText.match(/\p{Script=Latin}/gu) ?? []).length;
   if (cyrillic === 0 && latin === 0) return null;
   if (cyrillic > 0) {
-    if (isLikelyUkrainian(text) || profileLanguage === 'uk') return 'uk';
+    if (isLikelyUkrainian(userText) || profileLanguage === 'uk') return 'uk';
     return 'ru';
   }
-  if (latin <= 2 || /^[\p{Script=Latin}\d._-]{1,20}$/u.test(text.trim())) return null;
+  if (latin <= 2 || /^[\p{Script=Latin}\d._-]{1,20}$/u.test(userText.trim())) return null;
   return 'en';
+}
+
+function stripSlackConnectorAttribution(text: string): string {
+  return text.replace(/\*Sent using\*\s*<@[A-Z0-9]+(?:\|[^>]+)?>/gu, '').trim();
 }
 
 function normalizeLocale(locale?: string): LanguageCode | null {

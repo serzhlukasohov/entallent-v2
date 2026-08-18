@@ -20,6 +20,14 @@ No open failures recorded yet.
 
 ## Fixed Failures
 
+## 2026-08-18: Slack connector attribution flipped ambiguous turn language
+- Symptom: Production Slack smoke answered `ok` in English after a Russian conversation.
+- Expected: Short ambiguous turns should inherit the recent Russian user-turn language.
+- Root cause layer: verification
+- Harness fix: Add a production-shaped regression with Slack connector attribution appended to an ambiguous user turn.
+- Regression check: `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts`
+- Status: fixed
+
 ## 2026-08-15: contextual support smoke repeated stock fallback
 - Symptom: Production Slack smoke repeated the stock support phrase after the user pushed back that the reply was too generic.
 - Expected: A context-rich support turn should route through the model path instead of repeating deterministic support fallback.

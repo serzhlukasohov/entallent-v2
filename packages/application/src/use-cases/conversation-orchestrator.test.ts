@@ -194,6 +194,28 @@ describe('ConversationOrchestrator language policy', () => {
     });
   });
 
+  it('ignores Slack connector attribution when resolving an ambiguous current turn', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-0', direction: 'inbound', text: 'Я переживаю из-за Atlas-9', occurredAt: new Date(), metadata: undefined },
+      { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', direction: 'inbound', text: 'ok *Sent using* <@U0BPHHA21GC>', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.languagePolicy).toMatchObject({
+      responseLanguage: 'ru',
+      source: 'recent_turns',
+      shouldUpdateUserLocale: true,
+    });
+  });
+
   it('treats a Latin product token as ambiguous and keeps recent Russian context', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
