@@ -34,3 +34,5 @@ Failure layer values:
 | 2026-08-15 | Verify user-language fix in correct Slack prod DM | success | none | Slack `D0BJDC2MPE2` marker `20260815T1730Z`, DB `maf_primary/reply_committed`, Russian outbound | None |
 | 2026-08-15 | Inspect Roman production Slack/runtime logs | success | none | Prod DB messages/runtime attempts; API/worker Railway logs for latest Roman traces | Replace Cyrillic-only locale override if Ukrainian must stay Ukrainian |
 | 2026-08-15 | Add language detector for Roman locale routing | success | none | `pnpm --filter @entalent/worker test -- conversation.processor.test.ts`, `pnpm --filter @entalent/worker typecheck` | None |
+| 2026-08-15 | Deploy language detector and verify Ukrainian Slack reply | success | none | GitHub push `4a709e9`, Railway api/worker success, Slack marker `20260815T1848Z`, DB `maf_primary/reply_committed` Ukrainian outbound | None |
+| 2026-08-18 | Limit today's pulse test to autonomy questions | success | none | `pnpm --filter @entalent/application test -- pulse-backlog.service.test.ts`, `pnpm --filter @entalent/application typecheck`, `pnpm --filter @entalent/worker typecheck` | None |

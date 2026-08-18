@@ -130,8 +130,11 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
     userId: string,
     windowId: string,
     engagementOnly: boolean,
+    questionGroup?: string,
   ): Promise<PulseBacklogRecord | null> {
-    const groupFilter = engagementOnly
+    const groupFilter = questionGroup
+      ? eq(surveyQuestions.questionGroup, questionGroup)
+      : engagementOnly
       ? eq(surveyQuestions.questionGroup, 'engagement')
       : ne(surveyQuestions.questionGroup, 'engagement');
 

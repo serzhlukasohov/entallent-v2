@@ -26,6 +26,8 @@ export interface ProactivePulseConfig {
   engagementUnlockDays: number;
   /** Hours after probe sent before no-response counts as ignore. Default: 48 */
   ignoreWindowHours: number;
+  /** Temporary test filter: only ask pending questions from this question group. */
+  questionGroup?: string;
 }
 
 export const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = {
@@ -64,11 +66,13 @@ export interface PulseBacklogRepositoryPort {
    * Returns the pending entry with the lowest position.
    * If engagementOnly=true, only returns entries from questionGroup='engagement'.
    * If engagementOnly=false, only returns entries from questionGroup != 'engagement'.
+   * If questionGroup is set, it wins over engagementOnly.
    */
   findNextPending(
     userId: string,
     windowId: string,
     engagementOnly: boolean,
+    questionGroup?: string,
   ): Promise<PulseBacklogRecord | null>;
 
   /** Sets status='active' and proactive_sent_at. */

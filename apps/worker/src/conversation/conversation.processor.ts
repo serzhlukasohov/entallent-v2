@@ -84,6 +84,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         .limit(1);
 
       const policy = (tenantRow?.policy ?? {}) as Record<string, unknown>;
+      const testQuestionGroup = normalizeOptionalString(process.env.PULSE_TEST_QUESTION_GROUP);
       const pulseConfig: ProactivePulseConfig = {
         engagementUnlockDays:
           typeof policy['engagementUnlockDays'] === 'number'
@@ -93,6 +94,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           typeof policy['ignoreWindowHours'] === 'number'
             ? policy['ignoreWindowHours']
             : DEFAULT_PULSE_CONFIG.ignoreWindowHours,
+        ...(testQuestionGroup ? { questionGroup: testQuestionGroup } : {}),
       };
 
       if (await this.shouldUseMafForCheckIn(job.data)) {

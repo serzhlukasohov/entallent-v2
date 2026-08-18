@@ -27,9 +27,10 @@ export class PulseBacklogService {
 
     const allQuestions = await this.surveyRepo.findQuestionsForWindow(window.id);
     if (!allQuestions.length) return null;
+    const questionGroup = config.questionGroup?.trim();
 
     const nonEngagementQuestions = allQuestions
-      .filter((q) => q.questionGroup !== 'engagement')
+      .filter((q) => q.questionGroup !== 'engagement' && (!questionGroup || q.questionGroup === questionGroup))
       .sort((a, b) => {
         const gi = (g: string) => CANONICAL_GROUP_ORDER.indexOf(g as typeof CANONICAL_GROUP_ORDER[number]);
         const groupDiff = gi(a.questionGroup) - gi(b.questionGroup);
@@ -56,15 +57,15 @@ export class PulseBacklogService {
     const daysUntilEnd = (window.periodEnd.getTime() - Date.now()) / 86_400_000;
     const isEndOfQuarter = daysUntilEnd <= config.engagementUnlockDays;
 
-    if (isEndOfQuarter) {
+    if (isEndOfQuarter && !questionGroup) {
       const engagementQuestions = allQuestions
         .filter((q) => q.questionGroup === 'engagement')
         .sort((a, b) => a.displayOrder - b.displayOrder);
       await this.backlogRepo.unlockEngagementIfNeeded(userId, tenantId, window.id, engagementQuestions);
     }
 
-    let entry = await this.backlogRepo.findNextPending(userId, window.id, isEndOfQuarter);
-    if (!entry && isEndOfQuarter) {
+    let entry = await this.backlogRepo.findNextPending(userId, window.id, isEndOfQuarter, questionGroup);
+    if (!entry && isEndOfQuarter && !questionGroup) {
       // Engagement questions exhausted — fall back to remaining regular questions
       entry = await this.backlogRepo.findNextPending(userId, window.id, false);
     }

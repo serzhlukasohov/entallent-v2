@@ -191,7 +191,7 @@ describe('PulseBacklogService', () => {
 
       await service.getNextProbeQuestion('u-1', 't-1');
 
-      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false);
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, undefined);
     });
 
     it('uses engagementOnly=true and unlocks engagement when periodEnd is within engagementUnlockDays', async () => {
@@ -204,7 +204,7 @@ describe('PulseBacklogService', () => {
       await service.getNextProbeQuestion('u-1', 't-1', { engagementUnlockDays: 14, ignoreWindowHours: 48 });
 
       expect(backlogRepo.unlockEngagementIfNeeded).toHaveBeenCalledOnce();
-      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', true);
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', true, undefined);
     });
 
     it('does NOT unlock engagement when periodEnd is far away', async () => {
@@ -214,7 +214,7 @@ describe('PulseBacklogService', () => {
       await service.getNextProbeQuestion('u-1', 't-1');
 
       expect(backlogRepo.unlockEngagementIfNeeded).not.toHaveBeenCalled();
-      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false);
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, undefined);
     });
 
     it('does NOT pass engagement questions to initializeIfNeeded', async () => {
@@ -229,6 +229,28 @@ describe('PulseBacklogService', () => {
       const call = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0];
       const questions = call[3] as SurveyQuestionRecord[];
       expect(questions.every((q) => q.questionGroup !== 'engagement')).toBe(true);
+    });
+
+    it('limits initialization and pending lookup to a configured question group', async () => {
+      const autonomyQuestion = makeQuestion({ id: 'q-autonomy', questionGroup: 'autonomy' });
+      const growthQuestion = makeQuestion({ id: 'q-growth', questionGroup: 'growth' });
+      const backlogRepo = makeBacklogRepo({
+        findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry({ surveyQuestionId: 'q-autonomy' })),
+      });
+      const surveyRepo = makeSurveyRepo(makeWindow(), [growthQuestion, autonomyQuestion]);
+      const service = new PulseBacklogService(backlogRepo, surveyRepo);
+
+      const result = await service.getNextProbeQuestion('u-1', 't-1', {
+        engagementUnlockDays: 14,
+        ignoreWindowHours: 48,
+        questionGroup: 'autonomy',
+      });
+
+      const call = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0];
+      const questions = call[3] as SurveyQuestionRecord[];
+      expect(questions.map((q) => q.id)).toEqual(['q-autonomy']);
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, 'autonomy');
+      expect(result?.question.id).toBe('q-autonomy');
     });
   });
 
