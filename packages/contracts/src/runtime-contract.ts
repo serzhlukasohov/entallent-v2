@@ -119,6 +119,7 @@ export type RuntimeReplyQuestionPolicy = {
   reason:
     | 'strategy_disallows_questions'
     | 'greeting_no_question'
+    | 'greeting_opens_conversation'
     | 'social_checkin_returns_question'
     | 'acknowledgement_no_new_substance'
     | 'asked_recently'

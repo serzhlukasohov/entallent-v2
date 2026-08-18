@@ -120,6 +120,27 @@ describe('buildRespondSystemPrompt reply plan', () => {
     expect(p).toContain('Forbidden moves for this turn: operational_status, survey_probe');
   });
 
+  it('renders greeting turns as a warm opener when questions are allowed', () => {
+    const p = buildRespondSystemPrompt(s(), {
+      userName: 'T',
+      replyPlan: {
+        dialogueAct: 'greeting',
+        latestUserSubstance: null,
+        topicAnchor: null,
+        memoryAnchors: [],
+        responseMove: 'social_greeting',
+        mayInferFromBrevity: false,
+        questionPolicy: { maxQuestions: 1, reason: 'greeting_opens_conversation' },
+        requiredGrounding: [],
+        forbiddenMoves: ['survey_probe'],
+      },
+    });
+
+    expect(p).toContain('dialogueAct: greeting');
+    expect(p).toContain('brief greeting and one easy, low-pressure opener');
+    expect(p).toContain('not a support intake');
+  });
+
   it('renders acknowledgement turns as no-new-substance without brevity inference', () => {
     const p = buildRespondSystemPrompt(s(), {
       userName: 'T',

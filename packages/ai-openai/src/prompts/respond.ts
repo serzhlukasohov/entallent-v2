@@ -162,7 +162,9 @@ function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): s
     : '\nDo not infer mood, impatience, depth, personality, or unstated meaning from the employee being brief. Do not mention their brevity, one-word answer, or short wording. Do not quote the short acknowledgement as evidence. Continue from the topic anchor or close the thread naturally.';
 
   const social = plan.responseMove === 'social_greeting'
-    ? '\nSocial contract: answer with a plain greeting only; do not offer help or start a support flow.'
+    ? plan.questionPolicy.maxQuestions > 0
+      ? '\nSocial contract: answer with a brief greeting and one easy, low-pressure opener. Make it feel like a natural start to a Slack conversation, not a support intake. Good shapes: "How are you today?", "What is on your mind today?", or a similarly soft invitation. Do not ask an intense coaching question.'
+      : '\nSocial contract: answer with a plain greeting only; do not offer help or start a support flow.'
     : plan.responseMove === 'social_reply'
       ? '\nSocial contract: answer socially and briefly, then return the check-in once; do not describe operational status or support capabilities.'
       : '';

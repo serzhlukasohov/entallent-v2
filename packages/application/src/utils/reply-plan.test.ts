@@ -36,8 +36,8 @@ describe('buildReplyPlan', () => {
 
     expect(brief.responseMove).toBe('social_greeting');
     expect(brief.questionPolicy).toEqual({
-      maxQuestions: 0,
-      reason: 'greeting_no_question',
+      maxQuestions: 1,
+      reason: 'greeting_opens_conversation',
     });
     expect(brief.mayInferFromBrevity).toBe(false);
   });

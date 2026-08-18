@@ -90,7 +90,7 @@ function buildQuestionPolicy(input: {
   }
 
   if (input.dialogueAct === 'greeting') {
-    return { maxQuestions: 0, reason: 'greeting_no_question' };
+    return { maxQuestions: 1, reason: 'greeting_opens_conversation' };
   }
 
   if (input.dialogueAct === 'social_checkin') {
