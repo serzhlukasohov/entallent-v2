@@ -2,22 +2,21 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Job } from 'bullmq';
-import { and, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, or } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { detect as detectLanguage } from 'tinyld';
 import {
   AGENT_RUNTIME_PORT,
+  ConversationOrchestrator,
   FEATURE_FLAGS,
   ProactiveCheckInUseCase,
   RUNTIME_CONTROL_FLAGS,
   PulseBacklogService,
-  buildReplyPlan,
 } from '@entalent/application';
-import type { AgentRuntimePort, ConversationTurn, ProactivePulseConfig } from '@entalent/application';
-import type { RuntimeContext, SituationClassification } from '@entalent/contracts';
+import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/application';
+import type { RuntimeContext } from '@entalent/contracts';
 import { conversations, memoryItems, messages, tenants, userStyleProfiles, users } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { AiService } from './ai.service';
 import { LlmRunRepository } from './llm-run.repository';
 import { DatabaseService } from '../database/database.service';
 import { FeatureFlagRepository } from '../feature-flags/feature-flag.repository';
@@ -47,11 +46,11 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
   constructor(
     @Inject(AGENT_RUNTIME_PORT)
     private readonly agentRuntime: AgentRuntimePort,
+    private readonly orchestrator: ConversationOrchestrator,
     private readonly checkInUseCase: ProactiveCheckInUseCase,
     private readonly pulseBacklogService: PulseBacklogService,
     private readonly runtimeControls: RuntimeControlFlagRepository,
     private readonly featureFlags: FeatureFlagRepository,
-    private readonly ai: AiService,
     private readonly llmRunRepo: LlmRunRepository,
     private readonly db: DatabaseService,
   ) {
@@ -276,20 +275,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     let status: 'success' | 'error' = 'success';
 
     try {
-      const mafCandidateContext = await this.loadMafCandidateContext(job.data);
-      const result = await this.agentRuntime.processMessage({
-        requestId: job.data.requestId,
-        eventId: normalizeMafRuntimeEventId(job.data.eventId, job.data.requestId),
-        runtimeAttempt: runtimeAttemptNumberFromJob(job),
-        messageId: job.data.messageId,
-        conversationId: job.data.conversationId,
-        userId: job.data.userId,
-        tenantId: job.data.tenantId,
-        externalWorkspaceId: job.data.externalWorkspaceId,
-        externalConversationId: job.data.externalConversationId,
-        traceId: job.data.traceId,
-        ...mafCandidateContext,
-      });
+      const result = await this.orchestrator.orchestrate(job.data);
 
       this.logger.log(
         `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`,
@@ -312,121 +298,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         .catch(() => {
           /* non-critical */
         });
-    }
-  }
-
-  private async loadMafCandidateContext(
-    job: ConversationJob,
-  ): Promise<Partial<Parameters<AgentRuntimePort['processMessage']>[0]>> {
-    try {
-      const [currentMessage] = await this.db.client
-        .select({
-          text: messages.text,
-          occurredAt: messages.occurredAt,
-          externalThreadId: messages.externalThreadId,
-          userPreferredName: users.preferredName,
-          userTimezone: users.timezone,
-          userLocale: users.locale,
-          styleDimensions: userStyleProfiles.dimensions,
-          stylePhrases: userStyleProfiles.phrases,
-          styleAdaptationWeight: userStyleProfiles.adaptationWeight,
-        })
-        .from(messages)
-        .leftJoin(users, and(eq(users.id, messages.userId), eq(users.tenantId, messages.tenantId)))
-        .leftJoin(userStyleProfiles, and(eq(userStyleProfiles.userId, messages.userId), eq(userStyleProfiles.tenantId, messages.tenantId)))
-        .where(
-          and(
-            eq(messages.id, job.messageId),
-            eq(messages.tenantId, job.tenantId),
-            eq(messages.conversationId, job.conversationId),
-            eq(messages.userId, job.userId),
-            isNull(messages.deletedAt),
-          ),
-        )
-        .limit(1);
-
-      if (!currentMessage) {
-        return {};
-      }
-
-      const recentRows = await this.db.client
-        .select({
-          text: messages.text,
-          metadata: messages.metadata,
-          senderType: messages.senderType,
-          direction: messages.direction,
-          occurredAt: messages.occurredAt,
-        })
-        .from(messages)
-        .where(
-          and(
-            eq(messages.tenantId, job.tenantId),
-            eq(messages.conversationId, job.conversationId),
-            isNull(messages.deletedAt),
-            threadScopePredicate(currentMessage.externalThreadId),
-          ),
-        )
-        .orderBy(desc(messages.occurredAt))
-        .limit(8);
-
-      const memoryContextNow = new Date();
-      const memoryRows = await this.db.client
-        .select({
-          id: memoryItems.id,
-          tenantId: memoryItems.tenantId,
-          userId: memoryItems.userId,
-          category: memoryItems.category,
-          content: memoryItems.content,
-          importance: memoryItems.importance,
-          status: memoryItems.status,
-          expiresAt: memoryItems.expiresAt,
-          supersededById: memoryItems.supersededById,
-          createdAt: memoryItems.createdAt,
-        })
-        .from(memoryItems)
-        .where(mafMemoryContextWhere(job, memoryContextNow))
-        .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt), desc(memoryItems.id))
-        .limit(MAF_MEMORY_CONTEXT_LIMIT);
-
-      const threadId = normalizeOptionalString(currentMessage.externalThreadId);
-      const recentTurns = recentRows
-        .slice()
-        .reverse()
-        .flatMap((row) => toRecentTurn(row));
-      const runtimeMemoryItems = toRuntimeMemoryItems(memoryRows, job, memoryContextNow);
-      const styleAdaptation = toRuntimeStyleAdaptation(currentMessage);
-      const replyContext = await this.buildInboundReplyContext({
-        userName: normalizeOptionalString(currentMessage.userPreferredName) ?? 'there',
-        timezone: normalizeOptionalString(currentMessage.userTimezone),
-        turns: recentTurns,
-        memoryItems: runtimeMemoryItems,
-        lastReplyAskedQuestion: lastOutboundReplyShapeAskedQuestion(recentRows),
-      });
-
-      return {
-        messageText: stripSlackConnectorFooter(currentMessage.text),
-        messageCreatedAt: toIsoString(currentMessage.occurredAt),
-        eventId: normalizeMafRuntimeEventId(job.eventId, job.requestId),
-        userDisplayName: normalizeOptionalString(currentMessage.userPreferredName),
-        userTimezone: normalizeOptionalString(currentMessage.userTimezone),
-        userLocale: resolveEffectiveLocale(normalizeOptionalString(currentMessage.userLocale), recentTurns),
-        conversationThreadId: threadId,
-        conversationSessionKey: [
-          job.externalWorkspaceId,
-          job.userId,
-          job.externalConversationId,
-          threadId ?? 'dm',
-        ].join(':'),
-        runtimeContext: {
-          recentTurns,
-          memoryItems: runtimeMemoryItems,
-          goals: [],
-          ...(styleAdaptation ? { styleAdaptation } : {}),
-          ...replyContext,
-        },
-      };
-    } catch {
-      return {};
     }
   }
 
@@ -562,56 +433,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     };
   }
 
-  private async buildInboundReplyContext(input: {
-    userName: string;
-    timezone?: string;
-    turns: RuntimeContext['recentTurns'];
-    memoryItems: RuntimeContext['memoryItems'];
-    lastReplyAskedQuestion: boolean;
-  }): Promise<Pick<RuntimeContext, 'replyPlan' | 'replyPlanning' | 'replyPolicy'>> {
-    try {
-      const turns = input.turns.map((turn): ConversationTurn => ({
-        role: turn.role,
-        content: turn.content,
-        timestamp: new Date(turn.timestamp),
-      }));
-      const classification = await this.ai.classifySituation(turns, {
-        userName: input.userName,
-        now: new Date().toISOString(),
-        timezone: input.timezone,
-      });
-      const includeFollowUpQuestion = includeFollowUpQuestionFor(classification);
-      const replyPlan = buildReplyPlan({
-        classification,
-        memoryItems: input.memoryItems,
-        includeFollowUpQuestion,
-        lastReplyAskedQuestion: input.lastReplyAskedQuestion,
-        sensitiveMode: isSensitiveClassification(classification),
-      });
-      const maxQuestions = replyPlan.questionPolicy.maxQuestions;
-      const maxChars = maxReplyCharsForReplyPlan(
-        replyPlan,
-        maxReplyChars(maxResponseLengthFor(classification)),
-      );
-      return {
-        replyPlan,
-        replyPolicy: {
-          maxChars,
-          maxQuestions,
-          allowReflectiveOpener: false,
-          allowListFormatting: false,
-        },
-      };
-    } catch (err) {
-      this.logger.warn(`Failed to build inbound reply plan: ${(err as Error).message}`);
-      return {
-        replyPlanning: {
-          status: 'unavailable',
-          reason: 'classifier_failed',
-        },
-      };
-    }
-  }
 }
 
 export function runtimeAttemptNumberFromJob(job: Pick<Job, 'attemptsMade'>): number {
@@ -640,34 +461,8 @@ export function resolveEffectiveLocale(
   return detectedLocale;
 }
 
-function normalizeMafRuntimeEventId(eventId: string | undefined, fallbackEventId?: string): string | undefined {
-  if (eventId && eventIdRegex.test(eventId)) {
-    return eventId;
-  }
-
-  return fallbackEventId && eventIdRegex.test(fallbackEventId) ? fallbackEventId : undefined;
-}
-
-const eventIdRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 function toIsoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-}
-
-function threadScopePredicate(externalThreadId: string | null): SQL {
-  const threadId = normalizeOptionalString(externalThreadId);
-  if (threadId) {
-    return eq(messages.externalThreadId, threadId);
-  }
-
-  return or(
-    isNull(messages.externalThreadId),
-    and(
-      eq(messages.direction, 'outbound'),
-      eq(messages.senderType, 'agent'),
-      sql`${messages.externalThreadId} = ${messages.externalMessageId}`,
-    ),
-  ) ?? isNull(messages.externalThreadId);
 }
 
 function mafMemoryContextWhere(job: Pick<ConversationJob, 'tenantId' | 'userId'>, now: Date): SQL {
@@ -806,45 +601,6 @@ function stripSlackConnectorFooter(text: string): string {
   return text.replace(/\s*\*Sent using\*\s+<@[UW][A-Z0-9]+(?:\|[^>]+)?>\s*$/u, '').trim();
 }
 
-function includeFollowUpQuestionFor(classification: SituationClassification): boolean {
-  const mode = conversationModeFor(classification);
-  return mode === 'coaching' || mode === 'supportive' || mode === 'normal';
-}
-
-function conversationModeFor(classification: SituationClassification): string {
-  switch (classification.primaryIntent) {
-    case 'support':
-      return 'supportive';
-    case 'coaching':
-    case 'goal_setting':
-    case 'progress_update':
-      return 'coaching';
-    case 'survey_opportunity':
-      return 'survey_probe';
-    case 'potential_crisis':
-      return 'crisis';
-    case 'burnout_signal':
-    case 'harassment_signal':
-      return 'sensitive';
-    case 'celebration':
-      return 'celebration';
-    case 'onboarding':
-      return 'onboarding';
-    case 'casual_conversation':
-    default:
-      return 'normal';
-  }
-}
-
-function isSensitiveClassification(classification: SituationClassification): boolean {
-  const mode = conversationModeFor(classification);
-  return mode === 'sensitive' || mode === 'crisis';
-}
-
-function maxResponseLengthFor(classification: SituationClassification): 'short' | 'medium' {
-  return classification.urgency === 'high' ? 'short' : 'medium';
-}
-
 function maxReplyChars(maxResponseLength: 'short' | 'medium' | 'long'): number {
   if (maxResponseLength === 'short') {
     return 360;
@@ -853,39 +609,4 @@ function maxReplyChars(maxResponseLength: 'short' | 'medium' | 'long'): number {
     return 680;
   }
   return 980;
-}
-
-function maxReplyCharsForReplyPlan(
-  replyPlan: RuntimeContext['replyPlan'],
-  defaultMaxChars: number,
-): number {
-  if (
-    replyPlan?.latestUserSubstance === null &&
-    replyPlan.mayInferFromBrevity === false &&
-    (replyPlan.dialogueAct === 'acknowledgement' ||
-      replyPlan.dialogueAct === 'greeting' ||
-      replyPlan.dialogueAct === 'social_checkin')
-  ) {
-    return Math.min(defaultMaxChars, 120);
-  }
-  return defaultMaxChars;
-}
-
-function lastOutboundReplyShapeAskedQuestion(rows: Array<{
-  direction: string;
-  metadata: unknown;
-}>): boolean {
-  const lastOutbound = rows.find((row) => row.direction === 'outbound');
-  return typedReplyShapeAskedQuestion(lastOutbound?.metadata);
-}
-
-function typedReplyShapeAskedQuestion(metadata: unknown): boolean {
-  if (typeof metadata !== 'object' || metadata === null) {
-    return false;
-  }
-  const replyShape = (metadata as Record<string, unknown>)['replyShape'];
-  if (typeof replyShape !== 'object' || replyShape === null) {
-    return false;
-  }
-  return (replyShape as Record<string, unknown>)['askedQuestion'] === true;
 }

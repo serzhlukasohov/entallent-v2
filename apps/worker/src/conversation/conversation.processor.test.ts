@@ -102,6 +102,7 @@ describe('resolveEffectiveLocale', () => {
 
 function createProcessor(options: {
   agentRuntime?: { processMessage: ReturnType<typeof vi.fn> };
+  orchestrator?: { orchestrate: ReturnType<typeof vi.fn> };
   checkInUseCase?: { execute: ReturnType<typeof vi.fn> };
   pulseBacklogService?: {
     getNextProbeQuestion: ReturnType<typeof vi.fn>;
@@ -112,12 +113,14 @@ function createProcessor(options: {
     isUserDenylisted: ReturnType<typeof vi.fn>;
   };
   featureFlags?: { isEnabled: ReturnType<typeof vi.fn> };
-  ai?: { classifySituation: ReturnType<typeof vi.fn> };
   llmRunRepo?: { record: ReturnType<typeof vi.fn> };
   db?: unknown;
 } = {}) {
   const agentRuntime = options.agentRuntime ?? {
     processMessage: vi.fn(async () => runtimeResult),
+  };
+  const orchestrator = options.orchestrator ?? {
+    orchestrate: vi.fn(async () => runtimeResult),
   };
   const checkInUseCase = options.checkInUseCase ?? {
     execute: vi.fn(async () => ({
@@ -137,9 +140,6 @@ function createProcessor(options: {
   const featureFlags = options.featureFlags ?? {
     isEnabled: vi.fn(async () => true),
   };
-  const ai = options.ai ?? {
-    classifySituation: vi.fn(async () => runtimeResult.classification),
-  };
   const llmRunRepo = options.llmRunRepo ?? {
     record: vi.fn(async () => undefined),
   };
@@ -147,33 +147,42 @@ function createProcessor(options: {
   return {
     processor: new ConversationProcessor(
       agentRuntime as never,
+      orchestrator as never,
       checkInUseCase as never,
       pulseBacklogService as never,
       runtimeControls as never,
       featureFlags as never,
-      ai as never,
       llmRunRepo as never,
       (options.db ?? {}) as never,
     ),
     agentRuntime,
+    orchestrator,
     checkInUseCase,
     pulseBacklogService,
     runtimeControls,
     featureFlags,
-    ai,
     llmRunRepo,
   };
 }
 
-describe('ConversationProcessor runtime ledger recording', () => {
-  it('passes durable runtime attempt metadata to the agent runtime', async () => {
+describe('ConversationProcessor routing', () => {
+  it('routes inbound jobs directly through the existing orchestrator without MAF preloading', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => runtimeResult),
+    };
     const agentRuntime = {
       processMessage: vi.fn(async () => runtimeResult),
     };
+    const select = vi.fn();
     const llmRunRepo = {
       record: vi.fn(async () => undefined),
     };
-    const { processor } = createProcessor({ agentRuntime, llmRunRepo });
+    const { processor } = createProcessor({
+      orchestrator,
+      agentRuntime,
+      llmRunRepo,
+      db: { client: { select } },
+    });
 
     await processor.process({
       id: 'job-1',
@@ -182,25 +191,26 @@ describe('ConversationProcessor runtime ledger recording', () => {
       data: jobData,
     } as Job<ConversationJob>);
 
-    expect(agentRuntime.processMessage).toHaveBeenCalledWith({
-      requestId: 'request-1',
-      eventId: 'd5be8400-e29b-41d4-a716-446655440000',
-      runtimeAttempt: 1,
-      messageId: 'message-1',
-      conversationId: 'conversation-1',
-      userId: 'user-1',
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(orchestrator.orchestrate).toHaveBeenCalledWith(jobData);
+    expect(agentRuntime.processMessage).not.toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
+    expect(llmRunRepo.record).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
-      externalWorkspaceId: 'workspace-1',
-      externalConversationId: 'channel-1',
+      userId: 'user-1',
+      taskType: 'conversation',
+      model: 'gpt-4o',
+      latencyMs: expect.any(Number),
+      status: 'success',
       traceId: 'trace-1',
     });
   });
 
-  it('falls back to requestId for MAF request eventId when eventId format is invalid', async () => {
-    const invalidEventJob: ConversationJob = {
-      ...jobData,
-      eventId: 'dev:event-1',
-      requestId: 'c5c6d84e-5f8c-4a2a-a4af-b8f8f7d7dc99',
+  it('propagates orchestrator failures and records the inbound run as failed', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => {
+        throw new Error('orchestrator failed');
+      }),
     };
     const agentRuntime = {
       processMessage: vi.fn(async () => runtimeResult),
@@ -208,635 +218,19 @@ describe('ConversationProcessor runtime ledger recording', () => {
     const llmRunRepo = {
       record: vi.fn(async () => undefined),
     };
-    const { processor } = createProcessor({ agentRuntime, llmRunRepo });
+    const { processor } = createProcessor({ orchestrator, agentRuntime, llmRunRepo });
 
-    await processor.process({
-      id: 'job-1',
-      name: 'process',
-      attemptsMade: 0,
-      data: invalidEventJob,
-    } as Job<ConversationJob>);
-
-    expect(agentRuntime.processMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventId: 'c5c6d84e-5f8c-4a2a-a4af-b8f8f7d7dc99',
-      }),
-    );
-  });
-
-  it('Style adaptation maf_primary regression enriches the runtime request without sentinel turns', async () => {
-    const agentRuntime = {
-      processMessage: vi.fn(async () => runtimeResult),
-    };
-    const llmRunRepo = {
-      record: vi.fn(async () => undefined),
-    };
-    const currentQuery = {
-      from: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'I feel stuck but I can keep going.\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
-          occurredAt: new Date('2026-08-06T18:00:00.000Z'),
-          externalThreadId: 'thread-1',
-          userPreferredName: 'Test User',
-          userTimezone: 'Europe/Warsaw',
-          userLocale: 'en-US',
-          styleDimensions: {
-            register: 1.8,
-            humor: 0.45,
-            verbosity: -0.25,
-            emoji: 0.1,
-          },
-          stylePhrases: [
-            { text: 'quick read', count: 3 },
-            { text: 'net-net', count: 2 },
-            { text: 'ship it', count: 1 },
-            { text: 'extra phrase', count: 1 },
-            { text: 'fifth phrase', count: 1 },
-            { text: 'sixth phrase', count: 1 },
-          ],
-          styleAdaptationWeight: '0.30',
-        },
-      ]),
-    };
-    const recentQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'I feel stuck but I can keep going.\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
-          senderType: 'user',
-          direction: 'inbound',
-          occurredAt: new Date('2026-08-06T18:00:00.000Z'),
-        },
-        {
-          text: 'Earlier reply',
-          senderType: 'agent',
-          direction: 'outbound',
-          occurredAt: new Date('2026-08-06T17:55:00.000Z'),
-        },
-        {
-          text: 'Malformed historical turn',
-          senderType: 'user',
-          direction: 'inbound',
-          occurredAt: 'not-a-date',
-        },
-      ]),
-    };
-    const memoryQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          id: 'memory-1',
-          tenantId: 'tenant-1',
-          userId: 'user-1',
-          category: 'project_context',
-          content: 'The project codename is Север-17.',
-          importance: '0.80',
-          status: 'active',
-          expiresAt: null,
-          supersededById: null,
-          createdAt: new Date('2026-08-06T17:00:00.000Z'),
-        },
-      ]),
-    };
-    const db = {
-      client: {
-        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
-      },
-    };
-    const ai = {
-      classifySituation: vi.fn(async () => ({
-        ...runtimeResult.classification,
-        dialogueAct: 'acknowledgement',
-        latestUserSubstance: null,
-        topicAnchor: 'I feel stuck but I can keep going.',
-      })),
-    };
-    const { processor } = createProcessor({ agentRuntime, llmRunRepo, db, ai });
-
-    await processor.process({
+    await expect(processor.process({
       id: 'job-1',
       name: 'process',
       attemptsMade: 0,
       data: jobData,
-    } as Job<ConversationJob>);
+    } as Job<ConversationJob>)).rejects.toThrow('orchestrator failed');
 
-    expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
-      messageText: 'I feel stuck but I can keep going.',
-      messageCreatedAt: '2026-08-06T18:00:00.000Z',
-      userDisplayName: 'Test User',
-      userTimezone: 'Europe/Warsaw',
-      userLocale: 'en-US',
-      conversationThreadId: 'thread-1',
-      conversationSessionKey: 'workspace-1:user-1:channel-1:thread-1',
-      runtimeContext: {
-        recentTurns: [
-          {
-            role: 'assistant',
-            content: 'Earlier reply',
-            timestamp: '2026-08-06T17:55:00.000Z',
-          },
-          {
-            role: 'user',
-            content: 'I feel stuck but I can keep going.',
-            timestamp: '2026-08-06T18:00:00.000Z',
-          },
-        ],
-        memoryItems: [
-          {
-            id: 'memory-1',
-            category: 'project_context',
-            content: 'The project codename is Север-17.',
-            importance: 0.8,
-          },
-        ],
-        goals: [],
-        styleAdaptation: {
-          dimensions: {
-            register: 1,
-            humor: 0.45,
-            verbosity: 0,
-            emoji: 0.1,
-          },
-          weight: 0.3,
-          phrases: ['quick read', 'net-net', 'ship it', 'extra phrase', 'fifth phrase'],
-        },
-        replyPlan: expect.objectContaining({
-          dialogueAct: 'acknowledgement',
-          latestUserSubstance: null,
-          topicAnchor: 'I feel stuck but I can keep going.',
-          questionPolicy: {
-            maxQuestions: 0,
-            reason: 'acknowledgement_no_new_substance',
-          },
-        }),
-        replyPolicy: {
-          maxChars: 120,
-          maxQuestions: 0,
-          allowReflectiveOpener: false,
-          allowListFormatting: false,
-        },
-      },
-    }));
-    expect(ai.classifySituation).toHaveBeenCalledWith(
-      [
-        {
-          role: 'assistant',
-          content: 'Earlier reply',
-          timestamp: new Date('2026-08-06T17:55:00.000Z'),
-        },
-        {
-          role: 'user',
-          content: 'I feel stuck but I can keep going.',
-          timestamp: new Date('2026-08-06T18:00:00.000Z'),
-        },
-      ],
-      {
-        userName: 'Test User',
-        now: expect.any(String),
-        timezone: 'Europe/Warsaw',
-      },
-    );
-    expect(db.client.select).toHaveBeenCalledTimes(3);
-  });
-
-  it('Long-term memory maf_primary regression excludes inactive memory and keeps deterministic order', async () => {
-    const agentRuntime = {
-      processMessage: vi.fn(async () => runtimeResult),
-    };
-    const llmRunRepo = {
-      record: vi.fn(async () => undefined),
-    };
-    const currentQuery = {
-      from: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'Can you help me decide what to do next?',
-          occurredAt: new Date('2026-08-06T18:00:00.000Z'),
-          externalThreadId: null,
-          userPreferredName: 'Test User',
-          userTimezone: 'Europe/Warsaw',
-          userLocale: 'en-US',
-        },
-      ]),
-    };
-    const recentQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'Can you help me decide what to do next?',
-          senderType: 'user',
-          direction: 'inbound',
-          occurredAt: new Date('2026-08-06T18:00:00.000Z'),
-        },
-      ]),
-    };
-    const included = Array.from({ length: 13 }, (_, index) => ({
-      id: `memory-active-${index + 1}`,
-      tenantId: 'tenant-1',
-      userId: 'user-1',
-      category: 'project_context',
-      content: `Active memory ${index + 1}`,
-      importance: index >= 11 ? '0.99' : String((0.5 + index / 100).toFixed(2)),
-      status: 'active',
-      expiresAt: null,
-      supersededById: null,
-      createdAt: new Date(index >= 11 ? '2026-08-06T17:59:30.000Z' : `2026-08-06T17:${String(index).padStart(2, '0')}:00.000Z`),
-    }));
-    const dbMemoryRows = [
-      included[0],
-      {
-        id: 'memory-deleted',
-        tenantId: 'tenant-1',
-        userId: 'user-1',
-        category: 'project_context',
-        content: 'Deleted memory must not reach MAF.',
-        importance: '1.00',
-        status: 'deleted',
-        expiresAt: null,
-        supersededById: null,
-        createdAt: new Date('2026-08-06T17:59:00.000Z'),
-      },
-      {
-        id: 'memory-superseded',
-        tenantId: 'tenant-1',
-        userId: 'user-1',
-        category: 'project_context',
-        content: 'Superseded memory must not reach MAF.',
-        importance: '0.99',
-        status: 'active',
-        expiresAt: null,
-        supersededById: 'memory-active-13',
-        createdAt: new Date('2026-08-06T17:58:00.000Z'),
-      },
-      {
-        id: 'memory-expired',
-        tenantId: 'tenant-1',
-        userId: 'user-1',
-        category: 'project_context',
-        content: 'Expired memory must not reach MAF.',
-        importance: '0.98',
-        status: 'active',
-        expiresAt: new Date('2020-01-01T00:00:00.000Z'),
-        supersededById: null,
-        createdAt: new Date('2026-08-06T17:57:00.000Z'),
-      },
-      {
-        id: 'memory-other-tenant',
-        tenantId: 'tenant-2',
-        userId: 'user-1',
-        category: 'project_context',
-        content: 'Other tenant memory must not reach MAF.',
-        importance: '0.97',
-        status: 'active',
-        expiresAt: null,
-        supersededById: null,
-        createdAt: new Date('2026-08-06T17:56:00.000Z'),
-      },
-      {
-        id: 'memory-other-user',
-        tenantId: 'tenant-1',
-        userId: 'user-2',
-        category: 'project_context',
-        content: 'Other user memory must not reach MAF.',
-        importance: '0.96',
-        status: 'active',
-        expiresAt: null,
-        supersededById: null,
-        createdAt: new Date('2026-08-06T17:55:00.000Z'),
-      },
-      ...included.slice(1),
-    ];
-    const memoryCutoff = new Date('2026-08-06T18:00:00.000Z');
-    const memoryQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async (limit: number) =>
-        dbMemoryRows
-          .filter(
-            (row) =>
-              row.tenantId === 'tenant-1' &&
-              row.userId === 'user-1' &&
-              row.status === 'active' &&
-              !row.supersededById &&
-              (!row.expiresAt || row.expiresAt > memoryCutoff),
-          )
-          .sort(
-            (a, b) =>
-              Number(b.importance) - Number(a.importance) ||
-              b.createdAt.getTime() - a.createdAt.getTime() ||
-              b.id.localeCompare(a.id),
-          )
-          .slice(0, limit),
-      ),
-    };
-    const db = {
-      client: {
-        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
-      },
-    };
-    const { processor } = createProcessor({ agentRuntime, llmRunRepo, db });
-
-    await processor.process({
-      id: 'job-1',
-      name: 'process',
-      attemptsMade: 0,
-      data: jobData,
-    } as Job<ConversationJob>);
-
-    const request = (agentRuntime.processMessage.mock.calls as unknown as Array<[
-      { runtimeContext: { memoryItems: Array<{ id: string }> } },
-    ]>)[0][0];
-    expect(request.runtimeContext.memoryItems).toHaveLength(12);
-    expect(request.runtimeContext.memoryItems.map((item: { id: string }) => item.id)).toEqual([
-      'memory-active-13',
-      'memory-active-12',
-      'memory-active-11',
-      'memory-active-10',
-      'memory-active-9',
-      'memory-active-8',
-      'memory-active-7',
-      'memory-active-6',
-      'memory-active-5',
-      'memory-active-4',
-      'memory-active-3',
-      'memory-active-2',
-    ]);
-    expect(request.runtimeContext.memoryItems[0]).toEqual({
-      id: 'memory-active-13',
-      category: 'project_context',
-      content: 'Active memory 13',
-      importance: 0.99,
-    });
-    expect(request.runtimeContext.memoryItems).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'memory-deleted' }),
-        expect.objectContaining({ id: 'memory-superseded' }),
-        expect.objectContaining({ id: 'memory-expired' }),
-        expect.objectContaining({ id: 'memory-other-tenant' }),
-        expect.objectContaining({ id: 'memory-other-user' }),
-        expect.objectContaining({ id: 'memory-active-1' }),
-      ]),
-    );
-    expect(memoryQuery.limit).toHaveBeenCalledWith(12);
-  });
-
-  it('builds typed social reply context when the classifier returns social_checkin intent', async () => {
-    const agentRuntime = {
-      processMessage: vi.fn(async () => runtimeResult),
-    };
-    const currentQuery = {
-      from: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
-          occurredAt: new Date('2026-08-13T14:04:39.000Z'),
-          externalThreadId: null,
-          userPreferredName: 'Serhii',
-          userTimezone: 'Europe/Warsaw',
-          userLocale: 'ru-RU',
-        },
-      ]),
-    };
-    const recentQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
-          senderType: 'user',
-          direction: 'inbound',
-          occurredAt: new Date('2026-08-13T14:04:39.000Z'),
-        },
-      ]),
-    };
-    const memoryQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => []),
-    };
-    const db = {
-      client: {
-        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
-      },
-    };
-    const ai = {
-      classifySituation: vi.fn(async () => ({
-        ...runtimeResult.classification,
-        primaryIntent: 'social_checkin',
-        secondaryIntents: [],
-        emotionalState: ['neutral'],
-        urgency: 'low',
-        confidence: 0.94,
-        requiresSafetyCheck: false,
-        surveyAllowed: true,
-        reasoningSummary: 'The latest employee message is a social check-in.',
-        dialogueAct: 'social_checkin',
-        latestUserSubstance: null,
-        topicAnchor: null,
-      })),
-    };
-    const { processor } = createProcessor({ agentRuntime, db, ai });
-
-    await processor.process({
-      id: 'job-1',
-      name: 'process',
-      attemptsMade: 0,
-      data: jobData,
-    } as Job<ConversationJob>);
-
-    expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
-      messageText: 'как ты?',
-      runtimeContext: expect.objectContaining({
-        replyPlan: expect.objectContaining({
-          dialogueAct: 'social_checkin',
-          responseMove: 'social_reply',
-          questionPolicy: {
-            maxQuestions: 1,
-            reason: 'social_checkin_returns_question',
-          },
-          forbiddenMoves: expect.arrayContaining(['operational_status']),
-        }),
-        replyPolicy: {
-          maxChars: 120,
-          maxQuestions: 1,
-          allowReflectiveOpener: false,
-          allowListFormatting: false,
-        },
-      }),
-    }));
-  });
-
-  it('derives asked-recently reply planning only from outbound reply-shape metadata', async () => {
-    const agentRuntime = {
-      processMessage: vi.fn(async () => runtimeResult),
-    };
-    const currentQuery = {
-      from: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'same blocker',
-          occurredAt: new Date('2026-08-13T14:05:39.000Z'),
-          externalThreadId: null,
-          userPreferredName: 'Serhii',
-          userTimezone: 'Europe/Warsaw',
-          userLocale: 'ru-RU',
-        },
-      ]),
-    };
-    const recentQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'same blocker',
-          metadata: {},
-          senderType: 'user',
-          direction: 'inbound',
-          occurredAt: new Date('2026-08-13T14:05:39.000Z'),
-        },
-        {
-          text: 'what exactly is holding you back?',
-          metadata: { replyShape: { askedQuestion: true, maxQuestions: 1 } },
-          senderType: 'agent',
-          direction: 'outbound',
-          occurredAt: new Date('2026-08-13T14:04:39.000Z'),
-        },
-        {
-          text: 'older statement.',
-          metadata: { replyShape: { askedQuestion: false, maxQuestions: 0 } },
-          senderType: 'agent',
-          direction: 'outbound',
-          occurredAt: new Date('2026-08-13T14:03:39.000Z'),
-        },
-      ]),
-    };
-    const memoryQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => []),
-    };
-    const db = {
-      client: {
-        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
-      },
-    };
-    const ai = {
-      classifySituation: vi.fn(async () => ({
-        ...runtimeResult.classification,
-        dialogueAct: 'continuation',
-        latestUserSubstance: 'same blocker',
-        topicAnchor: 'blocker',
-      })),
-    };
-    const { processor } = createProcessor({ agentRuntime, db, ai });
-
-    await processor.process({
-      id: 'job-1',
-      name: 'process',
-      attemptsMade: 0,
-      data: jobData,
-    } as Job<ConversationJob>);
-
-    expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
-      runtimeContext: expect.objectContaining({
-        replyPlan: expect.objectContaining({
-          questionPolicy: {
-            maxQuestions: 0,
-            reason: 'asked_recently',
-          },
-        }),
-      }),
-    }));
-  });
-
-  it('marks reply planning unavailable when the typed classifier fails', async () => {
-    const agentRuntime = {
-      processMessage: vi.fn(async () => runtimeResult),
-    };
-    const llmRunRepo = {
-      record: vi.fn(async () => undefined),
-    };
-    const currentQuery = {
-      from: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
-          occurredAt: new Date('2026-08-13T13:18:26.000Z'),
-          externalThreadId: null,
-          userPreferredName: 'Test User',
-          userTimezone: 'Europe/Warsaw',
-          userLocale: 'ru',
-        },
-      ]),
-    };
-    const recentQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => [
-        {
-          text: 'как ты?\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
-          senderType: 'user',
-          direction: 'inbound',
-          occurredAt: new Date('2026-08-13T13:18:26.000Z'),
-        },
-      ]),
-    };
-    const memoryQuery = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn(async () => []),
-    };
-    const db = {
-      client: {
-        select: vi.fn().mockReturnValueOnce(currentQuery).mockReturnValueOnce(recentQuery).mockReturnValueOnce(memoryQuery),
-      },
-    };
-    const ai = {
-      classifySituation: vi.fn(async () => {
-        throw new Error('classifier schema mismatch');
-      }),
-    };
-    const { processor } = createProcessor({ agentRuntime, llmRunRepo, db, ai });
-
-    await processor.process({
-      id: 'job-1',
-      name: 'process',
-      attemptsMade: 0,
-      data: jobData,
-    } as Job<ConversationJob>);
-
-    expect(agentRuntime.processMessage).toHaveBeenCalledWith(expect.objectContaining({
-      messageText: 'как ты?',
-      runtimeContext: expect.objectContaining({
-        replyPlanning: {
-          status: 'unavailable',
-          reason: 'classifier_failed',
-        },
-      }),
+    expect(agentRuntime.processMessage).not.toHaveBeenCalled();
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'error',
+      traceId: 'trace-1',
     }));
   });
 

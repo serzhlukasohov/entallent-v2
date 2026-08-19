@@ -450,7 +450,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     expect(strategyArg.includeFollowUpQuestion).toBe(true);
   });
 
-  it('persists reply-shape metadata from the typed reply plan', async () => {
+  it('persists privacy-safe decision metadata from the typed reply plan', async () => {
     const m = baseMocks();
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -459,13 +459,80 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     await orch.orchestrate(INPUT);
     expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
       metadata: {
+        measurementVersion: 'ts-conversation-decision-v1',
+        dialogueAct: 'new_substance',
+        responseMove: 'address_new_substance',
         replyShape: {
           askedQuestion: true,
           maxQuestions: 1,
           questionPolicyReason: 'new_substance_allows_question',
         },
+        languagePolicy: {
+          responseLanguage: 'en',
+          source: 'user_profile',
+        },
+        isSessionStart: true,
+        memoryGrounding: {
+          used: false,
+          count: 0,
+        },
+        containsSurveyProbe: false,
       },
     }));
+  });
+
+  it('records memory grounding usage without persisting memory or topic text', async () => {
+    const m = baseMocks();
+    const memoryRepo = {
+      findActiveByUser: vi.fn().mockResolvedValue([
+        {
+          id: 'memory-1',
+          tenantId: 't-1',
+          userId: 'u-1',
+          category: 'concern',
+          content: 'Private Project Atlas concern',
+          importance: 0.9,
+          status: 'active',
+        },
+      ]),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: ['worried'],
+      urgency: 'low',
+      confidence: 0.9,
+      surveyAllowed: true,
+      requiresSafetyCheck: false,
+      reasoningSummary: 'test-only classifier output',
+      reminderRequest: null,
+      dialogueAct: 'emotional_disclosure',
+      latestUserSubstance: 'I am worried',
+      topicAnchor: 'Private topic anchor',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, memoryRepo, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const metadata = m.conversationRepo.saveMessage.mock.calls[0][0].metadata;
+    expect(metadata.memoryGrounding).toEqual({ used: true, count: 1 });
+    expect(Object.keys(metadata).sort()).toEqual([
+      'containsSurveyProbe',
+      'dialogueAct',
+      'isSessionStart',
+      'languagePolicy',
+      'measurementVersion',
+      'memoryGrounding',
+      'replyShape',
+      'responseMove',
+    ]);
+    expect(JSON.stringify(metadata)).not.toContain('Private Project Atlas concern');
+    expect(JSON.stringify(metadata)).not.toContain('Private topic anchor');
+    expect(JSON.stringify(metadata)).not.toContain('test-only classifier output');
   });
 
   it('does not shorten for a non-terse user (verbosity near base)', async () => {

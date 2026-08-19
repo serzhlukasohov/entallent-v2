@@ -32,6 +32,7 @@ export type OrchestrateInput = ProcessMessageRequest;
 export type OrchestrateResult = ProcessMessageResult;
 
 const TZ_REFRESH_DAYS = 30;
+const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
 
 export class ConversationOrchestrator {
   constructor(
@@ -275,10 +276,11 @@ export class ConversationOrchestrator {
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
     const strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
+    const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
-      languagePolicy: resolveLanguagePolicy(turns, conversation.userLocale),
+      languagePolicy,
       memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
       reminderConfirmation,
       surveyProbeQuestion: probeQuestion
@@ -303,13 +305,13 @@ export class ConversationOrchestrator {
       text: generated.text,
       occurredAt: new Date(),
       traceId: input.traceId,
-      metadata: generated.containsSurveyProbe
-        ? {
-            containsSurveyProbe: true,
-            surveyProbeQuestionId: generated.surveyProbeQuestionId,
-            ...replyShapeMetadata(replyPlan),
-          }
-        : replyShapeMetadata(replyPlan),
+      metadata: conversationDecisionMetadata({
+        replyPlan,
+        languagePolicy,
+        isSessionStart: sessionStart,
+        containsSurveyProbe: generated.containsSurveyProbe === true,
+        surveyProbeQuestionId: generated.surveyProbeQuestionId,
+      }),
     });
 
     if (surfacedGroup && this.surveyRepo) {
@@ -588,6 +590,39 @@ function replyShapeMetadata(plan: ResponseContext['replyPlan']): Record<string, 
       maxQuestions: plan.questionPolicy.maxQuestions,
       questionPolicyReason: plan.questionPolicy.reason,
     },
+  };
+}
+
+function conversationDecisionMetadata(input: {
+  replyPlan: ResponseContext['replyPlan'];
+  languagePolicy: ResponseContext['languagePolicy'];
+  isSessionStart: boolean;
+  containsSurveyProbe: boolean;
+  surveyProbeQuestionId?: string;
+}): Record<string, unknown> {
+  const groundingCount = input.replyPlan?.requiredGrounding.length ?? 0;
+  return {
+    measurementVersion: CONVERSATION_DECISION_MEASUREMENT_VERSION,
+    ...(input.replyPlan
+      ? {
+          dialogueAct: input.replyPlan.dialogueAct,
+          responseMove: input.replyPlan.responseMove,
+        }
+      : {}),
+    ...replyShapeMetadata(input.replyPlan),
+    languagePolicy: {
+      responseLanguage: input.languagePolicy.responseLanguage,
+      source: input.languagePolicy.source,
+    },
+    isSessionStart: input.isSessionStart,
+    memoryGrounding: {
+      used: groundingCount > 0,
+      count: groundingCount,
+    },
+    containsSurveyProbe: input.containsSurveyProbe,
+    ...(input.surveyProbeQuestionId
+      ? { surveyProbeQuestionId: input.surveyProbeQuestionId }
+      : {}),
   };
 }
 
