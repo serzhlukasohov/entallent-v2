@@ -120,6 +120,7 @@ export class ConversationOrchestrator {
     const classification: SituationClassification = SAFETY_INTENTS.has(rawClassification.primaryIntent)
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
+    const pauseTurn = classification.dialogueAct === 'closing' || classification.dialogueAct === 'acknowledgement';
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
 
@@ -156,7 +157,7 @@ export class ConversationOrchestrator {
 
     // Risk check and probe lookup are independent — run in parallel.
     // Probe is fetched speculatively when classify says it's allowed; discarded if risk blocks it.
-    const speculativeProbeAllowed = surveyEnabled && probePacingAllows && classification.surveyAllowed;
+    const speculativeProbeAllowed = !pauseTurn && surveyEnabled && probePacingAllows && classification.surveyAllowed;
     const [risk, speculativeProbe] = await Promise.all([
       classification.requiresSafetyCheck
         ? this.aiProvider.detectRisk(turns, { userName })
@@ -169,7 +170,7 @@ export class ConversationOrchestrator {
     // reply, weave a confirm-only message into THIS reply.
     let confirmationRequest: ResponseContext['confirmationRequest'];
     let surfacedGroup: string | undefined;
-    if (this.surveyRepo && !confirmationHandled && !phaseB.awaitingPresent) {
+    if (this.surveyRepo && !pauseTurn && !confirmationHandled && !phaseB.awaitingPresent) {
       const pending = await this.surveyRepo.findPendingConfirmationGroups(userId);
       if (pending.length > 0) {
         const group = pending[0];
@@ -296,6 +297,7 @@ export class ConversationOrchestrator {
       replyBrief: replyPlan,
       replyPlan,
     });
+    const containsSurveyProbe = !pauseTurn && generated.containsSurveyProbe === true;
 
     const outbound = await this.conversationRepo.saveMessage({
       conversationId,
@@ -307,10 +309,12 @@ export class ConversationOrchestrator {
       traceId: input.traceId,
       metadata: conversationDecisionMetadata({
         replyPlan,
+        responseText: generated.text,
+        confirmationRequest: confirmationRequest !== undefined,
         languagePolicy,
         isSessionStart: sessionStart,
-        containsSurveyProbe: generated.containsSurveyProbe === true,
-        surveyProbeQuestionId: generated.surveyProbeQuestionId,
+        containsSurveyProbe,
+        surveyProbeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId : undefined,
       }),
     });
 
@@ -582,19 +586,25 @@ function applyReplyPlanToStrategy(strategy: ReplyStrategy, plan: ResponseContext
   return { ...strategy, includeFollowUpQuestion: false };
 }
 
-function replyShapeMetadata(plan: ResponseContext['replyPlan']): Record<string, unknown> | undefined {
-  if (!plan) return undefined;
+function replyShapeMetadata(
+  plan: ResponseContext['replyPlan'],
+  responseText: string,
+  confirmationRequest: boolean,
+): Record<string, unknown> | undefined {
+  if (!plan && !confirmationRequest) return undefined;
   return {
     replyShape: {
-      askedQuestion: plan.questionPolicy.maxQuestions > 0,
-      maxQuestions: plan.questionPolicy.maxQuestions,
-      questionPolicyReason: plan.questionPolicy.reason,
+      askedQuestion: /[?;՞؟፧᥅⁇⁈⁉⸮﹖？❓❔]/u.test(responseText),
+      maxQuestions: plan?.questionPolicy.maxQuestions ?? 1,
+      questionPolicyReason: plan?.questionPolicy.reason ?? 'confirmation_requires_question',
     },
   };
 }
 
 function conversationDecisionMetadata(input: {
   replyPlan: ResponseContext['replyPlan'];
+  responseText: string;
+  confirmationRequest: boolean;
   languagePolicy: ResponseContext['languagePolicy'];
   isSessionStart: boolean;
   containsSurveyProbe: boolean;
@@ -609,7 +619,7 @@ function conversationDecisionMetadata(input: {
           responseMove: input.replyPlan.responseMove,
         }
       : {}),
-    ...replyShapeMetadata(input.replyPlan),
+    ...replyShapeMetadata(input.replyPlan, input.responseText, input.confirmationRequest),
     languagePolicy: {
       responseLanguage: input.languagePolicy.responseLanguage,
       source: input.languagePolicy.source,

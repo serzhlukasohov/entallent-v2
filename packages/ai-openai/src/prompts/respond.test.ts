@@ -204,13 +204,87 @@ describe('buildRespondSystemPrompt reply plan', () => {
 
     expect(p).toContain('Reply plan');
     expect(p).toContain('dialogueAct: acknowledgement');
-    expect(p).toContain('Latest employee substance: none');
-    expect(p).toContain('the release shipped over the weekend');
-    expect(p).toContain('Relevant memory anchors');
-    expect(p).toContain('will monitor the release over the weekend');
+    expect(p).toContain('Latest employee substance: omitted because the typed pause act controls this turn');
+    expect(p).not.toContain('the release shipped over the weekend');
+    expect(p).not.toContain('Relevant memory anchors');
+    expect(p).not.toContain('will monitor the release over the weekend');
     expect(p).toContain('Question policy (hard contract): ask zero questions this turn');
+    expect(p).toContain('Acknowledgement contract: use one brief, natural backchannel or pause');
+    expect(p).toContain('overrides the general instructions to engage, add something, push back, or follow side remarks');
+    expect(p).toContain('Do not restate the topic, recall memory, add a new angle, restart coaching, or ask a question');
     expect(p).toMatch(/Do not infer mood, impatience, depth, personality, or unstated meaning/i);
     expect(p).toMatch(/Do not mention their brevity, one-word answer, or short wording/i);
+  });
+
+  it('renders closing turns as a brief pause without memory or a new question', () => {
+    const p = buildRespondSystemPrompt(s(), context({
+      userName: 'T',
+      memoryContext: {
+        items: [{ id: 'm-1', category: 'commitment', content: 'private release memory', importance: 0.9 }],
+        goals: [],
+      },
+      replyPlan: {
+        dialogueAct: 'closing',
+        latestUserSubstance: null,
+        topicAnchor: 'the release',
+        memoryAnchors: [{ category: 'commitment', content: 'private release memory' }],
+        responseMove: 'close_or_pause',
+        mayInferFromBrevity: false,
+        questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+        requiredGrounding: [],
+        forbiddenMoves: ['comment_on_brevity', 'survey_probe'],
+      },
+    }));
+
+    expect(p).toContain('Closing contract: use a brief, natural sign-off or pause');
+    expect(p).toContain('Do not reopen the topic, recall memory, introduce a new angle or survey interaction, or ask a question');
+    expect(p).not.toContain('private release memory');
+    expect(p).not.toContain('the release');
+    expect(p).toContain('Question policy (hard contract): ask zero questions this turn');
+  });
+
+  it('does not expose inconsistent classifier substance on an acknowledgement pause', () => {
+    const p = buildRespondSystemPrompt(s(), context({
+      userName: 'T',
+      replyPlan: {
+        dialogueAct: 'acknowledgement',
+        latestUserSubstance: 'classifier-only substance must not steer the reply',
+        topicAnchor: null,
+        memoryAnchors: [],
+        responseMove: 'continue_existing_thread',
+        mayInferFromBrevity: true,
+        questionPolicy: { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' },
+        requiredGrounding: [],
+        forbiddenMoves: ['survey_probe'],
+      },
+    }));
+
+    expect(p).not.toContain('classifier-only substance must not steer the reply');
+    expect(p).toContain('Acknowledgement contract');
+  });
+
+  it('lets a safety response move override the closing pause contract', () => {
+    const crisis: ReplyStrategy = {
+      mode: 'crisis', tone: 'empathetic', includeFollowUpQuestion: false,
+      maxResponseLength: 'short', forbiddenPatterns: ['survey'],
+    };
+    const p = buildRespondSystemPrompt(crisis, context({
+      userName: 'T',
+      replyPlan: {
+        dialogueAct: 'closing',
+        latestUserSubstance: null,
+        topicAnchor: 'immediate danger',
+        memoryAnchors: [],
+        responseMove: 'support_emotion',
+        mayInferFromBrevity: false,
+        questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+        requiredGrounding: [],
+        forbiddenMoves: ['diagnose', 'action_plan', 'survey_probe'],
+      },
+    }));
+
+    expect(p).toContain('Support-emotion contract');
+    expect(p).not.toContain('Closing contract');
   });
 
   it('renders required memory grounding as a hard contract', () => {

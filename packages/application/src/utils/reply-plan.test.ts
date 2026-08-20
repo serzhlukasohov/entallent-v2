@@ -180,6 +180,57 @@ describe('buildReplyPlan', () => {
     ]);
   });
 
+  it('closes without reopening the conversation', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'closing',
+        latestUserSubstance: null,
+        topicAnchor: 'the release',
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief.responseMove).toBe('close_or_pause');
+    expect(brief.questionPolicy).toEqual({
+      maxQuestions: 0,
+      reason: 'strategy_disallows_questions',
+    });
+  });
+
+  it('keeps acknowledgements question-free even when classifier substance is inconsistent', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'acknowledgement',
+        latestUserSubstance: 'inconsistent classifier output',
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief.questionPolicy).toEqual({
+      maxQuestions: 0,
+      reason: 'acknowledgement_no_new_substance',
+    });
+  });
+
+  it('lets safety support override a closing pause without adding a question', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'closing',
+        latestUserSubstance: null,
+        topicAnchor: 'immediate danger',
+      }),
+      includeFollowUpQuestion: false,
+      sensitiveMode: true,
+    });
+
+    expect(brief.responseMove).toBe('support_emotion');
+    expect(brief.questionPolicy).toEqual({
+      maxQuestions: 0,
+      reason: 'strategy_disallows_questions',
+    });
+    expect(brief.requiredGrounding).toEqual([]);
+  });
+
   it('removes questions after a recent question on non-new-substance turns', () => {
     const brief = buildReplyPlan({
       classification: base({

@@ -16,11 +16,11 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
-## 2026-08-19: TS quality baseline gate exposes memory and terse-turn failures
-- Symptom: `SIM_GATE_RUNS=1 pnpm sim:gate` passed six scenarios but failed memory recall's required grounding assertion and the terse-user judge; the console mislabeled the memory assertion as `infra_failed`.
-- Expected: The baseline gate should distinguish product assertions from infrastructure failures and eventually pass the memory/turn-taking scenarios consistently.
+## 2026-08-19: TS quality gate misclassifies repeated memory assertion
+- Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console again mislabeled the product assertion as `infra_failed`, causing an unnecessary retry.
+- Expected: The gate should report the memory assertion as a hard product failure without an infrastructure retry; turn-taking scenarios should remain green.
 - Root cause layer: verification
-- Harness fix: Correct the gate failure classification and use Story 11.2 to address terse question pacing; re-evaluate memory grounding without expanding Story 11.1.
+- Harness fix: Classify scenario assertion failures separately from model/network failures in the gate runner; address memory grounding in its own story rather than expanding Story 11.2.
 - Regression check: `SIM_GATE_RUNS=1 pnpm sim:gate`
 - Status: open
 
@@ -32,22 +32,46 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: `agent-service/.venv/bin/pytest agent-service/tests/unit/test_runtime_contract.py::test_python_service_packages_shared_runtime_openapi_schema -q`
 - Status: open
 
-## 2026-08-18: classifier emits unsupported closing intent
-- Symptom: Live Slack closing turn ("Спасибо, пока достаточно. Вернусь к этому позже.") was retried three times and produced no outbound reply.
-- Expected: Closing/stop-style turns should either map to an existing supported intent (for example `casual_conversation`) with a short close, or be handled as intentional no-follow-up without failing the job.
-- Root cause layer: architecture
-- Harness fix: Add a production-shaped classifier contract regression for closing turns and decide whether closing is a first-class intent or a dialogue act only.
-- Regression check: `pnpm --filter @entalent/ai-openai test -- openai-provider.test.ts` plus `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts`
-- Status: open
-
 ## Fixed Failures
 
-## 2026-08-19: TSX IPC socket blocked by the workspace sandbox
-- Symptom: direct `pnpm exec tsx ...` verification failed with `listen EPERM` for its temporary IPC socket.
-- Expected: local script tests and migrations should run without being mistaken for product failures.
+## 2026-08-20: TSX IPC socket blocks full pre-push inside sandbox
+- Symptom: `pnpm prepush` passed monorepo typecheck, lint, and package tests, then `test:scripts` failed with `listen EPERM` for the TSX IPC socket.
+- Expected: Complete script-test verification despite the sandbox IPC restriction.
 - Root cause layer: environment
-- Harness fix: Run TSX-backed verification outside the filesystem sandbox with the scoped `pnpm exec tsx` approval.
-- Regression check: `pnpm exec tsx scripts/typescript-conversation-decision-report.test.ts`
+- Harness fix: Rerun the scoped `pnpm test:scripts` check outside the sandbox when TSX IPC is denied; the outside-sandbox verification passed.
+- Regression check: `pnpm test:scripts`
+- Status: fixed
+
+## 2026-08-19: Story 11.2 consumer typecheck read stale declarations
+- Symptom: The focused `ai-openai` typecheck rejected new `ReplyPlan` reasons before `application` declarations were rebuilt.
+- Expected: Consumer verification should use declarations generated from the current source.
+- Root cause layer: workflow
+- Harness fix: Build changed upstream packages before focused consumer typechecks, or use root `pnpm typecheck` which orders the dependency graph.
+- Regression check: `pnpm --filter @entalent/application build` then `pnpm --filter @entalent/ai-openai typecheck`
+- Status: fixed
+
+## 2026-08-19: Story 11.2 test mock missed lint suppression
+- Symptom: The first full pre-push stopped on one new `as any` test mock without the repository's required local ESLint suppression.
+- Expected: Focused implementation verification should catch lint errors before the broad handoff check.
+- Root cause layer: verification
+- Harness fix: Run lint for each changed package after focused tests and before the full pre-push.
+- Regression check: `pnpm --filter @entalent/application lint`
+- Status: fixed
+
+## 2026-08-19: Cross-contract rollback left one stale test reason
+- Symptom: After removing two story-local reason enums to avoid MAF/OpenAPI expansion, one reply-plan test still expected the removed acknowledgement reason.
+- Expected: Mechanical contract rollback should update every source and test occurrence before verification.
+- Root cause layer: workflow
+- Harness fix: Run an exact removed-symbol scan before rerunning focused tests.
+- Regression check: `rg 'acknowledgement_pauses_conversation|closing_ends_conversation' packages`
+- Status: fixed
+
+## 2026-08-18: classifier emits unsupported closing intent
+- Symptom: Live Slack closing turn ("Спасибо, пока достаточно. Вернусь к этому позже.") was retried three times and produced no outbound reply.
+- Expected: Closing/stop-style turns should map to a valid intent and produce a short, question-free close.
+- Root cause layer: architecture
+- Harness fix: Normalize known misplaced dialogue-act labels at the classifier boundary and keep closing as a typed `dialogueAct`.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- openai-provider.test.ts` plus `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts`
 - Status: fixed
 
 ## 2026-08-18: Slack connector attribution flipped ambiguous turn language

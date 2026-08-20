@@ -2,6 +2,8 @@ import OpenAI, { AzureOpenAI } from 'openai';
 import { CircuitBreaker } from './circuit-breaker';
 import {
   SituationClassificationSchema,
+  SituationIntentSchema,
+  DialogueActSchema,
   RiskDetectionSchema,
   MemoryItemProposalSchema,
   GoalProposalSchema,
@@ -70,8 +72,11 @@ export interface AzureOpenAiConfig {
 
 export type OpenAiProviderConfig = DirectOpenAiConfig | AzureOpenAiConfig;
 
-const QUESTION_RETRY_INSTRUCTION =
-  '\n\nYour previous draft ended with a question. This turn must NOT ask one — respond to what they said and leave the space open. Remove the trailing question.';
+function questionRetryInstruction(maxQuestions: 0 | 1): string {
+  return maxQuestions === 0
+    ? '\n\nYour previous draft asked a question. This turn must ask none — rewrite without any question anywhere in the reply.'
+    : '\n\nYour previous draft asked more than one question. Rewrite with at most one question in the entire reply.';
+}
 
 /** Firm rewrite instruction when a reply overruns its length budget. */
 function lengthRetryInstruction(maxChars: number): string {
@@ -96,12 +101,12 @@ function maxReplyChars(strategy: ReplyStrategy, context: ResponseContext): numbe
   }
 }
 
-/** True when the reply's final visible character is a question mark (allowing closing quotes/brackets). */
-function endsWithQuestion(text: string): boolean {
-  return /\?["'”’)\]]*\s*$/.test(text.trim());
+function countQuestionGroups(text: string): number {
+  return text.match(/[?;՞؟፧᥅⁇⁈⁉⸮﹖？❓❔]+/gu)?.length ?? 0;
 }
 
 function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext): 0 | 1 {
+  if (context.confirmationRequest) return 1;
   const replyPlan = context.replyPlan ?? context.replyBrief;
   if (replyPlan) return replyPlan.questionPolicy.maxQuestions;
   return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
@@ -162,7 +167,18 @@ export class OpenAiProvider implements AiProviderPort {
       2048,
       0,
     );
-    return SituationClassificationSchema.parse(JSON.parse(raw));
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      if (
+        !SituationIntentSchema.safeParse(record['primaryIntent']).success &&
+        DialogueActSchema.safeParse(record['primaryIntent']).success &&
+        DialogueActSchema.safeParse(record['dialogueAct']).success
+      ) {
+        record['primaryIntent'] = 'casual_conversation';
+      }
+    }
+    return SituationClassificationSchema.parse(parsed);
   }
 
   async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
@@ -227,21 +243,19 @@ export class OpenAiProvider implements AiProviderPort {
       JSON.parse(await this.complete(system, user, this.generationModel)),
     );
 
-    // Confirmation replies legitimately paraphrase understanding and end with a question —
-    // exempt them from every post-generation gate.
-    if (context.confirmationRequest) return first;
-
     // Deterministic invariants the persona won't respect from a soft prompt hint. Collect
     // what fired, do ONE corrective regeneration addressing all of it, and return unconditionally.
     const retries: string[] = [];
-    if (first.text.length > maxReplyChars(strategy, context)) {
+    if (!context.confirmationRequest && first.text.length > maxReplyChars(strategy, context)) {
       retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
     }
-    if (maxAllowedQuestions(strategy, context) === 0 && endsWithQuestion(first.text)) {
-      retries.push(QUESTION_RETRY_INSTRUCTION);
+    const maxQuestions = maxAllowedQuestions(strategy, context);
+    if (countQuestionGroups(first.text) > maxQuestions) {
+      retries.push(questionRetryInstruction(maxQuestions));
     }
     if (retries.length === 0) return first;
 
+    // ponytail: one corrective draft bounds latency/cost; validate the second draft if escaped violations become observable.
     return GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system + retries.join(''), user, this.generationModel)),
     );

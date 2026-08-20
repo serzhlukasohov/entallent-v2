@@ -192,6 +192,10 @@ The MAF runtime can process one inbound conversation turn behind the HTTP client
 The team can decide whether MAF is safe to expose to users using regression gates, safety/privacy/consent preservation checks, and staged rollout controls.
 **FRs covered:** FR17, FR27, FR28, FR29.
 
+### Epic 11: TypeScript Mentor Conversation Quality
+The production TypeScript mentor gains a simpler hot path, natural turn-taking, minimal continuity, and consent-based follow-ups measured from existing product data.
+**FRs covered:** Existing conversation, memory, survey, safety, and proactive behavior; no new product surface.
+
 ## Epic 1: Runtime Boundary And Operator Control
 
 Operators can keep the current TypeScript runtime as the default, route each conversation job through a runtime router, and disable all MAF behavior safely with a kill switch.
@@ -719,3 +723,75 @@ So that future migration steps do not accidentally introduce dual writers.
 **Given** a future story proposes moving aggregate ownership to Python
 **When** the architecture rules are applied
 **Then** it requires an explicit ownership-transfer AD before Python writes that aggregate.
+
+## Epic 11: TypeScript Mentor Conversation Quality
+
+Improve the production TypeScript mentor in small measurable slices without building a new runtime, dialogue engine, state table, or analytics platform.
+
+### Story 11.1: Establish Direct TypeScript Path And Quality Baseline
+
+As a product owner,
+I want each inbound turn to use one TypeScript orchestration path with privacy-safe decision evidence,
+So that the mentor is simpler and later conversation changes can be measured.
+
+**Acceptance Criteria:**
+
+**Given** an eligible inbound conversation job
+**When** the worker processes it
+**Then** `ConversationProcessor` invokes `ConversationOrchestrator` directly without preliminary MAF context hydration or duplicate classification.
+
+**Given** a TypeScript reply is committed
+**When** decision metadata and the tenant report are inspected
+**Then** they use existing typed decisions and PostgreSQL tables without storing private text or introducing a schema or analytics platform.
+
+### Story 11.2: Make Turn-Taking Natural And Reliable
+
+As an employee,
+I want acknowledgements and closing turns to end naturally without another coaching question,
+So that the mentor feels attentive instead of interrogative.
+
+**Acceptance Criteria:**
+
+**Given** the classifier returns a closing dialogue act or an unsupported dialogue-act label in `primaryIntent`
+**When** the turn reaches the TypeScript classifier trust boundary
+**Then** the product receives a valid intent and preserves the authoritative dialogue act without failing the job.
+
+**Given** a closing or no-substance acknowledgement
+**When** `ReplyPlan` is built and the response is validated
+**Then** the question budget is zero and the reply does not restart coaching.
+
+**Given** any reply plan allows at most one question
+**When** the renderer returns text
+**Then** the whole reply respects that budget rather than checking only its final character.
+
+### Story 11.3: Persist Minimal Continuity And Use Real Goals
+
+As an employee,
+I want the mentor to remember the relevant thread and my active goals without hijacking a new topic,
+So that conversations continue naturally across sittings.
+
+**Acceptance Criteria:**
+
+**Given** a conversation has one relevant open or parked thread
+**When** a later inbound turn re-enters that territory
+**Then** minimal dialogue state from existing `conversations.active_topic` can ground the reply.
+
+**Given** active goals exist
+**When** the orchestrator prepares context
+**Then** existing goal repository data is available but does not set an unrelated inbound agenda.
+
+### Story 11.4: Require Consent For Loops And Share Proactive Initiative
+
+As an employee,
+I want reminders and mentoring loops created only with my consent and proactive messages limited to one initiative,
+So that the mentor remains trustworthy and non-intrusive.
+
+**Acceptance Criteria:**
+
+**Given** the model proposes a follow-up without explicit user consent
+**When** TypeScript evaluates the candidate
+**Then** no scheduled action is created.
+
+**Given** reminders, due loops, parked threads, and warm check-ins compete for outreach
+**When** proactive policy selects an action
+**Then** one shared daily initiative budget and stable reason priority are enforced.

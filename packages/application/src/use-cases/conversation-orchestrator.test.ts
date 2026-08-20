@@ -58,6 +58,9 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
       { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', aiSummary: 's' },
     ]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Did I get that right?', confidence: 0.9, containsSurveyProbe: false,
+    });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
       undefined, undefined, m.featureFlags, undefined, undefined,
@@ -68,6 +71,12 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(ctxArg.confirmationRequest).toMatchObject({ questionGroup: 'autonomy' });
     expect(ctxArg.surveyProbeQuestion).toBeUndefined();
+    const metadata = m.conversationRepo.saveMessage.mock.calls[0][0].metadata;
+    expect(metadata.replyShape).toMatchObject({
+      askedQuestion: true,
+      maxQuestions: 1,
+      questionPolicyReason: 'confirmation_requires_question',
+    });
     expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
       expect.objectContaining({ questionGroup: 'autonomy', status: 'awaiting_confirmation' }),
     );
@@ -110,6 +119,37 @@ describe('ConversationOrchestrator deterministic safety pass', () => {
     expect(m.aiProvider.detectRisk).not.toHaveBeenCalled();
     expect(result.classification.requiresSafetyCheck).toBe(false);
   });
+
+  it('keeps safety support authoritative when the dialogue act is closing', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'potential_crisis', secondaryIntents: [], urgency: 'critical',
+      emotionalState: ['unsafe'], confidence: 0.9, reasoningSummary: 'risk',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'closing', latestUserSubstance: null, topicAnchor: 'immediate danger',
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity: 'critical', riskType: 'self_harm', confidence: 0.9,
+      surveyMustBeBlocked: true, immediateResponseRequired: true,
+      escalationRecommended: true, proactiveMessagesMustBePaused: true,
+      evidence: [], reasoningSummary: 'risk',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(strategyArg.mode).toBe('crisis');
+    expect(ctxArg.replyPlan).toMatchObject({
+      dialogueAct: 'closing',
+      responseMove: 'support_emotion',
+      questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+    });
+  });
 });
 
 describe('ConversationOrchestrator reply plan', () => {
@@ -149,6 +189,62 @@ describe('ConversationOrchestrator reply plan', () => {
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     expect(strategyArg.includeFollowUpQuestion).toBe(false);
   });
+
+  it.each(['acknowledgement', 'closing'] as const)(
+    'does not surface a new survey interaction on a %s turn',
+    async (dialogueAct) => {
+      const m = baseMocks();
+      m.conversationRepo.findRecentMessages.mockResolvedValue([
+        { id: 'm-0', direction: 'inbound', text: 'one', occurredAt: new Date(), metadata: undefined },
+        { id: 'm-1', direction: 'inbound', text: 'two', occurredAt: new Date(), metadata: undefined },
+        { id: 'm-2', direction: 'inbound', text: 'done', occurredAt: new Date(), metadata: undefined },
+      ]);
+      m.aiProvider.classifySituation.mockResolvedValue({
+        primaryIntent: 'casual_conversation',
+        secondaryIntents: [],
+        emotionalState: [],
+        urgency: 'low',
+        confidence: 0.9,
+        surveyAllowed: true,
+        requiresSafetyCheck: false,
+        reasoningSummary: 'pause',
+        reminderRequest: null,
+        dialogueAct,
+        latestUserSubstance: null,
+        topicAnchor: 'the release',
+      });
+      m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+        { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', aiSummary: 'summary' },
+      ]);
+      const pulseBacklog = {
+        getNextProbeQuestion: vi.fn().mockResolvedValue({
+          question: { id: 'probe-1', probeStrategies: ['ask about autonomy'] },
+        }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any;
+      m.aiProvider.generateResponse.mockResolvedValue({
+        text: 'Done.',
+        confidence: 0.9,
+        containsSurveyProbe: true,
+        surveyProbeQuestionId: 'hallucinated-probe',
+      });
+      const orch = new ConversationOrchestrator(
+        m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+        undefined, undefined, m.featureFlags, undefined, pulseBacklog,
+      );
+
+      await orch.orchestrate(INPUT);
+
+      const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+      expect(ctxArg.confirmationRequest).toBeUndefined();
+      expect(ctxArg.surveyProbeQuestion).toBeUndefined();
+      expect(m.surveyRepo.findPendingConfirmationGroups).not.toHaveBeenCalled();
+      expect(pulseBacklog.getNextProbeQuestion).not.toHaveBeenCalled();
+      const metadata = m.conversationRepo.saveMessage.mock.calls[0][0].metadata;
+      expect(metadata.containsSurveyProbe).toBe(false);
+      expect(metadata.surveyProbeQuestionId).toBeUndefined();
+    },
+  );
 });
 
 describe('ConversationOrchestrator language policy', () => {
@@ -463,7 +559,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
         dialogueAct: 'new_substance',
         responseMove: 'address_new_substance',
         replyShape: {
-          askedQuestion: true,
+          askedQuestion: false,
           maxQuestions: 1,
           questionPolicyReason: 'new_substance_allows_question',
         },
@@ -479,6 +575,24 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
         containsSurveyProbe: false,
       },
     }));
+  });
+
+  it('records an Armenian question mark in decision metadata', async () => {
+    const m = baseMocks();
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'What changes next՞',
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const metadata = m.conversationRepo.saveMessage.mock.calls[0][0].metadata;
+    expect(metadata.replyShape).toMatchObject({ askedQuestion: true, maxQuestions: 1 });
   });
 
   it('records memory grounding usage without persisting memory or topic text', async () => {

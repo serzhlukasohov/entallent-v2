@@ -109,6 +109,36 @@ describe('OpenAiProvider.classifySituation', () => {
       max_completion_tokens: 2048,
     });
   });
+
+  it('normalizes only known dialogue acts misplaced in primaryIntent', async () => {
+    const classification = {
+      secondaryIntents: [],
+      emotionalState: ['neutral'],
+      urgency: 'low',
+      confidence: 0.94,
+      requiresSafetyCheck: false,
+      surveyAllowed: true,
+      reasoningSummary: 'The employee is wrapping up.',
+      reminderRequest: null,
+      dialogueAct: 'closing',
+      latestUserSubstance: null,
+      topicAnchor: 'the release',
+    };
+    createMock
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ ...classification, primaryIntent: 'closing' }) } }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ ...classification, primaryIntent: 'unknown_label' }) } }],
+      });
+    const provider = makeProvider();
+
+    const normalized = await provider.classifySituation(turns, { userName: 'X' });
+
+    expect(normalized.primaryIntent).toBe('casual_conversation');
+    expect(normalized.dialogueAct).toBe('closing');
+    await expect(provider.classifySituation(turns, { userName: 'X' })).rejects.toThrow();
+  });
 });
 
 function replyPlan(maxQuestions: 0 | 1): NonNullable<ResponseContext['replyPlan']> {
@@ -227,6 +257,50 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     );
     expect(createMock).toHaveBeenCalledTimes(2);
     expect(res.text).toBe('Makes sense.');
+  });
+
+  it('regenerates for an embedded Armenian question mark on a zero-question turn', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Why՞ I will leave it there.', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'I will leave it there.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(turns, shortNoQuestion, responseContext({ userName: 'X' }));
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('I will leave it there.');
+  });
+
+  it('regenerates when a one-question turn contains two question groups', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What changed? What comes next?', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What comes next?', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(
+      turns,
+      shortNoQuestion,
+      responseContext({ userName: 'X', replyPlan: replyPlan(1) }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('What comes next?');
+  });
+
+  it('regenerates a confirmation with more than one Unicode question group', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Really？？ Did I get that right؟', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Did I get that right؟', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('Did I get that right؟');
   });
 
   it('uses typed replyPlan question policy instead of the legacy strategy flag', async () => {

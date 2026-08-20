@@ -19,12 +19,13 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
   const dialogueAct = classification.dialogueAct;
   const latestUserSubstance = classification.latestUserSubstance?.trim() || null;
   const topicAnchor = classification.topicAnchor?.trim() || null;
-  const memoryAnchors = selectMemoryAnchors(input.memoryItems ?? []);
-  const responseMove = responseMoveFor(dialogueAct);
+  const safetyOverridesPause = (input.sensitiveMode ?? false) &&
+    (dialogueAct === 'closing' || dialogueAct === 'acknowledgement');
+  const memoryAnchors = safetyOverridesPause ? [] : selectMemoryAnchors(input.memoryItems ?? []);
+  const responseMove = safetyOverridesPause ? 'support_emotion' : responseMoveFor(dialogueAct);
   const mayInferFromBrevity = latestUserSubstance !== null;
   const questionPolicy = buildQuestionPolicy({
     dialogueAct,
-    latestUserSubstance,
     includeFollowUpQuestion: input.includeFollowUpQuestion,
     lastReplyAskedQuestion: input.lastReplyAskedQuestion ?? false,
   });
@@ -37,7 +38,7 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
     responseMove,
     mayInferFromBrevity,
     questionPolicy,
-    requiredGrounding: buildRequiredGrounding(responseMove, topicAnchor, memoryAnchors),
+    requiredGrounding: safetyOverridesPause ? [] : buildRequiredGrounding(responseMove, topicAnchor, memoryAnchors),
     forbiddenMoves: buildForbiddenMoves({
       responseMove,
       mayInferFromBrevity,
@@ -81,10 +82,17 @@ function responseMoveFor(dialogueAct: SituationClassification['dialogueAct']): R
 
 function buildQuestionPolicy(input: {
   dialogueAct: SituationClassification['dialogueAct'];
-  latestUserSubstance: string | null;
   includeFollowUpQuestion: boolean;
   lastReplyAskedQuestion: boolean;
 }): ReplyPlan['questionPolicy'] {
+  if (input.dialogueAct === 'closing') {
+    return { maxQuestions: 0, reason: 'strategy_disallows_questions' };
+  }
+
+  if (input.dialogueAct === 'acknowledgement') {
+    return { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' };
+  }
+
   if (!input.includeFollowUpQuestion) {
     return { maxQuestions: 0, reason: 'strategy_disallows_questions' };
   }
@@ -95,10 +103,6 @@ function buildQuestionPolicy(input: {
 
   if (input.dialogueAct === 'social_checkin') {
     return { maxQuestions: 1, reason: 'social_checkin_returns_question' };
-  }
-
-  if (input.dialogueAct === 'acknowledgement' && input.latestUserSubstance === null) {
-    return { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' };
   }
 
   if (input.lastReplyAskedQuestion && input.dialogueAct !== 'new_substance') {

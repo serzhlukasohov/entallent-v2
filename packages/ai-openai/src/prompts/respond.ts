@@ -36,8 +36,11 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
   const styleBlock = context.styleAdaptation ? buildStyleAdaptationBlock(context.styleAdaptation, strategy.mode) : '';
   const replyPlan = context.replyPlan ?? context.replyBrief;
   const replyPlanBlock = replyPlan ? buildReplyPlanBlock(replyPlan) : '';
+  const pauseTurn = replyPlan?.responseMove !== 'support_emotion' &&
+    (replyPlan?.dialogueAct === 'acknowledgement' || replyPlan?.responseMove === 'close_or_pause');
+  const safetyMode = strategy.mode === 'crisis' || strategy.mode === 'sensitive';
 
-  const memoryHint = context.memoryContext && context.memoryContext.items.length > 0
+  const memoryHint = !pauseTurn && !safetyMode && context.memoryContext && context.memoryContext.items.length > 0
     ? `\nThings you already know about ${context.userName} (use naturally, do not repeat back verbatim): ${context.memoryContext.items.slice(0, 5).map(i => i.content).join('; ')}`
     : '';
 
@@ -145,19 +148,23 @@ function responseLanguageName(language: string): string {
 }
 
 function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): string {
-  const substance = plan.latestUserSubstance
+  const pauseTurn = plan.responseMove !== 'support_emotion' &&
+    (plan.dialogueAct === 'acknowledgement' || plan.responseMove === 'close_or_pause');
+  const substance = pauseTurn
+    ? '\nLatest employee substance: omitted because the typed pause act controls this turn.'
+    : plan.latestUserSubstance
     ? `\nLatest employee substance: ${plan.latestUserSubstance}`
     : '\nLatest employee substance: none; treat the latest message as an acknowledgement/backchannel, not as hidden content.';
-  const anchor = plan.topicAnchor
+  const anchor = !pauseTurn && plan.topicAnchor
     ? `\nTopic anchor to continue from: ${plan.topicAnchor}`
     : '';
-  const memoryAnchors = plan.memoryAnchors.length > 0
+  const memoryAnchors = !pauseTurn && plan.memoryAnchors.length > 0
     ? `\nRelevant memory anchors (use only if they fit; preserve their concrete nouns rather than vague references):\n${plan.memoryAnchors.map((item) => `- [${item.category}] ${item.content}`).join('\n')}`
     : '';
   const requiredGrounding = plan.requiredGrounding.length > 0
     ? `\nRequired grounding (hard contract): mention this memory concretely and recognizably in the reply; do not collapse it into only time/place/generalities:\n${plan.requiredGrounding.map((item) => `- [${item.category}] ${item.content}`).join('\n')}`
     : '';
-  const memoryUse = plan.memoryAnchors.length > 0 && (plan.responseMove === 'support_emotion' || !plan.latestUserSubstance)
+  const memoryUse = plan.memoryAnchors.length > 0 && plan.responseMove === 'support_emotion'
     ? '\nIf the employee names a feeling without restating the cause, connect it to one relevant memory anchor explicitly and concretely. Do not reduce a specific anchor like "payments architecture defense" to only "Friday" or "the committee".'
     : '';
   const questionPolicy = plan.questionPolicy.maxQuestions === 0
@@ -168,7 +175,9 @@ function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): s
     : '';
   const brevity = plan.mayInferFromBrevity
     ? ''
-    : '\nDo not infer mood, impatience, depth, personality, or unstated meaning from the employee being brief. Do not mention their brevity, one-word answer, or short wording. Do not quote the short acknowledgement as evidence. Continue from the topic anchor or close the thread naturally.';
+    : pauseTurn
+      ? '\nDo not infer mood, impatience, depth, personality, or unstated meaning from the employee being brief. Do not mention their brevity, one-word answer, or short wording. The typed pause contract controls this turn.'
+      : '\nDo not infer mood, impatience, depth, personality, or unstated meaning from the employee being brief. Do not mention their brevity, one-word answer, or short wording. Do not quote the short acknowledgement as evidence. Continue from the topic anchor or close the thread naturally.';
 
   const social = plan.responseMove === 'social_greeting'
     ? plan.questionPolicy.maxQuestions > 0
@@ -180,10 +189,15 @@ function buildReplyPlanBlock(plan: NonNullable<ResponseContext['replyPlan']>): s
   const emotionalSupport = plan.responseMove === 'support_emotion'
     ? '\nSupport-emotion contract: use plain presence, not coaching. This typed contract overrides the general invitation to name what is between the lines, push back, or offer a different angle. Do not open by labeling or diagnosing the employee\'s state. Do not prescribe even small tactics, task selection, timed exercises, or a "try/do this" move. If questions are disallowed, leave room with a short acknowledgement instead of substituting advice.'
     : '';
+  const pause = !pauseTurn
+    ? ''
+    : plan.dialogueAct === 'acknowledgement'
+      ? '\nAcknowledgement contract: use one brief, natural backchannel or pause. This typed contract overrides the general instructions to engage, add something, push back, or follow side remarks. Do not restate the topic, recall memory, add a new angle, restart coaching, or ask a question.'
+      : '\nClosing contract: use a brief, natural sign-off or pause. This typed contract overrides the general instructions to engage, add something, push back, or follow side remarks. Do not reopen the topic, recall memory, introduce a new angle or survey interaction, or ask a question.';
 
   return `\nReply plan (follow this typed policy over the raw surface form of the latest message):
   - dialogueAct: ${plan.dialogueAct}
-  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${forbiddenMoves}${brevity}${social}${emotionalSupport}
+  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${forbiddenMoves}${brevity}${social}${emotionalSupport}${pause}
   `;
 }
 
