@@ -383,8 +383,10 @@ def build_candidate_reply_prompt(
             "recent_user and recent_assistant reference context. Do not include "
             "older memory, goals, scheduled reminders, or follow-ups unless they "
             "ask what you know about them generally.",
-            "Voice: engage with one concrete thought or a specific question; "
-            "do not paraphrase the employee back to themselves.",
+            "Voice: engage with one concrete thought and, when reply constraints allow a "
+            "question, default to ending with one specific follow-up while an employee-raised "
+            "thread has an unresolved detail. Stop asking only when the thread is understood "
+            "or the employee closes it; do not paraphrase the employee back to themselves.",
             "Do not open with formulaic validation such as 'That sounds', "
             "'I understand', 'Glad to hear back', or 'It seems like'.",
             "Do not use bullets, numbered steps, productivity frameworks, or "
@@ -504,6 +506,13 @@ def candidate_dialogue_policy(
     )
 
     if dialogue_act == "acknowledgement":
+        if explicit_reply_plan_max_questions(request or {}) == 1:
+            return (
+                "acknowledgement: treat the latest message as a backchannel, not new hidden "
+                "content. Continue one unresolved thread from the recent conversation and end "
+                "with exactly one specific follow-up question. Do not repeat an answered "
+                "question, merely nod, or close the conversation."
+            )
         anchor = (
             f" Continue from this prior topic if useful: {topic_anchor}."
             if topic_anchor

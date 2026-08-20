@@ -83,8 +83,8 @@ describe('buildReplyPlan', () => {
     ]);
     expect(brief.mayInferFromBrevity).toBe(false);
     expect(brief.questionPolicy).toEqual({
-      maxQuestions: 0,
-      reason: 'acknowledgement_no_new_substance',
+      maxQuestions: 1,
+      reason: 'new_substance_allows_question',
     });
     expect(brief.forbiddenMoves).toContain('comment_on_brevity');
   });
@@ -197,18 +197,18 @@ describe('buildReplyPlan', () => {
     });
   });
 
-  it('keeps acknowledgements question-free even when classifier substance is inconsistent', () => {
+  it('keeps acknowledgements question-free when the strategy disallows questions', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'acknowledgement',
         latestUserSubstance: 'inconsistent classifier output',
       }),
-      includeFollowUpQuestion: true,
+      includeFollowUpQuestion: false,
     });
 
     expect(brief.questionPolicy).toEqual({
       maxQuestions: 0,
-      reason: 'acknowledgement_no_new_substance',
+      reason: 'strategy_disallows_questions',
     });
   });
 
@@ -231,7 +231,7 @@ describe('buildReplyPlan', () => {
     expect(brief.requiredGrounding).toEqual([]);
   });
 
-  it('removes questions after a recent question on non-new-substance turns', () => {
+  it('keeps the next question available while a continuing topic remains open', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'continuation',
@@ -239,12 +239,11 @@ describe('buildReplyPlan', () => {
         topicAnchor: 'recurring blocker',
       }),
       includeFollowUpQuestion: true,
-      lastReplyAskedQuestion: true,
     });
 
     expect(brief.questionPolicy).toEqual({
-      maxQuestions: 0,
-      reason: 'asked_recently',
+      maxQuestions: 1,
+      reason: 'new_substance_allows_question',
     });
   });
 });

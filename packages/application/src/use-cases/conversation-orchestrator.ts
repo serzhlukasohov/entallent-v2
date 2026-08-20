@@ -265,14 +265,12 @@ export class ConversationOrchestrator {
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
     const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
     const sessionStart = isSessionStart(lastPriorAt, new Date());
-    const lastReplyAskedQuestion = lastOutboundReplyShapeAskedQuestion(dbMessages);
     const replyPlan = confirmationRequest
       ? undefined
       : buildReplyPlan({
           classification,
           memoryItems,
           includeFollowUpQuestion: strategyWithStyle.includeFollowUpQuestion,
-          lastReplyAskedQuestion,
           surveyProbeQuestionId: probeQuestion?.id,
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
@@ -634,19 +632,6 @@ function conversationDecisionMetadata(input: {
       ? { surveyProbeQuestionId: input.surveyProbeQuestionId }
       : {}),
   };
-}
-
-function lastOutboundReplyShapeAskedQuestion(messages: Array<{ direction: string; metadata?: Record<string, unknown> }>): boolean {
-  const lastOutbound = [...messages].reverse().find((message) => message.direction === 'outbound');
-  return typedReplyShapeAskedQuestion(lastOutbound?.metadata);
-}
-
-function typedReplyShapeAskedQuestion(metadata: Record<string, unknown> | undefined): boolean {
-  const replyShape = metadata?.['replyShape'];
-  if (typeof replyShape !== 'object' || replyShape === null) {
-    return false;
-  }
-  return (replyShape as Record<string, unknown>)['askedQuestion'] === true;
 }
 
 /**

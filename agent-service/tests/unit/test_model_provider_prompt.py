@@ -264,15 +264,15 @@ def test_candidate_reply_prompt_includes_acknowledgement_policy() -> None:
                     "responseMove": "continue_existing_thread",
                     "mayInferFromBrevity": False,
                     "questionPolicy": {
-                        "maxQuestions": 0,
-                        "reason": "acknowledgement_no_new_substance",
+                        "maxQuestions": 1,
+                        "reason": "new_substance_allows_question",
                     },
                     "requiredGrounding": [],
                     "forbiddenMoves": ["comment_on_brevity"],
                 },
                 "replyPolicy": {
                     "maxChars": 180,
-                    "maxQuestions": 0,
+                    "maxQuestions": 1,
                     "allowReflectiveOpener": False,
                     "allowListFormatting": False,
                 },
@@ -291,12 +291,12 @@ def test_candidate_reply_prompt_includes_acknowledgement_policy() -> None:
     )
 
     assert "acknowledgement: treat the latest message as a backchannel" in prompt
-    assert "Do not say 'glad to hear back'" in prompt
-    assert "Do not add a checklist or action plan" in prompt
+    assert "Continue one unresolved thread from the recent conversation" in prompt
+    assert "end with exactly one specific follow-up question" in prompt
     assert "there is too much to do, so no time to rest" in prompt
     assert "reply constraints: max 180 characters" in prompt
-    assert "ask zero questions" in prompt
-    assert "reason: acknowledgement_no_new_substance" in prompt
+    assert "ask at most one question" in prompt
+    assert "reason: new_substance_allows_question" in prompt
     assert "replyPlan: dialogueAct=acknowledgement" in prompt
 
 

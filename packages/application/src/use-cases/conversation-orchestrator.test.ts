@@ -181,13 +181,13 @@ describe('ConversationOrchestrator reply plan', () => {
       dialogueAct: 'acknowledgement',
       responseMove: 'continue_existing_thread',
       latestUserSubstance: null,
-      topicAnchor: 'the release shipped over the weekend',
+      topicAnchor: null,
       mayInferFromBrevity: false,
-      questionPolicy: { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' },
+      questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
     });
     expect(ctxArg.replyBrief).toBe(ctxArg.replyPlan);
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
-    expect(strategyArg.includeFollowUpQuestion).toBe(false);
+    expect(strategyArg.includeFollowUpQuestion).toBe(true);
   });
 
   it.each(['acknowledgement', 'closing'] as const)(
@@ -492,7 +492,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
 
-  it('terse user is shortened while reply plan skips the question when reply metadata says the agent just asked one', async () => {
+  it('keeps one follow-up available for a terse user while the topic remains open', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
@@ -526,8 +526,8 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(strategyArg.maxResponseLength).toBe('short');
-    expect(strategyArg.includeFollowUpQuestion).toBe(false);
-    expect(ctxArg.replyPlan.questionPolicy).toEqual({ maxQuestions: 0, reason: 'asked_recently' });
+    expect(strategyArg.includeFollowUpQuestion).toBe(true);
+    expect(ctxArg.replyPlan.questionPolicy).toEqual({ maxQuestions: 1, reason: 'new_substance_allows_question' });
   });
 
   it('ignores legacy punctuation when previous reply has no reply-shape metadata', async () => {

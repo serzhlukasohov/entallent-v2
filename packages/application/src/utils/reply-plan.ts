@@ -9,7 +9,6 @@ export interface ReplyPlanInput {
   classification: SituationClassification;
   memoryItems?: Pick<MemoryItemRecord, 'category' | 'content' | 'importance'>[];
   includeFollowUpQuestion: boolean;
-  lastReplyAskedQuestion?: boolean;
   surveyProbeQuestionId?: string;
   sensitiveMode?: boolean;
 }
@@ -27,7 +26,6 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
   const questionPolicy = buildQuestionPolicy({
     dialogueAct,
     includeFollowUpQuestion: input.includeFollowUpQuestion,
-    lastReplyAskedQuestion: input.lastReplyAskedQuestion ?? false,
   });
 
   return {
@@ -83,18 +81,17 @@ function responseMoveFor(dialogueAct: SituationClassification['dialogueAct']): R
 function buildQuestionPolicy(input: {
   dialogueAct: SituationClassification['dialogueAct'];
   includeFollowUpQuestion: boolean;
-  lastReplyAskedQuestion: boolean;
 }): ReplyPlan['questionPolicy'] {
   if (input.dialogueAct === 'closing') {
     return { maxQuestions: 0, reason: 'strategy_disallows_questions' };
   }
 
-  if (input.dialogueAct === 'acknowledgement') {
-    return { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' };
-  }
-
   if (!input.includeFollowUpQuestion) {
     return { maxQuestions: 0, reason: 'strategy_disallows_questions' };
+  }
+
+  if (input.dialogueAct === 'acknowledgement') {
+    return { maxQuestions: 1, reason: 'new_substance_allows_question' };
   }
 
   if (input.dialogueAct === 'greeting') {
@@ -103,10 +100,6 @@ function buildQuestionPolicy(input: {
 
   if (input.dialogueAct === 'social_checkin') {
     return { maxQuestions: 1, reason: 'social_checkin_returns_question' };
-  }
-
-  if (input.lastReplyAskedQuestion && input.dialogueAct !== 'new_substance') {
-    return { maxQuestions: 0, reason: 'asked_recently' };
   }
 
   return { maxQuestions: 1, reason: 'new_substance_allows_question' };

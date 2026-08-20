@@ -66,6 +66,7 @@ describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', (
   it('encourages a question when includeFollowUpQuestion is true', () => {
     const p = buildRespondSystemPrompt(normal(true), context({ userName: 'T' }));
     expect(p).toMatch(/one sharp question/i);
+    expect(p).toMatch(/default to ending with one genuine follow-up question/i);
     expect(p).toContain('What else is on your mind right now'); // rhythm exit question available
   });
 
@@ -196,7 +197,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
         memoryAnchors: [{ category: 'commitment', content: 'will monitor the release over the weekend' }],
         responseMove: 'continue_existing_thread',
         mayInferFromBrevity: false,
-        questionPolicy: { maxQuestions: 0, reason: 'acknowledgement_no_new_substance' },
+        questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
         requiredGrounding: [],
         forbiddenMoves: ['comment_on_brevity'],
       },
@@ -208,10 +209,10 @@ describe('buildRespondSystemPrompt reply plan', () => {
     expect(p).not.toContain('the release shipped over the weekend');
     expect(p).not.toContain('Relevant memory anchors');
     expect(p).not.toContain('will monitor the release over the weekend');
-    expect(p).toContain('Question policy (hard contract): ask zero questions this turn');
-    expect(p).toContain('Acknowledgement contract: use one brief, natural backchannel or pause');
-    expect(p).toContain('overrides the general instructions to engage, add something, push back, or follow side remarks');
-    expect(p).toContain('Do not restate the topic, recall memory, add a new angle, restart coaching, or ask a question');
+    expect(p).toContain('Question policy: end with one specific question');
+    expect(p).toContain('continue one unresolved thread from the recent conversation');
+    expect(p).toContain('end with exactly one specific follow-up question');
+    expect(p).toContain('Do not invent hidden meaning, repeat an answered question, merely nod, or close the conversation');
     expect(p).toMatch(/Do not infer mood, impatience, depth, personality, or unstated meaning/i);
     expect(p).toMatch(/Do not mention their brevity, one-word answer, or short wording/i);
   });
