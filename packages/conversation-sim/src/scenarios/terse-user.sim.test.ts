@@ -157,7 +157,7 @@ describe('coach talking to a consistently terse user', () => {
       noSubstanceFollowupCalls[0].strategy,
       noSubstanceFollowupCalls[0].context,
     );
-    expect(noSubstancePrompt).toContain('Latest employee substance: none');
+    expect(noSubstancePrompt).toContain('Latest employee substance: omitted because the typed pause act controls this turn');
     expect(noSubstancePrompt).toContain('Question policy (hard contract): ask zero questions this turn');
     expect(noSubstancePrompt).toMatch(/Do not infer mood, impatience, depth, personality, or unstated meaning/i);
 

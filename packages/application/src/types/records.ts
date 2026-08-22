@@ -1,3 +1,9 @@
+export interface ConversationActiveTopicRecord {
+  summary: string;
+  status: 'active' | 'parked';
+  startedAt: string;
+}
+
 export interface ConversationRecord {
   id: string;
   tenantId: string;
@@ -10,6 +16,7 @@ export interface ConversationRecord {
   /** IANA timezone of the conversation's user, if known */
   userTimezone?: string;
   userTimezoneUpdatedAt?: Date;
+  activeTopic?: ConversationActiveTopicRecord;
 }
 
 export interface MessageMetadata {

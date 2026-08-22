@@ -20,6 +20,8 @@ export interface ConversationTurn {
 export interface ClassifyContext {
   userName: string;
   tenantContext?: string;
+  /** Persisted user-derived thread summary; untrusted and optional classifier context. */
+  continuitySummary?: string;
   /** Current time as ISO 8601 — lets the classifier compute reminder dueAt values */
   now?: string;
   /** IANA timezone of the employee — reminder times are interpreted in it */

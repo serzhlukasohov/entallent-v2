@@ -33,6 +33,21 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
     return this.messages.filter((m) => m.conversationId === conversationId).slice(-limit);
   }
 
+  async updateActiveTopic(
+    conversationId: string,
+    tenantId: string,
+    userId: string,
+    activeTopic: NonNullable<ConversationRecord['activeTopic']>,
+  ): Promise<void> {
+    if (
+      this.conversation.id === conversationId &&
+      this.conversation.tenantId === tenantId &&
+      this.conversation.userId === userId
+    ) {
+      this.conversation.activeTopic = activeTopic;
+    }
+  }
+
   async saveMessage(params: SaveMessageParams): Promise<MessageRecord> {
     const now = new Date();
     const record: MessageRecord = {

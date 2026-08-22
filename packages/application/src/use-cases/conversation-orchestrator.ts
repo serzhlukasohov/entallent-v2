@@ -11,7 +11,12 @@ import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { RiskSignalRepositoryPort } from '../ports/risk-signal.repository.port';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
 import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
-import type { StyleProfileRecord } from '../types/records';
+import type { GoalRepositoryPort } from '../ports/goal.repository.port';
+import type {
+  ConversationActiveTopicRecord,
+  StyleProfileRecord,
+  UserGoalRecord,
+} from '../types/records';
 import { BASE_STYLE, STYLE_CONFIDENCE_FLOOR, STYLE_OFF_BASE_MARGIN } from '../utils/style-adaptation';
 import { buildReplyPlan } from '../utils/reply-plan';
 import type { EscalationPort } from '../ports/escalation.port';
@@ -47,6 +52,7 @@ export class ConversationOrchestrator {
     private readonly scheduledActionRepo?: ScheduledActionRepositoryPort,
     private readonly pulseBacklogService?: PulseBacklogService,
     private readonly styleProfileRepo?: StyleProfileRepositoryPort,
+    private readonly goalRepo?: GoalRepositoryPort,
   ) {}
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
@@ -55,6 +61,9 @@ export class ConversationOrchestrator {
 
     const conversation = await this.conversationRepo.findById(conversationId, tenantId);
     if (!conversation) throw new Error(`Conversation ${conversationId} not found`);
+    if (conversation.userId !== userId) {
+      throw new Error(`Conversation ${conversationId} does not belong to user ${userId}`);
+    }
 
     const displayNameMissing = !conversation.userDisplayName;
     const tzMissing = !conversation.userTimezone;
@@ -71,6 +80,8 @@ export class ConversationOrchestrator {
     }
 
     const dbMessages = await this.conversationRepo.findRecentMessages(conversationId, 20);
+    const currentTurnAt = dbMessages.find((message) => message.id === input.messageId)?.occurredAt
+      .toISOString() ?? new Date().toISOString();
 
     const turns: ConversationTurn[] = dbMessages.map((msg) => ({
       role: msg.direction === 'inbound' ? 'user' : 'assistant',
@@ -93,13 +104,14 @@ export class ConversationOrchestrator {
     const confirmedGroup = phaseB.confirmedGroup;
     const confirmationHandled = confirmedGroup !== false;
 
-    // Classify, feature flags, and memory load are all independent — run them together.
-    // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
-    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile] = await Promise.all([
+    // Classification and enrichment reads are independent. Goal reads degrade to no goals;
+    // relevance is decided later, after safety and confirmation state are known.
+    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile, activeGoals] = await Promise.all([
       this.aiProvider.classifySituation(turns, {
         userName,
-        now: new Date().toISOString(),
+        now: currentTurnAt,
         timezone: userTimezone,
+        continuitySummary: conversation.activeTopic?.summary,
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -111,13 +123,18 @@ export class ConversationOrchestrator {
       this.styleProfileRepo
         ? this.styleProfileRepo.findByUser(userId, tenantId).catch(() => null)
         : Promise.resolve(null),
+      this.goalRepo
+        ? this.goalRepo.findActiveByUser(userId, tenantId).catch(() => [])
+        : Promise.resolve([]),
     ]);
 
     // Safety is too important to hinge on one model field. Intents that already route to
     // sensitive/crisis mode force the safety pass deterministically, even if the classifier
     // left requiresSafetyCheck false — otherwise detectRisk silently never runs on a burnout
     // or harassment turn and no risk signal can ever fire.
-    const classification: SituationClassification = SAFETY_INTENTS.has(rawClassification.primaryIntent)
+    const hasSafetyIntent = [rawClassification.primaryIntent, ...rawClassification.secondaryIntents]
+      .some((intent) => SAFETY_INTENTS.has(intent));
+    let classification: SituationClassification = hasSafetyIntent
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
     const pauseTurn = classification.dialogueAct === 'closing' || classification.dialogueAct === 'acknowledgement';
@@ -133,17 +150,14 @@ export class ConversationOrchestrator {
       ? { dimensions: profile.dimensions, weight: profile.adaptationWeight, phrases: profile.phrases.map((p) => p.text) }
       : undefined;
 
-    const memoryContext = {
-      items: memoryItems.map((i) => ({
-        id: i.id,
-        category: i.category,
-        content: i.content,
-        importance: i.importance,
-      })),
-      goals: memoryItems
-        .filter((i) => i.category === 'goal')
-        .map((i) => ({ id: i.id, title: i.content, status: i.status })),
-    };
+    const memoryContextItems = memoryItems
+      .filter((item) => item.category !== 'goal')
+      .map((item) => ({
+        id: item.id,
+        category: item.category,
+        content: item.content,
+        importance: item.importance,
+      }));
 
     // Probe pacing is computable from already-loaded messages — no I/O needed.
     const userTurnCount = dbMessages.filter(
@@ -181,6 +195,41 @@ export class ConversationOrchestrator {
         }
       }
     }
+
+    const continuity = resolveContinuity({
+      classification,
+      activeTopic: conversation.activeTopic,
+      safetyTurn: classification.requiresSafetyCheck || risk.severity !== 'none',
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined,
+      now: currentTurnAt,
+    });
+    const continuityDecision = continuity.decision;
+    classification = continuity.classification;
+
+    const relevantGoal = selectRelevantGoal(activeGoals, {
+      classification,
+      risk,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined,
+    });
+    const goalDecision: {
+      selected: boolean;
+      selectedGoalId?: string;
+      candidateGoalCount: number;
+      reason: string;
+    } = {
+      selected: !!relevantGoal,
+      candidateGoalCount: activeGoals.length,
+      reason: relevantGoal ? 'exact_active_match' : 'not_selected',
+    };
+    if (relevantGoal?.id) {
+      goalDecision.selectedGoalId = relevantGoal.id;
+    }
+    const memoryContext = {
+      items: memoryContextItems,
+      goals: relevantGoal
+        ? [{ id: relevantGoal.id, title: relevantGoal.title, status: relevantGoal.status }]
+        : [],
+    };
 
     const probeQuestion =
       !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !risk.surveyMustBeBlocked
@@ -280,7 +329,9 @@ export class ConversationOrchestrator {
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
       languagePolicy,
-      memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
+      memoryContext: memoryContext.items.length > 0 || memoryContext.goals.length > 0
+        ? memoryContext
+        : undefined,
       reminderConfirmation,
       surveyProbeQuestion: probeQuestion
         ? { id: probeQuestion.id, probeStrategies: probeQuestion.probeStrategies }
@@ -296,6 +347,15 @@ export class ConversationOrchestrator {
       replyPlan,
     });
     const containsSurveyProbe = !pauseTurn && generated.containsSurveyProbe === true;
+
+    if (continuity.activeTopicUpdate) {
+      await this.conversationRepo.updateActiveTopic(
+        conversationId,
+        tenantId,
+        userId,
+        continuity.activeTopicUpdate,
+      );
+    }
 
     const outbound = await this.conversationRepo.saveMessage({
       conversationId,
@@ -313,6 +373,8 @@ export class ConversationOrchestrator {
         isSessionStart: sessionStart,
         containsSurveyProbe,
         surveyProbeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId : undefined,
+        continuityDecision,
+        goalDecision,
       }),
     });
 
@@ -508,6 +570,150 @@ export class ConversationOrchestrator {
   }
 }
 
+const ACTIVE_TOPIC_SUMMARY_MAX_LENGTH = 500;
+
+type ContinuityDecision = {
+  action: 'none' | 'park' | 'reuse' | 'replace';
+  anchorSource: 'none' | 'stored' | 'new';
+  hasSubstance: boolean;
+};
+
+function resolveContinuity(input: {
+  classification: SituationClassification;
+  activeTopic?: ConversationActiveTopicRecord;
+  safetyTurn: boolean;
+  confirmationTurn: boolean;
+  now: string;
+}): {
+  classification: SituationClassification;
+  activeTopicUpdate?: ConversationActiveTopicRecord;
+  decision: ContinuityDecision;
+} {
+  const { activeTopic } = input;
+  const dialogueAct = input.classification.dialogueAct;
+  const latestSubstance = boundedTopicSummary(input.classification.latestUserSubstance);
+  const classifiedAnchor = input.classification.topicAnchor || null;
+  const boundedClassifiedAnchor = boundedTopicSummary(classifiedAnchor);
+  const usesStoredAnchor = !!activeTopic && classifiedAnchor === activeTopic.summary;
+  const resemblesStoredAnchor = !!activeTopic &&
+    normalizeExactMatch(boundedClassifiedAnchor) === normalizeExactMatch(activeTopic.summary);
+  const withoutTopicAnchor = { ...input.classification, topicAnchor: null };
+
+  if (dialogueAct === 'closing') {
+    return {
+      classification: withoutTopicAnchor,
+      activeTopicUpdate: activeTopic?.status === 'active'
+        ? { ...activeTopic, status: 'parked' }
+        : undefined,
+      decision: {
+        action: activeTopic?.status === 'active' ? 'park' : 'none',
+        anchorSource: 'none',
+        hasSubstance: !!latestSubstance,
+      },
+    };
+  }
+
+  if (
+    dialogueAct === 'acknowledgement' ||
+    dialogueAct === 'greeting' ||
+    dialogueAct === 'social_checkin' ||
+    input.safetyTurn ||
+    input.confirmationTurn
+  ) {
+    return {
+      classification: withoutTopicAnchor,
+      decision: {
+        action: 'none',
+        anchorSource: 'none',
+        hasSubstance: !!latestSubstance,
+      },
+    };
+  }
+
+  if (!latestSubstance) {
+    return {
+      classification: input.classification,
+      decision: {
+        action: 'none',
+        anchorSource: 'none',
+        hasSubstance: false,
+      },
+    };
+  }
+
+  if (activeTopic && usesStoredAnchor) {
+    return {
+      classification: { ...input.classification, topicAnchor: activeTopic.summary },
+      activeTopicUpdate: activeTopic.status === 'parked'
+        ? { ...activeTopic, status: 'active' }
+        : undefined,
+      decision: {
+        action: activeTopic.status === 'parked' ? 'reuse' : 'none',
+        anchorSource: 'stored',
+        hasSubstance: true,
+      },
+    };
+  }
+
+  const summary = dialogueAct === 'continuation' && !resemblesStoredAnchor
+    ? boundedClassifiedAnchor ?? latestSubstance
+    : latestSubstance;
+  return {
+    classification: { ...input.classification, topicAnchor: summary },
+    activeTopicUpdate: {
+      summary,
+      status: 'active',
+      startedAt: input.now,
+    },
+    decision: {
+      action: 'replace',
+      anchorSource: boundedClassifiedAnchor ? 'stored' : 'new',
+      hasSubstance: true,
+    },
+  };
+}
+
+function boundedTopicSummary(value: string | null | undefined): string | null {
+  const normalized = value?.trim().replace(/\s+/gu, ' ');
+  return normalized
+    ? [...normalized].slice(0, ACTIVE_TOPIC_SUMMARY_MAX_LENGTH).join('')
+    : null;
+}
+
+function selectRelevantGoal(
+  goals: UserGoalRecord[],
+  input: {
+    classification: SituationClassification;
+    risk: RiskDetection;
+    confirmationTurn: boolean;
+  },
+): UserGoalRecord | undefined {
+  const { classification } = input;
+  if (
+    classification.primaryIntent !== 'progress_update' ||
+    !classification.latestUserSubstance?.trim() ||
+    classification.requiresSafetyCheck ||
+    input.risk.severity !== 'none' ||
+    input.confirmationTurn ||
+    classification.dialogueAct === 'greeting' ||
+    classification.dialogueAct === 'social_checkin' ||
+    classification.dialogueAct === 'acknowledgement' ||
+    classification.dialogueAct === 'closing'
+  ) {
+    return undefined;
+  }
+
+  const normalizedAnchor = normalizeExactMatch(classification.topicAnchor);
+  if (!normalizedAnchor) return undefined;
+  return goals
+    .filter((goal) => goal.status === 'active' && normalizeExactMatch(goal.title) === normalizedAnchor)
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || a.id.localeCompare(b.id))[0];
+}
+
+function normalizeExactMatch(value: string | null | undefined): string {
+  return value?.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase() ?? '';
+}
+
 /** Parse an LLM-provided ISO reminder time; reject invalid or past timestamps. */
 function parseReminderDueAt(iso: string): Date | null {
   const d = new Date(iso);
@@ -607,6 +813,13 @@ function conversationDecisionMetadata(input: {
   isSessionStart: boolean;
   containsSurveyProbe: boolean;
   surveyProbeQuestionId?: string;
+  continuityDecision: ContinuityDecision;
+  goalDecision: {
+    selected: boolean;
+    selectedGoalId?: string;
+    candidateGoalCount: number;
+    reason: string;
+  };
 }): Record<string, unknown> {
   const groundingCount = input.replyPlan?.requiredGrounding.length ?? 0;
   return {
@@ -628,6 +841,8 @@ function conversationDecisionMetadata(input: {
       count: groundingCount,
     },
     containsSurveyProbe: input.containsSurveyProbe,
+    continuityDecision: input.continuityDecision,
+    goalDecision: input.goalDecision,
     ...(input.surveyProbeQuestionId
       ? { surveyProbeQuestionId: input.surveyProbeQuestionId }
       : {}),

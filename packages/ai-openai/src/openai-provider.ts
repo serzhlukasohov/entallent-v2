@@ -237,7 +237,7 @@ export class OpenAiProvider implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     const system = buildRespondSystemPrompt(strategy, context);
-    const user = buildRespondUserPrompt(turns, context);
+    const user = buildRespondUserPrompt(turns, context, strategy);
 
     const first = GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),

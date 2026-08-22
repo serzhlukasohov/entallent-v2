@@ -1359,6 +1359,7 @@ function createPrimaryRuntime(client: MafAgentRuntimeClient): MafPrimaryAgentRun
         createdAt: new Date(),
       })),
       updateMessageDelivery: vi.fn(async () => undefined),
+      updateActiveTopic: vi.fn(async () => undefined),
     },
     {
       enqueueMessageSend: vi.fn(async () => undefined),

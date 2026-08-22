@@ -1,13 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ConversationOrchestrator } from './conversation-orchestrator';
+import type { GoalRepositoryPort } from '../ports/goal.repository.port';
+import type { UserGoalRecord } from '../types/records';
 
 function baseMocks() {
   const conversationRepo = {
-    findById: vi.fn().mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC' }),
+    findById: vi.fn().mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+    }),
     findRecentMessages: vi.fn().mockResolvedValue([
       { id: 'm-1', direction: 'inbound', text: 'hey', occurredAt: new Date(), metadata: undefined },
     ]),
     saveMessage: vi.fn().mockResolvedValue({ id: 'out-1' }),
+    updateActiveTopic: vi.fn().mockResolvedValue(undefined),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
   const aiProvider = {
@@ -51,6 +57,56 @@ const INPUT = {
   messageId: 'm-1', conversationId: 'c-1', userId: 'u-1', tenantId: 't-1',
   externalWorkspaceId: 'ws', externalConversationId: 'ec', traceId: 'tr',
 };
+
+function goalRecord(id: string, title: string): UserGoalRecord {
+  const now = new Date();
+  return {
+    id,
+    tenantId: 't-1',
+    userId: 'u-1',
+    title,
+    category: 'delivery',
+    status: 'active',
+    priority: 'medium',
+    sourceMessageIds: [],
+    confidence: 0.9,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function goalRepository(
+  findActiveByUser: () => Promise<UserGoalRecord[]>,
+): GoalRepositoryPort {
+  return {
+    findActiveByUser: vi.fn(findActiveByUser),
+    findById: vi.fn().mockResolvedValue(null),
+    save: vi.fn(),
+    updateStatus: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function orchestratorWithGoals(
+  m: ReturnType<typeof baseMocks>,
+  goalRepo?: GoalRepositoryPort,
+  memoryRepo?: unknown,
+): ConversationOrchestrator {
+  return new ConversationOrchestrator(
+    m.conversationRepo,
+    m.aiProvider,
+    m.outbox,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    memoryRepo as any,
+    m.surveyRepo,
+    undefined,
+    undefined,
+    m.featureFlags,
+    undefined,
+    undefined,
+    undefined,
+    goalRepo,
+  );
+}
 
 describe('ConversationOrchestrator group confirmation — surface (Phase A)', () => {
   it('surfaces confirmation with confirmationRequest, no probe, and sets awaiting_confirmation', async () => {
@@ -247,6 +303,285 @@ describe('ConversationOrchestrator reply plan', () => {
   );
 });
 
+describe('ConversationOrchestrator persisted continuity and real goals', () => {
+  const parkedTopic = {
+    summary: 'Ship Atlas',
+    status: 'parked' as const,
+    startedAt: '2026-08-01T10:00:00.000Z',
+  };
+
+  it('rejects a queue user that does not own the conversation', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-other', channelType: 'slack',
+    });
+
+    await expect(orchestratorWithGoals(m).orchestrate(INPUT))
+      .rejects.toThrow('does not belong to user u-1');
+    expect(m.aiProvider.classifySituation).not.toHaveBeenCalled();
+  });
+
+  it('passes bounded continuity to classification and reactivates an exact re-entry', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
+      channelType: 'slack',
+      userDisplayName: 'Sam',
+      userLocale: 'en',
+      userTimezone: 'UTC',
+      activeTopic: parkedTopic,
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'coaching', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 're-entry',
+      reminderRequest: null, dialogueAct: 'continuation', latestUserSubstance: 'I made progress',
+      topicAnchor: 'Ship Atlas',
+    });
+
+    await orchestratorWithGoals(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.classifySituation.mock.calls[0][1].continuitySummary).toBe('Ship Atlas');
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.topicAnchor).toBe('Ship Atlas');
+    expect(m.conversationRepo.updateActiveTopic).toHaveBeenCalledWith(
+      'c-1',
+      't-1',
+      'u-1',
+      { ...parkedTopic, status: 'active' },
+    );
+    expect(m.conversationRepo.updateActiveTopic.mock.invocationCallOrder[0])
+      .toBeLessThan(m.conversationRepo.saveMessage.mock.invocationCallOrder[0]);
+  });
+
+  it('does not treat a whitespace-variant anchor as exact persisted re-entry', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'coaching', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'not exact',
+      reminderRequest: null, dialogueAct: 'continuation', latestUserSubstance: 'A different update',
+      topicAnchor: ' Ship Atlas ',
+    });
+
+    await orchestratorWithGoals(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.topicAnchor).toBe('A different update');
+    expect(m.conversationRepo.updateActiveTopic).toHaveBeenCalledWith(
+      'c-1',
+      't-1',
+      'u-1',
+      expect.objectContaining({ summary: 'A different update', status: 'active' }),
+    );
+  });
+
+  it('replaces an unrelated thread and keeps the prior topic and goal out of generation metadata', async () => {
+    const m = baseMocks();
+    const inboundAt = new Date('2026-08-20T08:30:00.000Z');
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', direction: 'inbound', text: 'roadmap update', occurredAt: inboundAt },
+    ]);
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'progress_update', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'new topic',
+      reminderRequest: null, dialogueAct: 'new_substance',
+      latestUserSubstance: 'I drafted the roadmap', topicAnchor: 'Prepare roadmap',
+    });
+    const goalRepo = goalRepository(async () => [goalRecord('goal-old', 'Ship Atlas')]);
+
+    await orchestratorWithGoals(m, goalRepo).orchestrate(INPUT);
+
+    const responseContext = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(responseContext.replyPlan.topicAnchor).toBe('I drafted the roadmap');
+    expect(responseContext.memoryContext).toBeUndefined();
+    expect(m.conversationRepo.updateActiveTopic).toHaveBeenCalledWith(
+      'c-1',
+      't-1',
+      'u-1',
+      {
+        summary: 'I drafted the roadmap',
+        status: 'active',
+        startedAt: inboundAt.toISOString(),
+      },
+    );
+    const metadata = m.conversationRepo.saveMessage.mock.calls[0][0].metadata;
+    expect(JSON.stringify(metadata)).not.toContain('Ship Atlas');
+  });
+
+  it('preserves a stored thread on acknowledgement without grounding it', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'ack',
+      reminderRequest: null, dialogueAct: 'acknowledgement', latestUserSubstance: null,
+      topicAnchor: 'Ship Atlas',
+    });
+
+    await orchestratorWithGoals(m).orchestrate(INPUT);
+
+    expect(m.conversationRepo.updateActiveTopic).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.topicAnchor).toBeNull();
+  });
+
+  it('parks a stored thread on closing without grounding it', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: { ...parkedTopic, status: 'active' },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'closing',
+      reminderRequest: null, dialogueAct: 'closing', latestUserSubstance: null,
+      topicAnchor: 'Ship Atlas',
+    });
+
+    await orchestratorWithGoals(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.topicAnchor).toBeNull();
+    expect(m.conversationRepo.updateActiveTopic).toHaveBeenCalledWith(
+      'c-1', 't-1', 'u-1', { ...parkedTopic, status: 'parked' },
+    );
+  });
+
+  it('exposes at most one active goal on an exact normalized progress-topic match', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'progress_update', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'progress',
+      reminderRequest: null, dialogueAct: 'continuation', latestUserSubstance: 'I shipped it',
+      topicAnchor: '  SHIP   Atlas  ',
+    });
+    const older = goalRecord('goal-1', 'Ship Atlas');
+    const newer = goalRecord('goal-2', 'ship atlas');
+    older.updatedAt = new Date('2026-08-19T10:00:00.000Z');
+    newer.updatedAt = new Date('2026-08-20T10:00:00.000Z');
+    const goalRepo = goalRepository(async () => [older, newer, goalRecord('goal-3', 'Prepare roadmap')]);
+
+    await orchestratorWithGoals(m, goalRepo).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].memoryContext.goals).toEqual([
+      { id: 'goal-2', title: 'ship atlas', status: 'active' },
+    ]);
+    expect(goalRepo.findActiveByUser).toHaveBeenCalledWith('u-1', 't-1');
+  });
+
+  it('omits goals when the exact match fails or the goal read fails', async () => {
+    const classifications = {
+      primaryIntent: 'progress_update', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'progress',
+      reminderRequest: null, dialogueAct: 'continuation', latestUserSubstance: 'I shipped it',
+      topicAnchor: 'Ship Atlas',
+    } as const;
+
+    for (const goalRepo of [
+      goalRepository(async () => [goalRecord('goal-1', 'Prepare roadmap')]),
+      goalRepository(async () => { throw new Error('goal store unavailable'); }),
+    ]) {
+      const m = baseMocks();
+      m.aiProvider.classifySituation.mockResolvedValue(classifications);
+
+      await expect(orchestratorWithGoals(m, goalRepo).orchestrate(INPUT)).resolves.toBeDefined();
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].memoryContext).toBeUndefined();
+    }
+  });
+
+  it('omits an exact goal on safety and confirmation turns', async () => {
+    const goalRepo = goalRepository(async () => [goalRecord('goal-1', 'Ship Atlas')]);
+
+    const safety = baseMocks();
+    safety.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'burnout_signal', secondaryIntents: [], emotionalState: ['exhausted'], urgency: 'high',
+      confidence: 0.9, surveyAllowed: false, requiresSafetyCheck: false, reasoningSummary: 'safety',
+      reminderRequest: null, dialogueAct: 'emotional_disclosure', latestUserSubstance: 'I cannot go on',
+      topicAnchor: 'Ship Atlas',
+    });
+    safety.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'burnout', severity: 'high', confidence: 0.9, evidence: [],
+      immediateResponseRequired: false, escalationRecommended: false,
+      surveyMustBeBlocked: true, proactiveMessagesMustBePaused: true, reasoningSummary: 'high risk',
+    });
+
+    await orchestratorWithGoals(safety, goalRepo).orchestrate(INPUT);
+    expect(safety.aiProvider.generateResponse.mock.calls[0][2].memoryContext).toBeUndefined();
+
+    const confirmation = baseMocks();
+    confirmation.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'progress_update', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'progress',
+      reminderRequest: null, dialogueAct: 'continuation', latestUserSubstance: 'I shipped it',
+      topicAnchor: 'Ship Atlas',
+    });
+    confirmation.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy' },
+    ]);
+
+    await orchestratorWithGoals(confirmation, goalRepo).orchestrate(INPUT);
+    expect(confirmation.aiProvider.generateResponse.mock.calls[0][2].confirmationRequest).toBeDefined();
+    expect(confirmation.aiProvider.generateResponse.mock.calls[0][2].memoryContext).toBeUndefined();
+  });
+
+  it('treats secondary safety intent as authoritative and clears continuity and goals', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'progress_update', secondaryIntents: ['burnout_signal'],
+      emotionalState: ['exhausted'], urgency: 'high', confidence: 0.9,
+      surveyAllowed: false, requiresSafetyCheck: false, reasoningSummary: 'secondary safety',
+      reminderRequest: null, dialogueAct: 'emotional_disclosure',
+      latestUserSubstance: 'I cannot keep going', topicAnchor: 'ship atlas',
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'burnout', severity: 'high', confidence: 0.9, evidence: [],
+      immediateResponseRequired: false, escalationRecommended: false,
+      surveyMustBeBlocked: true, proactiveMessagesMustBePaused: true,
+      reasoningSummary: 'high risk',
+    });
+    const goalRepo = goalRepository(async () => [goalRecord('goal-1', 'Ship Atlas')]);
+
+    await orchestratorWithGoals(m, goalRepo).orchestrate(INPUT);
+
+    expect(m.aiProvider.detectRisk).toHaveBeenCalled();
+    const responseContext = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(responseContext.replyPlan.topicAnchor).toBeNull();
+    expect(responseContext.memoryContext).toBeUndefined();
+  });
+
+  it('does not forward legacy goal-category memory as real goal context', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'unrelated',
+      reminderRequest: null, dialogueAct: 'new_substance',
+      latestUserSubstance: 'A new subject', topicAnchor: null,
+    });
+    const memoryRepo = {
+      findActiveByUser: vi.fn().mockResolvedValue([{
+        id: 'memory-goal', category: 'goal', content: 'Old pseudo-goal', importance: 1,
+      }]),
+    };
+
+    await orchestratorWithGoals(m, undefined, memoryRepo).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].memoryContext).toBeUndefined();
+  });
+});
+
 describe('ConversationOrchestrator language policy', () => {
   it('uses the current Russian inbound turn over an English user profile locale', async () => {
     const m = baseMocks();
@@ -337,6 +672,8 @@ describe('ConversationOrchestrator language policy', () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
       channelType: 'slack',
       userDisplayName: 'Sam',
       userLocale: 'uk',
@@ -364,6 +701,8 @@ describe('ConversationOrchestrator language policy', () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
       channelType: 'slack',
       userDisplayName: 'Sam',
       userLocale: 'pt-BR',
@@ -390,6 +729,8 @@ describe('ConversationOrchestrator language policy', () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
       channelType: 'slack',
       userDisplayName: 'Sam',
       userLocale: '123',
@@ -573,6 +914,16 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
           count: 0,
         },
         containsSurveyProbe: false,
+        continuityDecision: {
+          action: 'replace',
+          anchorSource: 'new',
+          hasSubstance: true,
+        },
+        goalDecision: {
+          selected: false,
+          candidateGoalCount: 0,
+          reason: 'not_selected',
+        },
       },
     }));
   });
@@ -636,7 +987,9 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     expect(metadata.memoryGrounding).toEqual({ used: true, count: 1 });
     expect(Object.keys(metadata).sort()).toEqual([
       'containsSurveyProbe',
+      'continuityDecision',
       'dialogueAct',
+      'goalDecision',
       'isSessionStart',
       'languagePolicy',
       'measurementVersion',
@@ -698,7 +1051,10 @@ describe('ConversationOrchestrator local time', () => {
 
   it('marks session start and omits localTime when tz is unknown', async () => {
     const m = baseMocks();
-    m.conversationRepo.findById.mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userTimezone: undefined });
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userTimezone: undefined,
+    });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
       undefined, undefined, m.featureFlags, undefined, undefined,
