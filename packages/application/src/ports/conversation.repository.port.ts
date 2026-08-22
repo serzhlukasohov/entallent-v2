@@ -1,4 +1,8 @@
-import type { ConversationRecord, MessageRecord } from '../types/records';
+import type {
+  ConversationActiveTopicRecord,
+  ConversationRecord,
+  MessageRecord,
+} from '../types/records';
 
 export interface SaveMessageParams {
   conversationId: string;
@@ -17,6 +21,12 @@ export interface SaveMessageParams {
 export interface ConversationRepositoryPort {
   findById(id: string, tenantId: string): Promise<ConversationRecord | null>;
   findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]>;
+  updateActiveTopic(
+    conversationId: string,
+    tenantId: string,
+    userId: string,
+    activeTopic: ConversationActiveTopicRecord,
+  ): Promise<void>;
   saveMessage(params: SaveMessageParams): Promise<MessageRecord>;
   updateMessageDelivery(
     messageId: string,

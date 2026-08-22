@@ -16,8 +16,16 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
-## 2026-08-19: TS quality gate misclassifies repeated memory assertion
-- Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console again mislabeled the product assertion as `infra_failed`, causing an unnecessary retry.
+## 2026-08-20: Local Slack connector smoke blocked by sandbox infra limits
+- Symptom: API/worker dev processes fail to start (`AggregateError ... connect EPERM ... 127.0.0.1:5432/6380`) and `curl /api/v1/channel/slack/events` returns `000` because local services are unreachable in this environment.
+- Expected: A signed Slack event should be accepted and processed, producing conversation queue work and outbound commit metadata.
+- Root cause layer: environment
+- Harness fix: Add a lightweight connector-check prerequisite step that verifies DB/Redis reachability and aborts with explicit guidance before sending any Slack payloads.
+- Regression check: `node -e "require('net').createConnection({host:'localhost',port:5434})" && node -e "require('net').createConnection({host:'localhost',port:6380})"`
+- Status: open
+
+## 2026-08-19: TS quality gate misclassifies scenario assertions
+- Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console mislabeled the product assertion as `infra_failed`, causing an unnecessary retry. Story 11.3 repeated the class when a stale terse-user prompt assertion was also labeled `infra_failed`.
 - Expected: The gate should report the memory assertion as a hard product failure without an infrastructure retry; turn-taking scenarios should remain green.
 - Root cause layer: verification
 - Harness fix: Classify scenario assertion failures separately from model/network failures in the gate runner; address memory grounding in its own story rather than expanding Story 11.2.
@@ -33,6 +41,22 @@ Use this file to turn agent misses into harness improvements.
 - Status: open
 
 ## Fixed Failures
+
+## 2026-08-20: metadata trace test expected unsorted keys
+- Symptom: `conversation-orchestrator.test.ts` failed after adding `continuityDecision` and `goalDecision` because the test sorted actual metadata keys but the expected list was not sorted.
+- Expected: Metadata shape regression should verify keys without failing on a mechanical ordering mismatch.
+- Root cause layer: verification
+- Harness fix: Keep expected key lists sorted whenever the assertion calls `Object.keys(...).sort()`.
+- Regression check: `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts`
+- Status: fixed
+
+## 2026-08-20: Story 11.3 review patch missed fixture and timestamp propagation
+- Symptom: Focused orchestrator tests failed after review fixes because owner-aware fixtures were incomplete, an acknowledgement assertion was stale, and the computed inbound timestamp was not passed to continuity resolution.
+- Expected: Review patches and their production-shaped fixtures should pass the focused regression before broader verification.
+- Root cause layer: workflow
+- Harness fix: Run the focused test immediately after each review patch and keep required conversation identity fields in the shared fixture.
+- Regression check: `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts`
+- Status: fixed
 
 ## 2026-08-20: TSX IPC socket blocks full pre-push inside sandbox
 - Symptom: `pnpm prepush` passed monorepo typecheck, lint, and package tests, then `test:scripts` failed with `listen EPERM` for the TSX IPC socket.
@@ -89,3 +113,35 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Add a production-shaped regression where a previous stock support reply forces the next support-emotion turn onto the model path.
 - Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_model_provider.py -q`
 - Status: fixed
+
+## 2026-08-20: MAF prompt rewrite changed a regression marker's case
+- Symptom: The focused prompt test failed because `Do not paraphrase` replaced the asserted lowercase marker.
+- Expected: Engagement wording changes should preserve unrelated prompt contracts.
+- Root cause layer: verification
+- Harness fix: Preserve the existing marker while extending the sentence and run the focused prompt test immediately.
+- Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_model_provider_prompt.py -q`
+- Status: fixed
+
+## 2026-08-20: Targeted conversation sim command ran the full suite
+- Symptom: Passing `-- terse-user.sim.test.ts` through the package script made Vitest run nine scenario files; live cases then failed on blocked DNS.
+- Expected: Only the requested terse-user scenario should run.
+- Root cause layer: workflow
+- Harness fix: Use `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/terse-user.sim.test.ts` for one scenario.
+- Regression check: Confirm Vitest reports exactly one test file before treating the run as evidence.
+- Status: fixed
+
+## 2026-08-20: Live model verification lacked authorized egress
+- Symptom: The corrected live terse-user simulation was rejected because it would send scenario text to Azure OpenAI without explicit egress authorization.
+- Expected: Live prompt verification should run only with an explicitly approved destination and payload.
+- Root cause layer: environment
+- Harness fix: Request explicit approval for Azure scenario egress or use deterministic prompt regressions as the safe default.
+- Regression check: Run the targeted application, AI, and MAF prompt tests without network access.
+- Status: open
+
+## 2026-08-20: Model-provider mypy baseline is not clean
+- Symptom: Whole-file mypy reports three pre-existing errors at lines 721, 782, and 857 outside the engagement diff.
+- Expected: Typed runtime verification should distinguish new errors from baseline debt.
+- Root cause layer: verification
+- Harness fix: Fix the existing annotations or add a checked mypy baseline before requiring whole-file cleanliness for scoped prompt edits.
+- Regression check: `agent-service/.venv/bin/mypy agent-service/src/agent_service/workflows/model_provider.py`
+- Status: open

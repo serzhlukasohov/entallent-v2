@@ -164,6 +164,7 @@ class InMemoryPrimaryRecorder {
       return record;
     },
     updateMessageDelivery: async () => undefined,
+    updateActiveTopic: async () => undefined,
   };
 
   readonly outbox: OutboxPort = {

@@ -141,6 +141,7 @@ export class CoachHarness {
       options.scheduledActionRepo,
       undefined,
       this.styleRepo,
+      this.goalRepo,
     );
   }
 

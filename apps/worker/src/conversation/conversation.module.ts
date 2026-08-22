@@ -267,6 +267,7 @@ type MafPrimaryAgentRuntimeOptions = {
         scheduledActionRepo: ScheduledActionRepository,
         pulseBacklogService: PulseBacklogService,
         styleProfileRepo: StyleProfileRepository,
+        goalRepo: GoalRepository,
       ) => new ConversationOrchestrator(
         repo,
         ai,
@@ -279,6 +280,7 @@ type MafPrimaryAgentRuntimeOptions = {
         scheduledActionRepo,
         pulseBacklogService,
         styleProfileRepo,
+        goalRepo,
       ),
       inject: [
         ConversationRepository,
@@ -292,6 +294,7 @@ type MafPrimaryAgentRuntimeOptions = {
         ScheduledActionRepository,
         PulseBacklogService,
         StyleProfileRepository,
+        GoalRepository,
       ],
     },
     {
