@@ -34,6 +34,22 @@ Use this file to turn agent misses into harness improvements.
 
 ## Fixed Failures
 
+## 2026-08-24: GitHub auth unavailable for PR creation
+- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed.
+- Expected: A requested PR should be pushed and opened from the local branch.
+- Root cause layer: environment
+- Harness fix: Configure GitHub auth for the repo environment or connect an authenticated GitHub plugin before PR tasks.
+- Regression check: `git push -u origin <branch>` or authenticated PR creation through the GitHub connector.
+- Status: open
+
+## 2026-08-21: npx unavailable for skill install command
+- Symptom: `npx skills add https://github.com/mattpocock/skills --skill grill-with-docs` failed with `zsh:1: command not found: npx`.
+- Expected: A user-provided skill install command should either run directly or have a documented fallback.
+- Root cause layer: environment
+- Harness fix: Use the preinstalled skill-installer helper script to install GitHub skills when Node/npm shims are unavailable.
+- Regression check: `python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py --repo mattpocock/skills --path skills/grill-with-docs`
+- Status: fixed
+
 ## 2026-08-20: TSX IPC socket blocks full pre-push inside sandbox
 - Symptom: `pnpm prepush` passed monorepo typecheck, lint, and package tests, then `test:scripts` failed with `listen EPERM` for the TSX IPC socket.
 - Expected: Complete script-test verification despite the sandbox IPC restriction.
