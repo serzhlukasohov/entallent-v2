@@ -37,12 +37,18 @@ export class SlackIngestService {
       return;
     }
 
+    const rawEvent = body['event'] as Record<string, unknown> | undefined;
+    if (rawEvent?.['type'] === 'message') {
+      this.logger.log(
+        `Slack message event metadata eventId=${eventId ?? 'none'} user=${String(rawEvent['user'] ?? 'none')} subtype=${String(rawEvent['subtype'] ?? 'none')} botId=${String(rawEvent['bot_id'] ?? 'none')} appId=${String(rawEvent['app_id'] ?? 'none')}`,
+      );
+    }
+
     const events = normalizeSlackEvent({ body, tenantId: workspaceIdentity.tenantId });
 
     for (const event of events) {
       if (event.type !== 'message') continue;
 
-      const rawEvent = body['event'] as Record<string, unknown> | undefined;
       if (rawEvent?.['bot_id'] || rawEvent?.['subtype'] === 'bot_message') continue;
 
       const payload = event.payload;
