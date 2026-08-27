@@ -13,6 +13,11 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain('primaryIntent="casual_conversation" and dialogueAct="acknowledgement"');
     expect(prompt).toContain('copy the persisted summary EXACTLY, character for character, into topicAnchor');
     expect(prompt).toContain('For unrelated new substance, classify only the latest message');
+    expect(prompt).toContain("questions about another chatbot's replies, rules, prompts, or behavior");
+    expect(prompt).toContain("not an instruction to change this mentor's behavior");
+    expect(prompt).toContain('let the correction supersede the rejected premise');
+    expect(prompt).toContain('Do not preserve that premise in latestUserSubstance or topicAnchor');
+    expect(prompt).toContain('Dialogue-act choice never lowers safety');
   });
 });
 

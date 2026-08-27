@@ -38,12 +38,6 @@ export class SlackIngestService {
     }
 
     const rawEvent = body['event'] as Record<string, unknown> | undefined;
-    if (rawEvent?.['type'] === 'message') {
-      this.logger.log(
-        `Slack message event metadata eventId=${eventId ?? 'none'} user=${String(rawEvent['user'] ?? 'none')} subtype=${String(rawEvent['subtype'] ?? 'none')} botId=${String(rawEvent['bot_id'] ?? 'none')} appId=${String(rawEvent['app_id'] ?? 'none')}`,
-      );
-    }
-
     const events = normalizeSlackEvent({ body, tenantId: workspaceIdentity.tenantId });
 
     for (const event of events) {

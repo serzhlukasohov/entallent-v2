@@ -16,6 +16,14 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-08-27: Slack Socket Mode explicit disconnect crashed the production API
+- Symptom: The production API exited while the Slack client was connecting because `@slack/socket-mode`/`finity` treated `server explicit disconnect` as an unhandled state-machine event; restarting the API restored service.
+- Expected: A transient or explicit Socket Mode disconnect should reconnect or fail without terminating the API process.
+- Root cause layer: architecture
+- Harness fix: Keep reconnect hardening separate from prompt changes; add a lifecycle regression around disconnect-during-connect before changing the adapter.
+- Regression check: Exercise an explicit disconnect while the Socket Mode client is connecting and verify the API remains healthy and reconnects.
+- Status: open
+
 ## 2026-08-20: Local Slack connector smoke blocked by sandbox infra limits
 - Symptom: API/worker dev processes fail to start (`AggregateError ... connect EPERM ... 127.0.0.1:5432/6380`) and `curl /api/v1/channel/slack/events` returns `000` because local services are unreachable in this environment.
 - Expected: A signed Slack event should be accepted and processed, producing conversation queue work and outbound commit metadata.
@@ -25,10 +33,10 @@ Use this file to turn agent misses into harness improvements.
 - Status: open
 
 ## 2026-08-19: TS quality gate misclassifies scenario assertions
-- Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console mislabeled the product assertion as `infra_failed`, causing an unnecessary retry. Story 11.3 repeated the class when a stale terse-user prompt assertion was also labeled `infra_failed`.
+- Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console mislabeled the product assertion as `infra_failed`, causing an unnecessary retry. Story 11.3 and the 2026-08-22 intent-fidelity gate repeated the class when stale terse-user zero-question assertions contradicted the acknowledged-thread policy introduced by `9ddd4a6`.
 - Expected: The gate should report the memory assertion as a hard product failure without an infrastructure retry; turn-taking scenarios should remain green.
 - Root cause layer: verification
-- Harness fix: Classify scenario assertion failures separately from model/network failures in the gate runner; address memory grounding in its own story rather than expanding Story 11.2.
+- Harness fix: Removed the two obsolete terse-user zero-question assertions while retaining the one-question ceiling and no-brevity-inference checks. Still classify scenario assertion failures separately from model/network failures in the gate runner; address memory grounding in its own story.
 - Regression check: `SIM_GATE_RUNS=1 pnpm sim:gate`
 - Status: open
 
@@ -41,6 +49,14 @@ Use this file to turn agent misses into harness improvements.
 - Status: open
 
 ## Fixed Failures
+
+## 2026-08-27: ChatGPT Slack connector could not produce user-authored E2E input
+- Symptom: A connector-authored marker appeared in DM `D09GVMU5S3G` at Slack timestamp `1787867291.624999`, but Slack emitted no event to enTalent even with ingress diagnostics placed before normalization and bot filtering.
+- Expected: Live acceptance input must reach enTalent through the same Slack event path as a human message.
+- Root cause layer: workflow
+- Harness fix: Send E2E input through an authenticated Slack Web test user and use the connector only to read the bot response; do not weaken the production anti-loop filter.
+- Regression check: Before a live dialogue replay, send one Slack Web marker and confirm an enTalent reply or ingress evidence before continuing.
+- Status: fixed
 
 ## 2026-08-20: metadata trace test expected unsorted keys
 - Symptom: `conversation-orchestrator.test.ts` failed after adding `continuityDecision` and `goalDecision` because the test sorted actual metadata keys but the expected list was not sorted.
@@ -131,11 +147,11 @@ Use this file to turn agent misses into harness improvements.
 - Status: fixed
 
 ## 2026-08-20: Live model verification lacked authorized egress
-- Symptom: The corrected live terse-user simulation was rejected because it would send scenario text to Azure OpenAI without explicit egress authorization.
+- Symptom: The corrected live terse-user simulation was rejected because it would send scenario text to Azure OpenAI without explicit egress authorization; the 2026-08-22 direct-intent fix repeated this when a targeted rerun also included LangWatch telemetry.
 - Expected: Live prompt verification should run only with an explicitly approved destination and payload.
 - Root cause layer: environment
 - Harness fix: Request explicit approval for Azure scenario egress or use deterministic prompt regressions as the safe default.
-- Regression check: Run the targeted application, AI, and MAF prompt tests without network access.
+- Regression check: Before a live sim, confirm explicit approval for its Azure OpenAI and LangWatch destinations/payload; otherwise do not run it and use targeted direct-TypeScript prompt tests.
 - Status: open
 
 ## 2026-08-20: Model-provider mypy baseline is not clean

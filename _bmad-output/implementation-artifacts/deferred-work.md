@@ -73,3 +73,7 @@
   summary: Complete live/staging validation for the LLM Safety Gateway after Azure credentials are available.
   status: todo
   evidence: Code, unit tests, and local contract behavior are complete, but real Azure OpenAI plus Azure AI Content Safety Prompt Shields smoke testing requires `AGENT_SERVICE_MODEL_PROVIDER`, `AGENT_SERVICE_MODEL_NAME`, `AGENT_SERVICE_AZURE_OPENAI_ENDPOINT`, `AGENT_SERVICE_AZURE_OPENAI_API_KEY`, `AGENT_SERVICE_AZURE_OPENAI_API_VERSION`, `AGENT_SERVICE_LLM_SAFETY_MODE`, `AGENT_SERVICE_LLM_SAFETY_PROVIDER`, `AGENT_SERVICE_AZURE_CONTENT_SAFETY_ENDPOINT`, and `AGENT_SERVICE_AZURE_CONTENT_SAFETY_KEY`.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-direct-address-and-current-intent-fidelity.md`
+  summary: Preserve the authoritative tail of employee messages that exceed the 2,000-character prompt bound.
+  evidence: Review found that `sanitizeTurnContent` keeps only the first 2,000 characters, so a late consultation question or correction can be absent from both classification and rendering; this predates the current prompt-contract fix and needs a separate trust-boundary design.

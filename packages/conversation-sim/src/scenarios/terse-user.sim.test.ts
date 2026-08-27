@@ -87,7 +87,6 @@ describe('coach talking to a consistently terse user', () => {
       `reply plans: ${learningHarness.generateResponseCalls.map((call) => JSON.stringify(call.context.replyPlan)).join('\n')}`,
     ).toBeGreaterThan(0);
     expect(noSubstanceLearningCalls.every((call) => call.context.replyPlan?.mayInferFromBrevity === false)).toBe(true);
-    expect(noSubstanceLearningCalls.every((call) => call.context.replyPlan?.questionPolicy.maxQuestions === 0)).toBe(true);
 
     if (!learningResult.success) {
       console.warn(`[terse-user:learning] judge did not pass this sample: ${learningResult.reasoning}`);
@@ -152,13 +151,11 @@ describe('coach talking to a consistently terse user', () => {
       noSubstanceFollowupCalls.length,
       `reply plans: ${followupHarness.generateResponseCalls.map((call) => JSON.stringify(call.context.replyPlan)).join('\n')}`,
     ).toBeGreaterThan(0);
-    expect(noSubstanceFollowupCalls.every((call) => call.context.replyPlan?.questionPolicy.maxQuestions === 0)).toBe(true);
     const noSubstancePrompt = buildRespondSystemPrompt(
       noSubstanceFollowupCalls[0].strategy,
       noSubstanceFollowupCalls[0].context,
     );
     expect(noSubstancePrompt).toContain('Latest employee substance: omitted because the typed pause act controls this turn');
-    expect(noSubstancePrompt).toContain('Question policy (hard contract): ask zero questions this turn');
     expect(noSubstancePrompt).toMatch(/Do not infer mood, impatience, depth, personality, or unstated meaning/i);
 
     const questionCounts = followupHarness.replies.map(countQuestions);
