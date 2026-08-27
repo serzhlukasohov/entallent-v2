@@ -50,12 +50,12 @@ Use this file to turn agent misses into harness improvements.
 
 ## Fixed Failures
 
-## 2026-08-27: ChatGPT Slack connector could not produce user-authored E2E input
-- Symptom: A connector-authored marker appeared in DM `D09GVMU5S3G` at Slack timestamp `1787867291.624999`, but Slack emitted no event to enTalent even with ingress diagnostics placed before normalization and bot filtering.
-- Expected: Live acceptance input must reach enTalent through the same Slack event path as a human message.
+## 2026-08-28: Slack acceptance targeted the wrong app DM
+- Symptom: A connector-authored marker appeared in `D09GVMU5S3G` at Slack timestamp `1787867291.624999`, but no enTalent ingress followed because that DM belongs to the separate `AI Agent Bot` app. The production EnTalent DM is `D0BJDC2MPE2`, with bot user `U0BJ018K3CP`.
+- Expected: Live acceptance must resolve the product app identity and channel before treating missing ingress as connector or filtering behavior.
 - Root cause layer: workflow
-- Harness fix: Send E2E input through an authenticated Slack Web test user and use the connector only to read the bot response; do not weaken the production anti-loop filter.
-- Regression check: Before a live dialogue replay, send one Slack Web marker and confirm an enTalent reply or ingress evidence before continuing.
+- Harness fix: Verify the DM title and bot author before replay. Use `D0BJDC2MPE2` for EnTalent; both authenticated Slack Web and the ChatGPT Slack connector reach the product there, so do not weaken the production anti-loop filter.
+- Regression check: Send one connector marker to `D0BJDC2MPE2` and confirm a reply authored by `U0BJ018K3CP` before continuing.
 - Status: fixed
 
 ## 2026-08-20: metadata trace test expected unsorted keys
