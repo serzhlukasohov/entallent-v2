@@ -46,7 +46,7 @@ context:
 - `packages/ai-openai/src/prompts/respond.ts` and `packages/ai-openai/src/prompts/survey.ts` -- direct numeric probe and extraction instructions.
 - `packages/application/src/ports/survey.repository.port.ts` and `apps/worker/src/survey/repositories/survey.repository.ts` -- existing assessment score read/write path.
 - `packages/application/src/use-cases/conversation-orchestrator.ts` -- probe metadata and engagement index from three assessment scores.
-- `packages/application/src/use-cases/proactive-check-in.use-case.ts`, `apps/worker/src/conversation/conversation.processor.ts`, and `agent-service/src/agent_service/workflows/model_provider.py` -- consistent numeric wording in TS and proactive MAF paths.
+- `packages/application/src/use-cases/proactive-check-in.use-case.ts` and `packages/ai-openai/src/openai-provider.ts` -- deterministic numeric wording in the supported TypeScript path; MAF and `agent-service` remain unchanged.
 
 ## Tasks & Acceptance
 
@@ -54,7 +54,7 @@ context:
 - [x] Update the pulse backlog service and focused unit tests with one bounded engagement-window predicate plus partial-group prioritization.
 - [x] Extend AI/evidence contracts and prompts with optional `responseType`/`numericValue`, preserving backward compatibility.
 - [x] Gate engagement evaluation by the same window, require a valid numeric value for numeric completion, and persist it through the existing assessment score column.
-- [x] Pass numeric probe metadata through inbound, proactive TS, and proactive MAF prompts; retain safety and one-question gates.
+- [x] Pass numeric probe metadata through inbound and proactive TS prompts; retain safety and one-question gates without extending the retired MAF boundary.
 - [x] Replace polarity-derived engagement scoring with three distinct assessment scores and add focused repository/use-case/orchestrator tests.
 - [x] Append the completed verification result to `docs/agent-task-log.md`; record any encountered failure in `docs/agent-failures.md`.
 
@@ -63,12 +63,13 @@ context:
 - Given an eligible engagement probe and an explicit rating of 0, 7, or 10, when extraction succeeds, then the exact value is stored in `survey_assessments.score`; qualitative-only text does not close the question.
 - Given three distinct scored engagement questions, when the employee confirms the group, then the stored group score equals their mean × 10 without a polarity fallback.
 - Given one or more partially completed regular groups, when the next probe is selected, then the group closest to three insights wins, with canonical tie-breaking and stable fallback.
-- Given either TS or proactive MAF generation, when the selected probe is numeric, then the visible reply asks exactly one explicit 0–10 question without mentioning survey mechanics.
+- Given TypeScript generation, when the selected probe is numeric, then the visible reply asks exactly one explicit 0–10 question without mentioning survey mechanics.
 
 ## Spec Change Log
 
 - 2026-08-28: Production acceptance exposed that the model evaluator could recognize an explicit rating while omitting optional `numericValue`. Commit `b4a583f` made the explicit inbound rating, bound to the exact preceding probe, the deterministic source of truth and rejects a conflicting model value.
 - 2026-08-28: Completed production acceptance for regular-window exclusion, final-14-day numeric wording and persistence, qualitative-only incompletion, and `growth` 2/3 focus selection. Removed the isolated test user and all verified queue/database artifacts afterward.
+- 2026-08-28: Corrected an implementation-boundary mistake by restoring `agent-service`, MAF prompt policy, runtime contracts, and proactive MAF wiring byte-for-byte to their pre-feature state. Quantitative engagement remains TypeScript-only.
 
 ## Design Notes
 
@@ -80,23 +81,20 @@ context:
 - `pnpm --filter @entalent/contracts test` -- numeric evaluator contract remains compatible.
 - `pnpm --filter @entalent/application test -- pulse-backlog.service.test.ts survey-evidence.use-case.test.ts conversation-orchestrator.test.ts` -- window, focus, persistence, and scoring behavior pass.
 - `pnpm --filter @entalent/ai-openai test` -- TS response/evidence prompts pass.
-- `pnpm --filter @entalent/worker test` -- repository and proactive runtime wiring pass.
-- `cd agent-service && pytest tests/unit/test_model_provider_prompt.py` -- MAF numeric probe policy passes.
+- `pnpm --filter @entalent/worker test` -- repository and supported proactive TypeScript wiring pass.
 - `pnpm typecheck` -- cross-package contracts compile.
 
 **Results:**
-- Focused application tests passed: 85/85; AI package tests passed: 80/80; contracts passed: 89/89 plus Python runtime fixtures.
+- Focused application tests passed: 85/85; AI package tests passed: 80/80; contracts passed: 89/89.
 - Full package test graph passed: 15/15 tasks, including application 358/358, worker 144/144, and API 92/92.
-- Root typecheck passed: 23/23 tasks; changed-package lint, Python ruff, and the script suite passed.
-- Agent-service pytest passed: 198/198; canonical and packaged OpenAPI contracts are byte-identical; `git diff --check` passed.
+- Root typecheck passed: 23/23 tasks; changed-package lint and the script suite passed; `git diff --check` passed.
 - BMad Blind Hunter and Edge Case Hunter findings were fixed or recorded in `deferred-work.md` where migration or product decisions are required.
-- Python mypy still reports the documented pre-existing model-provider baseline errors; no new changed-line mypy failure was found.
-- Commit `b2fec85` was pushed to `main`; Railway auto-deploy completed successfully for api, worker, agent-service, and dashboard.
-- Production agent-service readiness passed all six required-variable checks and validated the Dockerfile/runtime-volume envelope; HTTP probing was skipped because no health URL was provided.
+- Commit `b2fec85` was pushed to `main`; its accidental MAF/agent-service changes were subsequently restored to the pre-feature state.
 - Commit `b4a583f` passed the full pre-push gate (including application 360/360); Railway deployed api and worker successfully while agent-service and dashboard were correctly skipped by watch paths.
 - Production behavior acceptance passed: outside the 14-day window the next probe was regular (`autonomy / q12_expectations`); inside the window `engagement_nps` produced one explicit 0–10 question and stored score `7.00`; a qualitative-only engagement reply stored no assessment and left its backlog entry active.
 - With `growth` prepared at 2/3, the production-backed selector returned `growth / q12_progress_discussion`, proving the closest-index focus rule independently of the model's optional probe-use decision.
 - Cleanup passed: BullMQ jobs `conversation:251-254` and `survey-evidence:239-241` were removed after terminal-state and ownership checks; all 12 database counts for the isolated user, account, conversation, messages, window, backlog, evidence, assessments, group state, LLM runs, audit logs, and runtime attempts were zero.
+- No-MAF correction verification passed: MAF-facing files match `b2fec85^` exactly; application 87/87, AI 80/80, worker 144/144, contracts 87/87, root typecheck 23/23, and changed TypeScript package lint all passed.
 
 ## Suggested Review Order
 
@@ -129,9 +127,6 @@ context:
 
 - Retry once, then fail closed when a TS numeric probe remains invalid.
   [`openai-provider.ts:272`](../../packages/ai-openai/src/openai-provider.ts#L272)
-
-- Mirror the deterministic one-question 0–10 check in the MAF path.
-  [`model_provider.py:615`](../../agent-service/src/agent_service/workflows/model_provider.py#L615)
 
 **Contracts, tests, and deferred boundaries**
 

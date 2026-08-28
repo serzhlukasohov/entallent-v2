@@ -162,7 +162,6 @@ export type RuntimePulseProbeQuestion = {
   stableKey?: string;
   title?: string;
   group?: string;
-  responseType?: 'open_ended' | 'numeric_0_10';
   probeStrategies: string[];
 };
 

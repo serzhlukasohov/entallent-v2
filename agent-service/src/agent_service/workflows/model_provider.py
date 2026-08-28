@@ -420,7 +420,6 @@ def proactive_check_in_instruction(request: dict[str, Any]) -> str:
 
     title = safe_context_text(probe_question.get("title"), limit=80)
     stable_key = safe_context_text(probe_question.get("stableKey"), limit=80)
-    response_type = proactive_probe_response_type(request)
     strategies: list[str] = []
     raw_strategies = probe_question.get("probeStrategies")
     if isinstance(raw_strategies, list):
@@ -429,26 +428,19 @@ def proactive_check_in_instruction(request: dict[str, Any]) -> str:
             if strategy:
                 strategies.append(strategy)
 
-    if response_type == "numeric_0_10":
-        parts = [
-            "Start a short, human pulse check-in.",
-            "Ask exactly one direct question requesting an explicit rating from 0 to 10.",
-            "The 0-10 rating question must be the only question in the reply.",
-        ]
-    else:
-        parts = [
-            "Start a short, human pulse check-in.",
-            "Ask at most one question.",
-            "Use the selected probe topic as the reason for the question; stay natural, "
-            "but do not replace it with a generic check-in.",
-        ]
+    parts = [
+        "Start a short, human pulse check-in.",
+        "Ask at most one question.",
+        "Use the selected probe topic as the reason for the question; stay natural, "
+        "but do not replace it with a generic check-in.",
+    ]
     if title or stable_key:
         parts.append(f"Probe topic: {title or stable_key}.")
     if strategies:
         parts.append(f"Probe strategies: {' / '.join(strategies)}.")
     parts.append(
         "Do not mention survey mechanics, assessment language, internal probe IDs, "
-        "internal scoring, or HR terminology."
+        "or HR terminology."
     )
     return " ".join(parts)
 
@@ -612,11 +604,6 @@ def candidate_reply_policy_violations(
         not isinstance(metadata, Mapping) or metadata.get("containsSurveyProbe") is not True
     ):
         violations.append("ask the selected pulse probe question instead of a generic check-in")
-    if proactive_probe_response_type(request) == "numeric_0_10" and (
-        normalized.count("?") != 1
-        or re.search(r"(?:\b0\b.*\b10\b|\b10\b.*\b0\b)", normalized) is None
-    ):
-        violations.append("ask exactly one question with an explicit 0 to 10 rating")
     max_questions = (
         int(policy["max_questions"])
         if policy is not None
@@ -1195,16 +1182,6 @@ def proactive_probe_question_id(request: dict[str, Any]) -> str | None:
 
     normalized = question_id.strip()
     return normalized if normalized else None
-
-
-def proactive_probe_response_type(request: dict[str, Any]) -> str | None:
-    proactive_context = request.get("proactiveContext")
-    if not isinstance(proactive_context, Mapping):
-        return None
-    probe_question = proactive_context.get("probeQuestion")
-    if not isinstance(probe_question, Mapping):
-        return None
-    return safe_context_text(probe_question.get("responseType"), limit=40)
 
 
 def candidate_reference_context(request: dict[str, Any]) -> str:

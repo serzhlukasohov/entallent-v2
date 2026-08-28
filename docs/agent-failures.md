@@ -270,13 +270,13 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: `pnpm maf:agent-service:readiness` completes with service, variable, and deployment-envelope checks.
 - Status: fixed
 
-## 2026-08-28: Selected-probe smoke misdiagnosed the TypeScript check-in path
-- Symptom: `maf-proactive-selected-probe-smoke.ts` reported `selected_probe_missing` when the test user was routed through the TypeScript runtime, which does not persist the MAF synthetic request metadata the smoke queries.
-- Expected: The smoke should either verify a MAF-routed check-in or report the runtime path as unsupported instead of diagnosing probe selection as missing.
+## 2026-08-28: MAF-only smoke was used for a TypeScript feature
+- Symptom: `maf-proactive-selected-probe-smoke.ts` reported `selected_probe_missing` while the supported TypeScript path was under acceptance.
+- Expected: Retired MAF smoke and `agent-service` verification must not be used for TypeScript-only product work.
 - Root cause layer: verification
-- Harness fix: Make the smoke runtime-aware and fail fast with an explicit runtime-path result before asserting MAF-only request metadata.
-- Regression check: Run the smoke once with MAF primary and once with the TypeScript path; only the MAF run may assert `proactive_check_in_request` metadata.
-- Status: open
+- Harness fix: Exclude MAF smoke from the verification plan and use TypeScript selector/outbound evidence instead.
+- Regression check: The task verification list contains no `maf:*`, `agent-service`, Python runtime, or MAF OpenAPI command.
+- Status: obsolete
 
 ## 2026-08-28: Survey evaluator omitted an explicit numeric rating field
 - Symptom: Production evaluation recognized the employee's reply `7` but omitted optional `numericValue`, leaving `survey_assessments.score` null and the engagement backlog incomplete.
@@ -292,4 +292,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: tooling
 - Harness fix: Avoid template literals in shell-embedded scripts; use string concatenation or a reviewed temporary script, then perform an independent read-only absence check.
 - Regression check: Query the exact job IDs after cleanup and require `remaining=[]`; the verification passed for all seven jobs.
+- Status: fixed
+
+## 2026-08-28: Engagement implementation crossed the retired MAF boundary
+- Symptom: Commit `b2fec85` added numeric-probe behavior to `agent-service`, the MAF runtime contract, and proactive MAF worker wiring even though MAF is unsupported and out of scope.
+- Expected: Engagement scheduling, quantitative extraction, persistence, and focus changes must remain in the supported TypeScript application/worker/AI path.
+- Root cause layer: instructions
+- Harness fix: Restore every MAF-facing file to its pre-feature bytes and add an explicit no-MAF boundary check to engagement verification.
+- Regression check: Diff the final tree against `b2fec85^` for `agent-service`, runtime OpenAPI/contracts, `agent-runtime.port.ts`, and proactive MAF `responseType` wiring; require no feature delta.
 - Status: fixed

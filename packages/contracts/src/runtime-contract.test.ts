@@ -107,43 +107,6 @@ describe('Runtime contract fixtures', () => {
     ).toEqual({ ok: true });
   });
 
-  it('accepts a structured numeric response type on proactive pulse probes', () => {
-    const request = readJson(
-      'fixtures/valid/proactive-check-in-request.json',
-    ) as RuntimeProcessMessageRequest;
-    const probeQuestion = request.proactiveContext?.probeQuestion;
-    expect(probeQuestion).toBeDefined();
-
-    const numericRequest: RuntimeProcessMessageRequest = {
-      ...request,
-      proactiveContext: {
-        reason: 'pulse_check_in',
-        probeQuestion: {
-          ...probeQuestion!,
-          responseType: 'numeric_0_10',
-        },
-      },
-    };
-
-    expect(
-      validateRuntimeProcessMessageRequest({ schemaDocument, value: numericRequest }),
-    ).toEqual({ ok: true });
-  });
-
-  it('rejects an unsupported proactive probe response type', () => {
-    const request = readJson('fixtures/valid/proactive-check-in-request.json') as Record<string, unknown>;
-    const proactiveContext = request['proactiveContext'] as Record<string, unknown>;
-    const probeQuestion = proactiveContext['probeQuestion'] as Record<string, unknown>;
-    probeQuestion['responseType'] = 'numeric_0-10';
-
-    expect(
-      validateRuntimeProcessMessageRequest({
-        schemaDocument,
-        value: request as unknown as RuntimeProcessMessageRequest,
-      }).ok,
-    ).toBe(false);
-  });
-
   it('accepts an explicit reply plan and policy on runtime context', () => {
     const request = readJson(
       'fixtures/valid/process-message-request.json',

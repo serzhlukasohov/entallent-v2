@@ -307,7 +307,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         stableKey: string;
         title: string;
         questionGroup: string;
-        responseType: 'open_ended' | 'numeric_0_10';
         probeStrategies: string[];
       } | null;
     },
@@ -422,9 +421,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
                 stableKey: options.probeQuestion.stableKey,
                 title: options.probeQuestion.title,
                 group: options.probeQuestion.questionGroup,
-                ...(options.probeQuestion.responseType
-                  ? { responseType: options.probeQuestion.responseType }
-                  : {}),
                 probeStrategies: options.probeQuestion.probeStrategies,
               },
             }
