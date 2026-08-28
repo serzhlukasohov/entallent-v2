@@ -50,6 +50,14 @@ Use this file to turn agent misses into harness improvements.
 
 ## Fixed Failures
 
+## 2026-08-28: Leading acknowledgement hid a substantive correction
+- Symptom: In the exact Annna replay, the message beginning with `yes` and then rejecting the pulse-check interpretation was classified as `acknowledgement / continue_existing_thread`, so the next reply retained manager/report framing.
+- Expected: A substantive clarification or rejection must be `correction` even when it begins with a backchannel such as `yes`.
+- Root cause layer: instructions
+- Harness fix: Restrict `acknowledgement` to messages that are entirely backchannels and state that an explicit correction wins over a leading acknowledgement.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- prompts/classify.test.ts prompts/respond.test.ts`; production exact replay must persist `dialogueAct=correction` for the combined `yes`/correction turn.
+- Status: fixed
+
 ## 2026-08-28: Slack acceptance targeted the wrong app DM
 - Symptom: A connector-authored marker appeared in `D09GVMU5S3G` at Slack timestamp `1787867291.624999`, but no enTalent ingress followed because that DM belongs to the separate `AI Agent Bot` app. The production EnTalent DM is `D0BJDC2MPE2`, with bot user `U0BJ018K3CP`.
 - Expected: Live acceptance must resolve the product app identity and channel before treating missing ingress as connector or filtering behavior.
