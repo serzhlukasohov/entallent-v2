@@ -269,3 +269,27 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Run Railway-backed readiness with network escalation in the managed desktop sandbox.
 - Regression check: `pnpm maf:agent-service:readiness` completes with service, variable, and deployment-envelope checks.
 - Status: fixed
+
+## 2026-08-28: Selected-probe smoke misdiagnosed the TypeScript check-in path
+- Symptom: `maf-proactive-selected-probe-smoke.ts` reported `selected_probe_missing` when the test user was routed through the TypeScript runtime, which does not persist the MAF synthetic request metadata the smoke queries.
+- Expected: The smoke should either verify a MAF-routed check-in or report the runtime path as unsupported instead of diagnosing probe selection as missing.
+- Root cause layer: verification
+- Harness fix: Make the smoke runtime-aware and fail fast with an explicit runtime-path result before asserting MAF-only request metadata.
+- Regression check: Run the smoke once with MAF primary and once with the TypeScript path; only the MAF run may assert `proactive_check_in_request` metadata.
+- Status: open
+
+## 2026-08-28: Survey evaluator omitted an explicit numeric rating field
+- Symptom: Production evaluation recognized the employee's reply `7` but omitted optional `numericValue`, leaving `survey_assessments.score` null and the engagement backlog incomplete.
+- Expected: An explicit 0–10 answer to the exact preceding numeric probe should persist even when the model omits the redundant structured number.
+- Root cause layer: architecture
+- Harness fix: Treat the deterministically parsed inbound rating as source of truth, require exact probe binding, and reject any conflicting model-provided value (`b4a583f`).
+- Regression check: `pnpm --filter @entalent/application test -- survey-evidence.use-case.test.ts`; production replay stores `7.00`, while qualitative-only text stores no score.
+- Status: fixed
+
+## 2026-08-28: Inline queue-cleanup script used shell-interpreted template literals
+- Symptom: Backticks in a `tsx -e` command were expanded by the outer shell, producing `command not found` diagnostics and suppressing the script's removal summary; the guarded removal itself completed.
+- Expected: Production cleanup commands should preserve JavaScript source exactly and report every removed target.
+- Root cause layer: tooling
+- Harness fix: Avoid template literals in shell-embedded scripts; use string concatenation or a reviewed temporary script, then perform an independent read-only absence check.
+- Regression check: Query the exact job IDs after cleanup and require `remaining=[]`; the verification passed for all seven jobs.
+- Status: fixed

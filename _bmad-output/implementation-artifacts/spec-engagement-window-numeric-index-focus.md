@@ -67,6 +67,9 @@ context:
 
 ## Spec Change Log
 
+- 2026-08-28: Production acceptance exposed that the model evaluator could recognize an explicit rating while omitting optional `numericValue`. Commit `b4a583f` made the explicit inbound rating, bound to the exact preceding probe, the deterministic source of truth and rejects a conflicting model value.
+- 2026-08-28: Completed production acceptance for regular-window exclusion, final-14-day numeric wording and persistence, qualitative-only incompletion, and `growth` 2/3 focus selection. Removed the isolated test user and all verified queue/database artifacts afterward.
+
 ## Design Notes
 
 `survey_assessments.score` already exists and is already exposed by the admin insights API. Reusing it is the shortest correct path and keeps qualitative evidence summaries available as context without pretending polarity is a rating. Historic rows with `score = null` remain unmodified and simply do not count as quantitative engagement answers.
@@ -90,6 +93,10 @@ context:
 - Python mypy still reports the documented pre-existing model-provider baseline errors; no new changed-line mypy failure was found.
 - Commit `b2fec85` was pushed to `main`; Railway auto-deploy completed successfully for api, worker, agent-service, and dashboard.
 - Production agent-service readiness passed all six required-variable checks and validated the Dockerfile/runtime-volume envelope; HTTP probing was skipped because no health URL was provided.
+- Commit `b4a583f` passed the full pre-push gate (including application 360/360); Railway deployed api and worker successfully while agent-service and dashboard were correctly skipped by watch paths.
+- Production behavior acceptance passed: outside the 14-day window the next probe was regular (`autonomy / q12_expectations`); inside the window `engagement_nps` produced one explicit 0–10 question and stored score `7.00`; a qualitative-only engagement reply stored no assessment and left its backlog entry active.
+- With `growth` prepared at 2/3, the production-backed selector returned `growth / q12_progress_discussion`, proving the closest-index focus rule independently of the model's optional probe-use decision.
+- Cleanup passed: BullMQ jobs `conversation:251-254` and `survey-evidence:239-241` were removed after terminal-state and ownership checks; all 12 database counts for the isolated user, account, conversation, messages, window, backlog, evidence, assessments, group state, LLM runs, audit logs, and runtime attempts were zero.
 
 ## Suggested Review Order
 
