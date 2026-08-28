@@ -261,3 +261,11 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Run Git index mutations with repository-write escalation in the managed desktop sandbox.
 - Regression check: `git diff --cached --check` after staging.
 - Status: fixed
+
+## 2026-08-28: Railway readiness initially ran inside the network sandbox
+- Symptom: The first production readiness run failed DNS lookup for Railway's API.
+- Expected: The read-only deployment verification should reach Railway after an authorized push.
+- Root cause layer: environment
+- Harness fix: Run Railway-backed readiness with network escalation in the managed desktop sandbox.
+- Regression check: `pnpm maf:agent-service:readiness` completes with service, variable, and deployment-envelope checks.
+- Status: fixed

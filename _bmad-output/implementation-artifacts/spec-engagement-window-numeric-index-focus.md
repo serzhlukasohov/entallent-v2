@@ -88,6 +88,8 @@ context:
 - Agent-service pytest passed: 198/198; canonical and packaged OpenAPI contracts are byte-identical; `git diff --check` passed.
 - BMad Blind Hunter and Edge Case Hunter findings were fixed or recorded in `deferred-work.md` where migration or product decisions are required.
 - Python mypy still reports the documented pre-existing model-provider baseline errors; no new changed-line mypy failure was found.
+- Commit `b2fec85` was pushed to `main`; Railway auto-deploy completed successfully for api, worker, agent-service, and dashboard.
+- Production agent-service readiness passed all six required-variable checks and validated the Dockerfile/runtime-volume envelope; HTTP probing was skipped because no health URL was provided.
 
 ## Suggested Review Order
 
