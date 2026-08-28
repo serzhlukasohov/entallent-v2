@@ -109,7 +109,11 @@ describe('Annna direct-address and current-intent fidelity', () => {
     );
     expect(mentorSuggestedMemories).toEqual([]);
     const invalidClosingGoals = harness.memoryItems.filter(
-      (item) => item.category === 'goal' && /forget|leave it there|drop it|pause.{0,20}(?:discussion|conversation)/i.test(item.content),
+      (item) =>
+        item.category === 'goal' &&
+        /forget|leave it there|drop it|pause.{0,20}(?:discussion|conversation)|no longer wants? to continue|does not want to continue/i.test(
+          item.content,
+        ),
     );
     expect(invalidClosingGoals).toEqual([]);
 

@@ -33,6 +33,10 @@ export class MemoryExtractionUseCase {
 
   async execute(input: MemoryExtractionInput): Promise<MemoryExtractionResult> {
     const dbMessages = await this.conversationRepo.findRecentMessages(input.conversationId, 20);
+    const closesConversation = dbMessages.some(
+      (message) =>
+        message.id === input.outboundMessageId && message.metadata?.['dialogueAct'] === 'closing',
+    );
     const turns = dbMessages.map((m) => ({
       role: m.direction === 'inbound' ? ('user' as const) : ('assistant' as const),
       content: m.text,
@@ -54,10 +58,15 @@ export class MemoryExtractionUseCase {
       goals: activeGoals.map((g) => ({ id: g.id, title: g.title, status: g.status })),
     });
 
-    await this.applyMemoryItems(input, proposal.memoryItems, activeItems);
-    await this.applyGoalProposals(input, proposal.goalProposals);
+    await this.applyMemoryItems(input, closesConversation ? [] : proposal.memoryItems, activeItems);
+    await this.applyGoalProposals(
+      input,
+      closesConversation
+        ? proposal.goalProposals.filter((goal) => goal.action === 'cancel' || goal.action === 'complete')
+        : proposal.goalProposals,
+    );
 
-    return { followUpCandidates: proposal.followUpCandidates };
+    return { followUpCandidates: closesConversation ? [] : proposal.followUpCandidates };
   }
 
   private async applyMemoryItems(

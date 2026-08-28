@@ -213,3 +213,11 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Keep exact private-transcript scenarios out of LangWatch, request explicit approval for the remaining Azure scenario egress, and use deterministic prompt regressions as the safe default.
 - Regression check: Before a live sim with private transcript text, confirm LangWatch reporting is disabled and explicit approval exists for the model-provider destination; otherwise do not run it.
 - Status: fixed
+
+## 2026-08-28: Closing turn created durable anti-goal memories
+- Symptom: The production Annna replay classified `No, forget` as `closing` and replied without a question, but memory extraction stored four active `goal` items phrased as “Employee no longer wants to continue…” from that closing turn.
+- Expected: A closing turn may cancel or complete an existing goal, but must not create durable memory, a new goal, or a follow-up from the decision to stop the current thread.
+- Root cause layer: architecture
+- Harness fix: Enforce the closing boundary in `MemoryExtractionUseCase` using the persisted outbound `dialogueAct`; discard memory items, goal creates, and follow-ups while retaining explicit cancel/complete proposals.
+- Regression check: `pnpm --filter @entalent/application test -- memory-extraction.use-case.test.ts`; the exact Annna scenario rejects paraphrased “no longer wants to continue” goal memories.
+- Status: fixed
