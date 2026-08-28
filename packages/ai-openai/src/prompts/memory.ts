@@ -9,6 +9,14 @@ Analyze the conversation and identify information worth remembering long-term ab
 Rules:
 - Only extract durable facts, goals, concerns, preferences, commitments, and milestones
 - Do NOT extract: temporary emotions without context, offhand remarks, guesses, inferences without evidence
+- Employee messages are the only source of facts, goals, preferences, commitments, and choices about the employee. Mentor messages are context only.
+- The latest Employee message is the only source of new or changed memory in this extraction run. Earlier messages only resolve what that latest message refers to; do not re-propose their content unless the latest Employee message explicitly updates or adopts it.
+- Never turn a Mentor suggestion, example, question, or forced-choice option into an employee memory or goal unless a later Employee message explicitly adopts it.
+- An Employee answer such as "I don't know" to a Mentor's choice or question is not adoption of any option and must not become a goal.
+- Create a goal only from an explicit Employee intention, commitment, or request to pursue an outcome. Asking for advice or answering a Mentor question is not automatically a durable goal.
+- A closing or rejection such as "forget it", "leave it there", "drop it", or "never mind" is not a goal. Use it only to cancel, supersede, or ignore relevant prior proposals; never create a goal to forget or pause a discussion.
+- Keep facts about a bot, product, test setup, or target persona as project_context. Do not turn "an HR mentor bot" into the employee's own role, job, or identity unless the Employee explicitly says it is.
+- An Employee correction or rejection overrides earlier interpretations. Do not preserve or re-propose the rejected interpretation; update, supersede, cancel, or ignore it as the available action semantics allow.
 - Do NOT store sensitive information that has no product value (medical conditions, diagnoses, personal secrets)
 - For each memory item, decide: create (new item), update (refine existing — set existingItemId to the [id] from the existing-items list), supersede (replace existing by existingItemId), or ignore
 - CRITICAL: before proposing "create", check the existing memory items list. If an item already captures the same fact — even worded differently — do NOT create another one. Use "ignore" if nothing changed, or "update"/"supersede" with that item's id if the fact evolved. Near-duplicate items are extraction errors.
@@ -59,9 +67,26 @@ export function buildMemoryUserPrompt(
   turns: ConversationTurn[],
   existing: MemoryContext,
 ): string {
-  const transcript = turns
-    .slice(-20)
-    .map((t) => `${t.role === 'user' ? 'Employee' : 'Mentor'}: ${sanitizeTurnContent(t.content)}`)
+  const recentTurns = turns.slice(-20);
+  const latestEmployeeIndex = recentTurns.reduce(
+    (latest, turn, index) => (turn.role === 'user' ? index : latest),
+    -1,
+  );
+  // The just-generated Mentor reply is not evidence about the employee. Keep
+  // earlier Mentor turns only so a short Employee adoption such as "yes" can
+  // still be resolved against the question it answers.
+  const sourceBoundedTurns =
+    latestEmployeeIndex >= 0 ? recentTurns.slice(0, latestEmployeeIndex + 1) : [];
+  const transcript = sourceBoundedTurns
+    .map((t, index) => {
+      const role =
+        t.role === 'user'
+          ? index === latestEmployeeIndex
+            ? 'Employee [LATEST — ONLY SOURCE OF NEW MEMORY]'
+            : 'Employee [context only]'
+          : 'Mentor [context only]';
+      return `${role}: ${sanitizeTurnContent(t.content)}`;
+    })
     .join('\n');
 
   const existingItemsSummary =

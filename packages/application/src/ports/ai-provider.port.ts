@@ -48,6 +48,8 @@ export interface SurveyQuestionForEvaluation {
 
 export interface ReplyPlan {
   dialogueAct: import('@entalent/contracts').DialogueAct;
+  /** A correction occurred in the last two mentor replies; do not revive its rejected frame. */
+  correctionCarryover?: boolean;
   latestUserSubstance: string | null;
   topicAnchor: string | null;
   memoryAnchors: Array<{ category: string; content: string }>;

@@ -580,6 +580,79 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
 
     expect(m.aiProvider.generateResponse.mock.calls[0][2].memoryContext).toBeUndefined();
   });
+
+  it('keeps stored memory out of a correction response', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'correction',
+      reminderRequest: null, dialogueAct: 'correction',
+      latestUserSubstance: 'I wanted criteria for evaluating chatbot answers',
+      topicAnchor: 'manager-facing pulse report',
+    });
+    const memoryRepo = {
+      findActiveByUser: vi.fn().mockResolvedValue([{
+        id: 'memory-stale', category: 'project_context',
+        content: 'Employee wants a manager-facing pulse report', importance: 1,
+      }]),
+    };
+
+    await orchestratorWithGoals(m, undefined, memoryRepo).orchestrate(INPUT);
+
+    const [strategy, responseContext] = [
+      m.aiProvider.generateResponse.mock.calls[0][1],
+      m.aiProvider.generateResponse.mock.calls[0][2],
+    ];
+    expect(strategy.includeFollowUpQuestion).toBe(false);
+    expect(responseContext.memoryContext).toBeUndefined();
+    expect(responseContext.replyPlan.memoryAnchors).toEqual([]);
+    expect(responseContext.replyPlan.questionPolicy).toEqual({
+      maxQuestions: 0,
+      reason: 'strategy_disallows_questions',
+    });
+  });
+
+  it('keeps stored framing out for two replies after a correction', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'out-correction', direction: 'outbound', text: 'I was overreading that.',
+        occurredAt: new Date('2026-08-28T10:00:00.000Z'), metadata: { dialogueAct: 'correction' },
+      },
+      {
+        id: 'm-middle', direction: 'inbound', text: 'Natural and relevant.',
+        occurredAt: new Date('2026-08-28T10:01:00.000Z'), metadata: undefined,
+      },
+      {
+        id: 'out-middle', direction: 'outbound', text: 'Those need separate checks.',
+        occurredAt: new Date('2026-08-28T10:02:00.000Z'), metadata: { dialogueAct: 'continuation' },
+      },
+      {
+        id: 'm-1', direction: 'inbound', text: 'Give me the criteria.',
+        occurredAt: new Date('2026-08-28T10:03:00.000Z'), metadata: undefined,
+      },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'request',
+      reminderRequest: null, dialogueAct: 'request', latestUserSubstance: 'Give me the criteria',
+      topicAnchor: 'chatbot answer quality',
+    });
+    const memoryRepo = {
+      findActiveByUser: vi.fn().mockResolvedValue([{
+        id: 'memory-stale', category: 'project_context',
+        content: 'manager-facing pulse report', importance: 1,
+      }]),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    await orchestratorWithGoals(m, undefined, memoryRepo).orchestrate(INPUT);
+
+    const responseContext = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(responseContext.memoryContext).toBeUndefined();
+    expect(responseContext.replyPlan.correctionCarryover).toBe(true);
+    expect(responseContext.replyPlan.memoryAnchors).toEqual([]);
+  });
 });
 
 describe('ConversationOrchestrator language policy', () => {

@@ -11,7 +11,7 @@ Use this file to turn agent misses into harness improvements.
 - Root cause layer: instructions | context | architecture | verification | environment | workflow | tooling
 - Harness fix:
 - Regression check:
-- Status: open
+- Status: open | fixed | obsolete
 ```
 
 ## Open Failures
@@ -32,15 +32,67 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: `SIM_GATE_RUNS=1 pnpm sim:gate`
 - Status: open
 
+## Obsolete / Retired Failures
+
+These entries are retained as historical evidence but are not active work because MAF and `agent-service` are no longer supported.
+
 ## 2026-08-19: packaged Python runtime schema drifted from canonical OpenAPI
 - Symptom: `test_python_service_packages_shared_runtime_openapi_schema` fails because the packaged Python schema omits `greeting_opens_conversation`.
 - Expected: The deployable Python artifact must exactly match `packages/contracts/runtime/openapi.json`.
 - Root cause layer: workflow
-- Harness fix: Generate or copy the packaged schema from the canonical file during build and run parity in the default CI/pre-push path.
-- Regression check: `agent-service/.venv/bin/pytest agent-service/tests/unit/test_runtime_contract.py::test_python_service_packages_shared_runtime_openapi_schema -q`
-- Status: open
+- Harness fix: None planned; do not extend the retired Python runtime.
+- Regression check: Not active while MAF and `agent-service` remain unsupported.
+- Status: obsolete
+
+## 2026-08-20: Model-provider mypy baseline is not clean
+- Symptom: Whole-file mypy reports three pre-existing errors at lines 721, 782, and 857 outside the engagement diff.
+- Expected: Typed runtime verification should distinguish new errors from baseline debt.
+- Root cause layer: verification
+- Harness fix: None planned; do not spend current verification effort on the retired model-provider path.
+- Regression check: Not active while MAF and `agent-service` remain unsupported.
+- Status: obsolete
 
 ## Fixed Failures
+
+## 2026-08-28: Mixed rejection plus request escaped correction policy
+- Symptom: One exact Annna sample classified `No, you keep circling` plus the corrected criteria request as `request`, allowing an unnecessary rubric offer after the direct answer.
+- Expected: An explicit rejection controls response shape even when the same message contains a new request: answer it directly, ask zero questions, and stop.
+- Root cause layer: architecture
+- Harness fix: Add a classifier example and a deterministic provider-boundary normalization for unambiguous rejection-prefixed requests; keep the exact scenario strict on `correction`, zero questions, and no extra offer.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- openai-provider.test.ts prompts/classify.test.ts prompts/respond.test.ts` plus turn 13 of the exact Annna scenario.
+- Status: fixed
+
+## 2026-08-28: Explicit `No, forget` varied into acknowledgement
+- Symptom: The third exact Annna sample classified the final `No, forget` as `acknowledgement`, reopened the discussion, and asked another question.
+- Expected: Unambiguous stop phrases must always become typed `closing` with no topic anchor, follow-up, or additional offer.
+- Root cause layer: architecture
+- Harness fix: Normalize bounded explicit stop phrases at the provider boundary to `closing` while preserving safety fields; keep the scenario's closing-plan and zero-question assertions.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- openai-provider.test.ts` plus turn 15 of the exact Annna scenario.
+- Status: fixed
+
+## 2026-08-28: Exact evaluator rejected valid correction wording
+- Symptom: Hard assertions rejected valid acknowledgements such as `overreading`, `earlier read was too far off`, and `over-reading`; the post-fix judge also explicitly said no third-person violation was visible but still marked that binary criterion false.
+- Expected: The evaluator should accept semantically equivalent admissions and use deterministic checks for exact pronoun constraints without weakening the required correction, direct answer, or no-circling contracts.
+- Root cause layer: verification
+- Harness fix: Expand only the acknowledgement-synonym matcher, move the no-third-person criterion to a deterministic assertion across all 15 coach replies, and retain typed-plan, content, question, stale-frame, memory, and closing assertions.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/annna-intent-fidelity.sim.test.ts`
+- Status: fixed
+
+## 2026-08-28: Memory extraction copied mentor-authored conclusions into employee state
+- Symptom: Exact Annna replay stored `Employee thinks belonging is probably the hardest` after the employee said `have no idea`; another sample turned `No, forget` into a goal.
+- Expected: Only the employee's latest explicit assertion or adoption may create or change employee memory; the just-generated mentor reply and closing language are never evidence or goals.
+- Root cause layer: architecture
+- Harness fix: Bound each extraction to the latest employee message, structurally omit the trailing mentor reply, keep earlier turns as context only, and explicitly reject closing/rejection goals.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- prompts/memory.test.ts` plus the exact Annna scenario's mentor-sourced-memory and invalid-closing-goal assertions.
+- Status: fixed
+
+## 2026-08-28: Rejected framing returned from stored memory after correction
+- Symptom: The correction reply dropped pulse-check/report framing, but two turns later stored project context caused the bot to ask whether criteria should target regular chat or pulse-check answers.
+- Expected: A rejected frame must remain suppressed through the immediate corrected exchange without deleting otherwise valid project context.
+- Root cause layer: architecture
+- Harness fix: Persist correction evidence in outbound decision metadata, suppress response memory for the next two mentor replies, and add a responder-level recent-correction contract that follows the latest request without reviving pre-correction topics.
+- Regression check: `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts` and `pnpm --filter @entalent/ai-openai test -- prompts/respond.test.ts`.
+- Status: fixed
 
 ## 2026-08-28: Slack Socket Mode explicit disconnect crashed the production API
 - Symptom: The production API exited while the Slack client was connecting because `@slack/socket-mode@1.3.6`/`finity` treated `server explicit disconnect` as an unhandled state-machine event; restarting the API restored service.
@@ -155,17 +207,9 @@ Use this file to turn agent misses into harness improvements.
 - Status: fixed
 
 ## 2026-08-20: Live model verification lacked authorized egress
-- Symptom: The corrected live terse-user simulation was rejected because it would send scenario text to Azure OpenAI without explicit egress authorization; the 2026-08-22 direct-intent fix repeated this when a targeted rerun also included LangWatch telemetry.
+- Symptom: The corrected live terse-user simulation was rejected because it would send scenario text to Azure OpenAI without explicit egress authorization; later direct-intent and exact Annna reruns repeated this when they also included LangWatch telemetry.
 - Expected: Live prompt verification should run only with an explicitly approved destination and payload.
 - Root cause layer: environment
-- Harness fix: Request explicit approval for Azure scenario egress or use deterministic prompt regressions as the safe default.
-- Regression check: Before a live sim, confirm explicit approval for its Azure OpenAI and LangWatch destinations/payload; otherwise do not run it and use targeted direct-TypeScript prompt tests.
-- Status: open
-
-## 2026-08-20: Model-provider mypy baseline is not clean
-- Symptom: Whole-file mypy reports three pre-existing errors at lines 721, 782, and 857 outside the engagement diff.
-- Expected: Typed runtime verification should distinguish new errors from baseline debt.
-- Root cause layer: verification
-- Harness fix: Fix the existing annotations or add a checked mypy baseline before requiring whole-file cleanliness for scoped prompt edits.
-- Regression check: `agent-service/.venv/bin/mypy agent-service/src/agent_service/workflows/model_provider.py`
-- Status: open
+- Harness fix: Keep exact private-transcript scenarios out of LangWatch, request explicit approval for the remaining Azure scenario egress, and use deterministic prompt regressions as the safe default.
+- Regression check: Before a live sim with private transcript text, confirm LangWatch reporting is disabled and explicit approval exists for the model-provider destination; otherwise do not run it.
+- Status: fixed

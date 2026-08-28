@@ -140,6 +140,13 @@ export class ConversationOrchestrator {
     const pauseTurn = classification.dialogueAct === 'closing' || classification.dialogueAct === 'acknowledgement';
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
+    const recentOutbound = dbMessages.filter((m) => m.direction === 'outbound').slice(-2);
+    const correctionCarryover = classification.dialogueAct !== 'correction' && recentOutbound.some(
+      (message) => message.metadata?.['dialogueAct'] === 'correction',
+    );
+    const responseMemoryItems = classification.dialogueAct === 'correction' || correctionCarryover
+      ? []
+      : memoryItems;
 
     // Blend the user's learned style profile toward the base style, gated on the
     // same flag as memory. Only build adaptation when a profile actually exists.
@@ -150,7 +157,7 @@ export class ConversationOrchestrator {
       ? { dimensions: profile.dimensions, weight: profile.adaptationWeight, phrases: profile.phrases.map((p) => p.text) }
       : undefined;
 
-    const memoryContextItems = memoryItems
+    const memoryContextItems = responseMemoryItems
       .filter((item) => item.category !== 'goal')
       .map((item) => ({
         id: item.id,
@@ -163,7 +170,6 @@ export class ConversationOrchestrator {
     const userTurnCount = dbMessages.filter(
       (m) => m.direction === 'inbound' && m.text !== '__init__',
     ).length;
-    const recentOutbound = dbMessages.filter((m) => m.direction === 'outbound').slice(-2);
     const probedRecently = recentOutbound.some(
       (m) => m.metadata?.['containsSurveyProbe'] === true,
     );
@@ -318,8 +324,9 @@ export class ConversationOrchestrator {
       ? undefined
       : buildReplyPlan({
           classification,
-          memoryItems,
+          memoryItems: responseMemoryItems,
           includeFollowUpQuestion: strategyWithStyle.includeFollowUpQuestion,
+          correctionCarryover,
           surveyProbeQuestionId: probeQuestion?.id,
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });

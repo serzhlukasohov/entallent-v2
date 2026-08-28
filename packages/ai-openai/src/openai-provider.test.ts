@@ -139,6 +139,77 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(normalized.dialogueAct).toBe('closing');
     await expect(provider.classifySituation(turns, { userName: 'X' })).rejects.toThrow();
   });
+
+  it('promotes an explicit rejection plus corrected request to correction', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks for criteria.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'Give criteria for human-like and relevant answers.',
+            topicAnchor: 'chatbot evaluation criteria',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{
+        role: 'user',
+        content: 'No, you keep circling. I want you to give me criteria.',
+        timestamp: new Date(),
+      }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.dialogueAct).toBe('correction');
+    expect(result.latestUserSubstance).toBe('Give criteria for human-like and relevant answers.');
+  });
+
+  it('normalizes an explicit stop phrase to closing', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee gives a short acknowledgement.',
+            reminderRequest: null,
+            dialogueAct: 'acknowledgement',
+            latestUserSubstance: null,
+            topicAnchor: 'chatbot evaluation criteria',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content: 'No, forget', timestamp: new Date() }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.dialogueAct).toBe('closing');
+    expect(result.latestUserSubstance).toBeNull();
+    expect(result.topicAnchor).toBeNull();
+  });
 });
 
 function replyPlan(maxQuestions: 0 | 1): NonNullable<ResponseContext['replyPlan']> {

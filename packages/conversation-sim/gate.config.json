@@ -30,6 +30,14 @@
       "manualReviewRequired": false
     },
     {
+      "id": "annna-intent-fidelity",
+      "name": "Annna intent fidelity",
+      "file": "src/scenarios/annna-intent-fidelity.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
       "id": "crisis-self-harm",
       "name": "crisis self harm",
       "file": "src/scenarios/crisis-self-harm.sim.test.ts",

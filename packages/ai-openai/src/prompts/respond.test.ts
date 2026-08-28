@@ -215,16 +215,22 @@ describe('buildRespondSystemPrompt reply plan', () => {
 
   it('drops a rejected interpretation on correction turns', () => {
     const rejectedPremise = 'Annna wants to control the mentor because she distrusts chatbots';
+    const staleMemory = 'Annna wants a manager-facing pulse report';
+    const staleGoal = 'Pressure-test the belonging block';
     const responseContext = context({
       userName: 'Annna',
+      memoryContext: {
+        items: [{ id: 'm-1', category: 'project_context', content: staleMemory, importance: 1 }],
+        goals: [{ id: 'g-1', title: staleGoal, status: 'active' }],
+      },
       replyPlan: {
         dialogueAct: 'correction',
         latestUserSubstance: rejectedPremise,
         topicAnchor: rejectedPremise,
-        memoryAnchors: [],
+        memoryAnchors: [{ category: 'project_context', content: staleMemory }],
         responseMove: 'address_new_substance',
         mayInferFromBrevity: true,
-        questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+        questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
         requiredGrounding: [],
         forbiddenMoves: ['survey_probe'],
       },
@@ -244,11 +250,48 @@ describe('buildRespondSystemPrompt reply plan', () => {
     expect(systemPrompt).toContain('Never speculate about a replacement motive or personality');
     expect(systemPrompt).toContain('ask one neutral clarification only when the question policy allows');
     expect(systemPrompt).toContain('Answer any explicit question there directly');
+    expect(systemPrompt).toContain('then end the reply immediately without offering another task');
+    expect(systemPrompt).toContain('Do not add "if you want"');
     expect(systemPrompt).toContain('Read the request or correction directly from the latest employee message');
     expect(systemPrompt).not.toContain(rejectedPremise);
+    expect(systemPrompt).not.toContain(staleMemory);
+    expect(systemPrompt).not.toContain(staleGoal);
+    expect(systemPrompt).toContain('ask zero questions this turn');
+    expect(systemPrompt).toContain('without offering another task or reopening the rejected frame');
     expect(userPrompt).not.toContain('UNTRUSTED TOPIC ANCHOR');
+    expect(userPrompt).not.toContain(staleMemory);
+    expect(userPrompt).not.toContain(staleGoal);
     expect(userPrompt).toContain(rejectedPremise);
     expect(userPrompt).toContain('That is not what I meant. I only wanted advice on evaluating its answers.');
+  });
+
+  it('does not revive a rejected frame during correction carryover', () => {
+    const staleMemory = 'manager-facing pulse report';
+    const responseContext = context({
+      userName: 'Annna',
+      memoryContext: {
+        items: [{ id: 'm-1', category: 'project_context', content: staleMemory, importance: 1 }],
+        goals: [],
+      },
+      replyPlan: {
+        dialogueAct: 'request',
+        correctionCarryover: true,
+        latestUserSubstance: 'Give me criteria for relevance and human-likeness',
+        topicAnchor: 'chatbot answer quality',
+        memoryAnchors: [],
+        responseMove: 'answer_request',
+        mayInferFromBrevity: true,
+        questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+        requiredGrounding: [],
+        forbiddenMoves: ['survey_probe'],
+      },
+    });
+
+    const prompt = buildRespondSystemPrompt(s(), responseContext);
+
+    expect(prompt).toContain('Recent-correction contract');
+    expect(prompt).toContain('Do not revive, offer, or ask about topics from before that correction');
+    expect(prompt).not.toContain(staleMemory);
   });
 
   it('lets safety override direct-answer instructions', () => {

@@ -18,6 +18,10 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain("questions about another chatbot's replies, rules, prompts, or behavior");
     expect(prompt).toContain("not an instruction to change this mentor's behavior");
     expect(prompt).toContain('let the correction supersede the rejected premise');
+    expect(prompt).toContain('both rejects the mentor\'s prior interpretation and states a corrected request');
+    expect(prompt).toContain('use "correction", not "request"');
+    expect(prompt).toContain('No, you keep circling. I want you to give me criteria');
+    expect(prompt).toContain('Short explicit endings such as "No, forget"');
     expect(prompt).toContain('Do not preserve that premise in latestUserSubstance or topicAnchor');
     expect(prompt).toContain('Dialogue-act choice never lowers safety');
   });

@@ -178,7 +178,10 @@ export class OpenAiProvider implements AiProviderPort {
         record['primaryIntent'] = 'casual_conversation';
       }
     }
-    return SituationClassificationSchema.parse(parsed);
+    return normalizeExplicitCorrectionRequest(
+      normalizeExplicitClosing(SituationClassificationSchema.parse(parsed), turns),
+      turns,
+    );
   }
 
   async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
@@ -352,4 +355,43 @@ export class OpenAiProvider implements AiProviderPort {
       return content;
     });
   }
+}
+
+const EXPLICIT_CORRECTION_REQUEST_PREFIX =
+  /^(?:no\b(?!\s+(?:idea|problem|worries)\b)|that(?:'s| is) not what\b|this is not what\b|you (?:keep|are still|still)\b|i (?:didn['’]?t|did not|don['’]?t|do not) mean\b|нет\b|ні\b|это не то\b|це не те\b)/i;
+const EXPLICIT_CLOSING =
+  /^(?:(?:no|нет|ні)[,\s-]*(?:forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь|неважно|досить|достаточно)|forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь(?: про це|об этом)?|неважно|досить|достаточно)[.!]?$/i;
+
+function normalizeExplicitClosing(
+  classification: SituationClassification,
+  turns: ConversationTurn[],
+): SituationClassification {
+  const latestEmployeeText = [...turns]
+    .reverse()
+    .find((turn) => turn.role === 'user')
+    ?.content.trim();
+  if (!latestEmployeeText || !EXPLICIT_CLOSING.test(latestEmployeeText)) {
+    return classification;
+  }
+  return {
+    ...classification,
+    dialogueAct: 'closing',
+    latestUserSubstance: null,
+    topicAnchor: null,
+  };
+}
+
+function normalizeExplicitCorrectionRequest(
+  classification: SituationClassification,
+  turns: ConversationTurn[],
+): SituationClassification {
+  if (classification.dialogueAct !== 'request') return classification;
+  const latestEmployeeText = [...turns]
+    .reverse()
+    .find((turn) => turn.role === 'user')
+    ?.content.trim();
+  if (!latestEmployeeText || !EXPLICIT_CORRECTION_REQUEST_PREFIX.test(latestEmployeeText)) {
+    return classification;
+  }
+  return { ...classification, dialogueAct: 'correction' };
 }
