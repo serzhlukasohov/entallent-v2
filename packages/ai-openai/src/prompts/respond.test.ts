@@ -78,6 +78,42 @@ describe('buildRespondSystemPrompt question gating (includeFollowUpQuestion)', (
   });
 });
 
+describe('buildRespondSystemPrompt numeric pulse probes', () => {
+  const numericStrategy: ReplyStrategy = {
+    mode: 'survey_probe', tone: 'warm', includeFollowUpQuestion: true,
+    maxResponseLength: 'short', forbiddenPatterns: [],
+  };
+  const numericProbe = {
+    id: 'engagement-current',
+    responseType: 'numeric_0_10' as const,
+    probeStrategies: ['Ask how engaged they feel right now.'],
+  };
+
+  it('requires one explicit 0-10 question for an inbound numeric probe', () => {
+    const prompt = buildRespondSystemPrompt(numericStrategy, context({
+      userName: 'T',
+      surveyProbeQuestion: numericProbe,
+    }));
+
+    expect(prompt).toContain('Ask exactly ONE direct question');
+    expect(prompt).toContain('explicit rating from 0 to 10');
+    expect(prompt).toContain('only question in the message');
+    expect(prompt).toContain('"containsSurveyProbe": true');
+    expect(prompt).not.toContain('Optional — a topic worth exploring');
+  });
+
+  it('uses the same explicit 0-10 policy for a proactive numeric probe', () => {
+    const prompt = buildRespondSystemPrompt(numericStrategy, context({
+      userName: 'T',
+      proactiveCheckIn: { probeQuestion: numericProbe },
+    }));
+
+    expect(prompt).toContain('Ask exactly ONE direct question');
+    expect(prompt).toContain('explicit rating from 0 to 10');
+    expect(prompt).toContain('never mention surveys, HR, assessment mechanics, or internal scoring');
+  });
+});
+
 describe('buildRespondSystemPrompt local time', () => {
   const base = (): ReplyStrategy => ({ mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [] });
   it('includes local time + greeting guidance when localTime is set and isSessionStart is true', () => {

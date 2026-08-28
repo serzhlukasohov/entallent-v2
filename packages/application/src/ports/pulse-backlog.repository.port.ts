@@ -22,8 +22,6 @@ export interface ResolvedIgnore {
 }
 
 export interface ProactivePulseConfig {
-  /** Days before quarter end when engagement questions unlock. Default: 14 */
-  engagementUnlockDays: number;
   /** Hours after probe sent before no-response counts as ignore. Default: 48 */
   ignoreWindowHours: number;
   /** Temporary test filter: only ask pending questions from this question group. */
@@ -31,7 +29,6 @@ export interface ProactivePulseConfig {
 }
 
 export const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = {
-  engagementUnlockDays: 14,
   ignoreWindowHours: 48,
 };
 

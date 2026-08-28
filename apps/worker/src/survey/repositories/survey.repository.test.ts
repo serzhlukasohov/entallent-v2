@@ -91,4 +91,66 @@ describe('SurveyRepository', () => {
     expect(db.calls.insert).not.toHaveBeenCalled();
     expect(db.calls.values).not.toHaveBeenCalled();
   });
+
+  it('updates an existing assessment with an explicit numeric score', async () => {
+    const limit = vi.fn().mockResolvedValue([{ id: 'assessment-1', evidenceIds: ['evidence-old'] }]);
+    const selectWhere = vi.fn(() => ({ limit }));
+    const selectFrom = vi.fn(() => ({ where: selectWhere }));
+    const setWhere = vi.fn().mockResolvedValue(undefined);
+    const set = vi.fn(() => ({ where: setWhere }));
+    const db = {
+      client: {
+        select: vi.fn(() => ({ from: selectFrom })),
+        update: vi.fn(() => ({ set })),
+      },
+    };
+    const repository = makeRepository(db as never);
+
+    await repository.upsertAssessment({
+      surveyWindowId: 'window-1', surveyQuestionId: 'question-1', score: 6,
+      confidence: 1, status: 'scored', evidenceId: 'evidence-new', evaluatorVersion: 'v1',
+    });
+
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({
+      score: '6',
+      status: 'scored',
+      evidenceIds: ['evidence-old', 'evidence-new'],
+    }));
+  });
+
+  it('does not erase an existing score when a later assessment has no numeric value', async () => {
+    const limit = vi.fn().mockResolvedValue([{ id: 'assessment-1', evidenceIds: [] }]);
+    const selectWhere = vi.fn(() => ({ limit }));
+    const selectFrom = vi.fn(() => ({ where: selectWhere }));
+    const set = vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) }));
+    const db = {
+      client: {
+        select: vi.fn(() => ({ from: selectFrom })),
+        update: vi.fn(() => ({ set })),
+      },
+    };
+    const repository = makeRepository(db as never);
+
+    await repository.upsertAssessment({
+      surveyWindowId: 'window-1', surveyQuestionId: 'question-1',
+      confidence: 0.9, status: 'scored', evidenceId: 'evidence-new', evaluatorVersion: 'v1',
+    });
+
+    expect(set).toHaveBeenCalledWith(expect.not.objectContaining({ score: expect.anything() }));
+  });
+
+  it('returns assessment scores as numbers', async () => {
+    const where = vi.fn().mockResolvedValue([
+      { surveyQuestionId: 'question-1', status: 'scored', score: '7.00' },
+      { surveyQuestionId: 'question-2', status: 'partially_covered', score: null },
+    ]);
+    const from = vi.fn(() => ({ where }));
+    const db = { client: { select: vi.fn(() => ({ from })) } };
+    const repository = makeRepository(db as never);
+
+    await expect(repository.findAssessmentsForWindow('window-1')).resolves.toEqual([
+      { surveyQuestionId: 'question-1', status: 'scored', score: 7 },
+      { surveyQuestionId: 'question-2', status: 'partially_covered', score: null },
+    ]);
+  });
 });

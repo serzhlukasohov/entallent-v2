@@ -297,6 +297,42 @@ describe('Contract: SurveyEvidenceEvaluationSchema', () => {
       }),
     ).toThrow();
   });
+
+  it.each([0, 7, 10])('accepts an explicit numeric value of %s', (numericValue) => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: `Explicit rating: ${numericValue}`,
+        polarity: 'neutral', strength: 1, completeness: 1, confidence: 1,
+        followUpProbeNeeded: false, thresholdReached: true,
+        assessmentShouldRemainUnknown: false, numericValue,
+      }],
+    });
+    expect(parsed.evidence[0]?.numericValue).toBe(numericValue);
+  });
+
+  it.each([-1, 11])('rejects an out-of-range numeric value of %s', (numericValue) => {
+    expect(() => SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: 'Invalid rating', polarity: 'neutral',
+        strength: 1, completeness: 1, confidence: 1, followUpProbeNeeded: false,
+        thresholdReached: true, assessmentShouldRemainUnknown: false, numericValue,
+      }],
+    })).toThrow();
+  });
+
+  it('accepts a null numeric value as no explicit rating', () => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: 'Qualitative signal only', polarity: 'neutral',
+        strength: 0.6, completeness: 0.5, confidence: 0.7, followUpProbeNeeded: true,
+        thresholdReached: false, assessmentShouldRemainUnknown: false, numericValue: null,
+      }],
+    });
+    expect(parsed.evidence[0]?.numericValue).toBeNull();
+  });
 });
 
 describe('Contract: GeneratedResponseSchema', () => {

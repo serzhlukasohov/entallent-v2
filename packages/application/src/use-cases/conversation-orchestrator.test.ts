@@ -43,6 +43,7 @@ function baseMocks() {
     findAwaitingConfirmationGroups: vi.fn().mockResolvedValue([]),
     findOrCreateActiveWindow: vi.fn().mockResolvedValue({ id: 'w-1' }),
     findQuestionsForWindow: vi.fn().mockResolvedValue([{ id: 'q-1', stableKey: 'q12', questionGroup: 'autonomy' }]),
+    findAssessmentsForWindow: vi.fn().mockResolvedValue([]),
     findEvidenceForQuestion: vi.fn().mockResolvedValue([{ evidenceSummary: 'values ownership', polarity: 'positive', createdAt: new Date() }]),
     upsertGroupState: vi.fn().mockResolvedValue({}),
     findTeamByMemberId: vi.fn().mockResolvedValue(null),
@@ -136,6 +137,78 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
       expect.objectContaining({ questionGroup: 'autonomy', status: 'awaiting_confirmation' }),
     );
+  });
+});
+
+describe('ConversationOrchestrator numeric survey probes', () => {
+  it('passes the numeric response type to generation when probe pacing allows a question', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-0', direction: 'inbound', text: 'one', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-x', direction: 'inbound', text: 'two', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', direction: 'inbound', text: 'three', occurredAt: new Date(), metadata: undefined },
+    ]);
+    const pulseBacklog = {
+      getNextProbeQuestion: vi.fn().mockResolvedValue({
+        question: {
+          id: 'engagement-current',
+          responseType: 'numeric_0_10',
+          probeStrategies: ['Ask for current engagement from 0 to 10.'],
+        },
+      }),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, pulseBacklog as never,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const [strategyArg, contextArg] = [
+      m.aiProvider.generateResponse.mock.calls[0][1],
+      m.aiProvider.generateResponse.mock.calls[0][2],
+    ];
+    expect(strategyArg.includeFollowUpQuestion).toBe(true);
+    expect(contextArg.surveyProbeQuestion).toEqual({
+      id: 'engagement-current',
+      responseType: 'numeric_0_10',
+      probeStrategies: ['Ask for current engagement from 0 to 10.'],
+    });
+  });
+
+  it('keeps a hard zero-question correction turn authoritative over a selected numeric probe', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-0', direction: 'inbound', text: 'one', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-x', direction: 'inbound', text: 'two', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', direction: 'inbound', text: 'No, I meant this week.', occurredAt: new Date(), metadata: undefined },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
+      urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
+      reasoningSummary: 'correction', reminderRequest: null, dialogueAct: 'correction',
+      latestUserSubstance: 'this week', topicAnchor: null,
+    });
+    const pulseBacklog = {
+      getNextProbeQuestion: vi.fn().mockResolvedValue({
+        question: {
+          id: 'engagement-current', responseType: 'numeric_0_10',
+          probeStrategies: ['Ask for current engagement from 0 to 10.'],
+        },
+      }),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, pulseBacklog as never,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    const contextArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(strategyArg.includeFollowUpQuestion).toBe(false);
+    expect(contextArg.replyPlan.questionPolicy.maxQuestions).toBe(0);
+    expect(contextArg.surveyProbeQuestion).toBeUndefined();
   });
 });
 
@@ -848,6 +921,72 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
     expect(m.outbox.enqueueGroupReport).toHaveBeenCalled();
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(ctxArg.topicConfirmed).toMatchObject({ questionGroup: 'growth' });
+  });
+
+  it('computes engagement from three distinct stored assessment scores', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'engagement', aiSummary: 'Ratings captured.' },
+    ]);
+    m.surveyRepo.findQuestionsForWindow.mockResolvedValue([
+      { id: 'e-1', questionGroup: 'engagement', responseType: 'numeric_0_10' },
+      { id: 'e-2', questionGroup: 'engagement', responseType: 'numeric_0_10' },
+      { id: 'e-3', questionGroup: 'engagement', responseType: 'numeric_0_10' },
+      { id: 'e-legacy', questionGroup: 'engagement', responseType: 'open_ended' },
+    ]);
+    m.surveyRepo.findAssessmentsForWindow.mockResolvedValue([
+      { surveyQuestionId: 'e-1', status: 'scored', score: 6 },
+      { surveyQuestionId: 'e-2', status: 'scored', score: 8 },
+      { surveyQuestionId: 'e-3', status: 'scored', score: 10 },
+      { surveyQuestionId: 'e-legacy', status: 'scored', score: 1 },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questionGroup: 'engagement',
+        status: 'confirmed',
+        employeeScore: 80,
+      }),
+    );
+  });
+
+  it('does not synthesize an engagement index from fewer than three scored questions', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'engagement', aiSummary: 'Partial ratings.' },
+    ]);
+    m.surveyRepo.findQuestionsForWindow.mockResolvedValue([
+      { id: 'e-1', questionGroup: 'engagement', responseType: 'numeric_0_10' },
+      { id: 'e-2', questionGroup: 'engagement', responseType: 'numeric_0_10' },
+      { id: 'e-3', questionGroup: 'engagement', responseType: 'numeric_0_10' },
+    ]);
+    m.surveyRepo.findAssessmentsForWindow.mockResolvedValue([
+      { surveyQuestionId: 'e-1', status: 'scored', score: 8 },
+      { surveyQuestionId: 'e-2', status: 'scored', score: 10 },
+      { surveyQuestionId: 'e-3', status: 'partially_covered', score: null },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questionGroup: 'engagement',
+        status: 'confirmed',
+        employeeScore: undefined,
+      }),
+    );
   });
 
   it('correct → reopens group to in_progress and does not report', async () => {

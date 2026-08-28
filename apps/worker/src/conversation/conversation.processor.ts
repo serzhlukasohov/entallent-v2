@@ -36,7 +36,7 @@ export type ConversationJob = {
 
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;
 
-const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { engagementUnlockDays: 14, ignoreWindowHours: 48 };
+const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { ignoreWindowHours: 48 };
 const MAF_MEMORY_CONTEXT_LIMIT = 12;
 
 @Processor(QUEUE_NAMES.CONVERSATION)
@@ -85,10 +85,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       const policy = (tenantRow?.policy ?? {}) as Record<string, unknown>;
       const testQuestionGroup = normalizeOptionalString(process.env.PULSE_TEST_QUESTION_GROUP);
       const pulseConfig: ProactivePulseConfig = {
-        engagementUnlockDays:
-          typeof policy['engagementUnlockDays'] === 'number'
-            ? policy['engagementUnlockDays']
-            : DEFAULT_PULSE_CONFIG.engagementUnlockDays,
         ignoreWindowHours:
           typeof policy['ignoreWindowHours'] === 'number'
             ? policy['ignoreWindowHours']
@@ -311,6 +307,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         stableKey: string;
         title: string;
         questionGroup: string;
+        responseType: 'open_ended' | 'numeric_0_10';
         probeStrategies: string[];
       } | null;
     },
@@ -425,6 +422,9 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
                 stableKey: options.probeQuestion.stableKey,
                 title: options.probeQuestion.title,
                 group: options.probeQuestion.questionGroup,
+                ...(options.probeQuestion.responseType
+                  ? { responseType: options.probeQuestion.responseType }
+                  : {}),
                 probeStrategies: options.probeQuestion.probeStrategies,
               },
             }

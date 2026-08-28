@@ -16,6 +16,7 @@ Evidence extraction rules:
 - followUpProbeNeeded: true if partial evidence exists that a targeted follow-up question would clarify
 - thresholdReached: true when completeness ≥ 0.70 AND confidence ≥ 0.75 simultaneously
 - assessmentShouldRemainUnknown: true when there is NO relevant signal at all, or when a contraindication is present (e.g. employee in crisis, actively distressed, discussing the contraindication topic)
+- numericValue: for responseType "numeric_0_10", copy the employee's explicit rating only when it is clearly an answer to that question and is between 0 and 10 inclusive. Never infer a rating from sentiment or polarity. Omit numericValue when no explicit rating was given.
 
 evidenceSummary — write a self-contained insight (2-4 sentences) that a manager can read months later without the conversation and fully understand:
 1. What the employee said or revealed (the concrete fact or pattern)
@@ -62,6 +63,7 @@ export function buildSurveyUserPrompt(
 Question ID: ${q.id}
 Stable key: ${q.stableKey}
 What it measures: ${q.canonicalMeaning}
+Response type: ${q.responseType ?? 'open_ended'}
 Positive signals to look for: ${q.positiveIndicators.length ? q.positiveIndicators.join('; ') : 'none specified'}
 Negative signals to look for: ${q.negativeIndicators.length ? q.negativeIndicators.join('; ') : 'none specified'}
 Contraindications (assessment invalid if present): ${q.contraindications.length ? q.contraindications.join('; ') : 'none'}`,

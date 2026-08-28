@@ -156,6 +156,7 @@ export class SurveyRepository implements SurveyRepositoryPort {
       await this.db.client
         .update(surveyAssessments)
         .set({
+          ...(params.score !== undefined ? { score: String(params.score) } : {}),
           confidence: String(params.confidence),
           status: params.status,
           evidenceIds: updatedIds,
@@ -167,6 +168,7 @@ export class SurveyRepository implements SurveyRepositoryPort {
       await this.db.client.insert(surveyAssessments).values({
         surveyWindowId: params.surveyWindowId,
         surveyQuestionId: params.surveyQuestionId,
+        score: params.score !== undefined ? String(params.score) : undefined,
         confidence: String(params.confidence),
         status: params.status,
         evidenceIds: [params.evidenceId],
@@ -195,12 +197,23 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return rows.map(mapEvidence);
   }
 
-  async findAssessmentsForWindow(windowId: string): Promise<Array<{ surveyQuestionId: string; status: string }>> {
+  async findAssessmentsForWindow(windowId: string): Promise<Array<{
+    surveyQuestionId: string;
+    status: string;
+    score: number | null;
+  }>> {
     const rows = await this.db.client
-      .select({ surveyQuestionId: surveyAssessments.surveyQuestionId, status: surveyAssessments.status })
+      .select({
+        surveyQuestionId: surveyAssessments.surveyQuestionId,
+        status: surveyAssessments.status,
+        score: surveyAssessments.score,
+      })
       .from(surveyAssessments)
       .where(eq(surveyAssessments.surveyWindowId, windowId));
-    return rows;
+    return rows.map((row) => ({
+      ...row,
+      score: row.score === null ? null : Number(row.score),
+    }));
   }
 
   // Group state methods — delegated to GroupStateRepository
@@ -281,9 +294,14 @@ function mapQuestion(row: DbSurveyQuestion): SurveyQuestionRecord {
     maxFollowUpProbes: row.maxFollowUpProbes,
     displayOrder: row.displayOrder,
     questionGroup: row.questionGroup,
-    responseType: row.responseType,
+    responseType: mapResponseType(row.responseType),
     version: row.version,
   };
+}
+
+function mapResponseType(value: string): SurveyQuestionRecord['responseType'] {
+  if (value === 'open_ended' || value === 'numeric_0_10') return value;
+  throw new Error(`Unsupported survey response type: ${value}`);
 }
 
 function mapEvidence(row: typeof surveyEvidence.$inferSelect): SurveyEvidenceRecord {

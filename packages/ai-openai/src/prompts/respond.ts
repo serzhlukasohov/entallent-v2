@@ -52,6 +52,7 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
     : '';
 
   const checkInProbe = context.proactiveCheckIn?.probeQuestion;
+  const numericCheckInProbe = checkInProbe?.responseType === 'numeric_0_10';
   const checkInHint = context.proactiveCheckIn
     ? `\nYou are writing FIRST — ${context.userName} has not messaged you. This is a light, human check-in, like a colleague pinging someone they genuinely like.
 
@@ -60,7 +61,12 @@ How to open:
 - If you know NOTHING about them yet (no memory, no history), this is your first contact: say hi, one short line about who you are (someone they can talk to about work — informally, no titles), and one easy, low-stakes question like how their week is going. Nothing deeper. First contact earns trust; it does not mine for data.
 - 1-2 sentences, one question at most. Casual register.
 - Never announce the check-in ("just wanted to see how you're doing", "it's been a while") and never sound like a wellness bot doing rounds.
-- Never use assessment vocabulary: "priorities", "outcomes", "expectations", "goals" have no place in an opener.${checkInProbe ? `
+- Never use assessment vocabulary: "priorities", "outcomes", "expectations", "goals" have no place in an opener.${checkInProbe ? numericCheckInProbe ? `
+
+Ask exactly ONE direct question that requests an explicit rating from 0 to 10 for this topic:
+${checkInProbe.probeStrategies.map(s => `• ${s}`).join('\n')}
+The 0–10 question must be the only question in the message. Keep it human and concise; never mention surveys, HR, assessment mechanics, or internal scoring.
+Set "containsSurveyProbe": true and "surveyProbeQuestionId": "${checkInProbe.id}".` : `
 
 There is a territory you quietly care about learning over time:
 ${checkInProbe.probeStrategies.map(s => `• ${s}`).join('\n')}
@@ -82,7 +88,12 @@ Ask NOTHING else. Do not raise a new topic. Do not include any survey probe or f
     : '';
 
   const probeHint = context.surveyProbeQuestion && !context.proactiveCheckIn
-    ? `\nOptional — a topic worth exploring when the moment is right:
+    ? context.surveyProbeQuestion.responseType === 'numeric_0_10'
+      ? `\nAsk exactly ONE direct question that requests an explicit rating from 0 to 10 for this topic:
+${context.surveyProbeQuestion.probeStrategies.map(s => `• ${s}`).join('\n')}
+The 0–10 question must be the only question in the message. Keep it human and concise; never mention surveys, HR, assessment mechanics, or internal scoring.
+Set "containsSurveyProbe": true and "surveyProbeQuestionId": "${context.surveyProbeQuestion.id}".`
+      : `\nOptional — a topic worth exploring when the moment is right:
 ${context.surveyProbeQuestion.probeStrategies.map(s => `• ${s}`).join('\n')}
 
 How to handle this:

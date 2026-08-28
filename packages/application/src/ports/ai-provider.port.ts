@@ -10,6 +10,7 @@ import type {
   ConfirmationResponse,
   ObservedStyle,
 } from '@entalent/contracts';
+import type { SurveyResponseType } from '../types/records';
 
 export interface ConversationTurn {
   role: 'user' | 'assistant';
@@ -41,6 +42,7 @@ export interface SurveyQuestionForEvaluation {
   id: string;
   stableKey: string;
   canonicalMeaning: string;
+  responseType?: SurveyResponseType;
   positiveIndicators: string[];
   negativeIndicators: string[];
   contraindications: string[];
@@ -110,10 +112,10 @@ export interface ResponseContext {
    */
   reminderIntent?: string;
   /** Survey probe to embed naturally in the response */
-  surveyProbeQuestion?: { id: string; probeStrategies: string[] };
+  surveyProbeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
   /** Agent-initiated check-in: the agent writes first, optionally steering toward a survey topic */
   proactiveCheckIn?: {
-    probeQuestion?: { id: string; probeStrategies: string[] };
+    probeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
   };
   /**
    * Set when the employee just confirmed a summary the agent proposed.

@@ -77,3 +77,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-direct-address-and-current-intent-fidelity.md`
   summary: Preserve the authoritative tail of employee messages that exceed the 2,000-character prompt bound.
   evidence: Review found that `sanitizeTurnContent` keeps only the first 2,000 characters, so a late consultation question or correction can be absent from both classification and rendering; this predates the current prompt-contract fix and needs a separate trust-boundary design.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-engagement-window-numeric-index-focus.md`
+  summary: Make survey assessment upsert atomic under concurrent evidence jobs.
+  evidence: `survey_assessments` has no unique `(survey_window_id, survey_question_id)` constraint, so the current read-then-insert repository flow can create duplicate assessments; fixing it requires an explicitly approved migration.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-engagement-window-numeric-index-focus.md`
+  summary: Prevent an older numeric evidence job from overwriting a newer engagement correction.
+  evidence: Assessment rows do not retain authoritative score-source time, so out-of-order workers cannot compare rating chronology without a persistence/workflow change.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-engagement-window-numeric-index-focus.md`
+  summary: Define how a numeric correction reopens or recomputes an already confirmed engagement report.
+  evidence: The current confirmation state machine treats confirmed groups as terminal; changing score/report behavior after confirmation needs a separate product decision.

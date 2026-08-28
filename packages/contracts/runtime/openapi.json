@@ -1395,6 +1395,13 @@
             "type": "string",
             "minLength": 1
           },
+          "responseType": {
+            "type": "string",
+            "enum": [
+              "open_ended",
+              "numeric_0_10"
+            ]
+          },
           "probeStrategies": {
             "type": "array",
             "items": {

@@ -40,9 +40,9 @@ These entries are retained as historical evidence but are not active work becaus
 - Symptom: `test_python_service_packages_shared_runtime_openapi_schema` fails because the packaged Python schema omits `greeting_opens_conversation`.
 - Expected: The deployable Python artifact must exactly match `packages/contracts/runtime/openapi.json`.
 - Root cause layer: workflow
-- Harness fix: None planned; do not extend the retired Python runtime.
-- Regression check: Not active while MAF and `agent-service` remain unsupported.
-- Status: obsolete
+- Harness fix: Keep the packaged schema synchronized whenever the canonical runtime schema changes.
+- Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_runtime_contract.py -q`
+- Status: fixed
 
 ## 2026-08-20: Model-provider mypy baseline is not clean
 - Symptom: Whole-file mypy reports three pre-existing errors at lines 721, 782, and 857 outside the engagement diff.
@@ -198,6 +198,38 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_model_provider_prompt.py -q`
 - Status: fixed
 
+## 2026-08-28: Numeric probe metadata was passed to an unused persistence shape
+- Symptom: Root typecheck rejected `responseType` on the hidden proactive-request persistence payload.
+- Expected: New metadata should cross only boundaries that consume it.
+- Root cause layer: architecture
+- Harness fix: Remove the unused field and keep `responseType` only in the runtime candidate context.
+- Regression check: `pnpm --filter @entalent/worker typecheck`
+- Status: fixed
+
+## 2026-08-28: Agent-service verification used an unavailable global pytest
+- Symptom: `pytest tests/unit/test_model_provider_prompt.py` failed with `command not found` despite the repository virtualenv being present.
+- Expected: Python verification should use the project-owned interpreter.
+- Root cause layer: workflow
+- Harness fix: Use `agent-service/.venv/bin/python -m pytest` in local verification commands.
+- Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_model_provider_prompt.py -q`
+- Status: fixed
+
+## 2026-08-28: Narrow response type widened in a prompt fixture
+- Symptom: Root typecheck rejected a numeric-probe fixture because its `responseType` literal widened to `string` after the runtime contract became an enum.
+- Expected: Fixtures for closed contract values should retain literal types.
+- Root cause layer: verification
+- Harness fix: Mark the fixture discriminator `as const` and keep root typecheck in the handoff gate.
+- Regression check: `pnpm typecheck`
+- Status: fixed
+
+## 2026-08-28: Python scope guard matched a harmless word substring
+- Symptom: The full Python suite rejected validator prose because the word “requests” contains the forbidden substring `requests`.
+- Expected: Runtime policy wording should not trip the repository's coarse forbidden-fragment scan.
+- Root cause layer: verification
+- Harness fix: Use equivalent wording without the forbidden fragment and always run the full Python suite after prompt changes.
+- Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_scope.py -q`
+- Status: fixed
+
 ## 2026-08-20: Targeted conversation sim command ran the full suite
 - Symptom: Passing `-- terse-user.sim.test.ts` through the package script made Vitest run nine scenario files; live cases then failed on blocked DNS.
 - Expected: Only the requested terse-user scenario should run.
@@ -220,4 +252,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: architecture
 - Harness fix: Enforce the closing boundary in `MemoryExtractionUseCase` using the persisted outbound `dialogueAct`; discard memory items, goal creates, and follow-ups while retaining explicit cancel/complete proposals.
 - Regression check: `pnpm --filter @entalent/application test -- memory-extraction.use-case.test.ts`; the exact Annna scenario rejects paraphrased “no longer wants to continue” goal memories.
+- Status: fixed
+
+## 2026-08-28: Git staging initially ran without repository-write escalation
+- Symptom: `git add -u` failed because the managed sandbox could not create `.git/index.lock`.
+- Expected: Explicitly authorized commit operations should write the Git index successfully.
+- Root cause layer: tooling
+- Harness fix: Run Git index mutations with repository-write escalation in the managed desktop sandbox.
+- Regression check: `git diff --cached --check` after staging.
 - Status: fixed

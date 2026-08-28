@@ -20,6 +20,7 @@ export interface SaveSurveyEvidenceParams {
 export interface UpsertAssessmentParams {
   surveyWindowId: string;
   surveyQuestionId: string;
+  score?: number;
   confidence: number;
   status: string;
   evidenceId: string;
@@ -48,7 +49,11 @@ export interface SurveyRepositoryPort {
   upsertAssessment(params: UpsertAssessmentParams): Promise<void>;
   findEvidenceForQuestion(userId: string, questionId: string, windowId: string): Promise<SurveyEvidenceRecord[]>;
   // Assessment methods
-  findAssessmentsForWindow(windowId: string): Promise<Array<{ surveyQuestionId: string; status: string }>>;
+  findAssessmentsForWindow(windowId: string): Promise<Array<{
+    surveyQuestionId: string;
+    status: string;
+    score: number | null;
+  }>>;
   // Group state methods
   findGroupState(userId: string, windowId: string, questionGroup: string): Promise<SurveyGroupStateRecord | null>;
   findPendingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]>;

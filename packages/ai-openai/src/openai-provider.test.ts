@@ -399,6 +399,54 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     expect(createMock).toHaveBeenCalledTimes(2);
     expect(res.text).toBe('That tracks.');
   });
+
+  it('regenerates a numeric probe that omits the explicit 0-to-10 scale', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'How engaged do you feel?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'From 0 to 10, how engaged do you feel?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }] });
+    const provider = makeProvider();
+
+    const result = await provider.generateResponse(
+      turns,
+      { mode: 'survey_probe', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] },
+      responseContext({
+        userName: 'X',
+        surveyProbeQuestion: {
+          id: 'q-engagement', responseType: 'numeric_0_10', probeStrategies: ['Ask for a rating.'],
+        },
+      }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(result.text).toContain('0 to 10');
+  });
+
+  it('fails closed when a numeric probe retry is still noncompliant', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'How engaged do you feel?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }],
+    });
+    const provider = makeProvider();
+
+    await expect(provider.generateResponse(
+      turns,
+      { mode: 'survey_probe', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] },
+      responseContext({
+        userName: 'X',
+        surveyProbeQuestion: {
+          id: 'q-engagement', responseType: 'numeric_0_10', probeStrategies: ['Ask for a rating.'],
+        },
+      }),
+    )).rejects.toThrow(/noncompliant numeric survey probe/);
+  });
 });
 
 describe('OpenAiProvider.extractMemory resilience', () => {

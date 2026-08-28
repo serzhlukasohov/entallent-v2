@@ -112,6 +112,19 @@ function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext):
   return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
 }
 
+function numericProbeQuestion(context: ResponseContext): { id: string } | undefined {
+  const probe = context.surveyProbeQuestion ?? context.proactiveCheckIn?.probeQuestion;
+  return probe?.responseType === 'numeric_0_10' ? probe : undefined;
+}
+
+function isValidNumericProbeResponse(response: GeneratedResponse, questionId: string): boolean {
+  const includesScale = /(?:\b0\b[\s\S]*\b10\b|\b10\b[\s\S]*\b0\b)/u.test(response.text);
+  return response.containsSurveyProbe === true &&
+    response.surveyProbeQuestionId === questionId &&
+    countQuestionGroups(response.text) === 1 &&
+    includesScale;
+}
+
 /** Structural shape of a Zod schema's safeParse — lets keepValid stay decoupled from zod. */
 type SafeParser<T> = { safeParse(input: unknown): { success: true; data: T } | { success: false } };
 
@@ -256,12 +269,22 @@ export class OpenAiProvider implements AiProviderPort {
     if (countQuestionGroups(first.text) > maxQuestions) {
       retries.push(questionRetryInstruction(maxQuestions));
     }
+    const numericProbe = numericProbeQuestion(context);
+    if (numericProbe && !isValidNumericProbeResponse(first, numericProbe.id)) {
+      retries.push(
+        '\n\nYour previous draft did not ask the selected numeric probe correctly. Rewrite it as exactly one question that explicitly asks for a rating from 0 to 10, and set the matching survey-probe metadata.',
+      );
+    }
     if (retries.length === 0) return first;
 
     // ponytail: one corrective draft bounds latency/cost; validate the second draft if escaped violations become observable.
-    return GeneratedResponseSchema.parse(
+    const second = GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system + retries.join(''), user, this.generationModel)),
     );
+    if (numericProbe && !isValidNumericProbeResponse(second, numericProbe.id)) {
+      throw new Error('OpenAI returned a noncompliant numeric survey probe after retry');
+    }
+    return second;
   }
 
   async generateGroupSummary(

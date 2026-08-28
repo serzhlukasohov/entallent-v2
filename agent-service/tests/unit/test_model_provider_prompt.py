@@ -243,6 +243,82 @@ def test_candidate_reply_prompt_includes_proactive_probe_instruction() -> None:
     assert '"replyText":"assistant reply text","usesProbe":true|false' in prompt
 
 
+def test_candidate_reply_prompt_requires_explicit_numeric_engagement_rating() -> None:
+    prompt = build_candidate_reply_prompt(
+        request={
+            "requestPurpose": "proactive_check_in",
+            "message": {"text": "Start a proactive pulse check-in about Current Engagement."},
+            "proactiveContext": {
+                "reason": "pulse_check_in",
+                "probeQuestion": {
+                    "id": "88888888-8888-4888-8888-888888888888",
+                    "stableKey": "engagement_current",
+                    "title": "Current Engagement",
+                    "group": "engagement",
+                    "responseType": "numeric_0_10",
+                    "probeStrategies": [
+                        "Ask how engaged they feel with their current work on a scale of 0 to 10."
+                    ],
+                },
+            },
+            "context": {
+                "memoryItems": [],
+                "recentTurns": [],
+                "replyPolicy": {
+                    "maxChars": 360,
+                    "maxQuestions": 1,
+                    "allowReflectiveOpener": False,
+                    "allowListFormatting": False,
+                },
+            },
+        },
+        state={},
+    )
+
+    assert "Ask exactly one direct question" in prompt
+    assert "explicit rating from 0 to 10" in prompt
+    assert "must be the only question" in prompt
+    assert "Current Engagement" in prompt
+    assert "internal scoring" in prompt
+    assert "Return only a compact JSON object" in prompt
+
+
+def test_candidate_reply_policy_requires_visible_numeric_scale() -> None:
+    request = {
+        "requestPurpose": "proactive_check_in",
+        "proactiveContext": {
+            "reason": "pulse_check_in",
+            "probeQuestion": {
+                "id": "88888888-8888-4888-8888-888888888888",
+                "responseType": "numeric_0_10",
+                "probeStrategies": ["Ask for a rating from 0 to 10."],
+            },
+        },
+        "context": {
+            "replyPolicy": {
+                "maxChars": 360,
+                "maxQuestions": 1,
+                "allowReflectiveOpener": False,
+                "allowListFormatting": False,
+            },
+        },
+    }
+    metadata = {
+        "containsSurveyProbe": True,
+        "surveyProbeQuestionId": "88888888-8888-4888-8888-888888888888",
+    }
+
+    assert candidate_reply_policy_violations(
+        text="How engaged do you feel?", metadata=metadata, request=request, state={}
+    ) == ["ask exactly one question with an explicit 0 to 10 rating"]
+    assert candidate_reply_policy_violations(
+        text="From 0 to 10, how engaged do you feel?",
+        metadata=metadata,
+        request=request,
+        state={},
+    ) == []
+
+
 def test_candidate_reply_prompt_includes_acknowledgement_policy() -> None:
     prompt = build_candidate_reply_prompt(
         request={

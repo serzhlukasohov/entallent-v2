@@ -115,7 +115,11 @@ export class ProactiveCheckInUseCase {
           : undefined,
       proactiveCheckIn: {
         probeQuestion: probeQuestion
-          ? { id: probeQuestion.id, probeStrategies: probeQuestion.probeStrategies }
+          ? {
+              id: probeQuestion.id,
+              probeStrategies: probeQuestion.probeStrategies,
+              ...(probeQuestion.responseType ? { responseType: probeQuestion.responseType } : {}),
+            }
           : undefined,
       },
     });

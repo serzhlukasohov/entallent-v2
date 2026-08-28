@@ -312,10 +312,13 @@ export class ConversationOrchestrator {
     const baseStrategy = confirmationRequest
       ? { mode: 'confirmation' as const, tone: 'warm' as const, includeFollowUpQuestion: false, maxResponseLength: 'medium' as const, forbiddenPatterns: [] }
       : buildReplyStrategy(classification, risk, probeQuestion?.id);
+    const probeStrategy = probeQuestion && baseStrategy.mode !== 'crisis' && baseStrategy.mode !== 'sensitive'
+      ? { ...baseStrategy, includeFollowUpQuestion: true }
+      : baseStrategy;
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
-    const strategyWithStyle = applyTerseStyle(baseStrategy, memoryEnabled ? profile : null);
+    const strategyWithStyle = applyTerseStyle(probeStrategy, memoryEnabled ? profile : null);
 
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
     const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
@@ -331,6 +334,9 @@ export class ConversationOrchestrator {
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
     const strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
+    const responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
+      ? null
+      : probeQuestion;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
@@ -340,8 +346,12 @@ export class ConversationOrchestrator {
         ? memoryContext
         : undefined,
       reminderConfirmation,
-      surveyProbeQuestion: probeQuestion
-        ? { id: probeQuestion.id, probeStrategies: probeQuestion.probeStrategies }
+      surveyProbeQuestion: responseProbeQuestion
+        ? {
+            id: responseProbeQuestion.id,
+            probeStrategies: responseProbeQuestion.probeStrategies,
+            responseType: responseProbeQuestion.responseType,
+          }
         : undefined,
       topicConfirmed: typeof confirmedGroup === 'string'
         ? { questionGroup: confirmedGroup }
@@ -519,19 +529,31 @@ export class ConversationOrchestrator {
 
     let employeeScore: number | undefined;
     if (questionGroup === 'engagement') {
-      const evidenceItems = await surveyRepo.findQuestionsForWindow(windowId)
-        .then(async (questions) => {
-          const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
-          const evidenceList = await Promise.all(
-            groupQs.map((q) => surveyRepo.findEvidenceForQuestion(userId, q.id, windowId)),
-          );
-          return evidenceList.flat();
-        });
-      const numericValues = evidenceItems
-        .filter((e) => e.polarity === 'positive' || e.polarity === 'neutral' || e.polarity === 'negative')
-        .slice(0, 3)
-        .map((e) => ({ positive: 10, neutral: 5, negative: 0, mixed: 5 }[e.polarity] ?? 5));
-      if (numericValues.length === 3) {
+      const [questions, assessments] = await Promise.all([
+        surveyRepo.findQuestionsForWindow(windowId),
+        surveyRepo.findAssessmentsForWindow(windowId),
+      ]);
+      const engagementQuestionIds = new Set(
+        questions
+          .filter((question) =>
+            question.questionGroup === 'engagement' && question.responseType === 'numeric_0_10')
+          .map((question) => question.id),
+      );
+      const scoreByQuestion = new Map<string, number>();
+      for (const assessment of assessments) {
+        if (
+          engagementQuestionIds.has(assessment.surveyQuestionId) &&
+          assessment.status === 'scored' &&
+          assessment.score !== null &&
+          Number.isFinite(assessment.score) &&
+          assessment.score >= 0 &&
+          assessment.score <= 10
+        ) {
+          scoreByQuestion.set(assessment.surveyQuestionId, assessment.score);
+        }
+      }
+      const numericValues = [...scoreByQuestion.values()];
+      if (engagementQuestionIds.size === 3 && numericValues.length === 3) {
         employeeScore = computeEngagementIndex(numericValues[0], numericValues[1], numericValues[2]);
       }
     } else {
