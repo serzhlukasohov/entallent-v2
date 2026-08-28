@@ -31,6 +31,7 @@ Dialogue act rules:
 - Use "greeting" when the latest message only opens socially without asking about the mentor.
 - Use "social_checkin" when the latest message asks how the mentor/agent is doing without adding work substance, even if earlier turns discussed stress, wellbeing, or the mentor's operational status.
 - Use "acknowledgement" for backchannels / minimal replies that add no new work substance ("ok", "yeah", "fine", "a bit", "sure", "thanks").
+- A message is an "acknowledgement" only when the ENTIRE latest message is a backchannel. If it starts with "yes", "ok", "sure", or similar and then adds a clarification, rejection, restatement, or request, classify the substantive part instead; an explicit correction always wins over the leading acknowledgement.
 - Use "continuation" when the latest message continues a known topic with some new detail.
 - Use "new_substance" when it introduces a new concrete fact, event, task, blocker, preference, or concern.
 - Use "emotional_disclosure" when the latest message primarily discloses feelings or wellbeing.
