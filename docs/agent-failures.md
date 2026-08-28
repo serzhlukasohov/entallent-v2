@@ -16,14 +16,6 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
-## 2026-08-27: Slack Socket Mode explicit disconnect crashed the production API
-- Symptom: The production API exited while the Slack client was connecting because `@slack/socket-mode`/`finity` treated `server explicit disconnect` as an unhandled state-machine event; restarting the API restored service.
-- Expected: A transient or explicit Socket Mode disconnect should reconnect or fail without terminating the API process.
-- Root cause layer: architecture
-- Harness fix: Keep reconnect hardening separate from prompt changes; add a lifecycle regression around disconnect-during-connect before changing the adapter.
-- Regression check: Exercise an explicit disconnect while the Socket Mode client is connecting and verify the API remains healthy and reconnects.
-- Status: open
-
 ## 2026-08-20: Local Slack connector smoke blocked by sandbox infra limits
 - Symptom: API/worker dev processes fail to start (`AggregateError ... connect EPERM ... 127.0.0.1:5432/6380`) and `curl /api/v1/channel/slack/events` returns `000` because local services are unreachable in this environment.
 - Expected: A signed Slack event should be accepted and processed, producing conversation queue work and outbound commit metadata.
@@ -49,6 +41,14 @@ Use this file to turn agent misses into harness improvements.
 - Status: open
 
 ## Fixed Failures
+
+## 2026-08-28: Slack Socket Mode explicit disconnect crashed the production API
+- Symptom: The production API exited while the Slack client was connecting because `@slack/socket-mode@1.3.6`/`finity` treated `server explicit disconnect` as an unhandled state-machine event; restarting the API restored service.
+- Expected: A transient or explicit Socket Mode disconnect should reconnect or fail without terminating the API process.
+- Root cause layer: architecture
+- Harness fix: Upgrade `@slack/socket-mode` to `2.0.7`, which removes the Finity lifecycle and handles server disconnect through the WebSocket close/reconnect path; keep a regression for disconnect-before-handshake.
+- Regression check: `pnpm --filter @entalent/api test -- slack-socket-mode.lifecycle.test.ts`
+- Status: fixed
 
 ## 2026-08-28: Leading acknowledgement hid a substantive correction
 - Symptom: In the exact Annna replay, the message beginning with `yes` and then rejecting the pulse-check interpretation was classified as `acknowledgement / continue_existing_thread`, so the next reply retained manager/report framing.
