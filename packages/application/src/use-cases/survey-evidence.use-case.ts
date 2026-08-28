@@ -321,8 +321,6 @@ function validatedExplicitRating(
   questionId: string,
   evaluatedValue: number | null | undefined,
 ): number | undefined {
-  if (typeof evaluatedValue !== 'number') return undefined;
-
   const sourceIndex = messages.findIndex(
     (message) => message.id === sourceMessageId && message.direction === 'inbound',
   );
@@ -331,7 +329,9 @@ function validatedExplicitRating(
   if (surveyProbeQuestionIdForSource(messages, sourceMessageId) !== questionId) return undefined;
 
   const explicitValue = parseExplicitZeroToTen(messages[sourceIndex]!.text);
-  return explicitValue === evaluatedValue ? explicitValue : undefined;
+  if (explicitValue === undefined) return undefined;
+  if (typeof evaluatedValue === 'number' && evaluatedValue !== explicitValue) return undefined;
+  return explicitValue;
 }
 
 function parseExplicitZeroToTen(text: string): number | undefined {

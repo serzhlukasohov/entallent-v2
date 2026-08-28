@@ -341,6 +341,60 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     );
   });
 
+  it('persists an explicit employee rating when the evaluator omits numericValue', async () => {
+    const surveyRepo = makeSurveyRepo('partially_covered');
+    (surveyRepo.findOrCreateActiveWindow as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeWindow({ periodEnd: new Date(Date.now() + 7 * 86_400_000) }),
+    );
+    (surveyRepo.findQuestionsForWindow as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeQuestion('q-1', 'engagement', { responseType: 'numeric_0_10' }),
+    ]);
+    const ai = makeAi('scored');
+    (ai.evaluateSurveyEvidence as ReturnType<typeof vi.fn>).mockResolvedValue({
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: 'Explicit rating 7',
+        polarity: 'neutral', strength: 1, completeness: 1, confidence: 1,
+        assessmentShouldRemainUnknown: false,
+      }],
+    });
+
+    await new SurveyEvidenceExtractionUseCase(
+      ai, makeNumericConversationRepo('7'), surveyRepo,
+    ).execute(BASE_INPUT);
+
+    expect(surveyRepo.upsertAssessment).toHaveBeenCalledWith(
+      expect.objectContaining({ surveyQuestionId: 'q-1', score: 7, status: 'scored' }),
+    );
+  });
+
+  it('rejects an evaluator numeric value that conflicts with the explicit employee rating', async () => {
+    const surveyRepo = makeSurveyRepo('partially_covered');
+    (surveyRepo.findOrCreateActiveWindow as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeWindow({ periodEnd: new Date(Date.now() + 7 * 86_400_000) }),
+    );
+    (surveyRepo.findQuestionsForWindow as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeQuestion('q-1', 'engagement', { responseType: 'numeric_0_10' }),
+    ]);
+    const ai = makeAi('scored');
+    (ai.evaluateSurveyEvidence as ReturnType<typeof vi.fn>).mockResolvedValue({
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: 'Conflicting model rating', numericValue: 7,
+        polarity: 'neutral', strength: 1, completeness: 1, confidence: 1,
+        assessmentShouldRemainUnknown: false,
+      }],
+    });
+    const pulseService = makePulseService();
+
+    await new SurveyEvidenceExtractionUseCase(
+      ai, makeNumericConversationRepo('6'), surveyRepo, pulseService,
+    ).execute(BASE_INPUT);
+
+    expect(surveyRepo.upsertAssessment).toHaveBeenCalledWith(
+      expect.not.objectContaining({ score: expect.anything() }),
+    );
+    expect(pulseService.markQuestionCovered).not.toHaveBeenCalled();
+  });
+
   it('does not persist a model numeric value that is absent from the employee reply', async () => {
     const surveyRepo = makeSurveyRepo('partially_covered');
     (surveyRepo.findOrCreateActiveWindow as ReturnType<typeof vi.fn>).mockResolvedValue(
