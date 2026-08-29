@@ -2,6 +2,10 @@
 
 Last verified: 2026-08-15.
 
+## MAF retirement notice
+
+As of 2026-08-29, the worker is TypeScript-only and does not register the MAF router or client. `agent-service` and all MAF commands below are retained as historical operational reference only. Do not invoke, smoke-test, deploy, reconnect, or modify them without explicit user approval. Removing the Railway service or its configuration also requires explicit approval.
+
 Project: `reasonable-adaptation`.
 Environment: `production`.
 App services: `api`, `worker`, `agent-service`, `dashboard`.

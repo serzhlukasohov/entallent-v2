@@ -1,26 +1,16 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { and, desc, eq, gt, isNull, or } from 'drizzle-orm';
-import type { SQL } from 'drizzle-orm';
-import { detect as detectLanguage } from 'tinyld';
+import { eq } from 'drizzle-orm';
 import {
-  AGENT_RUNTIME_PORT,
   ConversationOrchestrator,
-  FEATURE_FLAGS,
   ProactiveCheckInUseCase,
-  RUNTIME_CONTROL_FLAGS,
-  PulseBacklogService,
 } from '@entalent/application';
-import type { AgentRuntimePort, ProactivePulseConfig } from '@entalent/application';
-import type { RuntimeContext } from '@entalent/contracts';
-import { conversations, memoryItems, messages, tenants, userStyleProfiles, users } from '@entalent/database';
+import type { ProactivePulseConfig } from '@entalent/application';
+import { tenants } from '@entalent/database';
+import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
-import { DatabaseService } from '../database/database.service';
-import { FeatureFlagRepository } from '../feature-flags/feature-flag.repository';
-import { RuntimeControlFlagRepository } from '../feature-flags/runtime-control-flag.repository';
 
 export type ConversationJob = {
   requestId: string;
@@ -37,20 +27,14 @@ export type ConversationJob = {
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;
 
 const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { ignoreWindowHours: 48 };
-const MAF_MEMORY_CONTEXT_LIMIT = 12;
 
 @Processor(QUEUE_NAMES.CONVERSATION)
 export class ConversationProcessor extends WorkerHost implements OnApplicationShutdown {
   private readonly logger = new Logger(ConversationProcessor.name);
 
   constructor(
-    @Inject(AGENT_RUNTIME_PORT)
-    private readonly agentRuntime: AgentRuntimePort,
     private readonly orchestrator: ConversationOrchestrator,
     private readonly checkInUseCase: ProactiveCheckInUseCase,
-    private readonly pulseBacklogService: PulseBacklogService,
-    private readonly runtimeControls: RuntimeControlFlagRepository,
-    private readonly featureFlags: FeatureFlagRepository,
     private readonly llmRunRepo: LlmRunRepository,
     private readonly db: DatabaseService,
   ) {
@@ -75,7 +59,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     });
 
     try {
-      // Load tenant policy to pass pulse cadence config to the use case
       const [tenantRow] = await this.db.client
         .select({ policy: tenants.proactiveMessagingPolicy })
         .from(tenants)
@@ -92,14 +75,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         ...(testQuestionGroup ? { questionGroup: testQuestionGroup } : {}),
       };
 
-      if (await this.shouldUseMafForCheckIn(job.data)) {
-        const result = await this.processMafCheckIn(job, pulseConfig);
-        this.logger.log(
-          `Check-in job ${job.id} done via MAF — text="${result.responseText.slice(0, 60)}"`,
-        );
-        return;
-      }
-
       const result = await this.checkInUseCase.execute({ ...job.data, pulseConfig });
       this.logger.log(
         `Check-in job ${job.id} done — probe=${result.probeQuestionId ?? 'none'} text="${result.responseText.slice(0, 60)}"`,
@@ -107,157 +82,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     } catch (err) {
       this.logger.error(`Check-in job ${job.id} failed: ${(err as Error).message}`, (err as Error).stack);
       throw err;
-    }
-  }
-
-  private async shouldUseMafForCheckIn(job: CheckInJob): Promise<boolean> {
-    const context = {
-      tenantId: job.tenantId,
-      userId: job.userId,
-      externalWorkspaceId: job.externalWorkspaceId,
-    };
-
-    if (await this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_DISABLED, context)) {
-      return false;
-    }
-    if (await this.runtimeControls.isUserDenylisted(context)) {
-      return false;
-    }
-    return this.runtimeControls.isEnabled(RUNTIME_CONTROL_FLAGS.MAF_RUNTIME_PRIMARY, context);
-  }
-
-  private async processMafCheckIn(
-    job: Job<CheckInJob>,
-    pulseConfig: ProactivePulseConfig,
-  ): Promise<Awaited<ReturnType<AgentRuntimePort['processMessage']>>> {
-    const requestId = randomUUID();
-    const eventId = randomUUID();
-    const messageId = randomUUID();
-    const now = new Date();
-    const surveyEnabled = await this.featureFlags.isEnabled(FEATURE_FLAGS.CONVERSATIONAL_SURVEY, {
-      tenantId: job.data.tenantId,
-      userId: job.data.userId,
-    });
-    const probeResult = surveyEnabled ? await this.selectOptionalProbeQuestion(job, pulseConfig) : null;
-
-    const mafCandidateContext = await this.loadProactiveMafCandidateContext(job.data, {
-      messageId,
-      messageCreatedAt: now,
-      probeQuestion: probeResult?.question ?? null,
-    });
-    await this.persistProactiveRuntimeRequestMessage(job.data, {
-      messageId,
-      text: mafCandidateContext.messageText ?? 'Start a proactive pulse check-in.',
-      occurredAt: now,
-      userLocale: normalizeOptionalString(mafCandidateContext.userLocale),
-      probeQuestion: probeResult?.question
-        ? {
-            id: probeResult.question.id,
-            stableKey: probeResult.question.stableKey,
-            title: probeResult.question.title,
-            questionGroup: probeResult.question.questionGroup,
-          }
-        : null,
-    });
-
-    const result = await this.agentRuntime.processMessage({
-      requestId,
-      eventId,
-      runtimeAttempt: runtimeAttemptNumberFromJob(job),
-      requestPurpose: 'proactive_check_in',
-      messageId,
-      conversationId: job.data.conversationId,
-      userId: job.data.userId,
-      tenantId: job.data.tenantId,
-      externalWorkspaceId: job.data.externalWorkspaceId,
-      externalConversationId: job.data.externalConversationId,
-      traceId: job.data.traceId,
-      ...mafCandidateContext,
-    });
-
-    if (
-      probeResult &&
-      result.replyMetadata?.containsSurveyProbe === true &&
-      result.replyMetadata.surveyProbeQuestionId === probeResult.question.id
-    ) {
-      try {
-        await this.pulseBacklogService.recordProbeSent(
-          job.data.userId,
-          probeResult.windowId,
-          probeResult.question.id,
-          now,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Check-in job ${job.id} committed MAF reply but failed to record probe sent: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    return result;
-  }
-
-  private async persistProactiveRuntimeRequestMessage(
-    job: CheckInJob,
-    request: {
-      messageId: string;
-      text: string;
-      occurredAt: Date;
-      userLocale?: string;
-      probeQuestion: {
-        id: string;
-        stableKey: string;
-        title: string;
-        questionGroup: string;
-      } | null;
-    },
-  ): Promise<void> {
-    await this.db.client.insert(messages).values({
-      id: request.messageId,
-      tenantId: job.tenantId,
-      conversationId: job.conversationId,
-      userId: job.userId,
-      direction: 'inbound',
-      senderType: 'system',
-      text: request.text,
-      normalizedText: request.text.toLowerCase(),
-      messageType: 'proactive_check_in_request',
-      metadata: {
-        runtimePurpose: 'proactive_check_in',
-        synthetic: true,
-        hiddenFromConversationContext: true,
-        ...(request.userLocale ? { userLocale: request.userLocale } : {}),
-        ...(request.probeQuestion
-          ? {
-              surveyProbeQuestionId: request.probeQuestion.id,
-              surveyProbeStableKey: request.probeQuestion.stableKey,
-              surveyProbeTitle: request.probeQuestion.title,
-              surveyProbeQuestionGroup: request.probeQuestion.questionGroup,
-            }
-          : {}),
-      },
-      occurredAt: request.occurredAt,
-      receivedAt: request.occurredAt,
-      traceId: job.traceId,
-      deletedAt: request.occurredAt,
-    });
-  }
-
-  private async selectOptionalProbeQuestion(
-    job: Job<CheckInJob>,
-    pulseConfig: ProactivePulseConfig,
-  ): Promise<Awaited<ReturnType<PulseBacklogService['getNextProbeQuestion']>>> {
-    try {
-      return await this.pulseBacklogService.getNextProbeQuestion(
-        job.data.userId,
-        job.data.tenantId,
-        pulseConfig,
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Check-in job ${job.id} could not load optional pulse probe: ${(err as Error).message}`,
-      );
-      return null;
     }
   }
 
@@ -278,7 +102,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       );
     } catch (err) {
       status = 'error';
-      this.logger.error(`Job ${job.id} failed (attempt ${job.attemptsMade}): ${(err as Error).message}`, (err as Error).stack);
+      this.logger.error(
+        `Job ${job.id} failed (attempt ${job.attemptsMade}): ${(err as Error).message}`,
+        (err as Error).stack,
+      );
       throw err;
     } finally {
       await this.llmRunRepo
@@ -296,313 +123,9 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         });
     }
   }
-
-  private async loadProactiveMafCandidateContext(
-    job: CheckInJob,
-    options: {
-      messageId: string;
-      messageCreatedAt: Date;
-      probeQuestion: {
-        id: string;
-        stableKey: string;
-        title: string;
-        questionGroup: string;
-        probeStrategies: string[];
-      } | null;
-    },
-  ): Promise<Partial<Parameters<AgentRuntimePort['processMessage']>[0]>> {
-    const [conversationRow] = await this.db.client
-      .select({
-        userPreferredName: users.preferredName,
-        userTimezone: users.timezone,
-        userLocale: users.locale,
-        styleDimensions: userStyleProfiles.dimensions,
-        stylePhrases: userStyleProfiles.phrases,
-        styleAdaptationWeight: userStyleProfiles.adaptationWeight,
-      })
-      .from(conversations)
-      .leftJoin(users, and(eq(users.id, conversations.userId), eq(users.tenantId, conversations.tenantId)))
-      .leftJoin(userStyleProfiles, and(eq(userStyleProfiles.userId, conversations.userId), eq(userStyleProfiles.tenantId, conversations.tenantId)))
-      .where(
-        and(
-          eq(conversations.id, job.conversationId),
-          eq(conversations.tenantId, job.tenantId),
-          eq(conversations.userId, job.userId),
-        ),
-      )
-      .limit(1);
-
-    if (!conversationRow) {
-      throw new Error(`Conversation ${job.conversationId} not found for check-in user ${job.userId}`);
-    }
-
-    const recentRows = await this.db.client
-      .select({
-        text: messages.text,
-        metadata: messages.metadata,
-        senderType: messages.senderType,
-        direction: messages.direction,
-        occurredAt: messages.occurredAt,
-      })
-      .from(messages)
-      .where(
-          and(
-            eq(messages.tenantId, job.tenantId),
-            eq(messages.conversationId, job.conversationId),
-            eq(messages.userId, job.userId),
-            isNull(messages.deletedAt),
-          ),
-        )
-      .orderBy(desc(messages.occurredAt))
-      .limit(8);
-
-    const memoryContextNow = new Date();
-    const memoryRows = await this.db.client
-      .select({
-        id: memoryItems.id,
-        tenantId: memoryItems.tenantId,
-        userId: memoryItems.userId,
-        category: memoryItems.category,
-        content: memoryItems.content,
-        importance: memoryItems.importance,
-        status: memoryItems.status,
-        expiresAt: memoryItems.expiresAt,
-        supersededById: memoryItems.supersededById,
-        createdAt: memoryItems.createdAt,
-      })
-      .from(memoryItems)
-      .where(mafMemoryContextWhere(job, memoryContextNow))
-      .orderBy(desc(memoryItems.importance), desc(memoryItems.createdAt), desc(memoryItems.id))
-      .limit(MAF_MEMORY_CONTEXT_LIMIT);
-
-    const recentTurns = recentRows
-      .slice()
-      .reverse()
-      .flatMap((row) => toRecentTurn(row));
-    const effectiveLocale = resolveEffectiveLocale(
-      normalizeOptionalString(conversationRow?.userLocale),
-      recentTurns,
-    );
-    const runtimeMemoryItems = toRuntimeMemoryItems(memoryRows, job, memoryContextNow);
-    const styleAdaptation = toRuntimeStyleAdaptation(conversationRow);
-
-    return {
-      messageText: options.probeQuestion
-        ? `Start a proactive pulse check-in about ${options.probeQuestion.title}.`
-        : 'Start a proactive pulse check-in.',
-      messageCreatedAt: options.messageCreatedAt.toISOString(),
-      userDisplayName: normalizeOptionalString(conversationRow?.userPreferredName),
-      userTimezone: normalizeOptionalString(conversationRow?.userTimezone),
-      userLocale: effectiveLocale,
-      conversationSessionKey: [
-        job.externalWorkspaceId,
-        job.userId,
-        job.externalConversationId,
-        'dm',
-      ].join(':'),
-      runtimeContext: {
-        recentTurns,
-        memoryItems: runtimeMemoryItems,
-        goals: [],
-        ...(styleAdaptation ? { styleAdaptation } : {}),
-        replyPolicy: {
-          maxChars: maxReplyChars('short'),
-          maxQuestions: 1,
-          allowReflectiveOpener: false,
-          allowListFormatting: false,
-        },
-      },
-      proactiveContext: {
-        reason: 'pulse_check_in',
-        ...(options.probeQuestion
-          ? {
-              probeQuestion: {
-                id: options.probeQuestion.id,
-                stableKey: options.probeQuestion.stableKey,
-                title: options.probeQuestion.title,
-                group: options.probeQuestion.questionGroup,
-                probeStrategies: options.probeQuestion.probeStrategies,
-              },
-            }
-          : {}),
-      },
-    };
-  }
-
-}
-
-export function runtimeAttemptNumberFromJob(job: Pick<Job, 'attemptsMade'>): number {
-  return job.attemptsMade + 1;
 }
 
 function normalizeOptionalString(value: string | null | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
-}
-
-export function resolveEffectiveLocale(
-  storedLocale: string | undefined,
-  recentTurns: RuntimeContext['recentTurns'],
-): string | undefined {
-  const recentUserText = recentTurns
-    .filter((turn) => turn.role === 'user')
-    .slice(-5)
-    .map((turn) => turn.content)
-    .join('\n');
-
-  const detectedLocale = normalizeOptionalString(detectLanguage(recentUserText));
-  if (!detectedLocale || detectedLocale === storedLocale?.split('-')[0]) {
-    return storedLocale;
-  }
-  return detectedLocale;
-}
-
-function toIsoString(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-}
-
-function mafMemoryContextWhere(job: Pick<ConversationJob, 'tenantId' | 'userId'>, now: Date): SQL {
-  return and(
-    eq(memoryItems.tenantId, job.tenantId),
-    eq(memoryItems.userId, job.userId),
-    eq(memoryItems.status, 'active'),
-    isNull(memoryItems.supersededById),
-    or(isNull(memoryItems.expiresAt), gt(memoryItems.expiresAt, now)),
-  ) as SQL;
-}
-
-function toRuntimeMemoryItems(rows: Array<{
-  id: string;
-  tenantId?: string;
-  userId?: string;
-  category: string;
-  content: string;
-  importance: string | number;
-  status?: string;
-  expiresAt?: Date | string | null;
-  supersededById?: string | null;
-  createdAt?: Date | string;
-}>, job: Pick<ConversationJob, 'tenantId' | 'userId'>, now: Date): RuntimeContext['memoryItems'] {
-  const nowMs = now.getTime();
-  return rows
-    .filter((row) => {
-      const expiresAtMs = toOptionalMillis(row.expiresAt);
-      return (
-        row.tenantId === job.tenantId &&
-        row.userId === job.userId &&
-        row.status === 'active' &&
-        !row.supersededById &&
-        (expiresAtMs === null || expiresAtMs > nowMs)
-      );
-    })
-    .sort(
-      (a, b) =>
-        Number(b.importance) - Number(a.importance) ||
-        toMillis(b.createdAt) - toMillis(a.createdAt) ||
-        b.id.localeCompare(a.id),
-    )
-    .slice(0, MAF_MEMORY_CONTEXT_LIMIT)
-    .map((row) => ({
-      id: row.id,
-      category: row.category,
-      content: row.content,
-      importance: Number(row.importance),
-    }));
-}
-
-function toRuntimeStyleAdaptation(row: {
-  styleDimensions?: unknown;
-  stylePhrases?: unknown;
-  styleAdaptationWeight?: string | number | null;
-}): RuntimeContext['styleAdaptation'] | undefined {
-  const dimensions = toStyleDimensions(row.styleDimensions);
-  if (!dimensions) {
-    return undefined;
-  }
-  const weight = Math.max(0, Math.min(0.4, Number(row.styleAdaptationWeight ?? 0)));
-  if (!Number.isFinite(weight) || weight <= 0) {
-    return undefined;
-  }
-  const phrases = Array.isArray(row.stylePhrases)
-    ? row.stylePhrases
-        .map((phrase) => typeof phrase === 'string' ? phrase : (phrase as { text?: unknown })?.text)
-        .filter((text): text is string => typeof text === 'string' && text.trim().length > 0)
-        .slice(0, 5)
-    : [];
-  return { dimensions, weight, phrases };
-}
-
-function toStyleDimensions(value: unknown): NonNullable<RuntimeContext['styleAdaptation']>['dimensions'] | undefined {
-  if (!value || typeof value !== 'object') {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  const register = clampStyleDimension(record['register']);
-  const humor = clampStyleDimension(record['humor']);
-  const verbosity = clampStyleDimension(record['verbosity']);
-  const emoji = clampStyleDimension(record['emoji']);
-  if (register === null || humor === null || verbosity === null || emoji === null) {
-    return undefined;
-  }
-  return { register, humor, verbosity, emoji };
-}
-
-function clampStyleDimension(value: unknown): number | null {
-  const dimension = Number(value);
-  if (!Number.isFinite(dimension)) {
-    return null;
-  }
-  return Math.max(0, Math.min(1, dimension));
-}
-
-function toMillis(value: Date | string | undefined): number {
-  return value ? new Date(value).getTime() : 0;
-}
-
-function toOptionalMillis(value: Date | string | null | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-  const millis = new Date(value).getTime();
-  return Number.isFinite(millis) ? millis : 0;
-}
-
-function toRecentTurn(row: {
-  text: string;
-  senderType: string;
-  direction: string;
-  occurredAt: Date | string;
-}): Array<{
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-}> {
-  const content = stripSlackConnectorFooter(row.text);
-  if (!content) {
-    return [];
-  }
-
-  try {
-    return [{
-      role: row.senderType === 'agent' || row.direction === 'outbound' ? 'assistant' : 'user',
-      content,
-      timestamp: toIsoString(row.occurredAt),
-    }];
-  } catch {
-    return [];
-  }
-}
-
-function stripSlackConnectorFooter(text: string): string {
-  return text.replace(/\s*\*Sent using\*\s+<@[UW][A-Z0-9]+(?:\|[^>]+)?>\s*$/u, '').trim();
-}
-
-function maxReplyChars(maxResponseLength: 'short' | 'medium' | 'long'): number {
-  if (maxResponseLength === 'short') {
-    return 360;
-  }
-  if (maxResponseLength === 'medium') {
-    return 680;
-  }
-  return 980;
 }

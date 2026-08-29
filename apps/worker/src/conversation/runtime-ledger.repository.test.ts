@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeLedgerRepository } from './runtime-ledger.repository';
-import { runtimeAttemptNumberFromJob } from './conversation.processor';
 
 const startedAttempt = {
   id: 'attempt-1',
@@ -459,15 +458,5 @@ describe('RuntimeLedgerRepository', () => {
     });
 
     expect(db.calls.update).not.toHaveBeenCalled();
-  });
-});
-
-describe('runtimeAttemptNumberFromJob', () => {
-  it.each([
-    [0, 1],
-    [1, 2],
-    [2, 3],
-  ])('maps BullMQ attemptsMade=%i to runtime attempt %i', (attemptsMade, expected) => {
-    expect(runtimeAttemptNumberFromJob({ attemptsMade } as never)).toBe(expected);
   });
 });

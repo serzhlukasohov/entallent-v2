@@ -14,7 +14,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test && pnpm run test:scripts",
-    "test:scripts": "pnpm exec tsx scripts/backfill-slack-display-names.test.ts && pnpm exec tsx scripts/live-maf-primary-app-smoke.test.ts && pnpm exec tsx scripts/typescript-conversation-decision-report.test.ts",
+    "test:scripts": "pnpm exec tsx scripts/backfill-slack-display-names.test.ts && pnpm exec tsx scripts/typescript-conversation-decision-report.test.ts",
     "test:integration": "turbo run test:integration",
     "sim": "pnpm --filter @entalent/conversation-sim sim",
     "sim:gate": "pnpm --filter @entalent/conversation-sim sim:gate",

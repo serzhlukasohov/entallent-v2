@@ -222,7 +222,7 @@ describe('ShadowDiagnosticsRepository', () => {
     expect(JSON.stringify(persisted)).not.toContain('raw validator summary');
   });
 
-  it('supports Story 9.1 user-facing canary runtime through the primary adapter', () => {
+  it('keeps retired MAF artifacts disconnected from the worker runtime', () => {
     const repoRoot = join(process.cwd(), '../..');
     const routerSource = join(
       repoRoot,
@@ -233,24 +233,26 @@ describe('ShadowDiagnosticsRepository', () => {
       'packages/application/src/use-cases/maf-agent-runtime-client.ts',
     );
     const workerModuleSource = join(repoRoot, 'apps/worker/src/conversation/conversation.module.ts');
+    const workerProcessorSource = join(
+      repoRoot,
+      'apps/worker/src/conversation/conversation.processor.ts',
+    );
 
     expect(existsSync(join(repoRoot, 'agent-service'))).toBe(true);
     expect(existsSync(mafClientSource)).toBe(true);
     expect(existsSync(routerSource)).toBe(true);
     expect(existsSync(workerModuleSource)).toBe(true);
+    expect(existsSync(workerProcessorSource)).toBe(true);
 
-    const router = readFileSync(routerSource, 'utf8');
-    const mafClient = readFileSync(mafClientSource, 'utf8');
     const workerModule = readFileSync(workerModuleSource, 'utf8');
+    const workerProcessor = readFileSync(workerProcessorSource, 'utf8');
 
-    expect(mafClient).toContain('/runtime/process-message');
-    expect(router).toContain("decision.mode === 'maf_primary' || decision.mode === 'maf_canary'");
-    expect(router).toContain('this.mafRuntime.processCandidate(request)');
-    expect(router).toContain('this.mafRuntime.getConfigurationDiagnostic(request)');
-    expect(workerModule).toContain('recordShadowCandidate');
-    expect(workerModule).toContain('ShadowDiagnosticsRepository');
-    expect(workerModule).toContain('recordActionEnvelopes');
-    expect(workerModule).toContain('recordCandidateReceived');
-    expect(existsSync(join(repoRoot, 'apps/dashboard/src/shadow-readiness-report.tsx'))).toBe(false);
+    expect(workerModule).not.toContain('AGENT_RUNTIME_PORT');
+    expect(workerModule).not.toContain('AgentRuntimeRouter');
+    expect(workerModule).not.toContain('MafAgentRuntimeClient');
+    expect(workerModule).not.toContain('MafPrimaryAgentRuntime');
+    expect(workerProcessor).not.toContain('processMafCheckIn');
+    expect(workerProcessor).not.toContain('shouldUseMafForCheckIn');
+    expect(workerProcessor).not.toContain('maf_runtime_primary');
   });
 });

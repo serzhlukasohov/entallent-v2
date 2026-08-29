@@ -16,6 +16,12 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 - Railway deployment rules live in the Deployment section below.
 - When context is getting close to compaction and there is enough warning to act, prepare a concise handoff prompt with current goal, files changed, decisions made, commands run, blockers, and next steps; offer it to the user so they can start a new session and continue cleanly.
 
+## Retired MAF Boundary
+
+- As of 2026-08-29, the active conversation and proactive check-in runtime is TypeScript-only. `agent-service`, MAF contracts, runtime ledgers, feature flags, scripts, migrations, and historical tests are retained only as archive/rollback artifacts.
+- Do not modify, invoke, smoke-test, deploy, or extend MAF/`agent-service` for ordinary product work. Do not route worker traffic through `AGENT_RUNTIME_PORT` or `maf_*` flags.
+- Physical deletion of archived code, database structures, Railway services, variables, or domains requires separate explicit user approval.
+
 ## Diagnostic Loop
 
 Treat agent failures as harness defects. When a task fails, add or update an entry in `docs/agent-failures.md` before finishing.
@@ -94,11 +100,11 @@ Primary runtime dependencies:
 Production-critical areas:
 
 - Slack event ingestion, signature validation, message persistence, queueing, worker processing, and outbound Slack delivery.
-- MAF runtime path: API/worker integration with `agent-service`, runtime contract validation, `runtime_attempts` evidence, feature flags such as `maf_runtime_primary` / `maf_runtime_disabled`, and TypeScript fallback behavior.
+- TypeScript conversation orchestration and proactive check-ins; active worker flows must remain disconnected from retired MAF runtime selection and `agent-service`.
 - Data integrity and privacy: tenant scoping, admin API key enforcement, field encryption, cohort-safety for analytics, and identifiable manager views.
 - Postgres migrations/schema and Redis/BullMQ queues.
 - Railway deployment health for `api`, `worker`, `agent-service`, and `dashboard`.
-- Production acceptance/regression scripts and MAF smoke tests before changing runtime, prompt, safety, queue, Slack, or deployment behavior.
+- Production acceptance/regression checks before changing runtime, prompt, safety, queue, Slack, or deployment behavior.
 
 ## Navigation
 
@@ -178,7 +184,7 @@ Conversation simulations and gates:
 - Release gate: `pnpm sim:gate`
 - Fast local gate sample: `SIM_GATE_RUNS=1 pnpm sim:gate`
 
-MAF / production smoke and verification:
+Retired MAF commands (historical only; do not run without explicit user approval):
 
 - Shadow smoke: `pnpm maf:shadow:smoke`
 - Primary smoke: `pnpm maf:primary:smoke`
@@ -302,7 +308,7 @@ Backend/API changes:
 Worker/runtime changes:
 
 - For `apps/worker` changes, run targeted worker tests when available, otherwise `pnpm --filter @entalent/worker test`.
-- For runtime routing, feature flags, fallback barriers, `runtime_attempts`, or `agent-service` client changes, run the related `packages/application` tests plus the relevant MAF smoke.
+- Active runtime changes must stay in the TypeScript path and include a regression proving the worker remains disconnected from MAF.
 - For prompt/orchestration changes, run `pnpm sim` or at least `SIM_GATE_RUNS=1 pnpm sim:gate` when model credentials are available.
 
 Database changes:
@@ -312,6 +318,7 @@ Database changes:
 
 Agent-service changes:
 
+- Do not change `agent-service` without explicit user approval; it is a retired archive component.
 - For Python `agent-service` changes, run `pytest` from `agent-service/`.
 - Also run `ruff` and `mypy` from `agent-service/` when touching typed runtime, settings, auth, contracts, or model-provider code.
 - For agent-service/API integration changes, run `pnpm maf:agent-service:readiness` or an appropriate MAF smoke.
@@ -359,14 +366,14 @@ Production-sensitive verification:
 
 - Architecture follows hexagonal ports/adapters. Domain and application logic should stay isolated from infrastructure details; Slack, OpenAI/Azure, Drizzle, BullMQ, and FastAPI integration belong at adapter boundaries.
 - PostgreSQL is the source of truth for persistent product state. Redis/BullMQ is a delivery and workflow mechanism, not authoritative storage.
-- LLMs and Python/MAF must not directly mutate production domain state. AI may analyze, classify, propose, and generate structured output; TypeScript backend/application code validates, decides, persists, queues side effects, and audits.
+- LLMs must not directly mutate production domain state. AI may analyze, classify, propose, and generate structured output; TypeScript backend/application code validates, decides, persists, queues side effects, and audits.
 - TypeScript remains the owner of durable side effects: outbound message persistence, message-send queueing, memory/goals/follow-ups, survey evidence, risk/policy decisions, ledgers, and audit records.
-- `agent-service` owns MAF candidate generation/runtime responses through `/runtime/process-message`; it must return contract-valid, redacted results and fail closed on unsafe or invalid output.
+- `agent-service` and `/runtime/process-message` are retired archive surfaces and are not part of the active product runtime.
 - Slack is the first channel integration. Channel-specific behavior should stay behind `packages/channel-core` / `packages/channel-slack` abstractions so future Teams/Telegram/WhatsApp adapters do not alter conversation domain logic.
 - Manager analytics must preserve privacy boundaries: aggregate views use cohort safety, while identifiable manager/admin surfaces require explicit admin access controls and auditability.
-- Runtime rollout is feature-flag controlled. MAF shadow/canary/primary behavior must preserve rollback paths such as `maf_runtime_disabled` and user denylist controls.
+- Active runtime selection is fixed to the TypeScript path; retired `maf_*` flags must not affect worker behavior.
 - Audit and runtime evidence are stored in PostgreSQL, including `audit_logs`, `runtime_attempts`, outbound message metadata, runtime ledgers, and shadow diagnostics.
-- Verified production integrations include Railway GitHub auto-deploy from `main`, Slack ingestion/delivery paths, Postgres/Redis runtime dependencies, and MAF smoke/acceptance scripts as documented in `docs/` and `docs/superpowers/railway-deploy.md`.
+- Verified production integrations include Railway GitHub auto-deploy from `main`, Slack ingestion/delivery paths, and Postgres/Redis runtime dependencies.
 
 ## Task Completion Reporting
 

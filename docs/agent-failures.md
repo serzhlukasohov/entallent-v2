@@ -135,10 +135,10 @@ These entries are retained as historical evidence but are not active work becaus
 - Status: fixed
 
 ## 2026-08-20: TSX IPC socket blocks full pre-push inside sandbox
-- Symptom: `pnpm prepush` passed monorepo typecheck, lint, and package tests, then `test:scripts` failed with `listen EPERM` for the TSX IPC socket.
-- Expected: Complete script-test verification despite the sandbox IPC restriction.
-- Root cause layer: environment
-- Harness fix: Rerun the scoped `pnpm test:scripts` check outside the sandbox when TSX IPC is denied; the outside-sandbox verification passed.
+- Symptom: `pnpm prepush` passes monorepo typecheck, lint, and package tests, then `test:scripts` fails with `listen EPERM` for the TSX IPC socket. On 2026-08-29 the escalation also exposed that the default script suite still included a retired live-MAF smoke test.
+- Expected: Complete ordinary pre-push verification without invoking retired MAF tooling.
+- Root cause layer: workflow
+- Harness fix: Remove the retired live-MAF test from `test:scripts`; rerun `pnpm prepush` outside the sandbox only for the remaining TypeScript-owned script checks when TSX IPC is denied.
 - Regression check: `pnpm test:scripts`
 - Status: fixed
 
@@ -300,4 +300,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: instructions
 - Harness fix: Restore every MAF-facing file to its pre-feature bytes and add an explicit no-MAF boundary check to engagement verification.
 - Regression check: Diff the final tree against `b2fec85^` for `agent-service`, runtime OpenAPI/contracts, `agent-runtime.port.ts`, and proactive MAF `responseType` wiring; require no feature delta.
+- Status: fixed
+
+## 2026-08-29: Worker suite required retired MAF wiring
+- Symptom: The first full worker test run failed because a source-inspection test still required `recordShadowCandidate` and primary/canary MAF wiring in `ConversationModule`.
+- Expected: The worker must remain TypeScript-only even while retired MAF artifacts stay available as unreferenced archive code.
+- Root cause layer: verification
+- Harness fix: Replace the obsolete rollout assertion with a quarantine regression that rejects MAF router, client, and proactive-branch references in the active worker module and processor.
+- Regression check: `pnpm --filter @entalent/worker test` passes 117/117 and includes the TypeScript-only module/processor boundary assertions.
 - Status: fixed
