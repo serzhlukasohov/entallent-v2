@@ -1,6 +1,6 @@
 # Railway Deploy Memory
 
-Last verified: 2026-08-15.
+Last verified: 2026-08-29.
 
 ## MAF retirement notice
 
