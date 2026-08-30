@@ -309,3 +309,27 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Replace the obsolete rollout assertion with a quarantine regression that rejects MAF router, client, and proactive-branch references in the active worker module and processor.
 - Regression check: `pnpm --filter @entalent/worker test` passes 117/117 and includes the TypeScript-only module/processor boundary assertions.
 - Status: fixed
+
+## 2026-08-30: Broad application test command crossed the retired MAF boundary
+- Symptom: A TypeScript pulse-backlog verification used the broad `@entalent/application` test command, which also executed archived MAF unit and smoke test files; a delegated worker had also opened one archived runtime-ledger test while searching for a database mock pattern.
+- Expected: Ordinary product work must use an active-runtime allowlist and neither inspect nor execute retired MAF tests, even when they are colocated in a supported TypeScript package.
+- Root cause layer: verification
+- Harness fix: Derive existing colocated tests from changed paths, run them through their owning package, and reject any derived retired target; never fall back to root `pnpm test`.
+- Regression check: `pnpm exec tsx scripts/agent-harness.test.ts` proves a changed package source runs only its colocated active test while an adjacent archived test and root broad test remain untouched.
+- Status: fixed
+
+## 2026-08-30: Harness reflection IPC was blocked by the managed sandbox
+- Symptom: The first focused reflection command failed with `listen EPERM` while creating the local tsx IPC socket.
+- Expected: Required read-only reflection should run before review without a false product failure.
+- Root cause layer: environment
+- Harness fix: Run this local reflection command with the narrowly scoped managed-sandbox escalation.
+- Regression check: The same focused reflection command exits `2` with `eligible=false`, not an IPC error.
+- Status: fixed
+
+## 2026-08-30: Broad formatting check mixed harness code with inherited docs
+- Symptom: A combined Prettier check failed on existing BMad and agent-log Markdown while validating the two changed harness scripts.
+- Expected: Harness implementation formatting should be verified without rewriting unrelated dirty documentation.
+- Root cause layer: workflow
+- Harness fix: Scope formatting verification to `scripts/agent-harness.ts` and its test.
+- Regression check: `pnpm exec prettier --check scripts/agent-harness.ts scripts/agent-harness.test.ts` passes.
+- Status: fixed
