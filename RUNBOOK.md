@@ -145,7 +145,7 @@ await queue.retryJobs({ state: 'failed' });
 
 ## 6. Accidental prompt release
 
-**Symptoms:** A prompt change causes regression in AI behavior (detected via Promptfoo or user reports).
+**Symptoms:** A prompt change causes regression in AI behavior (detected via conversation-sim or user reports).
 
 **Rollback steps:**
 
@@ -154,7 +154,7 @@ await queue.retryJobs({ state: 'failed' });
 3. Bump the evaluator version constant in the changed prompt file (e.g., `1.0.0 → 1.0.1`) to mark the rollback in `llm_runs`.
 4. Deploy the reverted version.
 5. Verify via `GET /admin/prompt-versions` that the old version string is no longer active.
-6. Run Promptfoo eval suite to confirm regression is resolved: `npx promptfoo eval --config evals/promptfooconfig.yaml`.
+6. With approved model egress, run `SIM_GATE_RUNS=1 pnpm sim:gate` and review the generated report.
 
 **Note:** Historical LLM outputs that used the bad prompt version have `evaluatorVersion` stamped — they can be flagged or re-processed.
 

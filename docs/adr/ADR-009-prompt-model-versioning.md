@@ -12,7 +12,7 @@ AI behavior is determined jointly by the prompt and the model. When either chang
 
 The system needs a way to version AI outputs so that:
 1. Each LLM output is attributed to its prompt version and model
-2. Changed behavior is detectable via regression tests (Promptfoo)
+2. Changed behavior is detectable via the canonical conversation-sim regression gate
 3. Historical data is not retroactively invalidated by prompt changes
 
 ## Decision
@@ -59,7 +59,7 @@ See `ModelConfig` in `packages/ai-openai/src/openai-provider.ts`.
 
 **Positive:**
 - Every AI output is attributable to a specific prompt + model combination
-- Regression tests (Promptfoo) can pin to a specific prompt version
+- Conversation-sim reports can pin to a specific prompt version
 - Survey evidence from different versions can be segregated for fair comparison
 
 **Negative:**
@@ -71,4 +71,4 @@ See `ModelConfig` in `packages/ai-openai/src/openai-provider.ts`.
 
 - ADR-005 — AI cannot mutate domain state directly (all outputs are proposals)
 - ADR-007 — Survey evidence tracks evaluatorVersion for reproducibility
-- EVALS.md — Promptfoo evaluation framework
+- EVALS.md — conversation-sim evaluation framework
