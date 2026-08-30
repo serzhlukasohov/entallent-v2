@@ -16,22 +16,6 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
-## 2026-08-20: Local Slack connector smoke blocked by sandbox infra limits
-- Symptom: API/worker dev processes fail to start (`AggregateError ... connect EPERM ... 127.0.0.1:5432/6380`) and `curl /api/v1/channel/slack/events` returns `000` because local services are unreachable in this environment.
-- Expected: A signed Slack event should be accepted and processed, producing conversation queue work and outbound commit metadata.
-- Root cause layer: environment
-- Harness fix: Add a lightweight connector-check prerequisite step that verifies DB/Redis reachability and aborts with explicit guidance before sending any Slack payloads.
-- Regression check: `node -e "require('net').createConnection({host:'localhost',port:5434})" && node -e "require('net').createConnection({host:'localhost',port:6380})"`
-- Status: open
-
-## 2026-08-19: TS quality gate misclassifies scenario assertions
-- Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console mislabeled the product assertion as `infra_failed`, causing an unnecessary retry. Story 11.3 and the 2026-08-22 intent-fidelity gate repeated the class when stale terse-user zero-question assertions contradicted the acknowledged-thread policy introduced by `9ddd4a6`.
-- Expected: The gate should report the memory assertion as a hard product failure without an infrastructure retry; turn-taking scenarios should remain green.
-- Root cause layer: verification
-- Harness fix: Removed the two obsolete terse-user zero-question assertions while retaining the one-question ceiling and no-brevity-inference checks. Still classify scenario assertion failures separately from model/network failures in the gate runner; address memory grounding in its own story.
-- Regression check: `SIM_GATE_RUNS=1 pnpm sim:gate`
-- Status: open
-
 ## Obsolete / Retired Failures
 
 These entries are retained as historical evidence but are not active work because MAF and `agent-service` are no longer supported.
@@ -53,6 +37,38 @@ These entries are retained as historical evidence but are not active work becaus
 - Status: obsolete
 
 ## Fixed Failures
+
+## 2026-08-29: Initial autonomous harness review found boundary gaps
+- Symptom: Independent review found that shallow/default diffs could miss committed retired changes, overrides were not receipted, malformed preflight had no receipt, and generated repair branches could recurse or validate with a self-modified harness.
+- Expected: Every changed path and automation revision must stay inside the approved deterministic, retired-surface, connector, and human-review boundaries.
+- Root cause layer: workflow
+- Harness fix: Pin complete/source revisions, use merge-base and no-renames, validate trusted copied harness code, record safe override/path evidence, block recursive repairs, and keep connector/model-provider guards aligned.
+- Regression check: `pnpm exec tsx scripts/agent-harness.test.ts`, workflow YAML parse, and manual workflow permission/guard inspection.
+- Status: fixed
+
+## 2026-08-29: Workflow YAML smoke used a newer Psych option
+- Symptom: The first local YAML parse failed because system Ruby 2.6 does not support `YAML.load_file(..., aliases: true)`.
+- Expected: The dependency-free workflow syntax smoke should run on the repository host Ruby.
+- Root cause layer: tooling
+- Harness fix: Use the compatible plain `YAML.load_file(file)` call; these workflows do not use YAML aliases.
+- Regression check: `ruby -e "require 'yaml'; ARGV.each { |f| YAML.load_file(f) }" .github/workflows/*.yml`
+- Status: fixed
+
+## 2026-08-20: Local Slack connector smoke blocked by sandbox infra limits
+- Symptom: API/worker dev processes fail to start (`AggregateError ... connect EPERM ... 127.0.0.1:5432/6380`) and `curl /api/v1/channel/slack/events` returns `000` because local services are unreachable in this environment.
+- Expected: A signed Slack event should be accepted and processed, producing conversation queue work and outbound commit metadata.
+- Root cause layer: environment
+- Harness fix: `pnpm harness:preflight` now verifies safe PostgreSQL/Redis host-port targets and blocks before connector payloads.
+- Regression check: `pnpm exec tsx scripts/agent-harness.test.ts`
+- Status: fixed
+
+## 2026-08-19: TS quality gate misclassifies scenario assertions
+- Symptom: A scenario assertion containing network/timeout wording was mislabeled `infra_failed` and retried.
+- Expected: A report or assertion is a hard product failure; only report-free transport failures retry.
+- Root cause layer: verification
+- Harness fix: Route the gate through the pure report-first failure classifier.
+- Regression check: `pnpm --filter @entalent/conversation-sim test -- src/gate/failure-classifier.test.ts`
+- Status: fixed
 
 ## 2026-08-28: Mixed rejection plus request escaped correction policy
 - Symptom: One exact Annna sample classified `No, you keep circling` plus the corrected criteria request as `request`, allowing an unnecessary rubric offer after the direct answer.
@@ -332,4 +348,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: workflow
 - Harness fix: Scope formatting verification to `scripts/agent-harness.ts` and its test.
 - Regression check: `pnpm exec prettier --check scripts/agent-harness.ts scripts/agent-harness.test.ts` passes.
+- Status: fixed
+
+## 2026-08-30: Production aggregate check assumed a root pg dependency
+- Symptom: The first post-deploy read-only aggregate command stopped locally with `Cannot find module 'pg'` before connecting to production.
+- Expected: Operational verification should reuse an installed repository database client without adding a dependency.
+- Root cause layer: tooling
+- Harness fix: Run one-off read-only database checks through `@entalent/database` and its existing `postgres` client.
+- Regression check: `pnpm --filter @entalent/database exec node -e 'console.log(require.resolve("postgres"))'` resolves locally before the Railway command runs.
 - Status: fixed

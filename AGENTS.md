@@ -1,6 +1,7 @@
 # Agent Instructions
 
 <!-- CODEGRAPH_START -->
+
 ## CodeGraph
 
 In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
@@ -26,6 +27,8 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 Treat agent failures as harness defects. When a task fails, add or update an entry in `docs/agent-failures.md` before finishing.
 
+Before implementation or review, retrieve relevant open failures with `pnpm exec tsx scripts/agent-harness.ts reflection --changed-path <path>` for each primary changed area and use the generated `runs/harness/reflection.md` as context. An exit code of `2` means there are no eligible open failures.
+
 After each implementation, review, debugging, or operations task, add one row to `docs/agent-task-log.md` with the task date, task summary, result, failure layer if any, verification run, and the next harness fix. Keep entries short.
 
 For each failure, record:
@@ -38,6 +41,12 @@ For each failure, record:
 - Status: `open` or `fixed`.
 
 If the same failure class appears twice, prefer updating the harness over repeating manual recovery.
+
+Finish implementation with `pnpm harness:check -- --base <base-revision>` and report its JSON receipt path as final harness evidence. The receipt must contain only structured statuses: never environment values, raw command output, transcripts, or hidden reasoning. Missing bases fall back to the full deterministic gate; retired MAF/`agent-service` paths block before commands unless the human approved a specific audit override.
+
+Before any connector smoke or payload, run `pnpm harness:preflight`; do not send the payload unless both named PostgreSQL and Redis targets are reachable.
+
+Codex CI repair, ready-spec execution, scheduled reflection, and scheduled conversation simulations are opt-in. They may create draft PRs or reports only; human review remains the merge, model-egress, and production boundary.
 
 ## Deployment
 

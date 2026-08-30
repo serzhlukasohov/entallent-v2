@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v6
 
@@ -33,14 +35,19 @@ jobs:
       - name: Build packages
         run: pnpm turbo run build --filter=!@entalent/api --filter=!@entalent/worker
 
-      - name: Typecheck
-        run: pnpm typecheck
+      - name: Deterministic harness gate
+        env:
+          HARNESS_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: pnpm harness:check
 
-      - name: Lint
-        run: pnpm lint
-
-      - name: Test
-        run: pnpm test
+      - name: Upload harness receipt
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: harness-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: runs/harness/*.json
+          if-no-files-found: warn
+          retention-days: 14
 
   integration:
     name: Integration tests
