@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import type { ScenarioRunReport } from '../harness/report';
+import { classifyFailure } from './failure-classifier';
 
 interface GateConfig {
   runs: number;
@@ -124,9 +125,7 @@ async function main(): Promise<void> {
     const infraFailures = samples.filter((sample) => sample.status === 'infra_failed').length;
     const hardFailures = samples.filter((sample) => sample.status === 'hard_failed').length;
     const thresholdStatus =
-      hardPasses >= requiredHardPasses &&
-      judgePasses >= requiredJudgePasses &&
-      infraFailures === 0
+      hardPasses >= requiredHardPasses && judgePasses >= requiredJudgePasses && infraFailures === 0
         ? 'passed'
         : 'failed';
     const status =
@@ -185,7 +184,9 @@ async function main(): Promise<void> {
   writeFileSync(join(reportDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
   writeFileSync(join(reportDir, 'summary.md'), buildSummaryMarkdown(summary), 'utf8');
 
-  console.log(`[sim:gate] status=${summary.status} summary=${relative(join(reportDir, 'summary.md'))}`);
+  console.log(
+    `[sim:gate] status=${summary.status} summary=${relative(join(reportDir, 'summary.md'))}`,
+  );
   if (summary.status !== 'passed') {
     process.exitCode = 1;
   }
@@ -251,22 +252,31 @@ function runSample(args: {
   const evaluatedJudgeReports = reports.filter((report) => report.judge.evaluated !== false);
   const judgeRequired = args.scenario.judgePasses > 0;
   const judgePassed = judgeRequired
-    ? evaluatedJudgeReports.length > 0 && evaluatedJudgeReports.every((report) => report.judge.passed)
+    ? evaluatedJudgeReports.length > 0 &&
+      evaluatedJudgeReports.every((report) => report.judge.passed)
     : true;
   const judgeFailures = evaluatedJudgeReports
     .filter((report) => !report.judge.passed)
-    .map((report) => `${report.scenarioName}: ${report.judge.reasoning ?? 'judge failed without reasoning'}`);
+    .map(
+      (report) =>
+        `${report.scenarioName}: ${report.judge.reasoning ?? 'judge failed without reasoning'}`,
+    );
   if (judgeRequired && evaluatedJudgeReports.length === 0) {
-    judgeFailures.push('No evaluated LLM judge report was produced for a scenario with judgePasses > 0.');
+    judgeFailures.push(
+      'No evaluated LLM judge report was produced for a scenario with judgePasses > 0.',
+    );
   }
   const failureReason = buildFailureReason(command.status, output, reports);
-  const infraFailed = command.status !== 0 && looksLikeInfraFailure(output);
-  const status =
-    hardPassed
-      ? 'hard_passed'
-      : infraFailed
-        ? 'infra_failed'
-        : 'hard_failed';
+  const failureKind = classifyFailure({
+    exitCode: command.status,
+    output,
+    reportCount: reports.length,
+  });
+  const status = hardPassed
+    ? 'hard_passed'
+    : failureKind === 'infrastructure'
+      ? 'infra_failed'
+      : 'hard_failed';
 
   return {
     scenarioId: args.scenario.id,
@@ -327,7 +337,11 @@ function summarizeGateStatus(scenarios: ScenarioSummary[]): GateStatus {
   return 'passed';
 }
 
-function scaleThreshold(configuredThreshold: number, configuredRuns: number, actualRuns: number): number {
+function scaleThreshold(
+  configuredThreshold: number,
+  configuredRuns: number,
+  actualRuns: number,
+): number {
   return Math.min(actualRuns, Math.ceil((configuredThreshold / configuredRuns) * actualRuns));
 }
 
@@ -373,12 +387,6 @@ function buildFailureReason(
     .map((line) => line.trim())
     .find((line) => line.includes('FAIL  src/'));
   return failLine ?? `Vitest exited with code ${exitCode ?? 'unknown'}.`;
-}
-
-function looksLikeInfraFailure(output: string): boolean {
-  return /(?:ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|fetch failed|network|timeout|timed out|rate limit|429|5\d\d|Bad Gateway|Service Unavailable)/i.test(
-    output,
-  );
 }
 
 function buildSummaryMarkdown(summary: GateSummary): string {
@@ -437,7 +445,10 @@ function buildSummaryMarkdown(summary: GateSummary): string {
 }
 
 function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 function relative(path: string): string {

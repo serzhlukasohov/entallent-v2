@@ -7,6 +7,7 @@
     "sim": "vitest run",
     "sim:gate": "pnpm exec tsx src/gate/run-gate.ts",
     "sim:watch": "vitest",
+    "test": "vitest run src/gate",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\""
   },
