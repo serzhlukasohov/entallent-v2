@@ -89,3 +89,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-engagement-window-numeric-index-focus.md`
   summary: Define how a numeric correction reopens or recomputes an already confirmed engagement report.
   evidence: The current confirmation state machine treats confirmed groups as terminal; changing score/report behavior after confirmation needs a separate product decision.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-reconcile-pulse-backlog-assessment-coverage.md`
+  summary: Reconcile the opposite drift where a pending qualitative backlog row already has a completed assessment.
+  evidence: Review confirmed assessment persistence and backlog closure are separate awaits, so a pre-existing or interrupted write can leave `pending + covered`; this story repairs the observed `done + insufficient_evidence` state, while symmetric healing needs separate attribution and active-probe policy decisions.

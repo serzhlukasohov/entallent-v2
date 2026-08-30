@@ -40,6 +40,7 @@ const EVIDENCE_BY_STATUS: Record<string, { confidence: number; completeness: num
   scored:            { strength: 0.8, completeness: 0.75, confidence: 0.85 },
   covered:           { strength: 0.8, completeness: 0.75, confidence: 0.85 },
   partially_covered: { strength: 0.6, completeness: 0.5,  confidence: 0.6  },
+  insufficient_evidence: { strength: 0.6, completeness: 0.2, confidence: 0.6 },
 };
 
 function makeAi(status: string): AiProviderPort {
@@ -163,6 +164,24 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     await useCase.execute(BASE_INPUT);
 
     expect(pulseService.markQuestionCovered).toHaveBeenCalledWith('u-1', 'w-1', 'q-1', 1);
+  });
+
+  it('does not close a qualitative backlog question when assessment is insufficient_evidence', async () => {
+    const pulseService = makePulseService();
+    const surveyRepo = makeSurveyRepo('insufficient_evidence');
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      makeAi('insufficient_evidence'),
+      makeConversationRepo(),
+      surveyRepo,
+      pulseService,
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(surveyRepo.upsertAssessment).toHaveBeenCalledWith(
+      expect.objectContaining({ surveyQuestionId: 'q-1', status: 'insufficient_evidence' }),
+    );
+    expect(pulseService.markQuestionCovered).not.toHaveBeenCalled();
   });
 
   it('works when pulseBacklogService is not provided', async () => {

@@ -141,6 +141,30 @@ describe('PulseBacklogService', () => {
       expect(coveredSet.has('q-2')).toBe(false);
     });
 
+    it('captures the coverage snapshot immediately before reading assessments', async () => {
+      vi.useFakeTimers();
+      const snapshotAt = new Date('2026-08-30T12:00:00.000Z');
+      const afterAssessmentRead = new Date('2026-08-30T12:00:01.000Z');
+      vi.setSystemTime(snapshotAt);
+
+      try {
+        const backlogRepo = makeBacklogRepo();
+        const surveyRepo = makeSurveyRepo(makeWindow());
+        (surveyRepo.findAssessmentsForWindow as ReturnType<typeof vi.fn>).mockImplementation(() => {
+          vi.setSystemTime(afterAssessmentRead);
+          return Promise.resolve([]);
+        });
+        const service = new PulseBacklogService(backlogRepo, surveyRepo);
+
+        await service.getNextProbeQuestion('u-1', 't-1');
+
+        const call = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(call[5]).toEqual(snapshotAt);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('calls resolveIgnoredEntries before finding next', async () => {
       const backlogRepo = makeBacklogRepo();
       const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow()));

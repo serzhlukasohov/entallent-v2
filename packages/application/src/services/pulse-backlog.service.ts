@@ -49,6 +49,7 @@ export class PulseBacklogService {
         return groupDiff !== 0 ? groupDiff : a.displayOrder - b.displayOrder;
       });
 
+    const coverageSnapshotAt = new Date();
     const assessments = await this.surveyRepo.findAssessmentsForWindow(window.id);
     const questionById = new Map(allQuestions.map((question) => [question.id, question]));
     const coveredIds = new Set(
@@ -69,6 +70,7 @@ export class PulseBacklogService {
       window.id,
       nonEngagementQuestions,
       coveredIds,
+      coverageSnapshotAt,
     );
 
     await this.backlogRepo.resolveIgnoredEntries(userId, window.id, config.ignoreWindowHours);

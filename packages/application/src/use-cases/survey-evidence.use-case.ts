@@ -18,6 +18,7 @@ const EVIDENCE_SIMILARITY_THRESHOLD = 0.5;
  * let accumulation decide.
  */
 const OPINION_REVERSAL_CONFIDENCE_THRESHOLD = 0.75;
+const COMPLETED_ASSESSMENT_STATUSES = new Set(['partially_covered', 'covered', 'scored']);
 
 export interface SurveyEvidenceExtractionInput {
   conversationId: string;
@@ -216,7 +217,10 @@ export class SurveyEvidenceExtractionUseCase {
       // Qualitative questions close on usable evidence. Numeric questions stay
       // pending until an explicit rating has been validated and stored.
       // Evidence can still be updated if the employee voluntarily revisits the topic.
-      if (this.pulseBacklogService && (!isNumeric || status === 'scored')) {
+      if (
+        this.pulseBacklogService &&
+        (isNumeric ? status === 'scored' : COMPLETED_ASSESSMENT_STATUSES.has(status))
+      ) {
         const allEvidence = await this.surveyRepo.findEvidenceForQuestion(
           input.userId,
           ev.questionId,
@@ -256,12 +260,11 @@ export class SurveyEvidenceExtractionUseCase {
 
     const assessments = await this.surveyRepo.findAssessmentsForWindow(windowId);
 
-    const COMPLETE_STATUSES = new Set(['partially_covered', 'covered', 'scored']);
     const allComplete = groupQuestions.every((q) => {
       const assessment = assessments.find((candidate) => candidate.surveyQuestionId === q.id);
       return q.responseType === 'numeric_0_10'
         ? assessment?.status === 'scored' && assessment.score !== null
-        : COMPLETE_STATUSES.has(assessment?.status ?? '');
+        : COMPLETED_ASSESSMENT_STATUSES.has(assessment?.status ?? '');
     });
 
     if (!allComplete) return;

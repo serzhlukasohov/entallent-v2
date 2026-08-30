@@ -34,9 +34,11 @@ export const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = {
 
 export interface PulseBacklogRepositoryPort {
   /**
-   * Creates 12 backlog entries (non-engagement questions in canonical group order)
-   * if no entries exist yet for this user/window pair. Idempotent.
-   * Questions whose IDs are in coveredQuestionIds are created with status='done'.
+   * Idempotently inserts missing non-engagement backlog entries in canonical group order.
+   * Questions whose IDs are in coveredQuestionIds are created with status='done'; supplied
+   * uncovered questions previously marked 'done' are reopened without changing queue position
+   * or ignore count when they were last updated by coverageSnapshotAt. Active, covered, and
+   * more recently updated entries remain unchanged.
    */
   initializeIfNeeded(
     userId: string,
@@ -44,6 +46,7 @@ export interface PulseBacklogRepositoryPort {
     windowId: string,
     questions: SurveyQuestionRecord[],
     coveredQuestionIds: Set<string>,
+    coverageSnapshotAt: Date,
   ): Promise<void>;
 
   /**
