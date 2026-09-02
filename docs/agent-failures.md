@@ -32,12 +32,12 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: `agent-service/.venv/bin/pytest agent-service/tests/unit/test_runtime_contract.py::test_python_service_packages_shared_runtime_openapi_schema -q`
 - Status: open
 
-## 2026-08-24: GitHub auth unavailable for PR creation
-- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed. Reproduced on 2026-09-02 when trying to open the grill docs PR after adding collected requirements.
+## 2026-08-24: GitHub auth/permission unavailable for PR creation
+- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed. Reproduced on 2026-09-02 after GitHub CLI auth was configured: account `yjinia` is authenticated, but push to `serzhlukasohov/entallent-v2` is denied with HTTP 403.
 - Expected: A requested PR should be pushed and opened from the local branch.
 - Root cause layer: environment
-- Harness fix: Configure GitHub auth for the repo environment or connect an authenticated GitHub plugin before PR tasks.
-- Regression check: `git push -u origin <branch>` or authenticated PR creation through the GitHub connector.
+- Harness fix: Configure GitHub auth for an account with write access to the repo, grant `yjinia` write access, or push to a fork and open a cross-repo PR.
+- Regression check: `git push -u origin <branch>` with the intended account or authenticated PR creation through the GitHub connector.
 - Status: open
 
 ## Fixed Failures
