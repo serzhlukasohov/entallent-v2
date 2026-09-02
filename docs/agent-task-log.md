@@ -63,3 +63,4 @@ Failure layer values:
 | 2026-08-24 | Prepare grill session handoff and PR package | partial | environment | Handoff doc added; docs commit created; push/PR blocked by missing GitHub auth/CLI | Configure GitHub auth, then push branch and open PR |
 | 2026-08-31 | Consolidate collected grill requirements | success | none | Created English requirements document; `git diff --check` docs pass | Use requirements as source for implementation stories |
 | 2026-09-02 | Attempt to open grill docs PR | partial | environment | Local branch/commits ready; `gh auth status` OK for `yjinia`; push blocked by repo write permission 403 | Grant repo write access or push to fork, then open PR |
+| 2026-09-02 | Open grill docs PR after access grant | success | none | `git push -u origin codex/grill-session-docs`; `gh pr create` -> PR #5 | Continue review on PR #5 |

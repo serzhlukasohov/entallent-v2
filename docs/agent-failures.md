@@ -32,15 +32,15 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: `agent-service/.venv/bin/pytest agent-service/tests/unit/test_runtime_contract.py::test_python_service_packages_shared_runtime_openapi_schema -q`
 - Status: open
 
+## Fixed Failures
+
 ## 2026-08-24: GitHub auth/permission unavailable for PR creation
-- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed. Reproduced on 2026-09-02 after GitHub CLI auth was configured: account `yjinia` is authenticated, but push to `serzhlukasohov/entallent-v2` is denied with HTTP 403.
+- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed. Reproduced on 2026-09-02 after GitHub CLI auth was configured: account `yjinia` was authenticated, but push to `serzhlukasohov/entallent-v2` was denied with HTTP 403.
 - Expected: A requested PR should be pushed and opened from the local branch.
 - Root cause layer: environment
 - Harness fix: Configure GitHub auth for an account with write access to the repo, grant `yjinia` write access, or push to a fork and open a cross-repo PR.
 - Regression check: `git push -u origin <branch>` with the intended account or authenticated PR creation through the GitHub connector.
-- Status: open
-
-## Fixed Failures
+- Status: fixed on 2026-09-02 after repo write access was granted; push and PR creation succeeded.
 
 ## 2026-08-21: npx unavailable for skill install command
 - Symptom: `npx skills add https://github.com/mattpocock/skills --skill grill-with-docs` failed with `zsh:1: command not found: npx`.
