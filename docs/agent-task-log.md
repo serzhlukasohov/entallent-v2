@@ -62,3 +62,4 @@ Failure layer values:
 | 2026-08-22 | Capture organization hierarchy and reporting cohort rules | success | none | Updated grill notes/glossary; `git diff --check` docs-only pass | Model cohort roll-up and team-transfer reset rules in schema |
 | 2026-08-24 | Prepare grill session handoff and PR package | partial | environment | Handoff doc added; docs commit created; push/PR blocked by missing GitHub auth/CLI | Configure GitHub auth, then push branch and open PR |
 | 2026-08-31 | Consolidate collected grill requirements | success | none | Created English requirements document; `git diff --check` docs pass | Use requirements as source for implementation stories |
+| 2026-09-02 | Attempt to open grill docs PR | partial | environment | Local branch/commits ready; `git push -u origin codex/grill-session-docs` blocked by missing GitHub auth | Authenticate GitHub or install/connect GitHub plugin, then push and open PR |

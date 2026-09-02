@@ -32,15 +32,15 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: `agent-service/.venv/bin/pytest agent-service/tests/unit/test_runtime_contract.py::test_python_service_packages_shared_runtime_openapi_schema -q`
 - Status: open
 
-## Fixed Failures
-
 ## 2026-08-24: GitHub auth unavailable for PR creation
-- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed.
+- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed. Reproduced on 2026-09-02 when trying to open the grill docs PR after adding collected requirements.
 - Expected: A requested PR should be pushed and opened from the local branch.
 - Root cause layer: environment
 - Harness fix: Configure GitHub auth for the repo environment or connect an authenticated GitHub plugin before PR tasks.
 - Regression check: `git push -u origin <branch>` or authenticated PR creation through the GitHub connector.
 - Status: open
+
+## Fixed Failures
 
 ## 2026-08-21: npx unavailable for skill install command
 - Symptom: `npx skills add https://github.com/mattpocock/skills --skill grill-with-docs` failed with `zsh:1: command not found: npx`.
