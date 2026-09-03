@@ -5,6 +5,7 @@ import type {
   MemoryItemRecord,
   MemoryRepositoryPort,
   MessageRecord,
+  ReportingDisclosureReceiptRecord,
   ScheduledActionRecord,
   SaveGoalParams,
   SaveMemoryItemParams,
@@ -21,6 +22,7 @@ const nextId = (prefix: string): string => `${prefix}-${++sequence}`;
 
 export class InMemoryConversationRepository implements ConversationRepositoryPort {
   readonly messages: MessageRecord[] = [];
+  private readonly deliveredAt = new Map<string, Date>();
 
   constructor(private readonly conversation: ConversationRecord) {}
 
@@ -31,6 +33,24 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
 
   async findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
     return this.messages.filter((m) => m.conversationId === conversationId).slice(-limit);
+  }
+
+  async findLatestDeliveredReportingDisclosure(
+    tenantId: string,
+    userId: string,
+    version: string,
+    before: Date,
+  ): Promise<ReportingDisclosureReceiptRecord | null> {
+    const message = [...this.messages].reverse().find(
+      (candidate) => candidate.tenantId === tenantId
+        && candidate.userId === userId
+        && candidate.direction === 'outbound'
+        && candidate.metadata?.reportingDisclosureVersion === version
+        && (this.deliveredAt.get(candidate.id)?.getTime() ?? Number.POSITIVE_INFINITY)
+          < before.getTime(),
+    );
+    if (!message) return null;
+    return { version, shownAt: this.deliveredAt.get(message.id)! };
   }
 
   async saveMessage(params: SaveMessageParams): Promise<MessageRecord> {
@@ -52,8 +72,25 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
     return record;
   }
 
-  async updateMessageDelivery(): Promise<void> {
-    // Delivery is a channel concern; simulations never leave the process.
+  async updateMessageDelivery(
+    messageId: string,
+    params: {
+      tenantId: string;
+      conversationId: string;
+      externalMessageId: string;
+      externalThreadId?: string;
+      sentAt: Date;
+    },
+  ): Promise<Date> {
+    const message = this.messages.find(
+      (candidate) => candidate.id === messageId
+        && candidate.tenantId === params.tenantId
+        && candidate.conversationId === params.conversationId,
+    );
+    if (!message) throw new Error(`Delivery update scope mismatch: ${messageId}`);
+    const deliveredAt = this.deliveredAt.get(messageId) ?? params.sentAt;
+    this.deliveredAt.set(messageId, deliveredAt);
+    return deliveredAt;
   }
 }
 

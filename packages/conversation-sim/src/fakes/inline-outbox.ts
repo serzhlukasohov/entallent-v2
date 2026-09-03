@@ -31,7 +31,7 @@ export class InlineOutbox implements OutboxPort {
 
   constructor(
     ai: AiProviderPort,
-    conversationRepo: ConversationRepositoryPort,
+    private readonly conversationRepo: ConversationRepositoryPort,
     memoryRepo: MemoryRepositoryPort,
     goalRepo: GoalRepositoryPort,
     styleRepo: StyleProfileRepositoryPort,
@@ -43,6 +43,12 @@ export class InlineOutbox implements OutboxPort {
 
   async enqueueMessageSend(payload: MessageSendPayload): Promise<void> {
     this.sentMessages.push(payload);
+    await this.conversationRepo.updateMessageDelivery(payload.messageId, {
+      tenantId: payload.tenantId,
+      conversationId: payload.conversationId,
+      externalMessageId: `sim:${payload.messageId}`,
+      sentAt: new Date(),
+    });
   }
 
   async enqueueMemoryExtraction(payload: MemoryExtractionPayload): Promise<void> {

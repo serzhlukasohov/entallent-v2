@@ -73,3 +73,42 @@
   summary: Complete live/staging validation for the LLM Safety Gateway after Azure credentials are available.
   status: todo
   evidence: Code, unit tests, and local contract behavior are complete, but real Azure OpenAI plus Azure AI Content Safety Prompt Shields smoke testing requires `AGENT_SERVICE_MODEL_PROVIDER`, `AGENT_SERVICE_MODEL_NAME`, `AGENT_SERVICE_AZURE_OPENAI_ENDPOINT`, `AGENT_SERVICE_AZURE_OPENAI_API_KEY`, `AGENT_SERVICE_AZURE_OPENAI_API_VERSION`, `AGENT_SERVICE_LLM_SAFETY_MODE`, `AGENT_SERVICE_LLM_SAFETY_PROVIDER`, `AGENT_SERVICE_AZURE_CONTENT_SAFETY_ENDPOINT`, and `AGENT_SERVICE_AZURE_CONTENT_SAFETY_KEY`.
+
+## Deferred from: PR 5 REQ-015 reporting disclosure (2026-09-03)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-015-reporting-disclosure.md`
+  summary: Bind `awaiting_confirmation` to the exact outbound summary and create it only after that message is delivered.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-pr5-req-012-exact-displayed-summary.md`
+  evidence: Review found Phase A writes awaiting state before enqueue/channel delivery; this is the next Phase 2 gap because it needs a versioned displayed-summary receipt rather than another disclosure guard.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-015-reporting-disclosure.md`
+  summary: Persist group-report dispatch intent atomically with confirmation through a PostgreSQL transactional outbox.
+  status: todo
+  evidence: Confirmation currently commits before BullMQ enqueue; a Redis failure can leave a confirmed row without a report job.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-015-reporting-disclosure.md`
+  summary: Scope report inputs by tenant, team, cycle, and distinct employee before applying the anonymity threshold.
+  status: todo
+  evidence: This belongs to planned Phase 3; current report reads can count historical windows for one employee more than once.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-015-reporting-disclosure.md`
+  summary: Couple probe backlog state and external-message idempotency to confirmed channel delivery.
+  status: todo
+  evidence: Queue success is not channel delivery, and a provider success followed by local receipt-write failure can retry the external send.
+
+## Deferred from: PR 5 REQ-012 exact displayed summary (2026-09-03)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-012-exact-displayed-summary.md`
+  summary: Persist confirmation-prompt dispatch atomically with candidate staging and recover staged or invalid receipts after terminal delivery failure or retention deletion.
+  status: todo
+  evidence: A crash between PostgreSQL staging and BullMQ enqueue can leave a pending pointer without a queued send; a later deleted or corrupted receipt can block future confirmations. This requires the transactional outbound lifecycle excluded from the exact-binding slice.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-012-exact-displayed-summary.md`
+  summary: Serialize competing confirmation responses by event time across concurrent workers.
+  status: todo
+  evidence: Message-bound CAS prevents stale candidate replacement, but simultaneous agree and correct replies are still resolved by worker completion order rather than inbound `occurredAt`.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-012-exact-displayed-summary.md`
+  summary: Add the typed de-identification acceptance gate and place confirmation evidence in an explicitly untrusted prompt block.
+  status: todo
+  evidence: Exact display binding is complete, but REQ-013 and REQ-016 still require TypeScript policy acceptance and prompt-injection-safe evidence handling before the candidate becomes reportable.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-012-exact-displayed-summary.md`
+  summary: Persist the external workspace binding on conversations or outbound delivery intents.
+  status: todo
+evidence: Delivery now validates tenant, channel type, and external conversation ID, but the current conversation schema cannot prove which same-tenant external workspace the job must use.

@@ -54,6 +54,6 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     SurveyEvidenceProcessor,
     GroupReportProcessor,
   ],
-  exports: [SurveyRepository, PulseBacklogService],
+  exports: [SurveyRepository, GroupStateRepository, PulseBacklogService],
 })
 export class SurveyModule {}

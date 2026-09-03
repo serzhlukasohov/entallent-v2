@@ -27,19 +27,22 @@ A soft conversational attempt to learn about a pulse question's territory. It sh
 A persisted finding that a conversation contains usable signal for a survey question, including polarity, strength, completeness, confidence, and source message IDs.
 
 **Temporary Working Insight**
-An automatically extracted, not-yet-final insight from employee conversation. It can support confirmation, but it is not permanent and is not reportable until the employee confirms or corrects it. It can live until the end of the pulse-check cycle, then should be cleared if still unconfirmed.
+An automatically extracted, not-yet-final insight from employee conversation. It can support confirmation, but it is not permanent or reportable until the employee confirms the exact displayed version. A correction creates a new working version and requires a new confirmation. Unconfirmed working state expires at cycle close.
 
 **Permanent Employee-Cycle Insight**
-A confirmed and anonymized insight for one employee within one pulse-check cycle. It can feed team aggregation, but must not expose names, projects, or concrete events that identify the source.
+A confirmed, de-identified insight for one employee within one pulse-check cycle. It remains internally linked to the employee, team, and cycle, but must not expose names, projects, or concrete events that identify the source.
 
 **Cross-Pollination**
 Closing or advancing a pulse question because the employee organically discussed the relevant topic, even without a proactive prompt.
 
 **Question Group**
-A pulse theme grouping, currently autonomy, belonging, growth, purpose, and engagement.
+The implementation field name for a Pulse Index. New product rules and reports use the term Pulse Index.
+
+**Pulse Index**
+The product completion and reporting unit: exactly three canonical pulse questions confirmed together. The active indices are autonomy, belonging, growth, purpose, and end-of-cycle engagement.
 
 **Group Confirmation**
-The mentor's employee-facing check that its understanding of a question group is accurate before that group becomes confirmed and can feed reporting.
+The mentor's employee-facing check of the exact displayed, de-identified Pulse Index summary. It can become reportable only after a recorded Reporting Disclosure, employee confirmation, and a non-withdrawn lifecycle state.
 
 **Trust-Led Guided Pulse**
 The employee-chat product mode where the mentor has a soft goal to collect pulse signal, but trust and natural conversation outrank completing a backlog topic in the current dialogue.
@@ -54,19 +57,22 @@ An agent-initiated conversation scheduled from the pulse backlog. It should incl
 Concrete employee-specific context used only to make future conversations with that same employee more helpful and continuous.
 
 **Reportable Signal**
-An anonymized, confirmed, and generalized signal that may feed team-level reporting. It must not contain details that reveal the employee source.
+A confirmed, de-identified, non-withdrawn employee-cycle insight scoped to one tenant, team, cycle, and Pulse Index. It may feed team-level reporting only through the frozen reporting cohort and must not reveal the employee source.
 
 **Confirmation Gate**
-The consent and accuracy step where the mentor asks whether it understood a question group correctly. The message should be sufficient, natural, and generalized rather than a detailed dossier. The employee can approve, correct, rewrite, or exclude information before it becomes a permanent employee-cycle insight.
+The accuracy and reporting-inclusion step after a recorded Reporting Disclosure. The mentor shows the exact de-identified version that would become reportable. The employee can approve, correct, rewrite, or exclude information; every changed version requires a new confirmation.
+
+**Reporting Disclosure**
+The versioned onboarding explanation that confirmed, de-identified employee insights may feed team-level recommendations. Its version and display time are persisted before a confirmation can authorize reporting inclusion.
 
 **Team Aggregation**
-The stage that combines at least five permanent employee-cycle insights into generalized team-level findings.
+The stage that combines reportable insights from at least five distinct employees in one frozen tenant/team/cycle cohort into generalized team-level findings. Each employee counts at most once per Pulse Index.
 
 **Organization Hierarchy**
-The company structure configured during setup: who is an employee, who leads whom, which managers own which teams, and which HR roles support which parts of the organization.
+The company structure configured during setup. Active MVP hierarchy records employees, Team Leads, and direct single-team membership. Manager of Managers branches and HR ownership boundaries are deferred.
 
 **Reporting Cohort**
-The group of employees whose confirmed insights can be aggregated into a report for a specific audience. It must satisfy the anonymity floor.
+The frozen tenant/team/cycle roster of active, single-team, survey-opted-in employees captured when a cycle opens. Eligibility counts each employee at most once per Pulse Index. Later deletion, opt-out, or transfer excludes that employee's data without shrinking the denominator.
 
 **Employee Role**
 An individual contributor with no subordinates in the configured organization hierarchy.
@@ -75,22 +81,28 @@ An individual contributor with no subordinates in the configured organization hi
 A manager with direct employee subordinates. A Team Lead report can only be generated when the direct team satisfies the anonymity floor.
 
 **Manager of Managers Role**
-A manager whose hierarchy includes multiple team leads. This role can receive rolled-up reporting across eligible lower-level teams/subteams.
+A future role for a manager whose hierarchy includes multiple Team Leads. Its reporting and inference-risk policy are deferred from the active MVP scope.
 
 **Cohort Roll-Up**
-The privacy-preserving fallback where a too-small team does not receive its own report and its data can instead contribute to a larger eligible manager-level cohort.
+A future privacy-preserving aggregation across lower-level teams. It is disabled for MVP; too-small teams fail closed and produce no manager-visible report.
 
 **Development Dashboard**
 The current internal product-testing surface used by the development/product team to inspect insight collection and confirmation. It is not a released manager/HR customer surface.
 
 **Intermediate Report**
-A team-level report for one index generated before the pulse-check cycle ends, once at least 80% of the team and at least five employees have confirmed all required questions for that index.
+An immutable team-level Report Snapshot for one Pulse Index generated before cycle close once `max(5, ceil(0.8 × eligibleRosterSize))` distinct roster members have confirmed all three questions. A later visible version requires changed reportable input from at least five distinct employees.
 
 **Final Report**
-The end-of-cycle team-level report generated from all confirmed permanent employee-cycle insights available by the close of the pulse-check cycle.
+One team-level cycle Report Snapshot generated after the immutable Cycle Cutoff. It includes only Pulse Indices with at least five distinct eligible employees; the intermediate 80% threshold does not apply. No report is generated when every index is ineligible. Temporary-state cleanup occurs even when no final report is eligible or delivery fails.
+
+**Cycle Cutoff**
+The immutable UTC `periodEnd` instant persisted when a cycle opens. Evidence, displayed candidate, confirmation, and any corrected version must all occur inside `[periodStart, periodEnd)` to enter that cycle. A withdrawal applies to snapshots generated or delivered after its persisted time. Later job execution cannot move data across the cutoff.
+
+**Report Snapshot**
+An immutable, versioned record of one eligible manager-visible report, its scope, policy version, and privacy-safe payload. Closed audit provenance records the included reportable-input IDs separately and is never part of the manager-visible payload. A queued snapshot is revalidated against withdrawals before delivery; publishing a later snapshot never rewrites an already delivered Slack report.
 
 **Anonymity Floor**
-The minimum privacy threshold for manager-visible reporting. Reports and recommendations require at least five employees and must remove or generalize identifying details.
+The minimum privacy threshold for manager-visible reporting. Reports and recommendations require at least five distinct employees from the frozen cohort and must remove or generalize identifying details.
 
 **Team-Level Recommendation**
 A recommendation addressed to team conditions, processes, communication, workload, expectations, or environment. It must not target a named or inferable employee.

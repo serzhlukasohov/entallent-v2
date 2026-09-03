@@ -1352,13 +1352,14 @@ function createPrimaryRuntime(client: MafAgentRuntimeClient): MafPrimaryAgentRun
         userTimezoneUpdatedAt: new Date(),
       })),
       findRecentMessages: vi.fn(async () => []),
+      findLatestDeliveredReportingDisclosure: vi.fn(async () => null),
       saveMessage: vi.fn(async (params) => ({
         id: 'primary-outbound-1',
         ...params,
         occurredAt: params.occurredAt ?? new Date(),
         createdAt: new Date(),
       })),
-      updateMessageDelivery: vi.fn(async () => undefined),
+      updateMessageDelivery: vi.fn(async () => new Date()),
     },
     {
       enqueueMessageSend: vi.fn(async () => undefined),

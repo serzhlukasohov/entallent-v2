@@ -145,6 +145,7 @@ class InMemoryPrimaryRecorder {
       status: 'active',
     }),
     findRecentMessages: async () => [],
+    findLatestDeliveredReportingDisclosure: async () => null,
     saveMessage: async (params) => {
       const now = new Date();
       const record: MessageRecord = {
@@ -163,7 +164,7 @@ class InMemoryPrimaryRecorder {
       this.savedOutbound = record;
       return record;
     },
-    updateMessageDelivery: async () => undefined,
+    updateMessageDelivery: async () => new Date(),
   };
 
   readonly outbox: OutboxPort = {

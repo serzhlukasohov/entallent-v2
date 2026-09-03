@@ -14,15 +14,17 @@ type TeamInfo = {
 export class TeamRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  async findTeamByMemberId(userId: string): Promise<TeamInfo | null> {
+  async findTeamByMemberId(userId: string, tenantId: string): Promise<TeamInfo | null> {
     const [membership] = await this.db.client
       .select({ teamId: teamMemberships.teamId })
       .from(teamMemberships)
+      .innerJoin(teams, eq(teams.id, teamMemberships.teamId))
       .where(
         and(
           eq(teamMemberships.userId, userId),
           eq(teamMemberships.role, 'member'),
           isNull(teamMemberships.leftAt),
+          eq(teams.tenantId, tenantId),
         ),
       )
       .limit(1);

@@ -18,6 +18,7 @@ export const SituationIntentSchema = z.enum([
   'celebration',
   'onboarding',
   'feedback_request',
+  'reporting_explanation',
 ]);
 export type SituationIntent = z.infer<typeof SituationIntentSchema>;
 
@@ -232,6 +233,7 @@ export type ReplyStrategy = z.infer<typeof ReplyStrategySchema>;
 
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
+  confirmationSummary: z.string().optional(),
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
   surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),

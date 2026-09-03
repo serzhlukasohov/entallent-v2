@@ -78,6 +78,19 @@ function questionRetryInstruction(maxQuestions: 0 | 1): string {
     : '\n\nYour previous draft asked more than one question. Rewrite with at most one question in the entire reply.';
 }
 
+const CONFIRMATION_RETRY_INSTRUCTION =
+  '\n\nYour previous confirmation draft was invalid. Return a non-empty reportable "confirmationSummary" with no question punctuation, copy that exact byte-for-byte string into "text" as a proper substring (never the entire reply), and ask exactly one question in the full "text" outside that summary.';
+
+function isValidConfirmationResponse(response: GeneratedResponse): boolean {
+  const summary = response.confirmationSummary;
+  return typeof summary === 'string'
+    && summary.trim().length > 0
+    && summary.trim() !== response.text.trim()
+    && response.text.includes(summary)
+    && countQuestionGroups(summary) === 0
+    && countQuestionGroups(response.text) === 1;
+}
+
 /** Firm rewrite instruction when a reply overruns its length budget. */
 function lengthRetryInstruction(maxChars: number): string {
   const words = Math.max(8, Math.round(maxChars / 6));
@@ -106,7 +119,6 @@ function countQuestionGroups(text: string): number {
 }
 
 function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext): 0 | 1 {
-  if (context.confirmationRequest) return 1;
   const replyPlan = context.replyPlan ?? context.replyBrief;
   if (replyPlan) return replyPlan.questionPolicy.maxQuestions;
   return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
@@ -244,21 +256,30 @@ export class OpenAiProvider implements AiProviderPort {
     );
 
     // Deterministic invariants the persona won't respect from a soft prompt hint. Collect
-    // what fired, do ONE corrective regeneration addressing all of it, and return unconditionally.
+    // what fired, do ONE corrective regeneration, then fail closed on an invalid confirmation.
     const retries: string[] = [];
-    if (!context.confirmationRequest && first.text.length > maxReplyChars(strategy, context)) {
-      retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
-    }
-    const maxQuestions = maxAllowedQuestions(strategy, context);
-    if (countQuestionGroups(first.text) > maxQuestions) {
-      retries.push(questionRetryInstruction(maxQuestions));
+    if (context.confirmationRequest) {
+      if (!isValidConfirmationResponse(first)) retries.push(CONFIRMATION_RETRY_INSTRUCTION);
+    } else {
+      if (first.text.length > maxReplyChars(strategy, context)) {
+        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
+      }
+      const maxQuestions = maxAllowedQuestions(strategy, context);
+      if (countQuestionGroups(first.text) > maxQuestions) {
+        retries.push(questionRetryInstruction(maxQuestions));
+      }
     }
     if (retries.length === 0) return first;
 
-    // ponytail: one corrective draft bounds latency/cost; validate the second draft if escaped violations become observable.
-    return GeneratedResponseSchema.parse(
+    const corrected = GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system + retries.join(''), user, this.generationModel)),
     );
+    if (context.confirmationRequest && !isValidConfirmationResponse(corrected)) {
+      throw new Error(
+        'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
+      );
+    }
+    return corrected;
   }
 
   async generateGroupSummary(

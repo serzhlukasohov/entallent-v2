@@ -12,7 +12,7 @@ export type { GoalRepositoryPort, SaveGoalParams } from './ports/goal.repository
 export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from './ports/scheduled-action.repository.port';
 export type { FollowUpContextPort, FollowUpContextData } from './ports/follow-up-context.port';
 export type { ProactiveSchedulerRepositoryPort, FindCheckInCandidatesParams, CheckInCandidate, CheckInEnqueuePort, CheckInEnqueuePayload } from './ports/proactive-scheduler.repository.port';
-export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams } from './ports/survey.repository.port';
+export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams, StageGroupConfirmationParams, TransitionAwaitingGroupStateParams, ConfirmGroupStateParams } from './ports/survey.repository.port';
 export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';
 export type { PulseBacklogRepositoryPort, PulseBacklogRecord, ResolvedIgnore, ProactivePulseConfig } from './ports/pulse-backlog.repository.port';
 export { DEFAULT_PULSE_CONFIG } from './ports/pulse-backlog.repository.port';
@@ -25,7 +25,7 @@ export type { EscalationPort, EscalationEvent } from './ports/escalation.port';
 export type { EncryptionPort } from './ports/encryption.port';
 export type { DataDeletionRepositoryPort } from './ports/data-deletion.repository.port';
 export type { StyleProfileRepositoryPort } from './ports/style-profile.repository.port';
-export type { ConversationRecord, MessageRecord, WorkspaceConnectionRecord, ChannelAccountRecord, MemoryItemRecord, UserGoalRecord, UserRecord, ScheduledActionRecord, SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord, RiskSignalRecord, SurveyGroupStateRecord, TeamRecord, TeamMembershipRecord, StyleProfileRecord, StyleDimensions, StylePhrase } from './types/records';
+export type { ConversationRecord, MessageRecord, ReportingDisclosureReceiptRecord, WorkspaceConnectionRecord, ChannelAccountRecord, MemoryItemRecord, UserGoalRecord, UserRecord, ScheduledActionRecord, SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord, RiskSignalRecord, SurveyGroupStateRecord, TeamRecord, TeamMembershipRecord, StyleProfileRecord, StyleDimensions, StylePhrase } from './types/records';
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';

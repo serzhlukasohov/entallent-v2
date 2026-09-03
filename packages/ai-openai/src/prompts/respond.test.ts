@@ -34,11 +34,27 @@ describe('buildRespondSystemPrompt confirmation branch', () => {
     }));
     expect(prompt).toMatch(/only one question/i);
     expect(prompt).toContain('autonomy');
+    expect(prompt).toContain('"confirmationSummary"');
+    expect(prompt).toMatch(/byte-for-byte/i);
   });
 
   it('does not emit confirm instructions otherwise', () => {
     const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
     expect(prompt).not.toMatch(/did i get that right/i);
+  });
+});
+
+describe('buildRespondSystemPrompt reporting transparency', () => {
+  it('uses the canonical explanation when asked and does not volunteer it every turn', () => {
+    const reportingDisclosure = 'Confirmed de-identified information may feed team recommendations.';
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      reportingDisclosure,
+    }));
+
+    expect(prompt).toContain(reportingDisclosure);
+    expect(prompt).toMatch(/if the employee asks/i);
+    expect(prompt).toMatch(/do not volunteer|do not repeat/i);
   });
 });
 

@@ -10,6 +10,11 @@ import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import type { SurveyQuestionRecord } from '../types/records';
 import { resolveLanguagePolicy } from '../utils/language-policy';
+import {
+  REPORTING_DISCLOSURE_VERSION,
+  appendReportingDisclosure,
+  getReportingDisclosureText,
+} from '../utils/reporting-disclosure';
 
 export interface ProactiveCheckInInput {
   conversationId: string;
@@ -49,6 +54,9 @@ export class ProactiveCheckInUseCase {
 
     const conversation = await this.conversationRepo.findById(conversationId, tenantId);
     if (!conversation) throw new Error(`Conversation ${conversationId} not found`);
+    if (conversation.tenantId !== tenantId || conversation.userId !== userId) {
+      throw new Error(`Conversation ownership mismatch: ${conversationId}`);
+    }
 
     const dbMessages = await this.conversationRepo.findRecentMessages(conversationId, 10);
     const turns: ConversationTurn[] = dbMessages
@@ -61,6 +69,7 @@ export class ProactiveCheckInUseCase {
 
     const userName = conversation.userDisplayName ?? 'there';
     const flagCtx = { tenantId, userId };
+    const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
     const [memoryEnabled, surveyEnabled] = await Promise.all([
       this.featureFlags
@@ -76,13 +85,27 @@ export class ProactiveCheckInUseCase {
         ? await this.memoryRepo.findActiveByUser(userId, tenantId, 20)
         : [];
 
+    const reportingDisclosureReceipt = surveyEnabled
+      ? await this.conversationRepo.findLatestDeliveredReportingDisclosure(
+        tenantId,
+        userId,
+        REPORTING_DISCLOSURE_VERSION,
+        new Date(),
+      )
+      : null;
+    const hasCurrentDeliveredDisclosure =
+      reportingDisclosureReceipt?.version === REPORTING_DISCLOSURE_VERSION;
+
     // First contact (no history, no memory): earn trust first, never steer toward a survey topic
     const isFirstContact = turns.length === 0 && memoryItems.length === 0;
 
     const pulseConfig = input.pulseConfig ?? DEFAULT_PULSE_CONFIG;
 
     const probeResult =
-      surveyEnabled && !isFirstContact && this.pulseBacklogService
+      surveyEnabled
+      && hasCurrentDeliveredDisclosure
+      && !isFirstContact
+      && this.pulseBacklogService
         ? await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId, pulseConfig)
         : null;
 
@@ -98,7 +121,10 @@ export class ProactiveCheckInUseCase {
 
     const generated = await this.aiProvider.generateResponse(turns, strategy, {
       userName,
-      languagePolicy: resolveLanguagePolicy(turns, conversation.userLocale),
+      languagePolicy,
+      reportingDisclosure: surveyEnabled
+        ? getReportingDisclosureText(languagePolicy.responseLanguage)
+        : undefined,
       memoryContext:
         memoryItems.length > 0
           ? {
@@ -120,22 +146,35 @@ export class ProactiveCheckInUseCase {
       },
     });
 
+    const responseText = surveyEnabled && !hasCurrentDeliveredDisclosure
+      ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
+      : generated.text;
+    const containsSurveyProbe =
+      probeQuestion !== null
+      && generated.containsSurveyProbe === true
+      && generated.surveyProbeQuestionId === probeQuestion.id;
+
     const outbound = await this.conversationRepo.saveMessage({
       conversationId,
       tenantId,
       userId,
       direction: 'outbound',
-      text: generated.text,
+      text: responseText,
       occurredAt: new Date(),
       traceId: input.traceId,
       messageType: 'proactive_check_in',
-      metadata: generated.containsSurveyProbe
-        ? {
+      metadata: {
+        ...(surveyEnabled && !hasCurrentDeliveredDisclosure
+          ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
+          : {}),
+        ...(containsSurveyProbe
+          ? {
             containsSurveyProbe: true,
             surveyProbeQuestionId: generated.surveyProbeQuestionId,
-            ...replyShapeMetadataFromStrategy(strategy),
           }
-        : replyShapeMetadataFromStrategy(strategy),
+          : {}),
+        ...replyShapeMetadataFromStrategy(strategy),
+      },
     });
 
     await this.outbox.enqueueMessageSend({
@@ -145,12 +184,12 @@ export class ProactiveCheckInUseCase {
       channelType: conversation.channelType,
       externalWorkspaceId: input.externalWorkspaceId,
       externalChannelId: input.externalConversationId,
-      text: generated.text,
+      text: responseText,
     });
 
     // Record that a probe was sent so ignore detection knows when to follow up
     if (
-      generated.containsSurveyProbe &&
+      containsSurveyProbe &&
       generated.surveyProbeQuestionId &&
       probeResult &&
       this.pulseBacklogService
@@ -165,10 +204,8 @@ export class ProactiveCheckInUseCase {
 
     return {
       outboundMessageId: outbound.id,
-      responseText: generated.text,
-      probeQuestionId: generated.containsSurveyProbe
-        ? (generated.surveyProbeQuestionId ?? null)
-        : null,
+      responseText,
+      probeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId ?? null : null,
     };
   }
 }

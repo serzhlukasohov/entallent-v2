@@ -32,11 +32,52 @@ export interface UpsertGroupStateParams {
   tenantId: string;
   questionGroup: string;
   status: string;
-  aiSummary?: string;
   employeeScore?: number;
   personalRecs?: unknown;
-  confirmedAt?: Date;
   reportSentAt?: Date;
+}
+
+interface TransitionAwaitingGroupStateBase {
+  surveyWindowId: string;
+  userId: string;
+  tenantId: string;
+  questionGroup: string;
+  confirmationPromptMessageId: string;
+}
+
+export type TransitionAwaitingGroupStateParams = TransitionAwaitingGroupStateBase & (
+  | { status: 'pending_confirmation' }
+  | {
+      status: 'in_progress';
+      conversationId: string;
+      responseMessageId: string;
+      responseOccurredAt: Date;
+    }
+);
+
+export interface StageGroupConfirmationParams {
+  surveyWindowId: string;
+  conversationId: string;
+  userId: string;
+  tenantId: string;
+  questionGroup: string;
+  expectedUpdatedAt: Date;
+  confirmationPromptMessageId: string;
+}
+
+export interface ConfirmGroupStateParams {
+  surveyWindowId: string;
+  conversationId: string;
+  userId: string;
+  tenantId: string;
+  questionGroup: string;
+  confirmationPromptMessageId: string;
+  expectedConfirmationSummary: string;
+  employeeScore?: number;
+  confirmedAt: Date;
+  reportingDisclosureVersion: string;
+  reportingDisclosureShownAt: Date;
+  confirmationMessageId: string;
 }
 
 export interface SurveyRepositoryPort {
@@ -51,11 +92,18 @@ export interface SurveyRepositoryPort {
   findAssessmentsForWindow(windowId: string): Promise<Array<{ surveyQuestionId: string; status: string }>>;
   // Group state methods
   findGroupState(userId: string, windowId: string, questionGroup: string): Promise<SurveyGroupStateRecord | null>;
-  findPendingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]>;
-  findAwaitingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]>;
+  findPendingConfirmationGroups(userId: string, tenantId: string): Promise<SurveyGroupStateRecord[]>;
+  findAwaitingConfirmationGroups(
+    userId: string,
+    tenantId: string,
+    conversationId: string,
+  ): Promise<SurveyGroupStateRecord[]>;
   upsertGroupState(params: UpsertGroupStateParams): Promise<SurveyGroupStateRecord>;
+  stageGroupConfirmation(params: StageGroupConfirmationParams): Promise<boolean>;
+  transitionAwaitingGroupState(params: TransitionAwaitingGroupStateParams): Promise<boolean>;
+  confirmGroupState(params: ConfirmGroupStateParams): Promise<boolean>;
   findConfirmedGroupStates(userIds: string[], questionGroup: string): Promise<SurveyGroupStateRecord[]>;
   // Team methods
-  findTeamByMemberId(userId: string): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null>;
+  findTeamByMemberId(userId: string, tenantId: string): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null>;
   findTeamById(teamId: string): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null>;
 }

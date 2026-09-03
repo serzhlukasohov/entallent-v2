@@ -1,7 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { conversations, messages, users } from '@entalent/database';
-import type { ConversationRepositoryPort, ConversationRecord, MessageRecord, SaveMessageParams } from '@entalent/application';
+import type {
+  ConversationRepositoryPort,
+  ConversationRecord,
+  MessageRecord,
+  ReportingDisclosureReceiptRecord,
+  SaveMessageParams,
+} from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
 
 @Injectable()
@@ -101,17 +107,104 @@ export class ConversationRepository implements ConversationRepositoryPort {
     };
   }
 
+  async findOutboundMessageForDelivery(
+    messageId: string,
+    tenantId: string,
+    conversationId: string,
+  ): Promise<{
+    text: string;
+    sentAt: Date | null;
+    channelType: string;
+    externalConversationId: string;
+  } | null> {
+    const [row] = await this.db.client
+      .select({
+        text: messages.text,
+        sentAt: messages.sentAt,
+        channelType: conversations.channelType,
+        externalConversationId: conversations.externalConversationId,
+      })
+      .from(messages)
+      .innerJoin(
+        conversations,
+        and(
+          eq(conversations.id, messages.conversationId),
+          eq(conversations.tenantId, messages.tenantId),
+        ),
+      )
+      .where(and(
+        eq(messages.id, messageId),
+        eq(messages.tenantId, tenantId),
+        eq(messages.conversationId, conversationId),
+        eq(messages.direction, 'outbound'),
+        isNull(messages.deletedAt),
+      ))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async findLatestDeliveredReportingDisclosure(
+    tenantId: string,
+    userId: string,
+    version: string,
+    before: Date,
+  ): Promise<ReportingDisclosureReceiptRecord | null> {
+    const [row] = await this.db.client
+      .select({
+        shownAt: messages.sentAt,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.tenantId, tenantId),
+          eq(messages.userId, userId),
+        eq(messages.direction, 'outbound'),
+        isNotNull(messages.sentAt),
+        isNull(messages.deletedAt),
+        sql`${messages.metadata}->>'reportingDisclosureVersion' = ${version}`,
+        lt(messages.sentAt, before),
+        ),
+      )
+      .orderBy(desc(messages.sentAt))
+      .limit(1);
+
+    if (!row?.shownAt) return null;
+
+    return {
+      version,
+      shownAt: row.shownAt,
+    };
+  }
+
   async updateMessageDelivery(
     messageId: string,
-    params: { externalMessageId: string; externalThreadId?: string; sentAt: Date },
-  ): Promise<void> {
-    await this.db.client
+    params: {
+      tenantId: string;
+      conversationId: string;
+      externalMessageId: string;
+      externalThreadId?: string;
+      sentAt: Date;
+    },
+  ): Promise<Date> {
+    const rows = await this.db.client
       .update(messages)
       .set({
-        externalMessageId: params.externalMessageId,
-        externalThreadId: params.externalThreadId,
-        sentAt: params.sentAt,
+        externalMessageId: sql`coalesce(${messages.externalMessageId}, ${params.externalMessageId})`,
+        externalThreadId: sql`coalesce(${messages.externalThreadId}, ${params.externalThreadId ?? null})`,
+        sentAt: sql`coalesce(${messages.sentAt}, ${params.sentAt})`,
       })
-      .where(eq(messages.id, messageId));
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.tenantId, params.tenantId),
+          eq(messages.conversationId, params.conversationId),
+        ),
+      )
+      .returning({ id: messages.id, sentAt: messages.sentAt });
+    if (rows.length !== 1) {
+      throw new Error(`Delivery update scope mismatch: ${messageId}`);
+    }
+    if (!rows[0]?.sentAt) throw new Error(`Delivery timestamp missing: ${messageId}`);
+    return rows[0].sentAt;
   }
 }

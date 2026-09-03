@@ -1,12 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ConversationOrchestrator } from './conversation-orchestrator';
+import {
+  REPORTING_DISCLOSURE_VERSION,
+  getReportingDisclosureText,
+} from '../utils/reporting-disclosure';
+
+const INBOUND_OCCURRED_AT = new Date('2026-09-03T10:00:00.000Z');
+const OWNERSHIP = { conversationId: 'c-1', tenantId: 't-1', userId: 'u-1' };
 
 function baseMocks() {
   const conversationRepo = {
-    findById: vi.fn().mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC' }),
+    findById: vi.fn().mockResolvedValue({ id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC' }),
     findRecentMessages: vi.fn().mockResolvedValue([
-      { id: 'm-1', direction: 'inbound', text: 'hey', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'hey', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
     ]),
+    findLatestDeliveredReportingDisclosure: vi.fn().mockResolvedValue({
+      messageId: 'disclosure-1',
+      version: REPORTING_DISCLOSURE_VERSION,
+      shownAt: new Date('2026-09-03T09:00:00.000Z'),
+    }),
     saveMessage: vi.fn().mockResolvedValue({ id: 'out-1' }),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -39,6 +51,9 @@ function baseMocks() {
     findQuestionsForWindow: vi.fn().mockResolvedValue([{ id: 'q-1', stableKey: 'q12', questionGroup: 'autonomy' }]),
     findEvidenceForQuestion: vi.fn().mockResolvedValue([{ evidenceSummary: 'values ownership', polarity: 'positive', createdAt: new Date() }]),
     upsertGroupState: vi.fn().mockResolvedValue({}),
+    stageGroupConfirmation: vi.fn().mockResolvedValue(true),
+    transitionAwaitingGroupState: vi.fn().mockResolvedValue(true),
+    confirmGroupState: vi.fn().mockResolvedValue(true),
     findTeamByMemberId: vi.fn().mockResolvedValue(null),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -52,14 +67,376 @@ const INPUT = {
   externalWorkspaceId: 'ws', externalConversationId: 'ec', traceId: 'tr',
 };
 
-describe('ConversationOrchestrator group confirmation — surface (Phase A)', () => {
-  it('surfaces confirmation with confirmationRequest, no probe, and sets awaiting_confirmation', async () => {
+describe('ConversationOrchestrator reporting disclosure gate', () => {
+  it('rejects a conversation owned by another user before reading disclosure proof', async () => {
     const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-other', channelType: 'slack',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('Conversation ownership mismatch');
+    expect(m.conversationRepo.findRecentMessages).not.toHaveBeenCalled();
+  });
+
+  it('rejects a confirming message outside the conversation ownership before reading disclosure proof', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1',
+        ...OWNERSHIP,
+        userId: 'u-other',
+        direction: 'inbound',
+        text: 'yes',
+        occurredAt: INBOUND_OCCURRED_AT,
+      },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('Inbound message ownership mismatch');
+    expect(m.conversationRepo.findLatestDeliveredReportingDisclosure).not.toHaveBeenCalled();
+  });
+
+  it('appends the localized disclosure on the first safe turn and blocks confirmation and probes', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'ru', userTimezone: 'UTC',
+    });
     m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
       { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', aiSummary: 's' },
     ]);
     m.aiProvider.generateResponse.mockResolvedValue({
-      text: 'Did I get that right?', confidence: 0.9, containsSurveyProbe: false,
+      text: 'Я рядом.', confidence: 0.9, containsSurveyProbe: true, surveyProbeQuestionId: 'q-1',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    const expectedText = `Я рядом.\n\n${getReportingDisclosureText('ru')}`;
+    expect(result.responseText).toBe(expectedText);
+    expect(m.aiProvider.generateResponse.mock.calls[0][2]).toMatchObject({
+      confirmationRequest: undefined,
+      surveyProbeQuestion: undefined,
+      reportingDisclosure: getReportingDisclosureText('ru'),
+    });
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expectedText,
+      metadata: expect.objectContaining({
+        reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION,
+        containsSurveyProbe: false,
+      }),
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ text: expectedText }));
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'awaiting_confirmation' }),
+    );
+  });
+
+  it('does not append a second disclosure when the generated response already contains it', async () => {
+    const m = baseMocks();
+    const disclosure = getReportingDisclosureText('en');
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: disclosure,
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(disclosure);
+  });
+
+  it('answers a reporting explanation request deterministically without confirming or probing', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'ru', userTimezone: 'UTC',
+    });
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1', ...OWNERSHIP, direction: 'inbound',
+        text: 'Куда пойдёт подтверждённая информация?',
+        occurredAt: INBOUND_OCCURRED_AT,
+      },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'reporting_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'explicit reporting question',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: 'reporting question', topicAnchor: null,
+    });
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(getReportingDisclosureText('ru'));
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'growth', status: 'pending_confirmation' }),
+    );
+    expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it('keeps a survey-blocking safety response free of reporting disclosure', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'potential_crisis', secondaryIntents: [], urgency: 'critical',
+      emotionalState: ['unsafe'], confidence: 0.9, reasoningSummary: 'risk',
+      surveyAllowed: false, requiresSafetyCheck: true, reminderRequest: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: 'unsafe', topicAnchor: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity: 'critical', riskType: 'self_harm', confidence: 0.9,
+      surveyMustBeBlocked: true, immediateResponseRequired: true,
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Please contact emergency support now.', confidence: 0.9, containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('Please contact emergency support now.');
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].reportingDisclosure).toBeUndefined();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('reportingDisclosureVersion');
+  });
+
+  it('does not confirm an awaiting group on a survey-blocking safety turn', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'potential_crisis', secondaryIntents: [], urgency: 'critical',
+      emotionalState: ['unsafe'], confidence: 0.9, reasoningSummary: 'risk',
+      surveyAllowed: false, requiresSafetyCheck: true, reminderRequest: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: 'unsafe', topicAnchor: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity: 'critical', riskType: 'self_harm', confidence: 0.9,
+      surveyMustBeBlocked: true, immediateResponseRequired: true,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'confirmed' }),
+    );
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it('does not surface a pending confirmation on a survey-blocking safety turn', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'potential_crisis', secondaryIntents: [], urgency: 'critical',
+      emotionalState: ['unsafe'], confidence: 0.9, reasoningSummary: 'risk',
+      surveyAllowed: false, requiresSafetyCheck: true, reminderRequest: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: 'unsafe', topicAnchor: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity: 'critical', riskType: 'self_harm', confidence: 0.9,
+      surveyMustBeBlocked: true, immediateResponseRequired: true,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].confirmationRequest).toBeUndefined();
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'awaiting_confirmation' }),
+    );
+  });
+
+  it('returns all legacy awaiting groups to pending when no earlier delivered receipt exists', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'purpose', aiSummary: 's2' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledTimes(2);
+    expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'growth', status: 'pending_confirmation' }),
+    );
+    expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ questionGroup: 'purpose', status: 'pending_confirmation' }),
+    );
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+    expect(result.responseText).toContain(getReportingDisclosureText('en'));
+  });
+
+  it('treats a stale disclosure version as missing and sends the current version', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue({
+      messageId: 'disclosure-old',
+      version: 'reporting-disclosure-v0',
+      shownAt: new Date('2026-09-03T09:00:00.000Z'),
+    });
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].confirmationRequest).toBeUndefined();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .toHaveProperty('reportingDisclosureVersion', REPORTING_DISCLOSURE_VERSION);
+    expect(result.responseText).toContain(getReportingDisclosureText('en'));
+  });
+
+  it('uses the exact confirming inbound timestamp rather than a later conversation message', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+      { id: 'm-later', direction: 'inbound', text: 'later', occurredAt: new Date('2026-09-03T12:00:00.000Z'), metadata: undefined },
+    ]);
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue({
+      messageId: 'disclosure-late',
+      version: REPORTING_DISCLOSURE_VERSION,
+      shownAt: new Date('2026-09-03T11:00:00.000Z'),
+    });
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'pending_confirmation',
+    }));
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+    expect(result.responseText).toBe('reply');
+  });
+
+  it('interprets confirmation only through the exact inbound message for an out-of-order job', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'not sure', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+      { id: 'm-later', ...OWNERSHIP, direction: 'inbound', text: 'yes', occurredAt: new Date('2026-09-03T12:00:00.000Z'), metadata: undefined },
+    ]);
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
+        aiSummary: 's', confirmationSummary: 's', confirmationPromptMessageId: 'out-1',
+      },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'unclear' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const interpretedTurns = m.aiProvider.interpretConfirmationResponse.mock.calls[0][0];
+    expect(interpretedTurns.at(-1)?.content).toBe('not sure');
+    expect(interpretedTurns).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'yes' }),
+    ]));
+  });
+
+  it('rejects a disclosure delivered at the same instant as the confirmation', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue({
+      messageId: 'disclosure-equal',
+      version: REPORTING_DISCLOSURE_VERSION,
+      shownAt: INBOUND_OCCURRED_AT,
+    });
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversationOrchestrator group confirmation — surface (Phase A)', () => {
+  it('persists the displayed summary and stages its outbound receipt without activating it', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'autonomy',
+        aiSummary: 'Mutable legacy summary that was never displayed.',
+        updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+    ]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'You value ownership. Did I get that right?',
+      confirmationSummary: 'You value ownership.',
+      confidence: 0.9,
+      containsSurveyProbe: false,
     });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -77,9 +454,45 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
       maxQuestions: 1,
       questionPolicyReason: 'confirmation_requires_question',
     });
-    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
-      expect.objectContaining({ questionGroup: 'autonomy', status: 'awaiting_confirmation' }),
+    expect(metadata.confirmationSummary).toBe('You value ownership.');
+    expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledWith({
+      surveyWindowId: 'w-1',
+      conversationId: 'c-1',
+      userId: 'u-1',
+      tenantId: 't-1',
+      questionGroup: 'autonomy',
+      expectedUpdatedAt: new Date('2026-09-03T09:59:00.000Z'),
+      confirmationPromptMessageId: 'out-1',
+    });
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalled();
+  });
+
+  it('rejects a whole reply presented as its own reportable summary', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'autonomy',
+        updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+    ]);
+    const wholeReply = 'You value ownership. Did I get that right?';
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: wholeReply,
+      confirmationSummary: wholeReply,
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
     );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow(/confirmationSummary/);
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
   });
 });
 
@@ -181,7 +594,7 @@ describe('ConversationOrchestrator reply plan', () => {
       dialogueAct: 'acknowledgement',
       responseMove: 'continue_existing_thread',
       latestUserSubstance: null,
-      topicAnchor: null,
+      topicAnchor: 'the release shipped over the weekend',
       mayInferFromBrevity: false,
       questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
     });
@@ -196,7 +609,7 @@ describe('ConversationOrchestrator reply plan', () => {
       const m = baseMocks();
       m.conversationRepo.findRecentMessages.mockResolvedValue([
         { id: 'm-0', direction: 'inbound', text: 'one', occurredAt: new Date(), metadata: undefined },
-        { id: 'm-1', direction: 'inbound', text: 'two', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'two', occurredAt: new Date(), metadata: undefined },
         { id: 'm-2', direction: 'inbound', text: 'done', occurredAt: new Date(), metadata: undefined },
       ]);
       m.aiProvider.classifySituation.mockResolvedValue({
@@ -251,7 +664,7 @@ describe('ConversationOrchestrator language policy', () => {
   it('uses the current Russian inbound turn over an English user profile locale', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', direction: 'inbound', text: 'Привет', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'Привет', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -273,7 +686,7 @@ describe('ConversationOrchestrator language policy', () => {
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'm-0', direction: 'inbound', text: 'Я переживаю из-за Atlas-9', occurredAt: new Date(), metadata: undefined },
       { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
-      { id: 'm-1', direction: 'inbound', text: 'ok', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -295,7 +708,7 @@ describe('ConversationOrchestrator language policy', () => {
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'm-0', direction: 'inbound', text: 'Я переживаю из-за Atlas-9', occurredAt: new Date(), metadata: undefined },
       { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
-      { id: 'm-1', direction: 'inbound', text: 'ok *Sent using* <@U0BPHHA21GC>', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok *Sent using* <@U0BPHHA21GC>', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -317,7 +730,7 @@ describe('ConversationOrchestrator language policy', () => {
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'm-0', direction: 'inbound', text: 'Я переживаю из-за автономии', occurredAt: new Date(), metadata: undefined },
       { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
-      { id: 'm-1', direction: 'inbound', text: 'Atlas-9', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'Atlas-9', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -337,13 +750,15 @@ describe('ConversationOrchestrator language policy', () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
       channelType: 'slack',
       userDisplayName: 'Sam',
       userLocale: 'uk',
       userTimezone: 'UTC',
     });
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', direction: 'inbound', text: 'я думаю що це важливо', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'я думаю що це важливо', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -364,13 +779,15 @@ describe('ConversationOrchestrator language policy', () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
       channelType: 'slack',
       userDisplayName: 'Sam',
       userLocale: 'pt-BR',
       userTimezone: 'UTC',
     });
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -390,13 +807,15 @@ describe('ConversationOrchestrator language policy', () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1',
+      tenantId: 't-1',
+      userId: 'u-1',
       channelType: 'slack',
       userDisplayName: 'Sam',
       userLocale: '123',
       userTimezone: 'UTC',
     });
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -417,7 +836,15 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
   it('agree → confirms group and enqueues report', async () => {
     const m = baseMocks();
     m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
-      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 'You want more ownership.' },
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'growth',
+        aiSummary: 'A mutable legacy summary.',
+        confirmationSummary: 'The exact summary shown to the employee.',
+        confirmationPromptMessageId: 'out-confirmation-1',
+      },
     ]);
     m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1' });
     m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
@@ -428,18 +855,98 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
 
     await orch.orchestrate(INPUT);
 
-    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
-      expect.objectContaining({ questionGroup: 'growth', status: 'confirmed' }),
+    expect(m.surveyRepo.findAwaitingConfirmationGroups)
+      .toHaveBeenCalledWith('u-1', 't-1', 'c-1');
+    expect(m.aiProvider.interpretConfirmationResponse)
+      .toHaveBeenCalledWith(expect.any(Array), 'The exact summary shown to the employee.');
+    expect(m.surveyRepo.confirmGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questionGroup: 'growth',
+        confirmationPromptMessageId: 'out-confirmation-1',
+        reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION,
+        reportingDisclosureShownAt: new Date('2026-09-03T09:00:00.000Z'),
+        confirmationMessageId: 'm-1',
+        confirmedAt: INBOUND_OCCURRED_AT,
+      }),
     );
+    expect(m.surveyRepo.confirmGroupState.mock.calls[0][0]).not.toHaveProperty('aiSummary');
+    expect(m.conversationRepo.findLatestDeliveredReportingDisclosure)
+      .toHaveBeenCalledWith(
+        't-1',
+        'u-1',
+        REPORTING_DISCLOSURE_VERSION,
+        INBOUND_OCCURRED_AT,
+      );
     expect(m.outbox.enqueueGroupReport).toHaveBeenCalled();
+    expect(m.surveyRepo.findTeamByMemberId).toHaveBeenCalledWith('u-1', 't-1');
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(ctxArg.topicConfirmed).toMatchObject({ questionGroup: 'growth' });
+  });
+
+  it('uses the interpreted displayed summary as the confirmation compare-and-set token', async () => {
+    const m = baseMocks();
+    let storedSummary = 'Summary A';
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'growth',
+        aiSummary: null,
+        confirmationSummary: storedSummary,
+        confirmationPromptMessageId: 'out-confirmation-1',
+      },
+    ]);
+    m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1' });
+    m.aiProvider.interpretConfirmationResponse.mockImplementation(async () => {
+      storedSummary = 'Summary B';
+      return { verdict: 'agree' };
+    });
+    m.surveyRepo.confirmGroupState.mockImplementation(async (
+      params: { expectedConfirmationSummary?: string },
+    ) => params.expectedConfirmationSummary === storedSummary);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.confirmGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedConfirmationSummary: 'Summary A' }),
+    );
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue a report when another worker already won the confirmation transition', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
+        aiSummary: null, confirmationSummary: 'Summary A', confirmationPromptMessageId: 'out-1',
+      },
+    ]);
+    m.surveyRepo.confirmGroupState.mockResolvedValue(false);
+    m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1' });
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.confirmGroupState).toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
   });
 
   it('correct → reopens group to in_progress and does not report', async () => {
     const m = baseMocks();
     m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
-      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
+        aiSummary: 's', confirmationSummary: 's', confirmationPromptMessageId: 'out-1',
+      },
     ]);
     m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'correct', correctionNote: 'not about promotion' });
     const orch = new ConversationOrchestrator(
@@ -449,7 +956,7 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
 
     await orch.orchestrate(INPUT);
 
-    expect(m.surveyRepo.upsertGroupState).toHaveBeenCalledWith(
+    expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(
       expect.objectContaining({ questionGroup: 'growth', status: 'in_progress' }),
     );
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
@@ -495,7 +1002,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
   it('keeps one follow-up available for a terse user while the topic remains open', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
       {
         id: 'o-1',
         direction: 'outbound',
@@ -533,7 +1040,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
   it('ignores legacy punctuation when previous reply has no reply-shape metadata', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'i-1', direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
       { id: 'o-1', direction: 'outbound', text: 'what exactly is holding you back?', occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
@@ -698,7 +1205,7 @@ describe('ConversationOrchestrator local time', () => {
 
   it('marks session start and omits localTime when tz is unknown', async () => {
     const m = baseMocks();
-    m.conversationRepo.findById.mockResolvedValue({ id: 'c-1', channelType: 'slack', userDisplayName: 'Sam', userTimezone: undefined });
+    m.conversationRepo.findById.mockResolvedValue({ id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', userDisplayName: 'Sam', userTimezone: undefined });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
       undefined, undefined, m.featureFlags, undefined, undefined,

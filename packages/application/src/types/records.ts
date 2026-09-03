@@ -15,6 +15,7 @@ export interface ConversationRecord {
 export interface MessageMetadata {
   containsSurveyProbe?: boolean;
   surveyProbeQuestionId?: string;
+  reportingDisclosureVersion?: string;
   replyShape?: {
     askedQuestion?: boolean;
     maxQuestions?: 0 | 1;
@@ -34,6 +35,11 @@ export interface MessageRecord {
   occurredAt: Date;
   createdAt: Date;
   metadata?: MessageMetadata & Record<string, unknown>;
+}
+
+export interface ReportingDisclosureReceiptRecord {
+  version: string;
+  shownAt: Date;
 }
 
 export interface WorkspaceConnectionRecord {
@@ -200,10 +206,16 @@ export interface SurveyGroupStateRecord {
   questionGroup: string;
   status: string;  // 'in_progress' | 'pending_confirmation' | 'confirmed' | 'report_sent'
   aiSummary: string | null;
+  confirmationSummary: string | null;
+  reportableSummary: string | null;
   employeeScore: number | null;
   personalRecs: unknown | null;
   confirmedAt: Date | null;
   reportSentAt: Date | null;
+  reportingDisclosureVersion: string | null;
+  reportingDisclosureShownAt: Date | null;
+  confirmationMessageId: string | null;
+  confirmationPromptMessageId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

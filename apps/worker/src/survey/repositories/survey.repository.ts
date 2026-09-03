@@ -14,6 +14,9 @@ import {
   type SaveSurveyEvidenceParams,
   type UpsertAssessmentParams,
   type UpsertGroupStateParams,
+  type StageGroupConfirmationParams,
+  type ConfirmGroupStateParams,
+  type TransitionAwaitingGroupStateParams,
   type SurveyQuestionRecord,
   type SurveyWindowRecord,
   type SurveyEvidenceRecord,
@@ -212,16 +215,35 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return this.groupStateRepo.findGroupState(userId, windowId, questionGroup);
   }
 
-  findPendingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]> {
-    return this.groupStateRepo.findPendingConfirmationGroups(userId);
+  findPendingConfirmationGroups(
+    userId: string,
+    tenantId: string,
+  ): Promise<SurveyGroupStateRecord[]> {
+    return this.groupStateRepo.findPendingConfirmationGroups(userId, tenantId);
   }
 
-  findAwaitingConfirmationGroups(userId: string): Promise<SurveyGroupStateRecord[]> {
-    return this.groupStateRepo.findAwaitingConfirmationGroups(userId);
+  findAwaitingConfirmationGroups(
+    userId: string,
+    tenantId: string,
+    conversationId: string,
+  ): Promise<SurveyGroupStateRecord[]> {
+    return this.groupStateRepo.findAwaitingConfirmationGroups(userId, tenantId, conversationId);
   }
 
   upsertGroupState(params: UpsertGroupStateParams): Promise<SurveyGroupStateRecord> {
     return this.groupStateRepo.upsertGroupState(params);
+  }
+
+  stageGroupConfirmation(params: StageGroupConfirmationParams): Promise<boolean> {
+    return this.groupStateRepo.stageGroupConfirmation(params);
+  }
+
+  transitionAwaitingGroupState(params: TransitionAwaitingGroupStateParams): Promise<boolean> {
+    return this.groupStateRepo.transitionAwaitingGroupState(params);
+  }
+
+  confirmGroupState(params: ConfirmGroupStateParams): Promise<boolean> {
+    return this.groupStateRepo.confirmGroupState(params);
   }
 
   findConfirmedGroupStates(
@@ -234,8 +256,9 @@ export class SurveyRepository implements SurveyRepositoryPort {
   // Team methods — delegated to TeamRepository
   findTeamByMemberId(
     userId: string,
+    tenantId: string,
   ): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null> {
-    return this.teamRepo.findTeamByMemberId(userId);
+    return this.teamRepo.findTeamByMemberId(userId, tenantId);
   }
 
   findTeamById(

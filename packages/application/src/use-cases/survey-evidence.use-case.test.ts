@@ -203,6 +203,7 @@ describe('SurveyEvidenceExtractionUseCase', () => {
 
   it('completing a group upserts pending_confirmation', async () => {
     const surveyRepo = makeSurveyRepo('scored');
+    const ai = makeAi('scored');
     // group of one question fully covered
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (surveyRepo.findQuestionsForWindow as any).mockResolvedValue([makeQuestion('q-1', 'autonomy')]);
@@ -212,13 +213,20 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     (surveyRepo.findGroupState as any).mockResolvedValue(null);
 
     const useCase = new SurveyEvidenceExtractionUseCase(
-      makeAi('scored'), makeConversationRepo(), surveyRepo, makePulseService(),
+      ai, makeConversationRepo(), surveyRepo, makePulseService(),
     );
 
     await useCase.execute(BASE_INPUT);
 
     expect(surveyRepo.upsertGroupState).toHaveBeenCalledWith(
-      expect.objectContaining({ questionGroup: 'autonomy', status: 'pending_confirmation' }),
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'autonomy',
+        status: 'pending_confirmation',
+      },
     );
+    expect(ai.generateGroupSummary).not.toHaveBeenCalled();
   });
 });

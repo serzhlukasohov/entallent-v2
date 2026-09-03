@@ -1056,13 +1056,14 @@ function createRuntime(options: {
           }
     )),
     findRecentMessages: vi.fn(async () => []),
+    findLatestDeliveredReportingDisclosure: vi.fn(async () => null),
     saveMessage: vi.fn(async (params) => ({
       id: 'outbound-1',
       ...params,
       occurredAt: params.occurredAt ?? new Date(),
       createdAt: new Date(),
     })),
-    updateMessageDelivery: vi.fn(async () => undefined),
+    updateMessageDelivery: vi.fn(async () => new Date()),
   } satisfies ConversationRepositoryPort;
   const outbox = {
     enqueueMessageSend: vi.fn(async () => undefined),

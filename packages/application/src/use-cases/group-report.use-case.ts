@@ -44,8 +44,8 @@ export class GroupReportUseCase {
       : 0;
 
     const teamSummaries = confirmedStates
-      .filter((s) => s.aiSummary)
-      .map((s) => s.aiSummary as string);
+      .filter((s) => s.reportableSummary)
+      .map((s) => s.reportableSummary as string);
 
     const report = await this.ai.generateGroupReport(
       teamSummaries,

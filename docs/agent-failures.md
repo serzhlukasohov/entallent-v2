@@ -12,9 +12,69 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix:
 - Regression check:
 - Status: open
+
 ```
 
 ## Open Failures
+
+## 2026-09-03: BMad config resolver called without project root
+
+- Symptom: `resolve_config.py` exited with a required `--project-root` argument error.
+- Expected: BMad configuration resolves before planning the implementation slice.
+- Root cause layer: tooling
+- Harness fix: Use `python3 _bmad/scripts/resolve_config.py --project-root "$PWD"` and the customization resolver command from the skill.
+- Regression check: Both resolver commands exit zero before creating the next spec.
+- Status: fixed
+
+## 2026-09-03: Local PostgreSQL check blocked by sandbox socket policy
+
+- Symptom: the first Docker status and localhost database test attempts returned permission errors.
+- Expected: approved local integration verification reaches the existing Postgres container.
+- Root cause layer: environment
+- Harness fix: Run read-only Docker status and local integration tests with the required sandbox escalation, without changing container state.
+- Regression check: `pnpm exec dotenv -e .env -- pnpm --filter @entalent/database test:integration`
+- Status: fixed
+
+## 2026-09-03: Index inspection used unsafe shell quoting
+
+- Symptom: the first ad hoc PostgreSQL index query was parsed incorrectly before the successful schema check.
+- Expected: inspect the generated active-confirmation index without shell interpolation errors.
+- Root cause layer: tooling
+- Harness fix: Pass inspection SQL through a quoted heredoc or a migration-aware test instead of nested command-line quoting.
+- Regression check: the integration test asserts staged-candidate uniqueness directly.
+- Status: fixed
+
+## 2026-09-03: ambiguous one-line patch changed the wrong test fixture
+- Symptom: A patch intended for the acknowledgement assertion matched the first `topicAnchor: null` in the file and changed the shared base fixture; the targeted test stayed red.
+- Expected: The patch should update only the assertion inside `passes acknowledgement dialogue state to response generation`.
+- Root cause layer: tooling
+- Harness fix: Include the enclosing test or assertion context when patching repeated literals, then inspect the focused file diff before running tests.
+- Regression check: `git diff -- packages/application/src/use-cases/conversation-orchestrator.test.ts` must show only the intended assertion line before the targeted test runs.
+- Status: fixed
+
+## 2026-09-03: GitHub PR metadata refresh blocked by network
+- Symptom: Two consecutive `gh pr view 5 --repo serzhlukasohov/entallent-v2` refreshes failed with `error connecting to api.github.com` after the PR metadata had been captured earlier in the audit.
+- Expected: A read-only PR metadata refresh should return the current branch, file, review, and check state.
+- Root cause layer: environment
+- Harness fix: Treat an earlier captured PR snapshot as evidence for the same audit run, report that the final live refresh was unavailable, and avoid repeated retries without a network-state change.
+- Regression check: Run one `gh pr view 5 --repo serzhlukasohov/entallent-v2 --json state,headRefName,baseRefName,statusCheckRollup`; retry only after connectivity changes.
+- Status: open
+
+## 2026-09-03: acknowledgement reply-plan test contradicts its fixture
+- Symptom: `pnpm test` fails because the acknowledgement fixture sets `topicAnchor` to `the release shipped over the weekend` while the assertion expects `topicAnchor: null`.
+- Expected: The test should assert the intended typed plan and agree with the fixture and renderer pause behavior.
+- Root cause layer: verification
+- Harness fix: Correct the stale assertion or explicitly normalize acknowledgement anchors in `buildReplyPlan`, then keep one focused regression for the chosen behavior.
+- Regression check: `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts -t "passes acknowledgement dialogue state"`
+- Status: fixed
+
+## 2026-09-03: root integration command silently drops database environment
+- Symptom: `pnpm exec dotenv -e .env -- pnpm test:integration` exits successfully while all 19 database tests are skipped because Turbo does not pass `DATABASE_URL` to the package task.
+- Expected: With a local database URL present, the documented root command should execute the integration tests or fail clearly.
+- Root cause layer: workflow
+- Harness fix: Declare the integration environment in Turbo or load `.env` inside the database integration command; fail when every integration test is skipped in an intended DB run.
+- Regression check: `pnpm exec dotenv -e .env -- pnpm test:integration` must report 19 executed tests, not 19 skipped.
+- Status: open
 
 ## 2026-08-19: TS quality gate misclassifies repeated memory assertion
 - Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console again mislabeled the product assertion as `infra_failed`, causing an unnecessary retry.
@@ -32,7 +92,70 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: `agent-service/.venv/bin/pytest agent-service/tests/unit/test_runtime_contract.py::test_python_service_packages_shared_runtime_openapi_schema -q`
 - Status: open
 
+## 2026-09-03: BMad resolver scripts have different CLI contracts
+
+- Symptom: `resolve_config.py` required `--project-root`, while passing that same flag to `resolve_customization.py` failed as an unknown argument.
+- Expected: Resolve BMad config and skill customization without trial-and-error invocations.
+- Root cause layer: workflow
+- Harness fix: Call `resolve_config.py --project-root <root>` and run `resolve_customization.py --skill <path> --key workflow` from the project root.
+- Regression check: Run both commands before entering the selected BMad workflow step.
+- Status: fixed
+
+## 2026-09-03: Worker SQL test read stale database declarations
+
+- Symptom: A focused worker repository test compiled malformed SQL until `@entalent/database` was rebuilt after schema changes.
+- Expected: Consumer tests resolve current workspace schema declarations.
+- Root cause layer: workflow
+- Harness fix: Build changed producer packages before running focused consumer tests.
+- Regression check: `pnpm --filter @entalent/database build` before worker repository verification.
+- Status: fixed
+
+## 2026-09-03: Review agents failed after writing edits
+
+- Symptom: Two REQ-015 agents ended with local `404 /v1/responses`, so they could not return their final reports although their filesystem edits remained.
+- Expected: Agent completion returns both edits and a reviewable result.
+- Root cause layer: tooling
+- Harness fix: Treat the shared worktree as authoritative, inspect the diff locally, then restart failed agents for read-only review.
+- Regression check: `collaboration.list_agents` followed by local `git diff` before reassigning failed work.
+- Status: fixed
+
+## 2026-09-03: Focused simulation command ran the full live suite
+
+- Symptom: `pnpm --filter @entalent/conversation-sim sim -- <file>` passed an extra separator to Vitest, ran live scenarios, and hit blocked model/network calls.
+- Expected: Run only the deterministic receipt regression.
+- Root cause layer: workflow
+- Harness fix: Use `pnpm --filter @entalent/conversation-sim exec vitest run <file>` for focused simulation tests.
+- Regression check: Output must list only the requested test file.
+- Status: fixed
+
+## 2026-09-03: Local integration test blocked by sandbox network policy
+
+- Symptom: The first local Postgres run failed with `connect EPERM` to `localhost:5434` despite the database being available.
+- Expected: Execute migration and constraint tests against the confirmed local database.
+- Root cause layer: environment
+- Harness fix: Verify the redacted database target, then rerun the same test with local network escalation.
+- Regression check: `pnpm --filter @entalent/database test:integration` reports executed tests rather than connection errors or skips.
+- Status: fixed
+
+## 2026-09-03: Simulation TypeScript target lacks Array.findLast
+
+- Symptom: Root typecheck rejected `MessageRecord[].findLast` in the simulation receipt fake.
+- Expected: The deterministic fake compiles under the repository's ES2022 target.
+- Root cause layer: architecture
+- Harness fix: Use the existing array APIs supported by ES2022.
+- Regression check: `pnpm --filter @entalent/conversation-sim typecheck`.
+- Status: fixed
+
 ## Fixed Failures
+
+## 2026-09-03: channel-slack package has no Vitest dependency
+
+- Symptom: The first Slack timestamp regression used Vitest and package typecheck could not resolve the import.
+- Expected: A package-local timestamp check runs with declared dependencies.
+- Root cause layer: tooling
+- Harness fix: Use Node's built-in `node:test` and `node:assert` for the two adapter checks.
+- Regression check: `node --import tsx --test packages/channel-slack/src/slack.adapter.test.ts`
+- Status: fixed
 
 ## 2026-08-24: GitHub auth/permission unavailable for PR creation
 - Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed. Reproduced on 2026-09-02 after GitHub CLI auth was configured: account `yjinia` was authenticated, but push to `serzhlukasohov/entallent-v2` was denied with HTTP 403.
@@ -105,3 +228,21 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Add a production-shaped regression where a previous stock support reply forces the next support-emotion turn onto the model path.
 - Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_model_provider.py -q`
 - Status: fixed
+
+## 2026-09-03: Live Slack smoke write rejected by approval review
+
+- Symptom: Slack channel history was readable, but the approved REQ-012 marker message was rejected before delivery; a schema-probe retry was also rejected.
+- Expected: One explicitly authorized marker reaches `D0BJDC2MPE2`, then channel history provides delivery and agent-reply evidence.
+- Root cause layer: tooling
+- Harness fix: Treat connector write rejection as a hard stop; surface the exact target and message for renewed user approval instead of probing or switching tools.
+- Regression check: Read the target first, invoke one direct Slack send only after explicit approval, then verify the unique marker through `slack_read_channel`.
+- Status: open
+
+## 2026-09-03: Live Slack smoke transcript hidden after approved send
+
+- Symptom: After renewed explicit approval, one REQ-012 marker delivered to `D0BJDC2MPE2`, but Slack read/search transcript content was returned to Codex as opaque `ccr:` references, so the agent reply text and confirmation summary could not be inspected.
+- Expected: Slack smoke should expose model-readable channel history after delivery so follow-up turns can be sent only in response to actual agent text.
+- Root cause layer: tooling
+- Harness fix: Require a model-readable transcript source before continuing live Slack follow-up turns; use connector message links/search only as delivery evidence.
+- Regression check: Send one approved marker, verify returned Slack `ts`, then verify read/search output contains text before sending any reply.
+- Status: open

@@ -6,7 +6,7 @@ export function buildClassifySystemPrompt(): string {
 
 Return a JSON object with exactly these fields:
 {
-  "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","social_checkin","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request"
+  "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","social_checkin","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request","reporting_explanation"
   "secondaryIntents": string[],  // zero or more of the same values
   "emotionalState": string[],    // descriptors like "stressed","excited","anxious","neutral","frustrated","hopeful"
   "urgency": string,             // one of: "low","medium","high","critical"
@@ -35,6 +35,7 @@ Dialogue act rules:
 - Use "new_substance" when it introduces a new concrete fact, event, task, blocker, preference, or concern.
 - Use "emotional_disclosure" when the latest message primarily discloses feelings or wellbeing.
 - Use "request" for explicit asks to the mentor; "correction" for correcting the mentor; "closing" for ending/wrapping.
+- Use "reporting_explanation" when the employee explicitly asks where confirmed pulse information goes or how it is used. Detect this in any language. If safety is the primary intent, put "reporting_explanation" in secondaryIntents.
 - Never infer impatience, hidden meaning, depth, or personality from brevity itself.
 - When dialogueAct is "acknowledgement", latestUserSubstance MUST be null and topicAnchor should name the active topic from the prior turns.
 

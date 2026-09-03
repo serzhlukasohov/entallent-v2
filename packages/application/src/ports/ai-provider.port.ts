@@ -93,6 +93,8 @@ export interface ResponseContext {
   tenantContext?: string;
   languagePolicy: LanguagePolicy;
   memoryContext?: MemoryContext;
+  /** Canonical policy text for answering employee questions about reporting. */
+  reportingDisclosure?: string;
   /** For proactive follow-ups: the original reason + message strategy hint for the LLM */
   followUpIntent?: string;
   /**

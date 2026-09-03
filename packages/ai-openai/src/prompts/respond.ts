@@ -43,6 +43,9 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
   const memoryHint = !pauseTurn && !safetyMode && context.memoryContext && context.memoryContext.items.length > 0
     ? `\nThings you already know about ${context.userName} (use naturally, do not repeat back verbatim): ${context.memoryContext.items.slice(0, 5).map(i => i.content).join('; ')}`
     : '';
+  const reportingDisclosureHint = context.reportingDisclosure
+    ? `\nReporting transparency: If the employee asks where confirmed pulse information goes, answer using this policy: "${context.reportingDisclosure}" Do not volunteer or repeat this explanation on ordinary turns.`
+    : '';
 
   const checkInProbe = context.proactiveCheckIn?.probeQuestion;
   const checkInHint = context.proactiveCheckIn
@@ -70,7 +73,8 @@ If your message does touch this territory, set "containsSurveyProbe": true, "sur
 1. First, briefly and warmly acknowledge or round off what the employee just said — no abrupt jump.
 2. Then paraphrase, in 2-4 sentences, your understanding of this topic based on what they've shared:
 ${context.confirmationRequest.evidence.map((e) => `   • (${e.polarity}) ${e.evidenceSummary}`).join('\n')}
-3. End with exactly ONE question — some natural phrasing of "did I get that right?".
+3. Put only that reportable paraphrase in "confirmationSummary", and copy it byte-for-byte into "text". Keep the warm acknowledgement and confirmation question outside that substring.
+4. End with exactly ONE question — some natural phrasing of "did I get that right?".
 Ask NOTHING else. Do not raise a new topic. Do not include any survey probe or follow-up question. Only one question total, and it is the confirmation question.`
     : '';
 
@@ -113,7 +117,7 @@ ${strategy.includeFollowUpQuestion
 
 Thread-following: people often drop hints mid-sentence and don't develop them — "I want something with more life to it", "my lead says yes, but...", "I actually wanted to suggest it, but didn't". These side remarks are often more important than the main topic they're talking about. When you catch one, follow it: it's an invitation. Don't let it disappear while you keep drilling the current subject.
 
-Length: ${lengthGuide}. Write in ${languageName}.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${checkInHint}${probeHint}${timeHint}
+Length: ${lengthGuide}. Write in ${languageName}.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${reportingDisclosureHint}${checkInHint}${probeHint}${timeHint}
 
 ${replyPlanBlock}${RESPOND_STYLE_EXAMPLES}${styleBlock}
 
@@ -131,6 +135,7 @@ Hard rules:
 Return JSON:
 {
   "text": string,
+  "confirmationSummary": string|undefined,
   "confidence": number,
   "containsSurveyProbe": boolean,
   "surveyProbeQuestionId": string|undefined

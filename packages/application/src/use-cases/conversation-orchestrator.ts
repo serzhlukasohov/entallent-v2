@@ -18,11 +18,20 @@ import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
 import { FEATURE_FLAGS } from '../ports/feature-flag.port';
-import type { SurveyQuestionRecord } from '../types/records';
+import type {
+  ReportingDisclosureReceiptRecord,
+  SurveyGroupStateRecord,
+  SurveyQuestionRecord,
+} from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isSessionStart } from '../utils/session';
 import { resolveLanguagePolicy } from '../utils/language-policy';
+import {
+  REPORTING_DISCLOSURE_VERSION,
+  appendReportingDisclosure,
+  getReportingDisclosureText,
+} from '../utils/reporting-disclosure';
 import type {
   ProcessMessageRequest,
   ProcessMessageResult,
@@ -55,6 +64,9 @@ export class ConversationOrchestrator {
 
     const conversation = await this.conversationRepo.findById(conversationId, tenantId);
     if (!conversation) throw new Error(`Conversation ${conversationId} not found`);
+    if (conversation.tenantId !== tenantId || conversation.userId !== userId) {
+      throw new Error(`Conversation ownership mismatch: ${conversationId}`);
+    }
 
     const displayNameMissing = !conversation.userDisplayName;
     const tzMissing = !conversation.userTimezone;
@@ -70,7 +82,36 @@ export class ConversationOrchestrator {
       });
     }
 
-    const dbMessages = await this.conversationRepo.findRecentMessages(conversationId, 20);
+    const recentMessages = await this.conversationRepo.findRecentMessages(conversationId, 20);
+    const inboundMessageIndex = recentMessages.findIndex(
+      (message) =>
+        message.id === input.messageId
+        && message.conversationId === conversationId
+        && message.tenantId === tenantId
+        && message.userId === userId
+        && message.direction === 'inbound',
+    );
+    if (inboundMessageIndex < 0) {
+      throw new Error(`Inbound message ownership mismatch: ${input.messageId}`);
+    }
+
+    const dbMessages = recentMessages.slice(0, inboundMessageIndex + 1);
+    const inboundMessage = dbMessages[inboundMessageIndex];
+    const deliveredReportingDisclosure = this.surveyRepo
+      ? await this.conversationRepo.findLatestDeliveredReportingDisclosure(
+        tenantId,
+        userId,
+        REPORTING_DISCLOSURE_VERSION,
+        inboundMessage.occurredAt,
+      )
+      : null;
+    const hasCurrentDeliveredDisclosure =
+      deliveredReportingDisclosure?.version === REPORTING_DISCLOSURE_VERSION;
+    const reportingDisclosureReceipt =
+      hasCurrentDeliveredDisclosure
+      && deliveredReportingDisclosure.shownAt.getTime() < inboundMessage.occurredAt.getTime()
+        ? deliveredReportingDisclosure
+        : null;
 
     const turns: ConversationTurn[] = dbMessages.map((msg) => ({
       role: msg.direction === 'inbound' ? 'user' : 'assistant',
@@ -81,17 +122,6 @@ export class ConversationOrchestrator {
     const userName = conversation.userDisplayName ?? 'there';
     const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
-
-    // ── Group confirmation interpretation (Phase B) ─────────────────────────
-    // If the employee is responding to a confirmation the agent surfaced, interpret
-    // that reply by meaning and act (agree → score/confirm/report; correct → reopen;
-    // unclear → no-op). `awaitingPresent` is true whenever a group was awaiting a
-    // reply this turn — used to stop Phase A from surfacing a second confirmation.
-    const phaseB = this.surveyRepo
-      ? await this.handleAwaitingConfirmation(turns, input)
-      : { confirmedGroup: false as string | false, awaitingPresent: false };
-    const confirmedGroup = phaseB.confirmedGroup;
-    const confirmationHandled = confirmedGroup !== false;
 
     // Classify, feature flags, and memory load are all independent — run them together.
     // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
@@ -120,6 +150,9 @@ export class ConversationOrchestrator {
     const classification: SituationClassification = SAFETY_INTENTS.has(rawClassification.primaryIntent)
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
+    const reportingExplanationRequested =
+      classification.primaryIntent === 'reporting_explanation'
+      || classification.secondaryIntents.includes('reporting_explanation');
     const pauseTurn = classification.dialogueAct === 'closing' || classification.dialogueAct === 'acknowledgement';
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
@@ -157,7 +190,13 @@ export class ConversationOrchestrator {
 
     // Risk check and probe lookup are independent — run in parallel.
     // Probe is fetched speculatively when classify says it's allowed; discarded if risk blocks it.
-    const speculativeProbeAllowed = !pauseTurn && surveyEnabled && probePacingAllows && classification.surveyAllowed;
+    const speculativeProbeAllowed =
+      reportingDisclosureReceipt !== null
+      && !pauseTurn
+      && surveyEnabled
+      && probePacingAllows
+      && classification.surveyAllowed
+      && !reportingExplanationRequested;
     const [risk, speculativeProbe] = await Promise.all([
       classification.requiresSafetyCheck
         ? this.aiProvider.detectRisk(turns, { userName })
@@ -165,19 +204,43 @@ export class ConversationOrchestrator {
       speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
     ]);
 
+    // ── Group confirmation interpretation (Phase B) ─────────────────────────
+    // Safety classification must resolve before any survey state can change.
+    const phaseB = this.surveyRepo && surveyEnabled
+      && classification.surveyAllowed && !risk.surveyMustBeBlocked
+      ? await this.handleAwaitingConfirmation(
+        turns,
+        input,
+        reportingExplanationRequested ? null : reportingDisclosureReceipt,
+        inboundMessage?.occurredAt,
+      )
+      : { confirmedGroup: false as string | false, awaitingPresent: false };
+    const confirmedGroup = phaseB.confirmedGroup;
+    const confirmationHandled = confirmedGroup !== false;
+
     // ── Group confirmation surfacing (Phase A) ──────────────────────────────
     // If a group is ripe (pending_confirmation) and none is already awaiting a
     // reply, weave a confirm-only message into THIS reply.
     let confirmationRequest: ResponseContext['confirmationRequest'];
-    let surfacedGroup: string | undefined;
-    if (this.surveyRepo && !pauseTurn && !confirmationHandled && !phaseB.awaitingPresent) {
-      const pending = await this.surveyRepo.findPendingConfirmationGroups(userId);
+    let surfacedGroup: SurveyGroupStateRecord | undefined;
+    if (
+      this.surveyRepo
+      && reportingDisclosureReceipt
+      && !pauseTurn
+      && surveyEnabled
+      && classification.surveyAllowed
+      && !risk.surveyMustBeBlocked
+      && !reportingExplanationRequested
+      && !confirmationHandled
+      && !phaseB.awaitingPresent
+    ) {
+      const pending = await this.surveyRepo.findPendingConfirmationGroups(userId, tenantId);
       if (pending.length > 0) {
         const group = pending[0];
         const evidence = await this.collectGroupEvidence(userId, group.surveyWindowId, group.questionGroup);
         if (evidence.length > 0) {
           confirmationRequest = { questionGroup: group.questionGroup, evidence };
-          surfacedGroup = group.questionGroup;
+          surfacedGroup = group;
         }
       }
     }
@@ -277,10 +340,30 @@ export class ConversationOrchestrator {
     const strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
-    const generated = await this.aiProvider.generateResponse(turns, strategy, {
+    const canAnswerReportingExplanation =
+      reportingExplanationRequested
+      && classification.surveyAllowed
+      && !risk.surveyMustBeBlocked
+      && strategy.mode !== 'sensitive'
+      && strategy.mode !== 'crisis';
+    const generated = canAnswerReportingExplanation
+      ? {
+          text: getReportingDisclosureText(languagePolicy.responseLanguage),
+          confidence: 1,
+          containsSurveyProbe: false,
+        }
+      : await this.aiProvider.generateResponse(turns, strategy, {
       userName,
       languagePolicy,
       memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
+      reportingDisclosure:
+        this.surveyRepo
+        && classification.surveyAllowed
+        && !risk.surveyMustBeBlocked
+        && strategy.mode !== 'sensitive'
+        && strategy.mode !== 'crisis'
+        ? getReportingDisclosureText(languagePolicy.responseLanguage)
+        : undefined,
       reminderConfirmation,
       surveyProbeQuestion: probeQuestion
         ? { id: probeQuestion.id, probeStrategies: probeQuestion.probeStrategies }
@@ -294,40 +377,72 @@ export class ConversationOrchestrator {
       isSessionStart: sessionStart,
       replyBrief: replyPlan,
       replyPlan,
-    });
-    const containsSurveyProbe = !pauseTurn && generated.containsSurveyProbe === true;
+        });
+    const shouldAppendReportingDisclosure =
+      this.surveyRepo !== undefined
+      && surveyEnabled
+      && !hasCurrentDeliveredDisclosure
+      && !pauseTurn
+      && classification.surveyAllowed
+      && !risk.surveyMustBeBlocked
+      && strategy.mode !== 'crisis'
+      && strategy.mode !== 'sensitive';
+    const responseText = shouldAppendReportingDisclosure
+      ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
+      : generated.text;
+    const confirmationSummary = confirmationRequest ? generated.confirmationSummary : undefined;
+    if (
+      confirmationRequest
+      && (
+        !confirmationSummary?.trim()
+        || confirmationSummary.trim() === responseText.trim()
+        || !responseText.includes(confirmationSummary)
+      )
+    ) {
+      throw new Error('Confirmation response requires a non-empty confirmationSummary copied verbatim as a proper substring of text');
+    }
+    const containsSurveyProbe =
+      probeQuestion !== null
+      && !pauseTurn
+      && generated.containsSurveyProbe === true;
 
     const outbound = await this.conversationRepo.saveMessage({
       conversationId,
       tenantId,
       userId,
       direction: 'outbound',
-      text: generated.text,
+      text: responseText,
       occurredAt: new Date(),
       traceId: input.traceId,
-      metadata: conversationDecisionMetadata({
-        replyPlan,
-        responseText: generated.text,
-        confirmationRequest: confirmationRequest !== undefined,
-        languagePolicy,
-        isSessionStart: sessionStart,
-        containsSurveyProbe,
-        surveyProbeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId : undefined,
-      }),
+      metadata: {
+        ...conversationDecisionMetadata({
+          replyPlan,
+          responseText,
+          confirmationRequest: confirmationRequest !== undefined,
+          languagePolicy,
+          isSessionStart: sessionStart,
+          containsSurveyProbe,
+          surveyProbeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId : undefined,
+        }),
+        ...(shouldAppendReportingDisclosure
+          ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
+          : {}),
+        ...(confirmationSummary ? { confirmationSummary } : {}),
+      },
     });
 
     if (surfacedGroup && this.surveyRepo) {
-      const pending = await this.surveyRepo.findPendingConfirmationGroups(userId);
-      const g = pending.find((p) => p.questionGroup === surfacedGroup);
-      if (g) {
-        await this.surveyRepo.upsertGroupState({
-          surveyWindowId: g.surveyWindowId,
-          userId: g.userId,
-          tenantId: g.tenantId,
-          questionGroup: g.questionGroup,
-          status: 'awaiting_confirmation',
-          aiSummary: g.aiSummary ?? undefined,
-        });
+      const staged = await this.surveyRepo.stageGroupConfirmation({
+        surveyWindowId: surfacedGroup.surveyWindowId,
+        conversationId,
+        userId: surfacedGroup.userId,
+        tenantId: surfacedGroup.tenantId,
+        questionGroup: surfacedGroup.questionGroup,
+        expectedUpdatedAt: surfacedGroup.updatedAt,
+        confirmationPromptMessageId: outbound.id,
+      });
+      if (!staged) {
+        throw new Error(`Confirmation candidate became stale: ${surfacedGroup.questionGroup}`);
       }
     }
 
@@ -338,7 +453,7 @@ export class ConversationOrchestrator {
       channelType: conversation.channelType,
       externalWorkspaceId,
       externalChannelId: externalConversationId,
-      text: generated.text,
+      text: responseText,
     });
 
     if (memoryEnabled) await this.outbox.enqueueMemoryExtraction({
@@ -369,7 +484,7 @@ export class ConversationOrchestrator {
 
     return {
       outboundMessageId: outbound.id,
-      responseText: generated.text,
+      responseText,
       mode: strategy.mode,
       classification,
       risk,
@@ -386,45 +501,79 @@ export class ConversationOrchestrator {
   private async handleAwaitingConfirmation(
     turns: ConversationTurn[],
     input: OrchestrateInput,
+    reportingDisclosureReceipt: ReportingDisclosureReceiptRecord | null,
+    confirmingMessageOccurredAt?: Date,
   ): Promise<{ confirmedGroup: string | false; awaitingPresent: boolean }> {
     if (!this.surveyRepo || !this.outbox) return { confirmedGroup: false, awaitingPresent: false };
     const surveyRepo = this.surveyRepo;
 
-    const awaiting = await surveyRepo.findAwaitingConfirmationGroups(input.userId);
+    const awaiting = await surveyRepo.findAwaitingConfirmationGroups(
+      input.userId,
+      input.tenantId,
+      input.conversationId,
+    );
     if (awaiting.length === 0) return { confirmedGroup: false, awaitingPresent: false };
-    const group = awaiting[0];
+    if (!reportingDisclosureReceipt || !confirmingMessageOccurredAt) {
+      await Promise.all(
+        awaiting.map((group) =>
+          surveyRepo.transitionAwaitingGroupState({
+            surveyWindowId: group.surveyWindowId,
+            userId: group.userId,
+          tenantId: group.tenantId,
+          questionGroup: group.questionGroup,
+          confirmationPromptMessageId: group.confirmationPromptMessageId!,
+          status: 'pending_confirmation',
+          }),
+        ),
+      );
+      return { confirmedGroup: false, awaitingPresent: false };
+    }
 
-    const verdict = await this.aiProvider.interpretConfirmationResponse(turns, group.aiSummary ?? '');
+    const group = awaiting[0];
+    if (!group.confirmationSummary || !group.confirmationPromptMessageId) {
+      return { confirmedGroup: false, awaitingPresent: true };
+    }
+
+    const verdict = await this.aiProvider.interpretConfirmationResponse(turns, group.confirmationSummary);
 
     if (verdict.verdict === 'unclear') return { confirmedGroup: false, awaitingPresent: true };
 
     if (verdict.verdict === 'correct') {
-      await surveyRepo.upsertGroupState({
+      await surveyRepo.transitionAwaitingGroupState({
         surveyWindowId: group.surveyWindowId,
         userId: group.userId,
-        tenantId: group.tenantId,
-        questionGroup: group.questionGroup,
-        status: 'in_progress',
-        aiSummary: group.aiSummary ?? undefined,
-      });
+      tenantId: group.tenantId,
+      questionGroup: group.questionGroup,
+      confirmationPromptMessageId: group.confirmationPromptMessageId,
+      status: 'in_progress',
+      conversationId: input.conversationId,
+      responseMessageId: input.messageId,
+      responseOccurredAt: confirmingMessageOccurredAt,
+    });
       return { confirmedGroup: false, awaitingPresent: true };
     }
 
     // verdict === 'agree' → compute score, confirm, trigger report
     const employeeScore = await this.computeGroupScore(group.surveyWindowId, group.questionGroup, input.userId);
 
-    await surveyRepo.upsertGroupState({
+    const confirmed = await surveyRepo.confirmGroupState({
       surveyWindowId: group.surveyWindowId,
+      conversationId: input.conversationId,
       userId: group.userId,
       tenantId: group.tenantId,
       questionGroup: group.questionGroup,
-      status: 'confirmed',
-      aiSummary: group.aiSummary ?? undefined,
+      confirmationPromptMessageId: group.confirmationPromptMessageId,
+      expectedConfirmationSummary: group.confirmationSummary,
       employeeScore,
-      confirmedAt: new Date(),
+      confirmedAt: confirmingMessageOccurredAt,
+      reportingDisclosureVersion: reportingDisclosureReceipt.version,
+      reportingDisclosureShownAt: reportingDisclosureReceipt.shownAt,
+      confirmationMessageId: input.messageId,
     });
 
-    const team = await surveyRepo.findTeamByMemberId(input.userId);
+    if (!confirmed) return { confirmedGroup: false, awaitingPresent: true };
+
+    const team = await surveyRepo.findTeamByMemberId(input.userId, input.tenantId);
     if (team) {
       await this.outbox.enqueueGroupReport({
         teamId: team.teamId,
