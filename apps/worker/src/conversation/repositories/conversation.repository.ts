@@ -189,22 +189,39 @@ export class ConversationRepository implements ConversationRepositoryPort {
     const rows = await this.db.client
       .update(messages)
       .set({
-        externalMessageId: sql`coalesce(${messages.externalMessageId}, ${params.externalMessageId})`,
-        externalThreadId: sql`coalesce(${messages.externalThreadId}, ${params.externalThreadId ?? null})`,
-        sentAt: sql`coalesce(${messages.sentAt}, ${params.sentAt})`,
+        externalMessageId: params.externalMessageId,
+        externalThreadId: params.externalThreadId ?? null,
+        sentAt: params.sentAt,
       })
       .where(
         and(
           eq(messages.id, messageId),
           eq(messages.tenantId, params.tenantId),
           eq(messages.conversationId, params.conversationId),
+          eq(messages.direction, 'outbound'),
+          isNull(messages.sentAt),
+          isNull(messages.deletedAt),
         ),
       )
       .returning({ id: messages.id, sentAt: messages.sentAt });
-    if (rows.length !== 1) {
-      throw new Error(`Delivery update scope mismatch: ${messageId}`);
-    }
-    if (!rows[0]?.sentAt) throw new Error(`Delivery timestamp missing: ${messageId}`);
-    return rows[0].sentAt;
+    if (rows[0]?.sentAt) return rows[0].sentAt;
+
+    const [existing] = await this.db.client
+      .select({ sentAt: messages.sentAt })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.tenantId, params.tenantId),
+          eq(messages.conversationId, params.conversationId),
+          eq(messages.direction, 'outbound'),
+          isNotNull(messages.sentAt),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (existing?.sentAt) return existing.sentAt;
+
+    throw new Error(`Delivery update scope mismatch: ${messageId}`);
   }
 }

@@ -131,14 +131,16 @@ describe('ConversationRepository', () => {
     })).resolves.toEqual(firstDeliveredAt);
 
     const updateValues = set.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(compileSql(updateValues['sentAt']).sql).toContain('coalesce');
-    expect(compileSql(updateValues['externalMessageId']).sql).toContain('coalesce');
+    expect(updateValues['sentAt']).toEqual(new Date('2026-09-03T10:00:00.000Z'));
+    expect(updateValues['externalMessageId']).toBe('1710000000.000001');
 
     const query = compileSql(where.mock.calls[0]?.[0]);
     expect(query.sql).toContain('"messages"."id"');
     expect(query.sql).toContain('"messages"."tenant_id"');
     expect(query.sql).toContain('"messages"."conversation_id"');
-    expect(query.params).toEqual(['message-1', 'tenant-1', 'conversation-1']);
+    expect(query.sql).toContain('"messages"."sent_at" is null');
+    expect(query.sql).toContain('"messages"."deleted_at" is null');
+    expect(query.params).toEqual(['message-1', 'tenant-1', 'conversation-1', 'outbound']);
   });
 
   it('rejects a delivery update when the queued scope matches no message', async () => {
@@ -146,7 +148,11 @@ describe('ConversationRepository', () => {
     const where = vi.fn((_value: unknown) => ({ returning }));
     const set = vi.fn((_value: unknown) => ({ where }));
     const update = vi.fn(() => ({ set }));
-    const repository = new ConversationRepository({ client: { update } } as never);
+    const limit = vi.fn().mockResolvedValue([]);
+    const selectWhere = vi.fn((_value: unknown) => ({ limit }));
+    const from = vi.fn(() => ({ where: selectWhere }));
+    const select = vi.fn(() => ({ from }));
+    const repository = new ConversationRepository({ client: { update, select } } as never);
 
     await expect(repository.updateMessageDelivery('message-1', {
       tenantId: 'tenant-1',
