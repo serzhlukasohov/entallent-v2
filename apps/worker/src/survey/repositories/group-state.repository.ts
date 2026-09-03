@@ -167,6 +167,7 @@ export class GroupStateRepository {
   async activateDeliveredConfirmation(
     params: ActivateDeliveredConfirmationParams,
   ): Promise<boolean> {
+    const deliveredAtIso = params.deliveredAt.toISOString();
     const rows = await this.db.client
       .update(surveyGroupStates)
       .set({ status: 'awaiting_confirmation', updatedAt: new Date() })
@@ -183,7 +184,7 @@ export class GroupStateRepository {
             and ${messages.tenantId} = ${surveyGroupStates.tenantId}
             and ${messages.userId} = ${surveyGroupStates.userId}
             and ${messages.direction} = 'outbound'
-            and ${messages.sentAt} = ${params.deliveredAt}
+            and ${messages.sentAt} = ${deliveredAtIso}::timestamptz
             and ${messages.deletedAt} is null
             and btrim(${messages.metadata}->>'confirmationSummary') <> ''
             and strpos(${messages.text}, ${messages.metadata}->>'confirmationSummary') > 0
@@ -197,7 +198,9 @@ export class GroupStateRepository {
     params: TransitionAwaitingGroupStateParams,
   ): Promise<boolean> {
     const correctionProof = params.status === 'in_progress'
-      ? and(
+      ? (() => {
+        const responseOccurredAtIso = params.responseOccurredAt.toISOString();
+        return and(
           sql`exists (
             select 1 from ${messages}
             where ${messages.id} = ${params.confirmationPromptMessageId}
@@ -206,7 +209,7 @@ export class GroupStateRepository {
               and ${messages.userId} = ${params.userId}
               and ${messages.direction} = 'outbound'
               and ${messages.sentAt} is not null
-              and ${messages.sentAt} < ${params.responseOccurredAt}
+              and ${messages.sentAt} < ${responseOccurredAtIso}::timestamptz
               and ${messages.deletedAt} is null
           )`,
           sql`exists (
@@ -216,10 +219,11 @@ export class GroupStateRepository {
               and ${messages.tenantId} = ${params.tenantId}
               and ${messages.userId} = ${params.userId}
               and ${messages.direction} = 'inbound'
-              and ${messages.occurredAt} = ${params.responseOccurredAt}
+              and ${messages.occurredAt} = ${responseOccurredAtIso}::timestamptz
               and ${messages.deletedAt} is null
           )`,
-        )
+        );
+      })()
       : undefined;
     const rows = await this.db.client
       .update(surveyGroupStates)
@@ -247,6 +251,8 @@ export class GroupStateRepository {
   }
 
   async confirmGroupState(params: ConfirmGroupStateParams): Promise<boolean> {
+    if (params.reportingDisclosureShownAt.getTime() >= params.confirmedAt.getTime()) return false;
+    const confirmedAtIso = params.confirmedAt.toISOString();
     const rows = await this.db.client
       .update(surveyGroupStates)
       .set({
@@ -266,7 +272,6 @@ export class GroupStateRepository {
         eq(surveyGroupStates.questionGroup, params.questionGroup),
         inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
         eq(surveyGroupStates.confirmationPromptMessageId, params.confirmationPromptMessageId),
-        sql`${params.reportingDisclosureShownAt} < ${params.confirmedAt}`,
         sql`exists (
           select 1 from ${messages}
           where ${messages.id} = ${params.confirmationPromptMessageId}
@@ -276,7 +281,7 @@ export class GroupStateRepository {
             and ${messages.userId} = ${params.userId}
             and ${messages.direction} = 'outbound'
             and ${messages.sentAt} is not null
-            and ${messages.sentAt} < ${params.confirmedAt}
+            and ${messages.sentAt} < ${confirmedAtIso}::timestamptz
             and ${messages.deletedAt} is null
             and btrim(${messages.metadata}->>'confirmationSummary') <> ''
             and strpos(${messages.text}, ${messages.metadata}->>'confirmationSummary') > 0

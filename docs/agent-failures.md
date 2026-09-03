@@ -264,3 +264,12 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Make delivered-prompt queries accept both staged pending and awaiting states, guarded by `messages.sent_at IS NOT NULL` and summary validity.
 - Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts src/message-send/message-send.processor.test.ts`
 - Status: fixed
+
+## 2026-09-03: Confirmation state SQL passed JS Date through raw template
+
+- Symptom: Real Slack confirmation reply retried and failed with `TypeError [ERR_INVALID_ARG_TYPE]: ArrayBuffer. Received an instance Date` in `ConversationProcessor`.
+- Expected: Group confirmation SQL should compare timestamps without passing raw JS `Date` values through untyped SQL template parameters.
+- Root cause layer: architecture
+- Harness fix: Convert raw timestamp parameters to ISO `::timestamptz` and keep disclosure-before-confirmation check in TypeScript before the SQL update.
+- Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts src/message-send/message-send.processor.test.ts`
+- Status: fixed
