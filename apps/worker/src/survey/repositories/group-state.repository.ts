@@ -294,7 +294,7 @@ export class GroupStateRepository {
             and ${messages.tenantId} = ${params.tenantId}
             and ${messages.userId} = ${params.userId}
             and ${messages.direction} = 'inbound'
-            and ${messages.occurredAt} = ${params.confirmedAt}
+            and ${messages.occurredAt} = ${confirmedAtIso}::timestamptz
             and ${messages.deletedAt} is null
         )`,
       ))
