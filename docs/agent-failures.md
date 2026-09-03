@@ -255,3 +255,12 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Add orchestrator regression for acknowledgement after delivered disclosure and avoid passing disclosure policy hints after current receipt exists.
 - Regression check: `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts`
 - Status: fixed
+
+## 2026-09-03: Delivered confirmation prompt stayed pending after Slack delivery
+
+- Symptom: Slack delivered a confirmation prompt with valid `confirmationSummary`, but `survey_group_states.status` stayed `pending_confirmation` with `confirmation_prompt_message_id` set.
+- Expected: A delivered prompt with a valid displayed summary should be treated as awaiting confirmation, including rows that missed the delivery activation hook.
+- Root cause layer: architecture
+- Harness fix: Make delivered-prompt queries accept both staged pending and awaiting states, guarded by `messages.sent_at IS NOT NULL` and summary validity.
+- Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts src/message-send/message-send.processor.test.ts`
+- Status: fixed

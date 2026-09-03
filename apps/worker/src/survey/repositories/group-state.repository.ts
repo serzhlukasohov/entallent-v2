@@ -76,7 +76,7 @@ export class GroupStateRepository {
       .where(and(
         eq(surveyGroupStates.userId, userId),
         eq(surveyGroupStates.tenantId, tenantId),
-        eq(surveyGroupStates.status, 'awaiting_confirmation'),
+        inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
         eq(messages.tenantId, tenantId),
         eq(messages.userId, userId),
         eq(messages.conversationId, conversationId),
@@ -238,7 +238,7 @@ export class GroupStateRepository {
         eq(surveyGroupStates.userId, params.userId),
         eq(surveyGroupStates.tenantId, params.tenantId),
         eq(surveyGroupStates.questionGroup, params.questionGroup),
-        eq(surveyGroupStates.status, 'awaiting_confirmation'),
+        inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
         eq(surveyGroupStates.confirmationPromptMessageId, params.confirmationPromptMessageId),
         correctionProof,
       ))
@@ -264,7 +264,7 @@ export class GroupStateRepository {
         eq(surveyGroupStates.userId, params.userId),
         eq(surveyGroupStates.tenantId, params.tenantId),
         eq(surveyGroupStates.questionGroup, params.questionGroup),
-        eq(surveyGroupStates.status, 'awaiting_confirmation'),
+        inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
         eq(surveyGroupStates.confirmationPromptMessageId, params.confirmationPromptMessageId),
         sql`${params.reportingDisclosureShownAt} < ${params.confirmedAt}`,
         sql`exists (
