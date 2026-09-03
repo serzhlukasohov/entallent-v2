@@ -153,7 +153,8 @@ export class ConversationOrchestrator {
     const reportingExplanationRequested =
       classification.primaryIntent === 'reporting_explanation'
       || classification.secondaryIntents.includes('reporting_explanation');
-    const pauseTurn = classification.dialogueAct === 'closing' || classification.dialogueAct === 'acknowledgement';
+    const closingTurn = classification.dialogueAct === 'closing';
+    const pauseTurn = closingTurn || classification.dialogueAct === 'acknowledgement';
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
 
@@ -226,7 +227,7 @@ export class ConversationOrchestrator {
     if (
       this.surveyRepo
       && reportingDisclosureReceipt
-      && !pauseTurn
+      && !closingTurn
       && surveyEnabled
       && classification.surveyAllowed
       && !risk.surveyMustBeBlocked
@@ -358,6 +359,7 @@ export class ConversationOrchestrator {
       memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
       reportingDisclosure:
         this.surveyRepo
+        && !hasCurrentDeliveredDisclosure
         && classification.surveyAllowed
         && !risk.surveyMustBeBlocked
         && strategy.mode !== 'sensitive'

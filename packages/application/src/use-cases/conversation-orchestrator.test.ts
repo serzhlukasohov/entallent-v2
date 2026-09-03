@@ -420,6 +420,54 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 });
 
 describe('ConversationOrchestrator group confirmation — surface (Phase A)', () => {
+  it('surfaces pending confirmation after delivered disclosure even on acknowledgement turn', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      surveyAllowed: true,
+      requiresSafetyCheck: false,
+      reasoningSummary: 'acknowledged disclosure',
+      reminderRequest: null,
+      dialogueAct: 'acknowledgement',
+      latestUserSubstance: null,
+      topicAnchor: null,
+    });
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'autonomy',
+        updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+    ]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'You want more ownership over the work. Did I get that right?',
+      confirmationSummary: 'You want more ownership over the work.',
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.confirmationRequest).toMatchObject({ questionGroup: 'autonomy' });
+    expect(ctxArg.reportingDisclosure).toBeUndefined();
+    expect(result.responseText).toContain('Did I get that right?');
+    expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledWith(expect.objectContaining({
+      questionGroup: 'autonomy',
+      confirmationPromptMessageId: 'out-1',
+    }));
+  });
+
   it('persists the displayed summary and stages its outbound receipt without activating it', async () => {
     const m = baseMocks();
     m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
@@ -626,9 +674,7 @@ describe('ConversationOrchestrator reply plan', () => {
         latestUserSubstance: null,
         topicAnchor: 'the release',
       });
-      m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
-        { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', aiSummary: 'summary' },
-      ]);
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([]);
       const pulseBacklog = {
         getNextProbeQuestion: vi.fn().mockResolvedValue({
           question: { id: 'probe-1', probeStrategies: ['ask about autonomy'] },
@@ -651,7 +697,11 @@ describe('ConversationOrchestrator reply plan', () => {
       const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
       expect(ctxArg.confirmationRequest).toBeUndefined();
       expect(ctxArg.surveyProbeQuestion).toBeUndefined();
-      expect(m.surveyRepo.findPendingConfirmationGroups).not.toHaveBeenCalled();
+      if (dialogueAct === 'closing') {
+        expect(m.surveyRepo.findPendingConfirmationGroups).not.toHaveBeenCalled();
+      } else {
+        expect(m.surveyRepo.findPendingConfirmationGroups).toHaveBeenCalledTimes(1);
+      }
       expect(pulseBacklog.getNextProbeQuestion).not.toHaveBeenCalled();
       const metadata = m.conversationRepo.saveMessage.mock.calls[0][0].metadata;
       expect(metadata.containsSurveyProbe).toBe(false);

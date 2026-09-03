@@ -246,3 +246,12 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Require a model-readable transcript source before continuing live Slack follow-up turns; use connector message links/search only as delivery evidence.
 - Regression check: Send one approved marker, verify returned Slack `ts`, then verify read/search output contains text before sending any reply.
 - Status: open
+
+## 2026-09-03: Reporting disclosure receipt did not advance pending confirmation
+
+- Symptom: Live Slack after delivered reporting disclosure repeated disclosure-only text and left `survey_group_states.status = pending_confirmation`.
+- Expected: Once current reporting disclosure is delivered before the inbound turn, the next safe non-closing turn should surface the exact displayed confirmation prompt and stage `awaiting_confirmation`.
+- Root cause layer: architecture
+- Harness fix: Add orchestrator regression for acknowledgement after delivered disclosure and avoid passing disclosure policy hints after current receipt exists.
+- Regression check: `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts`
+- Status: fixed
