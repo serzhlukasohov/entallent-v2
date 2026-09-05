@@ -1061,6 +1061,20 @@ describe('ConversationOrchestrator language policy', () => {
 describe('ConversationOrchestrator group confirmation — interpret (Phase B)', () => {
   it('agree → confirms group and enqueues report', async () => {
     const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      surveyAllowed: true,
+      requiresSafetyCheck: false,
+      reasoningSummary: 'test',
+      reminderRequest: null,
+      dialogueAct: 'acknowledgement',
+      latestUserSubstance: null,
+      topicAnchor: 'growth',
+    });
     m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
       {
         surveyWindowId: 'w-1',
@@ -1105,8 +1119,11 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
       );
     expect(m.outbox.enqueueGroupReport).toHaveBeenCalled();
     expect(m.surveyRepo.findTeamByMemberId).toHaveBeenCalledWith('u-1', 't-1');
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(ctxArg.topicConfirmed).toMatchObject({ questionGroup: 'growth' });
+    expect(strategyArg.includeFollowUpQuestion).toBe(false);
+    expect(ctxArg.replyPlan.questionPolicy.maxQuestions).toBe(0);
   });
 
   it('uses the interpreted displayed summary as the confirmation compare-and-set token', async () => {
@@ -1164,6 +1181,11 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
 
     expect(m.surveyRepo.confirmGroupState).toHaveBeenCalled();
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
+    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(ctxArg.topicConfirmed).toBeUndefined();
+    expect(strategyArg.includeFollowUpQuestion).toBe(true);
+    expect(ctxArg.replyPlan.questionPolicy.maxQuestions).toBe(1);
   });
 
   it('correct → reopens group to in_progress and does not report', async () => {

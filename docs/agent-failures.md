@@ -50,6 +50,7 @@ Use this file to turn agent misses into harness improvements.
 - Root cause layer: tooling
 - Harness fix: Include the enclosing test or assertion context when patching repeated literals, then inspect the focused file diff before running tests.
 - Regression check: `git diff -- packages/application/src/use-cases/conversation-orchestrator.test.ts` must show only the intended assertion line before the targeted test runs.
+- Recurrence: On 2026-09-05 an unscoped status-line patch changed the first failure entry; it was immediately corrected with heading-scoped context.
 - Status: fixed
 
 ## 2026-09-03: GitHub PR metadata refresh blocked by network
@@ -306,6 +307,15 @@ Use this file to turn agent misses into harness improvements.
 - Symptom: The full Slack lifecycle confirmed both `engagement` and `belonging`, but both Russian prompts ended with `did I get that right?`; after the second explicit agreement, the bot continued the topic with another question instead of visibly acknowledging confirmation.
 - Expected: Confirmation prompts stay in the resolved response language, and an accepted confirmation produces a clear, question-free acknowledgement before normal conversation resumes.
 - Root cause layer: architecture
-- Harness fix: Add production-shaped response-generation regressions for confirmation prompt language and the post-`agree` response move.
+- Harness fix: Remove the literal English confirmation exemplar, disable ordinary follow-up after a successful confirmation, and revalidate the corrected zero-question draft at the provider boundary.
 - Regression check: Focused orchestrator/provider tests plus a real Slack confirmation cycle.
 - Status: open
+
+## 2026-09-05: Documented deterministic harness command does not exist
+
+- Symptom: `pnpm harness:check -- --base HEAD` failed because the root package exposes no `harness:check` script.
+- Expected: The specification should name a runnable deterministic repository gate.
+- Root cause layer: workflow
+- Harness fix: Use the current root `pnpm prepush` gate and verify available scripts from `package.json` before copying older handoff commands.
+- Regression check: `jq -e '.scripts.prepush and (.scripts["harness:check"] | not)' package.json` followed by `pnpm prepush`.
+- Status: fixed

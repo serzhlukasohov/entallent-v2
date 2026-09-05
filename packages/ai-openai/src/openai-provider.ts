@@ -290,6 +290,9 @@ export class OpenAiProvider implements AiProviderPort {
         'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
       );
     }
+    if (!context.confirmationRequest && countQuestionGroups(corrected.text) > maxAllowedQuestions(strategy, context)) {
+      throw new Error('Generated response exceeds the question limit after one corrective attempt');
+    }
     return corrected;
   }
 

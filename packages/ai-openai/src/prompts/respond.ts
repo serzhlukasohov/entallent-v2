@@ -74,7 +74,7 @@ If your message does touch this territory, set "containsSurveyProbe": true, "sur
 2. Then paraphrase, in 2-4 sentences, your understanding of this topic based on what they've shared:
 ${context.confirmationRequest.evidence.map((e) => `   • (${e.polarity}) ${e.evidenceSummary}`).join('\n')}
 3. Put only that reportable paraphrase in "confirmationSummary", and copy it byte-for-byte into "text". Keep the warm acknowledgement and confirmation question outside that substring.
-4. End with exactly ONE question — some natural phrasing of "did I get that right?".
+4. End with exactly ONE confirmation question in ${languageName}, naturally asking whether your understanding is correct.
 Ask NOTHING else. Do not raise a new topic. Do not include any survey probe or follow-up question. Only one question total, and it is the confirmation question.`
     : '';
 

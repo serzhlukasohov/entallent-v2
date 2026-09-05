@@ -370,6 +370,20 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     expect(res.text).toBe('Makes sense.');
   });
 
+  it('rejects a corrected draft that still violates the zero-question policy', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What changes first?', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What comes next?', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    await expect(provider.generateResponse(
+      [{ role: 'user', content: 'ok', timestamp: new Date() }],
+      { mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X' }),
+    )).rejects.toThrow(/question/i);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
   it('regenerates for an embedded Armenian question mark on a zero-question turn', async () => {
     createMock
       .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Why՞ I will leave it there.', confidence: 0.9, containsSurveyProbe: false }) } }] })

@@ -115,3 +115,9 @@ evidence: Delivery now validates tenant, channel type, and external conversation
 - source_spec: `_bmad-output/implementation-artifacts/spec-admin-user-reset-button.md`
   summary: Add a user-reset generation fence or BullMQ cancellation for jobs queued before an admin reset.
   evidence: Review found that conversation/message-send jobs can hold stale messageId/conversationId outside Postgres; current DB reset prevents deleted outbound delivery but does not proactively remove queued jobs.
+- source_spec: `_bmad-output/implementation-artifacts/spec-confirmation-language-and-acknowledgement.md`
+  summary: Revalidate the reply-length ceiling after corrective non-confirmation generation.
+  evidence: The existing single corrective generation rechecks confirmation and question-count contracts but can still return an overlong corrected draft.
+- source_spec: `_bmad-output/implementation-artifacts/spec-confirmation-language-and-acknowledgement.md`
+  summary: Make successful confirmation state and its acknowledgement delivery recover atomically.
+  evidence: Confirmation and report enqueue occur before response generation, so any provider failure can close the topic without delivering the acknowledgement.

@@ -327,7 +327,10 @@ export class ConversationOrchestrator {
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
-    const strategyWithStyle = applyTerseStyle(baseStrategy, memoryEnabled ? profile : null);
+    const strategyWithStyle = applyTerseStyle(
+      confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : baseStrategy,
+      memoryEnabled ? profile : null,
+    );
 
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
     const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
