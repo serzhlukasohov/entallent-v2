@@ -90,6 +90,7 @@ function makeController() {
     { add: queueAdd } as never,
     {} as never,
     {} as never,
+    { resetUser: vi.fn() } as never,
   );
 
   return { controller, dbTouched, queueAdd };

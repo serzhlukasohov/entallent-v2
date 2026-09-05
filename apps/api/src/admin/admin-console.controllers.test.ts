@@ -4,6 +4,7 @@ import { AuditLogsController } from './audit-logs.controller';
 import { FeatureFlagsController } from './feature-flags.controller';
 import { LlmRunsController } from './llm-runs.controller';
 import { UserDebugController } from './user-debug.controller';
+import { UserResetController } from './user-reset.controller';
 
 const TENANT_ID = '7d1e0163-6d53-4713-bd24-254690cc5090';
 const USER_ID = '9d1e0163-6d53-4713-bd24-254690cc5090';
@@ -155,6 +156,50 @@ describe('admin console MAF-primary regression', () => {
     expect(JSON.stringify(response)).not.toContain('private MAF risk reasoning');
     expect(JSON.stringify(response)).not.toContain('private MAF risk evidence');
   });
+
+  it('resets a user through the admin adapter and audits the destructive action', async () => {
+    const resetResult = {
+      conversations: 1,
+      messages: 2,
+      memoryItems: 0,
+      userGoals: 0,
+      scheduledActions: 0,
+      riskSignals: 0,
+      surveyWindows: 0,
+      surveyAssessments: 0,
+      surveyEvidence: 0,
+      surveyGroupStates: 0,
+      pulseBacklog: 0,
+      userStyleProfiles: 0,
+      llmRuns: 0,
+    };
+    const resetService = { resetUser: vi.fn().mockResolvedValue(resetResult) };
+    const auditLog = { append: vi.fn() };
+    const controller = new UserResetController(resetService as never, auditLog as never);
+
+    await expect(controller.reset(USER_ID, TENANT_ID)).resolves.toBe(resetResult);
+    expect(resetService.resetUser).toHaveBeenCalledWith({
+      tenantId: TENANT_ID,
+      userId: USER_ID,
+      deleteConversationHistory: true,
+    });
+    expect(auditLog.append).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      tenantId: TENANT_ID,
+      actorType: 'admin',
+      action: 'admin.user_reset_requested',
+      resourceType: 'user',
+      resourceId: USER_ID,
+    }));
+    expect(auditLog.append).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      tenantId: TENANT_ID,
+      actorType: 'admin',
+      action: 'admin.user_reset_completed',
+      resourceType: 'user',
+      resourceId: USER_ID,
+      metadata: resetResult,
+    }));
+  });
+
 });
 
 function queryOrderBy(rows: unknown[]) {

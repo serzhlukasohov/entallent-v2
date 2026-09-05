@@ -112,3 +112,6 @@
   summary: Persist the external workspace binding on conversations or outbound delivery intents.
   status: todo
 evidence: Delivery now validates tenant, channel type, and external conversation ID, but the current conversation schema cannot prove which same-tenant external workspace the job must use.
+- source_spec: `_bmad-output/implementation-artifacts/spec-admin-user-reset-button.md`
+  summary: Add a user-reset generation fence or BullMQ cancellation for jobs queued before an admin reset.
+  evidence: Review found that conversation/message-send jobs can hold stale messageId/conversationId outside Postgres; current DB reset prevents deleted outbound delivery but does not proactively remove queued jobs.

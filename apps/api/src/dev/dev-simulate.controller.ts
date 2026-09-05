@@ -2,12 +2,13 @@ import { BadRequestException, Controller, Post, Get, Body, Param, HttpCode, Logg
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
-import { eq, and, desc, isNull, ne, asc, inArray, max as sqlMax } from 'drizzle-orm';
+import { eq, and, desc, isNull, ne, asc, max as sqlMax } from 'drizzle-orm';
 import { IngestionService } from '../channel/ingestion.service';
 import { DatabaseService } from '../database/database.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { messages, memoryItems, scheduledActions, surveyEvidence, surveyAssessments, surveyGroupStates, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
+import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
+import { UserResetService, type UserResetResult } from '../admin/user-reset.service';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
 import type { SurveyEvidencePayload } from '@entalent/application';
 
@@ -38,6 +39,7 @@ export class DevSimulateController {
     @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly queue: Queue<ConversationJob | CheckInJob>,
     @InjectQueue(QUEUE_NAMES.PROACTIVE_SCAN) private readonly scanQueue: Queue<{ tenantId?: string }>,
     @InjectQueue(QUEUE_NAMES.SURVEY_EVIDENCE) private readonly surveyEvidenceQueue: Queue<SurveyEvidencePayload>,
+    private readonly resetService: UserResetService,
   ) {}
 
   @Post('simulate-message')
@@ -446,54 +448,20 @@ export class DevSimulateController {
     return { enqueued: candidates.length, users: candidates.map((c) => c.userId) };
   }
 
-  /**
-   * Resets a user's state for a clean re-test.
-   * By default clears: pulse backlog, survey evidence + assessments + group states,
-   * memory, scheduled actions.
-   * Pass `{ deep: true }` to also delete all messages (full conversation wipe).
-   */
+  /** Resets a user's state for a clean re-test. Pass `{ deep: true }` for a full conversation wipe. */
   @Post('reset-user')
   @HttpCode(200)
-  async resetUser(@Body() body: { userId: string; deep?: boolean }): Promise<Record<string, number>> {
-    const { userId, deep = false } = body;
-    const rowCount = (r: unknown) => (r as { rowCount?: number }).rowCount ?? 0;
+  async resetUser(@Body() body: { userId: string; tenantId?: string; deep?: boolean }): Promise<UserResetResult> {
+    const tenantId = body.tenantId ?? process.env['DEFAULT_TENANT_ID'] ?? '';
+    if (!tenantId) throw new BadRequestException('tenantId is required');
+    const result = await this.resetService.resetUser({
+      tenantId,
+      userId: body.userId,
+      deleteConversationHistory: body.deep ?? false,
+    });
 
-    // Assessments are keyed by window, not user — resolve this user's windows first
-    // so we can wipe the computed state alongside the raw evidence. Otherwise stale
-    // assessments (status/score/calculatedAt) survive a reset and show as old insights.
-    const userWindows = await this.db.client
-      .select({ id: surveyWindows.id })
-      .from(surveyWindows)
-      .where(eq(surveyWindows.userId, userId));
-    const windowIds = userWindows.map((w) => w.id);
-
-    const [backlogDel, evidenceDel, assessmentDel, groupStateDel, memoryDel, actionsDel] = await Promise.all([
-      this.db.client.delete(pulseBacklog).where(eq(pulseBacklog.userId, userId)),
-      this.db.client.delete(surveyEvidence).where(eq(surveyEvidence.userId, userId)),
-      windowIds.length
-        ? this.db.client.delete(surveyAssessments).where(inArray(surveyAssessments.surveyWindowId, windowIds))
-        : Promise.resolve({ rowCount: 0 }),
-      this.db.client.delete(surveyGroupStates).where(eq(surveyGroupStates.userId, userId)),
-      this.db.client.delete(memoryItems).where(eq(memoryItems.userId, userId)),
-      this.db.client.delete(scheduledActions).where(eq(scheduledActions.userId, userId)),
-    ]);
-
-    let messagesRowCount = 0;
-    if (deep) {
-      const result = await this.db.client.delete(messages).where(eq(messages.userId, userId));
-      messagesRowCount = rowCount(result);
-    }
-
-    this.logger.log(`Dev: reset user=${userId} deep=${deep}`);
-    return {
-      pulseBacklog: rowCount(backlogDel),
-      surveyEvidence: rowCount(evidenceDel),
-      surveyAssessments: rowCount(assessmentDel),
-      surveyGroupStates: rowCount(groupStateDel),
-      memoryItems: rowCount(memoryDel),
-      scheduledActions: rowCount(actionsDel),
-      messages: messagesRowCount,
-    };
+    this.logger.log(`Dev: reset user=${body.userId} deep=${body.deep ?? false}`);
+    return result;
   }
 
   /**

@@ -20,8 +20,8 @@ async function devPost(path: string, body: unknown) {
   return res.json();
 }
 
-export async function resetUser(userId: string, deep: boolean) {
-  const result = await devPost('/dev/reset-user', { userId, deep });
+export async function resetUser(userId: string, tenantId: string, deep: boolean) {
+  const result = await devPost('/dev/reset-user', { userId, tenantId, deep });
   revalidatePath('/pulse');
   return result as Record<string, number>;
 }
