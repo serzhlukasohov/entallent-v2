@@ -102,6 +102,7 @@ The classifier prompt defines acknowledgement as a separate dialogue act, but th
 - Slack acknowledgement `1788636518.440649` produced a confirmation prompt instead of another disclosure-only reply.
 - Production DB advanced `engagement` to `awaiting_confirmation` with prompt message `14436799-a115-4e77-b97d-afed0292f806`; `sent_at` is populated, `metadata.confirmationSummary` is non-empty, and the text contains it exactly.
 - `belonging` remained pending, preserving the one-active-confirmation invariant. No production reset occurred.
+- Full continuation then confirmed `engagement`, surfaced and confirmed `belonging`, and persisted disclosure, prompt, and confirmation proof for both groups. The target state-machine blocker is closed; mixed-language prompt suffixes and inconsistent visible acknowledgement remain a separate output-contract follow-up.
 
 ## Suggested Review Order
 

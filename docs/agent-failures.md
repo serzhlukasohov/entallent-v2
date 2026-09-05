@@ -300,3 +300,12 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Normalize stale `reporting_explanation` intent at the shared orchestrator boundary only for a substance-free acknowledgement after a delivered disclosure, with a multi-group regression.
 - Regression check: Real Slack smoke or orchestrator test covering `belonging`/`engagement` pending states after existing confirmed groups.
 - Status: fixed
+
+## 2026-09-05: Confirmation lifecycle copy breaks language and acknowledgement
+
+- Symptom: The full Slack lifecycle confirmed both `engagement` and `belonging`, but both Russian prompts ended with `did I get that right?`; after the second explicit agreement, the bot continued the topic with another question instead of visibly acknowledging confirmation.
+- Expected: Confirmation prompts stay in the resolved response language, and an accepted confirmation produces a clear, question-free acknowledgement before normal conversation resumes.
+- Root cause layer: architecture
+- Harness fix: Add production-shaped response-generation regressions for confirmation prompt language and the post-`agree` response move.
+- Regression check: Focused orchestrator/provider tests plus a real Slack confirmation cycle.
+- Status: open
