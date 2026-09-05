@@ -295,8 +295,8 @@ Use this file to turn agent misses into harness improvements.
 ## 2026-09-05: Additional pending groups repeat disclosure without confirmation prompt
 
 - Symptom: Full production Slack smoke created `belonging` and `engagement` pending confirmation states, but repeated the reporting disclosure message after acknowledgement and never surfaced a confirmation prompt.
-- Expected: Once a pending group has enough evidence and disclosure is delivered, the next safe user turn should record the disclosure receipt and show the exact confirmation summary prompt.
+- Expected: Once a pending group has enough evidence and disclosure is delivered, the next safe acknowledgement should show the exact confirmation summary prompt.
 - Root cause layer: architecture
-- Harness fix: Add a production-shaped regression for multiple post-reset survey groups where disclosure delivery is bound to the specific pending group before prompt staging.
+- Harness fix: Normalize stale `reporting_explanation` intent at the shared orchestrator boundary only for a substance-free acknowledgement after a delivered disclosure, with a multi-group regression.
 - Regression check: Real Slack smoke or orchestrator test covering `belonging`/`engagement` pending states after existing confirmed groups.
-- Status: open
+- Status: fixed

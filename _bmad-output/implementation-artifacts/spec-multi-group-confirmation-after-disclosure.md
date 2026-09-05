@@ -88,13 +88,20 @@ The classifier prompt defines acknowledgement as a separate dialogue act, but th
 **Implementation after review loop 1:**
 - RED: focused orchestrator run failed only the new acknowledgement regression (47 passed, 1 failed); `generateResponse` was not called.
 - GREEN: focused orchestrator run passed 48/48, including `request` and schema-defaulted `new_substance` reporting classifications; application typecheck and lint passed; `git diff --check` passed.
-- Pending: commit/push hook, worker deployment, Slack history, production DB evidence, and docs failure/task-log updates.
+- Review patches expanded the final focused run to 50/50 and preserved substantive or first-time reporting questions.
 
 **Accepted Step-4 patch results:**
 - RED: focused orchestrator run passed 48 and failed only the two new disclosure-preservation cases; each returned the ordinary generated reply instead of disclosure.
 - GREEN: focused orchestrator run passed 50/50; application typecheck and lint passed; `git diff --check` passed.
 - Untracked spec: the no-index whitespace check emitted no diagnostics and returned the expected difference exit code 1.
-- Pending: commit/push hook, worker deployment, Slack history, production DB evidence, and docs failure/task-log updates.
+- Full pre-push passed before commit `fa99ae8` was pushed to `codex/grill-session-docs`.
+
+**Production rollout:**
+- User explicitly approved the manual feature-branch deployment; only Railway `worker` was deployed.
+- Deployment `498753b5-d354-4c7e-bc70-0d0503c46e9b` reached `SUCCESS` from `apps/worker/Dockerfile` with image digest `sha256:ec372a5098f7728a900397ea05df8de11decd18dba1e7ff0fcdc5ab290544ada`.
+- Slack acknowledgement `1788636518.440649` produced a confirmation prompt instead of another disclosure-only reply.
+- Production DB advanced `engagement` to `awaiting_confirmation` with prompt message `14436799-a115-4e77-b97d-afed0292f806`; `sent_at` is populated, `metadata.confirmationSummary` is non-empty, and the text contains it exactly.
+- `belonging` remained pending, preserving the one-active-confirmation invariant. No production reset occurred.
 
 ## Suggested Review Order
 
