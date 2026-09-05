@@ -67,6 +67,14 @@ const INPUT = {
   externalWorkspaceId: 'ws', externalConversationId: 'ec', traceId: 'tr',
 };
 
+function surveyReadyHistory() {
+  return [
+    { id: 'm-prior-1', ...OWNERSHIP, direction: 'inbound', text: 'first', occurredAt: new Date('2026-09-03T09:58:00.000Z'), metadata: undefined },
+    { id: 'm-prior-2', ...OWNERSHIP, direction: 'inbound', text: 'second', occurredAt: new Date('2026-09-03T09:59:00.000Z'), metadata: undefined },
+    { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'hey', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+  ];
+}
+
 describe('ConversationOrchestrator reporting disclosure gate', () => {
   it('rejects a conversation owned by another user before reading disclosure proof', async () => {
     const m = baseMocks();
@@ -103,8 +111,32 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.conversationRepo.findLatestDeliveredReportingDisclosure).not.toHaveBeenCalled();
   });
 
-  it('appends the localized disclosure on the first safe turn and blocks confirmation and probes', async () => {
+  it('keeps a fresh first safe turn free of reporting disclosure', async () => {
     const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Я рядом.', confidence: 0.9, containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('Я рядом.');
+    expect(m.aiProvider.generateResponse.mock.calls[0][2]).toMatchObject({
+      confirmationRequest: undefined,
+      surveyProbeQuestion: undefined,
+      reportingDisclosure: undefined,
+    });
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('reportingDisclosureVersion');
+  });
+
+  it('appends the localized disclosure once survey pacing is ready and blocks confirmation and probes', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'ru', userTimezone: 'UTC',
@@ -145,6 +177,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
   it('does not append a second disclosure when the generated response already contains it', async () => {
     const m = baseMocks();
     const disclosure = getReportingDisclosureText('en');
+    m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
     m.aiProvider.generateResponse.mockResolvedValue({
       text: disclosure,
@@ -317,6 +350,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
   it('treats a stale disclosure version as missing and sends the current version', async () => {
     const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue({
       messageId: 'disclosure-old',
       version: 'reporting-disclosure-v0',

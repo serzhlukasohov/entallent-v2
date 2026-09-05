@@ -341,6 +341,16 @@ export class ConversationOrchestrator {
     const strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
+    const shouldOfferReportingDisclosure =
+      this.surveyRepo !== undefined
+      && surveyEnabled
+      && !hasCurrentDeliveredDisclosure
+      && !pauseTurn
+      && classification.surveyAllowed
+      && !risk.surveyMustBeBlocked
+      && strategy.mode !== 'crisis'
+      && strategy.mode !== 'sensitive'
+      && (reportingExplanationRequested || probePacingAllows || phaseB.awaitingPresent);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
       && classification.surveyAllowed
@@ -357,13 +367,7 @@ export class ConversationOrchestrator {
       userName,
       languagePolicy,
       memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
-      reportingDisclosure:
-        this.surveyRepo
-        && !hasCurrentDeliveredDisclosure
-        && classification.surveyAllowed
-        && !risk.surveyMustBeBlocked
-        && strategy.mode !== 'sensitive'
-        && strategy.mode !== 'crisis'
+      reportingDisclosure: shouldOfferReportingDisclosure
         ? getReportingDisclosureText(languagePolicy.responseLanguage)
         : undefined,
       reminderConfirmation,
@@ -380,15 +384,7 @@ export class ConversationOrchestrator {
       replyBrief: replyPlan,
       replyPlan,
         });
-    const shouldAppendReportingDisclosure =
-      this.surveyRepo !== undefined
-      && surveyEnabled
-      && !hasCurrentDeliveredDisclosure
-      && !pauseTurn
-      && classification.surveyAllowed
-      && !risk.surveyMustBeBlocked
-      && strategy.mode !== 'crisis'
-      && strategy.mode !== 'sensitive';
+    const shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
     const responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
@@ -528,7 +524,7 @@ export class ConversationOrchestrator {
           }),
         ),
       );
-      return { confirmedGroup: false, awaitingPresent: false };
+      return { confirmedGroup: false, awaitingPresent: true };
     }
 
     const group = awaiting[0];
