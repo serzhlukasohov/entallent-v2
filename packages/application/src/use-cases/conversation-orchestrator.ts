@@ -151,8 +151,11 @@ export class ConversationOrchestrator {
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
     const reportingExplanationRequested =
-      classification.primaryIntent === 'reporting_explanation'
-      || classification.secondaryIntents.includes('reporting_explanation');
+      !(reportingDisclosureReceipt
+        && classification.dialogueAct === 'acknowledgement'
+        && !classification.latestUserSubstance?.trim())
+      && (classification.primaryIntent === 'reporting_explanation'
+        || classification.secondaryIntents.includes('reporting_explanation'));
     const closingTurn = classification.dialogueAct === 'closing';
     const pauseTurn = closingTurn || classification.dialogueAct === 'acknowledgement';
 

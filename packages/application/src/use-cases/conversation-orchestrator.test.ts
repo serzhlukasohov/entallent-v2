@@ -234,6 +234,48 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
   });
 
+  it('answers a reporting explanation defaulted to new substance deterministically', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'reporting_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'reporting question',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'new_substance', latestUserSubstance: 'reporting question', topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(getReportingDisclosureText('en'));
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['after disclosure when the acknowledgement has substantive privacy text', true, 'Where will this information go?'],
+    ['when no earlier disclosure was delivered', false, null],
+  ] as const)('answers reporting explanation %s', async (_case, hasReceipt, latestUserSubstance) => {
+    const m = baseMocks();
+    if (!hasReceipt) m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'reporting_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'reporting question',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'acknowledgement', latestUserSubstance, topicAnchor: 'reporting privacy',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(getReportingDisclosureText('en'));
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+  });
+
   it('keeps a survey-blocking safety response free of reporting disclosure', async () => {
     const m = baseMocks();
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
@@ -454,6 +496,79 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 });
 
 describe('ConversationOrchestrator group confirmation — surface (Phase A)', () => {
+  it('surfaces one pending group when a real acknowledgement retains stale reporting intent', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1',
+        ...OWNERSHIP,
+        direction: 'inbound',
+        text: 'Got it, thanks.',
+        occurredAt: INBOUND_OCCURRED_AT,
+        metadata: undefined,
+      },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'reporting_explanation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      surveyAllowed: true,
+      requiresSafetyCheck: false,
+      reasoningSummary: 'acknowledged reporting disclosure',
+      reminderRequest: null,
+      dialogueAct: 'acknowledgement',
+      latestUserSubstance: null,
+      topicAnchor: 'how pulse summaries are shared',
+    });
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'belonging',
+        updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'engagement',
+        updatedAt: new Date('2026-09-03T09:59:30.000Z'),
+      },
+    ]);
+    m.surveyRepo.findQuestionsForWindow.mockResolvedValue([
+      { id: 'q-belonging', stableKey: 'q-belonging', questionGroup: 'belonging' },
+    ]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'You feel supported by your team. Did I get that right?',
+      confirmationSummary: 'You feel supported by your team.',
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(m.aiProvider.generateResponse.mock.calls[0][2]).toMatchObject({
+      confirmationRequest: { questionGroup: 'belonging' },
+      reportingDisclosure: undefined,
+    });
+    expect(result.responseText).not.toContain(getReportingDisclosureText('en'));
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.confirmationSummary)
+      .toBe('You feel supported by your team.');
+    expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledTimes(1);
+    expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledWith(expect.objectContaining({
+      questionGroup: 'belonging',
+      confirmationPromptMessageId: 'out-1',
+    }));
+  });
+
   it('surfaces pending confirmation after delivered disclosure even on acknowledgement turn', async () => {
     const m = baseMocks();
     m.aiProvider.classifySituation.mockResolvedValue({
