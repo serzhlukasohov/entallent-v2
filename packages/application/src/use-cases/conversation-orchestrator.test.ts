@@ -549,6 +549,33 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalled();
   });
 
+  it('rejects confirmation text that exposes the confirmationSummary label', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'autonomy',
+        updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+    ]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'confirmationSummary: You value ownership. Did I get that right?',
+      confirmationSummary: 'You value ownership.',
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow(/confirmationSummary/);
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
+  });
+
   it('rejects a whole reply presented as its own reportable summary', async () => {
     const m = baseMocks();
     m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([

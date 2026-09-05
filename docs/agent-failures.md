@@ -148,6 +148,15 @@ Use this file to turn agent misses into harness improvements.
 
 ## Fixed Failures
 
+## 2026-09-05: confirmation summary label leaked into Slack text
+
+- Symptom: Real Slack confirmation prompt displayed the internal `confirmationSummary:` field label before the employee-facing summary.
+- Expected: The employee sees only natural confirmation copy, while `metadata.confirmationSummary` remains available for exact-summary persistence.
+- Root cause layer: architecture
+- Harness fix: Reject label-bearing confirmation drafts at the OpenAI provider validation boundary and fail closed in the orchestrator if any provider returns one.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- src/openai-provider.test.ts` and `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts`.
+- Status: fixed
+
 ## 2026-09-03: channel-slack package has no Vitest dependency
 
 - Symptom: The first Slack timestamp regression used Vitest and package typecheck could not resolve the import.

@@ -395,6 +395,7 @@ export class ConversationOrchestrator {
         !confirmationSummary?.trim()
         || confirmationSummary.trim() === responseText.trim()
         || !responseText.includes(confirmationSummary)
+        || exposesConfirmationSummaryLabel(responseText)
       )
     ) {
       throw new Error('Confirmation response requires a non-empty confirmationSummary copied verbatim as a proper substring of text');
@@ -662,6 +663,10 @@ function parseReminderDueAt(iso: string): Date | null {
   // Ignore reminders in the past (LLM miscomputed relative time) — nudge to +1 min
   if (d.getTime() <= Date.now()) return new Date(Date.now() + 60_000);
   return d;
+}
+
+function exposesConfirmationSummaryLabel(text: string): boolean {
+  return /\bconfirmationSummary\s*:/i.test(text);
 }
 
 function slugify(text: string): string {

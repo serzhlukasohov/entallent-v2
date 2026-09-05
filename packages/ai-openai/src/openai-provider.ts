@@ -79,7 +79,11 @@ function questionRetryInstruction(maxQuestions: 0 | 1): string {
 }
 
 const CONFIRMATION_RETRY_INSTRUCTION =
-  '\n\nYour previous confirmation draft was invalid. Return a non-empty reportable "confirmationSummary" with no question punctuation, copy that exact byte-for-byte string into "text" as a proper substring (never the entire reply), and ask exactly one question in the full "text" outside that summary.';
+  '\n\nYour previous confirmation draft was invalid. Return a non-empty reportable "confirmationSummary" with no question punctuation, copy that exact byte-for-byte string into "text" as a proper substring (never the entire reply), do not expose field labels like "confirmationSummary:", and ask exactly one question in the full "text" outside that summary.';
+
+function exposesConfirmationSummaryLabel(text: string): boolean {
+  return /\bconfirmationSummary\s*:/i.test(text);
+}
 
 function isValidConfirmationResponse(response: GeneratedResponse): boolean {
   const summary = response.confirmationSummary;
@@ -87,6 +91,7 @@ function isValidConfirmationResponse(response: GeneratedResponse): boolean {
     && summary.trim().length > 0
     && summary.trim() !== response.text.trim()
     && response.text.includes(summary)
+    && !exposesConfirmationSummaryLabel(response.text)
     && countQuestionGroups(summary) === 0
     && countQuestionGroups(response.text) === 1;
 }
