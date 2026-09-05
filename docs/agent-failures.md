@@ -282,3 +282,12 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Convert raw timestamp parameters to ISO `::timestamptz` and keep disclosure-before-confirmation check in TypeScript before the SQL update.
 - Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts src/message-send/message-send.processor.test.ts`
 - Status: fixed
+
+## 2026-09-05: Confirmation label retry failed closed without Slack reply
+
+- Symptom: After the first label-leak fix, a production Slack turn reached `pending_confirmation`, but worker job 390 failed closed when the model repeated a confirmation draft containing the technical `confirmationSummary:` label; no outbound Slack prompt was delivered.
+- Expected: A simple exposed provider label should be normalized before confirmation validation so the user receives the clean confirmation prompt, while invalid summaries still fail closed.
+- Root cause layer: architecture
+- Harness fix: Strip the simple `confirmationSummary:` label at the OpenAI provider boundary before validation and keep the orchestrator contract guard as the cross-provider safety net.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- src/openai-provider.test.ts`
+- Status: fixed

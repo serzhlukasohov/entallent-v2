@@ -248,34 +248,20 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
     expect(createMock).toHaveBeenCalledTimes(2);
   });
 
-  it('regenerates when a confirmation draft exposes the confirmationSummary label', async () => {
-    createMock
-      .mockResolvedValueOnce({
-        choices: [{
-          finish_reason: 'stop',
-          message: {
-            content: JSON.stringify({
-              text: 'confirmationSummary: You value ownership. Did I get that right?',
-              confirmationSummary: 'You value ownership.',
-              confidence: 0.9,
-              containsSurveyProbe: false,
-            }),
-          },
-        }],
-      })
-      .mockResolvedValueOnce({
-        choices: [{
-          finish_reason: 'stop',
-          message: {
-            content: JSON.stringify({
-              text: 'You value ownership. Did I get that right?',
-              confirmationSummary: 'You value ownership.',
-              confidence: 0.9,
-              containsSurveyProbe: false,
-            }),
-          },
-        }],
-      });
+  it('strips an exposed confirmationSummary label before validating a confirmation draft', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            text: 'confirmationSummary: You value ownership. Did I get that right?',
+            confirmationSummary: 'You value ownership.',
+            confidence: 0.9,
+            containsSurveyProbe: false,
+          }),
+        },
+      }],
+    });
     const provider = makeProvider();
 
     const response = await provider.generateResponse(
@@ -284,9 +270,9 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
       responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
     );
 
-    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(createMock).toHaveBeenCalledTimes(1);
     expect(response.text).toBe('You value ownership. Did I get that right?');
-    expect(response.text).not.toContain('confirmationSummary:');
+    expect(response.confirmationSummary).toBe('You value ownership.');
   });
 
   it('rejects a confirmation when the reportable summary is the whole reply', async () => {

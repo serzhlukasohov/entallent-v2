@@ -85,6 +85,12 @@ function exposesConfirmationSummaryLabel(text: string): boolean {
   return /\bconfirmationSummary\s*:/i.test(text);
 }
 
+function stripExposedConfirmationSummaryLabel(response: GeneratedResponse): GeneratedResponse {
+  return response.confirmationSummary
+    ? { ...response, text: response.text.replace(/\bconfirmationSummary\s*:\s*/i, '') }
+    : response;
+}
+
 function isValidConfirmationResponse(response: GeneratedResponse): boolean {
   const summary = response.confirmationSummary;
   return typeof summary === 'string'
@@ -256,9 +262,9 @@ export class OpenAiProvider implements AiProviderPort {
     const system = buildRespondSystemPrompt(strategy, context);
     const user = buildRespondUserPrompt(turns, context);
 
-    const first = GeneratedResponseSchema.parse(
+    const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
-    );
+    ));
 
     // Deterministic invariants the persona won't respect from a soft prompt hint. Collect
     // what fired, do ONE corrective regeneration, then fail closed on an invalid confirmation.
@@ -276,9 +282,9 @@ export class OpenAiProvider implements AiProviderPort {
     }
     if (retries.length === 0) return first;
 
-    const corrected = GeneratedResponseSchema.parse(
+    const corrected = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system + retries.join(''), user, this.generationModel)),
-    );
+    ));
     if (context.confirmationRequest && !isValidConfirmationResponse(corrected)) {
       throw new Error(
         'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
