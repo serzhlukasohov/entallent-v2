@@ -190,7 +190,7 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.latestUserSubstance).toBe('Give criteria for human-like and relevant answers.');
   });
 
-  it('drops reporting explanation copied from older product context', async () => {
+  it('drops reporting explanation inferred from descriptive product context', async () => {
     createMock.mockResolvedValue({
       choices: [{
         finish_reason: 'stop',
@@ -206,7 +206,7 @@ describe('OpenAiProvider.classifySituation', () => {
             reasoningSummary: 'The older transcript mentioned pulse reporting.',
             reminderRequest: null,
             dialogueAct: 'request',
-            latestUserSubstance: 'I have no idea, that is why I am asking you.',
+            latestUserSubstance: 'Who sees the pulse report?',
             topicAnchor: 'chatbot answer quality',
           }),
         },
@@ -215,7 +215,11 @@ describe('OpenAiProvider.classifySituation', () => {
     const provider = makeProvider();
 
     const result = await provider.classifySituation(
-      [{ role: 'user', content: 'have no idea\nthat’s why I asking you', timestamp: new Date() }],
+      [{
+        role: 'user',
+        content: 'The bot builds a report so managers understand mood and who they need to support, mentor, or appreciate more.',
+        timestamp: new Date(),
+      }],
       { userName: 'Annna' },
     );
 

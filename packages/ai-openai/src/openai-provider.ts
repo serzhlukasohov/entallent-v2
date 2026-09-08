@@ -435,8 +435,7 @@ function normalizeReportingExplanation(
     .reverse()
     .find((turn) => turn.role === 'user')
     ?.content.trim() ?? '';
-  const evidence = `${latestEmployeeText}\n${classification.latestUserSubstance ?? ''}`;
-  if (EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(evidence)) return classification;
+  if (EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(latestEmployeeText)) return classification;
   return {
     ...classification,
     primaryIntent: classification.primaryIntent === 'reporting_explanation'
