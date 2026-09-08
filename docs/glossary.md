@@ -63,7 +63,7 @@ A confirmed, de-identified, non-withdrawn employee-cycle insight scoped to one t
 The accuracy and reporting-inclusion step after a recorded Reporting Disclosure. The mentor shows the exact de-identified version that would become reportable. The employee can approve, correct, rewrite, or exclude information; every changed version requires a new confirmation.
 
 **Reporting Disclosure**
-The versioned onboarding explanation that confirmed, de-identified employee insights may feed team-level recommendations. Its version and display time are persisted before a confirmation can authorize reporting inclusion.
+The versioned onboarding-lifecycle explanation that confirmed, de-identified employee insights may feed team-level recommendations. It is delivered on the first safe survey-relevant turn rather than interrupting a fresh social greeting; its version and display time are persisted before a confirmation can authorize reporting inclusion.
 
 **Team Aggregation**
 The stage that combines reportable insights from at least five distinct employees in one frozen tenant/team/cycle cohort into generalized team-level findings. Each employee counts at most once per Pulse Index.

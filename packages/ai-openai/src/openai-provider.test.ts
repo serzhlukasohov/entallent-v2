@@ -38,6 +38,7 @@ const questions = [
     positiveIndicators: [],
     negativeIndicators: [],
     contraindications: [],
+    responseType: 'open_ended',
   },
 ];
 
@@ -67,6 +68,18 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
     );
     expect(r.verdict).toBe('correct');
     expect(r.correctionNote).toBe('not about money');
+  });
+
+  it('parses an exclusion verdict', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"exclude"}' } }],
+    });
+    const provider = makeProvider();
+    const r = await provider.interpretConfirmationResponse(
+      [{ role: 'user', content: 'do not include that in reports', timestamp: new Date() }],
+      'summary',
+    );
+    expect(r.verdict).toBe('exclude');
   });
 });
 

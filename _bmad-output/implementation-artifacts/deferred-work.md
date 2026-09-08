@@ -87,8 +87,9 @@
   evidence: Confirmation currently commits before BullMQ enqueue; a Redis failure can leave a confirmed row without a report job.
 - source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-015-reporting-disclosure.md`
   summary: Scope report inputs by tenant, team, cycle, and distinct employee before applying the anonymity threshold.
-  status: todo
-  evidence: This belongs to planned Phase 3; current report reads can count historical windows for one employee more than once.
+  status: done
+  completed_by: `_bmad-output/implementation-artifacts/spec-pr5-tenant-team-cycle-cohort-reporting-boundary.md`
+  evidence: The TypeScript report boundary now carries tenant/team/anchor scope, projects typed definition/period/roster scope, counts distinct employees once, and fails closed before AI.
 - source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-015-reporting-disclosure.md`
   summary: Couple probe backlog state and external-message idempotency to confirmed channel delivery.
   status: todo
@@ -111,13 +112,48 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-pr5-req-012-exact-displayed-summary.md`
   summary: Persist the external workspace binding on conversations or outbound delivery intents.
   status: todo
-evidence: Delivery now validates tenant, channel type, and external conversation ID, but the current conversation schema cannot prove which same-tenant external workspace the job must use.
+  evidence: Delivery now validates tenant, channel type, and external conversation ID, but the current conversation schema cannot prove which same-tenant external workspace the job must use.
 - source_spec: `_bmad-output/implementation-artifacts/spec-admin-user-reset-button.md`
   summary: Add a user-reset generation fence or BullMQ cancellation for jobs queued before an admin reset.
+  status: todo
   evidence: Review found that conversation/message-send jobs can hold stale messageId/conversationId outside Postgres; current DB reset prevents deleted outbound delivery but does not proactively remove queued jobs.
 - source_spec: `_bmad-output/implementation-artifacts/spec-confirmation-language-and-acknowledgement.md`
   summary: Revalidate the reply-length ceiling after corrective non-confirmation generation.
+  status: todo
   evidence: The existing single corrective generation rechecks confirmation and question-count contracts but can still return an overlong corrected draft.
 - source_spec: `_bmad-output/implementation-artifacts/spec-confirmation-language-and-acknowledgement.md`
   summary: Make successful confirmation state and its acknowledgement delivery recover atomically.
+  status: todo
   evidence: Confirmation and report enqueue occur before response generation, so any provider failure can close the topic without delivering the acknowledgement.
+
+## Deferred from: code review of spec-pr5-tenant-team-cycle-cohort-reporting-boundary (2026-09-06)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-tenant-team-cycle-cohort-reporting-boundary.md`
+  summary: Materialize one immutable tenant/team/cycle roster at actual cycle open and roll over legacy active windows that have no persisted reporting scope.
+  status: done
+  completed_by: `_bmad-output/specs/spec-pr5-persisted-reporting-cohort-lifecycle/SPEC.md`
+  evidence: A guarded TypeScript cycle-opening operation now persists immutable tenant/team/definition/period cohorts, employee windows reference the canonical cohort, and stale legacy windows roll over without historical roster reconstruction.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-tenant-team-cycle-cohort-reporting-boundary.md`
+  summary: Revalidate the exact contributor cohort immediately before manager Slack delivery.
+  status: todo
+  evidence: Eligibility is checked before AI generation; withdrawal, deletion, opt-out, or scope changes racing the model call need snapshot/delivery lifecycle handling.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-tenant-team-cycle-cohort-reporting-boundary.md`
+  summary: Make manager Slack report delivery idempotent with an immutable report snapshot and durable delivery key.
+  status: todo
+  evidence: A BullMQ retry after Slack acceptance can currently send the same logical report twice.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-tenant-team-cycle-cohort-reporting-boundary.md`
+  summary: Bind manager identity and Slack workspace as one tenant-scoped delivery target.
+  status: todo
+  evidence: Selecting the first tenant Slack workspace is insufficient once a tenant has multiple workspace connections.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-tenant-team-cycle-cohort-reporting-boundary.md`
+  summary: Define whether null employee scores can satisfy numeric Pulse Index report eligibility.
+  status: todo
+  evidence: Current report eligibility counts proof-backed summaries while score aggregation excludes null values; numeric engagement policy is a separate explicit slice.
+- source_spec: `_bmad-output/implementation-artifacts/spec-pr5-tenant-team-cycle-cohort-reporting-boundary.md`
+  summary: Add a PostgreSQL-backed repository acceptance test for five sibling windows plus duplicate, foreign-tenant, and divergent-roster rejection.
+  status: todo
+  evidence: Migration integration passes, while current repository verification compiles SQL predicates and the application test exercises adapter projections in memory.
+- source_spec: `_bmad-output/specs/spec-pr5-persisted-reporting-cohort-lifecycle/SPEC.md`
+  summary: Enforce one active survey window per tenant and employee under concurrent first-window creation.
+  status: todo
+  evidence: Cohort opening and legacy rollover are transactional, but the existing schema has no audited partial unique constraint for active employee windows; add it with duplicate-data remediation during active-window lifecycle cleanup.

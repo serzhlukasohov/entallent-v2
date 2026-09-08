@@ -1,91 +1,36 @@
 # Grill Session Handoff
 
-Use this prompt to continue the grill session in a new Codex chat.
+Updated: 2026-09-08
 
-```text
-Мы продолжаем grill-with-docs сессию по проекту enTalent (`entallent-v2`).
+The canonical implementation contract is:
 
-Контекст:
-- MAF не трогаем. Текущий продуктовый фокус - TypeScript runtime/product.
-- Цель grill: проверить текущую функциональность против ожиданий product manager и зафиксировать product truth, domain model, ADR/glossary/docs по мере разговора.
-- Используем manual режим `grill-with-docs`: grilling + domain modeling + docs as we go.
-- Не превращай сырые ответы в финальную документацию без короткого отражения и подтверждения смысла.
-- После подтвержденных выводов обновляй:
-  - `docs/current-project-grill.md`
-  - `docs/glossary.md`
-  - ADR при необходимости
-  - `docs/agent-task-log.md`
+- `_bmad-output/specs/spec-pr5-persisted-reporting-cohort-lifecycle/SPEC.md`
+- `_bmad-output/specs/spec-pr5-first-immutable-report-snapshot-delivery/SPEC.md`
 
-Уже зафиксированные документы:
-- `docs/current-project-grill.md`
-- `docs/glossary.md`
-- `docs/adr/ADR-012-typescript-runtime-product-spine.md`
+Latest implementation handoff:
 
-Ключевые product truths:
-- Для employee persona агент должен ощущаться как друг на работе: слышит, понимает, поддерживает, помогает сотруднику лучше понять себя в рабочих ситуациях.
-- Для manager/HR persona продукт должен давать честную team-level картину и полезные рекомендации по управлению командой.
-- Employee chat - это trust-led guided pulse: агент имеет мягкую цель собрать pulse signal, но доверие сотрудника важнее завершения конкретной backlog-темы в конкретном диалоге.
-- Reactive conversation: сотрудник сам приносит тему, агент следует за ним. Pulse evidence может появиться, но не управляет разговором.
-- Proactive pulse conversation: агент пишет по расписанию на основании backlog topic. Нужна гибкая структура: natural opening, contextual small talk, natural backlog-topic question, cause/effect clarification, human-like closing.
-- Если сотрудник отвечает коротко, уходит в сторону или не хочет развивать backlog topic, агент не давит в этом же диалоге. Тема возвращается позже после попытки пройти другие backlog topics.
+- `_bmad-output/implementation-artifacts/handoff-2026-09-07-first-immutable-report-snapshot-delivery.md`
 
-Privacy/reportability truths:
-- Manager никогда не видит named employee state, risk, evidence или recommendation.
-- Manager recommendations только team-level.
-- Report должен быть основан минимум на 5 employees.
-- Даже anonymized details нужно generalize, если по событию, проекту или ситуации можно восстановить автора.
-- Private memory не равно reportable signal.
-- Агент может хранить concrete details в private memory для будущих разговоров с тем же employee.
-- Эти details не являются directly reportable.
+Current program state:
 
-Insight pipeline:
-1. Temporary working insights extracted automatically while employee and mentor talk.
-2. Когда по question group достаточно status + cause/effect understanding, агент нативно спрашивает confirmation.
-3. Confirmation summary должен быть sufficient, но не dossier: без names, projects, concrete events; status/root cause формулируются generalized.
-4. Если employee confirms, insight становится permanent anonymized employee-cycle insight.
-5. Если employee corrects/rewrites/excludes, working insight must be changed or excluded before permanence.
-6. Team aggregation возможен после at least 5 employees.
-7. Manager/HR report generated only from team-level generalized data and recommendations.
+- Grill discovery and the 47-requirement product contract are complete.
+- Phase 0 and Phase 1 are complete.
+- Phase 2 is complete locally; disclosure and confirmation lifecycle work is production-verified.
+- Phase 3 is in progress; persisted cohort scope, cycle opening, transfer rollover, active-member uniqueness, first immutable report snapshot/delivery lifecycle, later intermediate snapshot version gating, final one-message cycle aggregation, cycle-close expiry of unconfirmed temporary working insights, and retention cleanup are complete locally.
+- Phase 5 dashboard isolation is complete locally: the internal dashboard, named employee admin routes, and manager-labelled admin trends route fail closed unless `INTERNAL_DASHBOARD_ENABLED=true` or `1`.
+- Final deterministic local verification is complete.
+- A delivery-time invalid snapshot is cancelled without regeneration in the same worker attempt; only a later explicit report trigger may create a replacement.
+- An ambiguous Slack result becomes `delivery_unknown`; automatic retries and later snapshots for the same tenant/cohort/Pulse Index remain blocked until explicit reconciliation.
+- Pre-send TypeScript validation failure cancels the snapshot; a Slack receipt with an external message ID marks it delivered; any exception after sending begins becomes `delivery_unknown`. No Slack provider taxonomy is added in this slice.
+- A snapshot freezes its exact `(workspaceConnectionId, managerSlackUserId)` target; a changed binding cancels it, never retargets it, and requires a later explicit trigger for a new snapshot.
+- The first snapshot is persisted only after AI returns; TypeScript revalidates, atomically inserts the completed payload and provenance under a database unique key, and only the insertion winner may call Slack. No pre-AI `generating` state is added.
+- `survey:cycle:close` finds cohorts whose immutable `periodEnd` is at or before the close instant, expires unconfirmed temporary `survey_group_states`, and enqueues one final `GROUP_REPORT` job per cohort. The worker evaluates the five Pulse Indices through the existing report use case, omits ineligible indices, and sends one consolidated final manager message only when at least one index is eligible. The existing snapshot lifecycle blocks duplicate final cycle delivery per cohort.
+- Numeric engagement is complete locally: engagement questions are eligible only during `[periodEnd - 14 calendar days, periodEnd)`, evidence extraction excludes engagement outside that interval, only explicit integer 1-10 values are accepted, assessment scores persist those values, and employee/team engagement scores use equal-weight 1-10 averages with one-decimal dashboard display.
+- Same-index pulse prioritization is complete locally: when reactive or proactive evidence covers a question, remaining pending questions from that same Pulse Index move ahead of other pending questions while preserving their relative order.
+- Skipped-topic pulse policy is complete locally: pending questions from a group with an unresolved active probe are not selected, and ignored groups are moved behind other pending topics after stale no-evidence replies.
+- Retention cleanup is complete locally: `retention:cleanup` resolves active tenant policies, applies message/evidence/memory/risk/group-state/audit/snapshot cutoffs idempotently, and supports optional `TENANT_ID` scoping. The script has not been run against a live database in this slice.
+- Final local gates passed outside the sandbox: `pnpm run prepush:non-maf` and `pnpm exec dotenv -e .env -- pnpm test:integration` with 25 executed database integration tests.
+- Manager-of-Managers roll-up, HR/HRBP reporting, and the released customer manager/HR surface and auth model remain deferred.
+- Live Slack, production smoke, deploy, push, and PR actions remain unrun and require explicit authorization.
 
-Confirmation UX:
-- No buttons. Free-text dialogue.
-- Не повторяем каждый раз "это пойдет в anonymous report"; это покрыто onboarding.
-- Объясняем usage only if employee asks.
-- Confirmation встроен в natural dialogue after enough coverage for a group/index.
-
-Temporary insights/dashboard:
-- Current dashboard is development/product testing dashboard, not customer-facing manager/HR product.
-- Temporary insights visible only to development/product team in non-customer testing context.
-- Manager/HR не видят temporary content, pending-confirmation counts, or progress hints.
-- Unconfirmed temporary insights не попадают в intermediate/final reports.
-- Temporary insights live until end of pulse-check cycle, then cleared if unconfirmed.
-- Useful private-memory facts may remain for future employee conversations.
-
-Reports:
-- Intermediate report: for one index, when at least 80% of team and no fewer than 5 employees confirmed all required questions for that index.
-- Final report: end-of-cycle report from all confirmed permanent employee-cycle insights available by cycle close.
-
-Organization hierarchy:
-- Company setup includes organization hierarchy: employees, team leads, managers of managers, HR ownership boundaries.
-- MVP: each employee belongs to exactly one team and one hierarchy branch. Multi-team/project-team membership is out of scope.
-- Employee = individual contributor with no subordinates.
-- Team Lead = manager with direct employee subordinates.
-- Manager of Managers = manager whose hierarchy includes multiple team leads.
-- Team Lead report only if direct team satisfies anonymity floor.
-- If Team Lead has fewer than 5 employees, no report for that Team Lead; data can roll up to next eligible manager-level cohort.
-- If employee changes team mid-cycle, old insights should not move into new reporting context; pulse check restarts for new team.
-- HR/HRBP reporting is deferred until Team Lead and Manager of Managers reporting is modeled.
-
-Next grill question to continue:
-Manager of Managers report may still create inference risk. If a small team rolls up, the manager above may infer which Team Lead or small team caused a negative signal.
-
-Ask:
-1. Can Manager of Managers see breakdown by subteams?
-2. Or only a roll-up department-level report without subteam breakdown?
-3. If one subteam is large and another small, can the large one be shown separately while the small one is only in roll-up?
-4. Can report show "top affected area" without naming team?
-5. Need suppression rule if recommendation effectively points to a specific Team Lead or small group?
-
-Current hypothesis to test:
-For MVP, Manager of Managers report should be roll-up only, without subteam breakdown, unless every displayed subteam independently satisfies anonymity floor and does not create inference risk.
-```
+The dated Phase 2 and Slack handoffs remain historical evidence of completed slices.

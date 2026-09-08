@@ -97,6 +97,26 @@ export interface PulseBacklogRepositoryPort {
   ): Promise<void>;
 
   /**
+   * Moves pending questions from the same group ahead of other pending questions,
+   * preserving relative order inside each set.
+   */
+  prioritizeQuestionGroup(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
+  ): Promise<void>;
+
+  /**
+   * Moves pending questions from a skipped group behind other pending questions,
+   * preserving relative order inside each set.
+   */
+  deprioritizeQuestionGroup(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
+  ): Promise<void>;
+
+  /**
    * Adds 3 engagement questions at the end of the queue if not already present.
    * Idempotent — uses ON CONFLICT DO NOTHING.
    */

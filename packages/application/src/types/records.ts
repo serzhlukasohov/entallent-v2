@@ -1,3 +1,5 @@
+import type { DeidentificationDecision } from '../utils/deidentification-policy';
+
 export interface ConversationRecord {
   id: string;
   tenantId: string;
@@ -16,6 +18,7 @@ export interface MessageMetadata {
   containsSurveyProbe?: boolean;
   surveyProbeQuestionId?: string;
   reportingDisclosureVersion?: string;
+  deidentificationDecision?: DeidentificationDecision;
   replyShape?: {
     askedQuestion?: boolean;
     maxQuestions?: 0 | 1;
@@ -161,7 +164,21 @@ export interface SurveyWindowRecord {
   periodType: string;
   periodStart: Date;
   periodEnd: Date;
+  reportingCohortId?: string | null;
+  reportingTeamId?: string | null;
+  reportingRosterUserIds?: string[];
   status: string;
+}
+
+export interface SurveyReportingCohortRecord {
+  id: string;
+  tenantId: string;
+  teamId: string;
+  surveyDefinitionId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  rosterUserIds: string[];
+  openedAt: Date;
 }
 
 export interface SurveyEvidenceRecord {
@@ -208,9 +225,12 @@ export interface SurveyGroupStateRecord {
   aiSummary: string | null;
   confirmationSummary: string | null;
   reportableSummary: string | null;
+  deidentificationDecision: DeidentificationDecision | null;
   employeeScore: number | null;
   personalRecs: unknown | null;
   confirmedAt: Date | null;
+  withdrawnAt: Date | null;
+  withdrawalMessageId: string | null;
   reportSentAt: Date | null;
   reportingDisclosureVersion: string | null;
   reportingDisclosureShownAt: Date | null;
@@ -219,6 +239,7 @@ export interface SurveyGroupStateRecord {
   createdAt: Date;
   updatedAt: Date;
 }
+
 
 export interface TeamRecord {
   id: string;

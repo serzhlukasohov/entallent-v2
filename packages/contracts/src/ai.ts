@@ -192,6 +192,7 @@ export const SurveyEvidenceEvaluationSchema = z.object({
       followUpProbeNeeded: z.boolean(),
       thresholdReached: z.boolean(),
       assessmentShouldRemainUnknown: z.boolean(),
+      numericValue: z.number().int().min(1).max(10).optional(),
     }),
   ),
 });
@@ -200,7 +201,7 @@ export type SurveyEvidenceEvaluation = z.infer<typeof SurveyEvidenceEvaluationSc
 // ── Group Confirmation Response Interpreter ─────────────────────────────────
 
 export const ConfirmationResponseSchema = z.object({
-  verdict: z.enum(['agree', 'correct', 'unclear']),
+  verdict: z.enum(['agree', 'correct', 'exclude', 'unclear']),
   correctionNote: z.string().optional(),
 });
 export type ConfirmationResponse = z.infer<typeof ConfirmationResponseSchema>;

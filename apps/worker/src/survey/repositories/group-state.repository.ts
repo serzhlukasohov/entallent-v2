@@ -1,13 +1,27 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
-import { messages, surveyGroupStates } from '@entalent/database';
+import { and, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import {
+  messages,
+  surveyGroupStates,
+  surveyReportingCohorts,
+  surveyWindows,
+  teamMemberships,
+  teams,
+  users,
+} from '@entalent/database';
 import type {
   ConfirmGroupStateParams,
+  ConfirmedGroupReportStateRecord,
+  DeidentificationDecision,
+  FindConfirmedGroupStatesParams,
+  RecordGroupDeidentificationDecisionParams,
   StageGroupConfirmationParams,
   SurveyGroupStateRecord,
   TransitionAwaitingGroupStateParams,
   UpsertGroupStateParams,
+  WithdrawGroupStateParams,
 } from '@entalent/application';
+import { DEIDENTIFICATION_POLICY_VERSION } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
 
 export interface ActivateDeliveredConfirmationParams {
@@ -127,11 +141,34 @@ export class GroupStateRepository {
     return existing;
   }
 
+  async recordGroupDeidentificationDecision(
+    params: RecordGroupDeidentificationDecisionParams,
+  ): Promise<boolean> {
+    const rows = await this.db.client
+      .update(surveyGroupStates)
+      .set({
+        deidentificationDecision: params.deidentificationDecision as never,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(surveyGroupStates.surveyWindowId, params.surveyWindowId),
+        eq(surveyGroupStates.userId, params.userId),
+        eq(surveyGroupStates.tenantId, params.tenantId),
+        eq(surveyGroupStates.questionGroup, params.questionGroup),
+        eq(surveyGroupStates.status, 'pending_confirmation'),
+        isNull(surveyGroupStates.confirmationPromptMessageId),
+        eq(surveyGroupStates.updatedAt, params.expectedUpdatedAt),
+      ))
+      .returning({ id: surveyGroupStates.id });
+    return rows.length === 1;
+  }
+
   async stageGroupConfirmation(params: StageGroupConfirmationParams): Promise<boolean> {
     const rows = await this.db.client
       .update(surveyGroupStates)
       .set({
         aiSummary: null,
+        deidentificationDecision: params.deidentificationDecision as never,
         confirmationPromptMessageId: params.confirmationPromptMessageId,
         confirmedAt: null,
         reportingDisclosureVersion: null,
@@ -158,6 +195,7 @@ export class GroupStateRepository {
             and ${messages.deletedAt} is null
             and btrim(${messages.metadata}->>'confirmationSummary') <> ''
             and strpos(${messages.text}, ${messages.metadata}->>'confirmationSummary') > 0
+            and ${acceptedDeidentificationDecisionSql(sql`${messages.metadata}->'deidentificationDecision'`, params.deidentificationDecision.policyVersion)}
         )`,
       ))
       .returning({ id: surveyGroupStates.id });
@@ -175,6 +213,7 @@ export class GroupStateRepository {
         eq(surveyGroupStates.confirmationPromptMessageId, params.confirmationPromptMessageId),
         eq(surveyGroupStates.tenantId, params.tenantId),
         eq(surveyGroupStates.status, 'pending_confirmation'),
+        acceptedDeidentificationDecisionSql(surveyGroupStates.deidentificationDecision),
         sql`exists (
           select 1 from ${messages}
           where ${messages.id} = ${params.confirmationPromptMessageId}
@@ -188,6 +227,7 @@ export class GroupStateRepository {
             and ${messages.deletedAt} is null
             and btrim(${messages.metadata}->>'confirmationSummary') <> ''
             and strpos(${messages.text}, ${messages.metadata}->>'confirmationSummary') > 0
+            and ${acceptedDeidentificationDecisionSql(sql`${messages.metadata}->'deidentificationDecision'`)}
         )`,
       ))
       .returning({ id: surveyGroupStates.id });
@@ -230,11 +270,14 @@ export class GroupStateRepository {
       .set({
         status: params.status,
         aiSummary: null,
+        deidentificationDecision: null,
         confirmationPromptMessageId: null,
         confirmedAt: null,
         reportingDisclosureVersion: null,
         reportingDisclosureShownAt: null,
         confirmationMessageId: null,
+        withdrawnAt: null,
+        withdrawalMessageId: null,
         updatedAt: new Date(),
       })
       .where(and(
@@ -245,6 +288,55 @@ export class GroupStateRepository {
         inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
         eq(surveyGroupStates.confirmationPromptMessageId, params.confirmationPromptMessageId),
         correctionProof,
+      ))
+      .returning({ id: surveyGroupStates.id });
+    return rows.length === 1;
+  }
+
+  async withdrawGroupState(params: WithdrawGroupStateParams): Promise<boolean> {
+    const withdrawnAtIso = params.withdrawnAt.toISOString();
+    const rows = await this.db.client
+      .update(surveyGroupStates)
+      .set({
+        status: 'withdrawn',
+        aiSummary: null,
+        deidentificationDecision: null,
+        confirmedAt: null,
+        reportingDisclosureVersion: null,
+        reportingDisclosureShownAt: null,
+        confirmationMessageId: null,
+        withdrawnAt: params.withdrawnAt,
+        withdrawalMessageId: params.withdrawalMessageId,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(surveyGroupStates.surveyWindowId, params.surveyWindowId),
+        eq(surveyGroupStates.userId, params.userId),
+        eq(surveyGroupStates.tenantId, params.tenantId),
+        eq(surveyGroupStates.questionGroup, params.questionGroup),
+        inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
+        eq(surveyGroupStates.confirmationPromptMessageId, params.confirmationPromptMessageId),
+        sql`exists (
+          select 1 from ${messages}
+          where ${messages.id} = ${params.confirmationPromptMessageId}
+            and ${messages.conversationId} = ${params.conversationId}
+            and ${messages.tenantId} = ${params.tenantId}
+            and ${messages.userId} = ${params.userId}
+            and ${messages.direction} = 'outbound'
+            and ${messages.sentAt} is not null
+            and ${messages.sentAt} < ${withdrawnAtIso}::timestamptz
+            and ${messages.deletedAt} is null
+        )`,
+        sql`exists (
+          select 1 from ${messages}
+          where ${messages.id} = ${params.withdrawalMessageId}
+            and ${messages.conversationId} = ${params.conversationId}
+            and ${messages.tenantId} = ${params.tenantId}
+            and ${messages.userId} = ${params.userId}
+            and ${messages.direction} = 'inbound'
+            and ${messages.occurredAt} = ${withdrawnAtIso}::timestamptz
+            and ${messages.deletedAt} is null
+        )`,
       ))
       .returning({ id: surveyGroupStates.id });
     return rows.length === 1;
@@ -263,6 +355,7 @@ export class GroupStateRepository {
         reportingDisclosureVersion: params.reportingDisclosureVersion,
         reportingDisclosureShownAt: params.reportingDisclosureShownAt,
         confirmationMessageId: params.confirmationMessageId,
+        deidentificationDecision: params.deidentificationDecision as never,
         updatedAt: new Date(),
       })
       .where(and(
@@ -272,6 +365,7 @@ export class GroupStateRepository {
         eq(surveyGroupStates.questionGroup, params.questionGroup),
         inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
         eq(surveyGroupStates.confirmationPromptMessageId, params.confirmationPromptMessageId),
+        acceptedDeidentificationDecisionSql(surveyGroupStates.deidentificationDecision, params.deidentificationDecision.policyVersion),
         sql`exists (
           select 1 from ${messages}
           where ${messages.id} = ${params.confirmationPromptMessageId}
@@ -286,6 +380,7 @@ export class GroupStateRepository {
             and btrim(${messages.metadata}->>'confirmationSummary') <> ''
             and strpos(${messages.text}, ${messages.metadata}->>'confirmationSummary') > 0
             and ${messages.metadata}->>'confirmationSummary' = ${params.expectedConfirmationSummary}
+            and ${acceptedDeidentificationDecisionSql(sql`${messages.metadata}->'deidentificationDecision'`, params.deidentificationDecision.policyVersion)}
         )`,
         sql`exists (
           select 1 from ${messages}
@@ -302,26 +397,78 @@ export class GroupStateRepository {
     return rows.length === 1;
   }
 
-  async findConfirmedGroupStates(
-    userIds: string[],
-    questionGroup: string,
-  ): Promise<SurveyGroupStateRecord[]> {
-    if (userIds.length === 0) return [];
+  async findConfirmedGroupStates(params: FindConfirmedGroupStatesParams): Promise<ConfirmedGroupReportStateRecord[]> {
+    if (params.rosterUserIds.length === 0) return [];
     const rows = await this.db.client
-      .select()
+      .select({
+        groupState: surveyGroupStates,
+        reportingCohortId: surveyReportingCohorts.id,
+        surveyDefinitionId: surveyReportingCohorts.surveyDefinitionId,
+        reportingTeamId: surveyReportingCohorts.teamId,
+        reportingRosterUserIds: surveyReportingCohorts.rosterUserIds,
+        reportingPeriodStart: surveyReportingCohorts.periodStart,
+        reportingPeriodEnd: surveyReportingCohorts.periodEnd,
+      })
       .from(surveyGroupStates)
+      .innerJoin(surveyWindows, eq(surveyWindows.id, surveyGroupStates.surveyWindowId))
+      .innerJoin(
+        surveyReportingCohorts,
+        eq(surveyReportingCohorts.id, surveyWindows.reportingCohortId),
+      )
       .where(and(
-        inArray(surveyGroupStates.userId, userIds),
-        eq(surveyGroupStates.questionGroup, questionGroup),
+        eq(surveyGroupStates.tenantId, params.tenantId),
+        inArray(surveyGroupStates.userId, params.rosterUserIds),
+        eq(surveyGroupStates.questionGroup, params.questionGroup),
+        eq(surveyWindows.tenantId, params.tenantId),
+        eq(surveyWindows.userId, surveyGroupStates.userId),
+        eq(surveyWindows.reportingCohortId, params.reportingCohortId),
+        eq(surveyReportingCohorts.id, params.reportingCohortId),
+        eq(surveyReportingCohorts.tenantId, params.tenantId),
+        eq(surveyReportingCohorts.teamId, params.teamId),
+        sql`${surveyGroupStates.userId} = any(${surveyReportingCohorts.rosterUserIds})`,
+        sql`exists (
+          select 1 from ${users} report_user
+          where report_user.id = ${surveyGroupStates.userId}
+            and report_user.tenant_id = ${params.tenantId}
+            and report_user.status = 'active'
+            and report_user.deleted_at is null
+            and report_user.consent_state->'surveyEnabled' = 'true'::jsonb
+        )`,
+        sql`exists (
+          select 1
+          from ${teamMemberships} current_membership
+          join ${teams} current_team on current_team.id = current_membership.team_id
+          where current_membership.user_id = ${surveyGroupStates.userId}
+            and current_membership.team_id = ${surveyReportingCohorts.teamId}
+            and current_membership.role = 'member'
+            and current_membership.joined_at <= now()
+            and (current_membership.left_at is null or current_membership.left_at > now())
+            and current_team.tenant_id = ${params.tenantId}
+            and not exists (
+              select 1
+              from ${teamMemberships} other_membership
+              join ${teams} other_team on other_team.id = other_membership.team_id
+              where other_membership.user_id = current_membership.user_id
+                and other_membership.team_id <> current_membership.team_id
+                and other_membership.role = 'member'
+                and other_membership.joined_at <= now()
+                and (other_membership.left_at is null or other_membership.left_at > now())
+                and other_team.tenant_id = ${params.tenantId}
+            )
+        )`,
         eq(surveyGroupStates.status, 'confirmed'),
         isNotNull(surveyGroupStates.confirmedAt),
+        gte(surveyGroupStates.confirmedAt, surveyReportingCohorts.periodStart),
+        lt(surveyGroupStates.confirmedAt, surveyReportingCohorts.periodEnd),
         isNotNull(surveyGroupStates.reportingDisclosureVersion),
         sql`btrim(${surveyGroupStates.reportingDisclosureVersion}) <> ''`,
         isNotNull(surveyGroupStates.reportingDisclosureShownAt),
         isNotNull(surveyGroupStates.confirmationMessageId),
         isNotNull(surveyGroupStates.confirmationPromptMessageId),
+        isNull(surveyGroupStates.withdrawnAt),
         isNotNull(surveyGroupStates.aiSummary),
         sql`btrim(${surveyGroupStates.aiSummary}) <> ''`,
+        acceptedDeidentificationDecisionSql(surveyGroupStates.deidentificationDecision),
         lt(surveyGroupStates.reportingDisclosureShownAt, surveyGroupStates.confirmedAt),
         sql`exists (
           select 1 from ${messages} displayed
@@ -337,6 +484,7 @@ export class GroupStateRepository {
             and btrim(displayed.metadata->>'confirmationSummary') <> ''
             and strpos(displayed.text, displayed.metadata->>'confirmationSummary') > 0
             and displayed.metadata->>'confirmationSummary' = ${surveyGroupStates.aiSummary}
+            and ${acceptedDeidentificationDecisionSql(sql`displayed.metadata->'deidentificationDecision'`)}
             and response.tenant_id = ${surveyGroupStates.tenantId}
             and response.user_id = ${surveyGroupStates.userId}
             and response.conversation_id = displayed.conversation_id
@@ -345,7 +493,15 @@ export class GroupStateRepository {
             and response.deleted_at is null
         )`,
       ));
-    return rows.map((row) => mapGroupState(row, { reportableSummary: row.aiSummary }));
+    return rows.flatMap((row) => row.reportingTeamId ? [{
+      ...mapGroupState(row.groupState, { reportableSummary: row.groupState.aiSummary }),
+      reportingCohortId: row.reportingCohortId,
+      surveyDefinitionId: row.surveyDefinitionId,
+      reportingTeamId: row.reportingTeamId,
+      reportingRosterUserIds: row.reportingRosterUserIds,
+      reportingPeriodStart: row.reportingPeriodStart,
+      reportingPeriodEnd: row.reportingPeriodEnd,
+    }] : []);
   }
 }
 
@@ -363,9 +519,12 @@ function mapGroupState(
     aiSummary: row.aiSummary,
     confirmationSummary: projection.confirmationSummary ?? null,
     reportableSummary: projection.reportableSummary ?? null,
+    deidentificationDecision: parseDeidentificationDecision(row.deidentificationDecision),
     employeeScore: row.employeeScore !== null ? Number(row.employeeScore) : null,
     personalRecs: row.personalRecs,
     confirmedAt: row.confirmedAt,
+    withdrawnAt: row.withdrawnAt,
+    withdrawalMessageId: row.withdrawalMessageId,
     reportingDisclosureVersion: row.reportingDisclosureVersion,
     reportingDisclosureShownAt: row.reportingDisclosureShownAt,
     confirmationMessageId: row.confirmationMessageId,
@@ -374,4 +533,51 @@ function mapGroupState(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function parseDeidentificationDecision(value: unknown): DeidentificationDecision | null {
+  if (!value || typeof value !== 'object') return null;
+  const decision = value as { status?: unknown; policyVersion?: unknown; reasons?: unknown };
+  if (decision.policyVersion !== DEIDENTIFICATION_POLICY_VERSION || !Array.isArray(decision.reasons)) {
+    return null;
+  }
+  if (decision.status === 'accepted' && decision.reasons.length === 0) {
+    return {
+      status: 'accepted',
+      policyVersion: decision.policyVersion,
+      reasons: [],
+    };
+  }
+  if (
+    decision.status === 'rejected'
+    && decision.reasons.length > 0
+    && decision.reasons.every(isDeidentificationRejectionReason)
+  ) {
+    return {
+      status: 'rejected',
+      policyVersion: decision.policyVersion,
+      reasons: decision.reasons,
+    };
+  }
+  return null;
+}
+
+function acceptedDeidentificationDecisionSql(value: unknown, policyVersion = DEIDENTIFICATION_POLICY_VERSION) {
+  return and(
+    sql`${value}->>'status' = 'accepted'`,
+    sql`${value}->>'policyVersion' = ${policyVersion}`,
+    sql`jsonb_typeof(${value}->'reasons') = 'array'`,
+    sql`jsonb_array_length(${value}->'reasons') = 0`,
+  );
+}
+
+function isDeidentificationRejectionReason(reason: unknown): reason is DeidentificationDecision['reasons'][number] {
+  return reason === 'known_identifier'
+    || reason === 'slack_handle'
+    || reason === 'email_address'
+    || reason === 'phone_number'
+    || reason === 'url'
+    || reason === 'exact_date_or_time'
+    || reason === 'source_message_id'
+    || reason === 'project_or_customer_identifier';
 }

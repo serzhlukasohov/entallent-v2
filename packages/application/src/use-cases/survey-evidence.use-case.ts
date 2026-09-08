@@ -4,7 +4,7 @@ import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { SurveyQuestionRecord, SurveyWindowRecord, MessageRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
-import type { PulseBacklogService } from '../services/pulse-backlog.service';
+import { isWithinEngagementWindow, type PulseBacklogService } from '../services/pulse-backlog.service';
 
 /** Evidence weaker than this is noise ("said hi, fine") — not worth persisting */
 const MIN_EVIDENCE_STRENGTH = 0.35;
@@ -97,6 +97,11 @@ export class SurveyEvidenceExtractionUseCase {
     messages: MessageRecord[],
     sourceMessageId: string,
   ): Promise<void> {
+    const eligibleQuestions = questions.filter(
+      (q) => q.questionGroup !== 'engagement' || isWithinEngagementWindow(window.periodEnd),
+    );
+    if (!eligibleQuestions.length) return;
+
     const turns: ConversationTurn[] = messages.map((m) => ({
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       content: m.text,
@@ -105,13 +110,14 @@ export class SurveyEvidenceExtractionUseCase {
 
     if (!turns.some((t) => t.role === 'user')) return;
 
-    const questionsForEval: SurveyQuestionForEvaluation[] = questions.map((q) => ({
+    const questionsForEval: SurveyQuestionForEvaluation[] = eligibleQuestions.map((q) => ({
       id: q.id,
       stableKey: q.stableKey,
       canonicalMeaning: q.canonicalMeaning,
       positiveIndicators: q.positiveIndicators,
       negativeIndicators: q.negativeIndicators,
       contraindications: q.contraindications,
+      responseType: q.responseType,
     }));
 
     const evaluation = await this.ai.evaluateSurveyEvidence(turns, questionsForEval);
@@ -120,7 +126,7 @@ export class SurveyEvidenceExtractionUseCase {
       if (ev.assessmentShouldRemainUnknown) continue;
       if (ev.strength < MIN_EVIDENCE_STRENGTH) continue;
 
-      const question = questions.find((q) => q.id === ev.questionId);
+      const question = eligibleQuestions.find((q) => q.id === ev.questionId);
       if (!question) continue;
 
       // The evaluator re-reads the same transcript every message, so consecutive
@@ -178,6 +184,7 @@ export class SurveyEvidenceExtractionUseCase {
         status,
         evidenceId: evidenceRecord.id,
         evaluatorVersion: 'v1',
+        score: ev.numericValue,
       });
 
       // Any saved evidence means the question has a root cause — mark it done
@@ -197,7 +204,7 @@ export class SurveyEvidenceExtractionUseCase {
         );
       }
 
-      await this.checkGroupCompletion(input, window.id, ev.questionId, questions);
+      await this.checkGroupCompletion(input, window.id, ev.questionId, eligibleQuestions);
     }
   }
 

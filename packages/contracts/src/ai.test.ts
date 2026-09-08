@@ -297,6 +297,34 @@ describe('Contract: SurveyEvidenceEvaluationSchema', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts only explicit integer 1-10 numeric evidence values', () => {
+    const payload = {
+      candidateQuestionIds: ['q-1'],
+      evidence: [
+        {
+          questionId: 'q-1',
+          evidenceSummary: 'User explicitly answered 7 out of 10.',
+          polarity: 'mixed',
+          strength: 0.8,
+          completeness: 0.7,
+          confidence: 0.9,
+          followUpProbeNeeded: false,
+          thresholdReached: true,
+          assessmentShouldRemainUnknown: false,
+          numericValue: 7,
+        },
+      ],
+    };
+
+    expect(SurveyEvidenceEvaluationSchema.parse(payload).evidence[0]!.numericValue).toBe(7);
+    expect(() =>
+      SurveyEvidenceEvaluationSchema.parse({
+        ...payload,
+        evidence: [{ ...payload.evidence[0], numericValue: 7.5 }],
+      }),
+    ).toThrow();
+  });
 });
 
 describe('Contract: GeneratedResponseSchema', () => {
@@ -398,6 +426,11 @@ describe('ConfirmationResponseSchema', () => {
   it('accepts correct with a note', () => {
     const r = ConfirmationResponseSchema.parse({ verdict: 'correct', correctionNote: 'not about pay' });
     expect(r.correctionNote).toBe('not about pay');
+  });
+
+  it('accepts an exclusion verdict', () => {
+    const r = ConfirmationResponseSchema.parse({ verdict: 'exclude' });
+    expect(r.verdict).toBe('exclude');
   });
 
   it('rejects an unknown verdict', () => {

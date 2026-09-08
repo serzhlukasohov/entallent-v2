@@ -2,7 +2,7 @@
 
 Created: 2026-08-31
 
-Last updated: 2026-09-03
+Last updated: 2026-09-06
 
 Scope: current TypeScript product. MAF is out of scope.
 
@@ -128,7 +128,7 @@ The agent should ask a natural version of "did I understand you correctly?" and 
 
 ### REQ-015: Reporting Explanation
 
-The employee must learn during onboarding that de-identified information they confirm may feed team-level recommendations. The system must persist the disclosure version and `shownAt` timestamp.
+The employee must learn during the onboarding lifecycle that de-identified information they confirm may feed team-level recommendations. The disclosure does not need to interrupt a fresh social greeting: it must be delivered on the first safe survey-relevant turn and always before the first confirmation. The system must persist the disclosure version and `shownAt` timestamp.
 
 Only a confirmation made after the persisted disclosure can authorize reporting inclusion. The agent should not repeat the explanation during every confirmation and should explain where information goes when the employee asks.
 
@@ -168,7 +168,7 @@ Only confirmed, de-identified, non-withdrawn permanent employee-cycle insights m
 
 An employee must be able to tell the agent not to use specific information for reports.
 
-This can happen during confirmation or during ordinary conversation. The exclusion or withdrawal must be persisted and block the information from every future report snapshot. Before delivery, every queued snapshot must be revalidated against current withdrawal state; a snapshot containing newly withdrawn input is cancelled and may be regenerated only from the remaining eligible inputs. Already delivered Slack reports are immutable and must not be silently edited or deleted.
+This can happen during confirmation or during ordinary conversation. The exclusion or withdrawal must be persisted and block the information from every future report snapshot. Before delivery, every queued snapshot must be revalidated against current withdrawal state; a snapshot containing newly withdrawn input is cancelled. The same worker attempt must stop without regenerating or sending a replacement. A later explicit report trigger may create a fresh snapshot only from the then-current eligible inputs. Already delivered Slack reports are immutable and must not be silently edited or deleted.
 
 ## 6. Privacy And Manager Visibility
 
@@ -217,6 +217,14 @@ An intermediate report may be generated for a specific Pulse Index when:
 - All included insights have passed confirmation.
 
 Each manager-visible intermediate report is an immutable snapshot. A later version may be published only when reportable inputs from at least five distinct employees have changed since the previous visible snapshot. Versions must not expose per-version contributor deltas.
+
+If a Slack delivery attempt has an ambiguous outcome, such as a timeout after the provider may have accepted the message, the snapshot must enter `delivery_unknown`. Automatic retries must not call Slack again for that snapshot, and no later snapshot for the same tenant, reporting cohort, and Pulse Index may be delivered until explicit reconciliation resolves the unknown outcome.
+
+A pre-send TypeScript scope or target validation failure cancels the snapshot. A Slack receipt with a valid external message ID marks it `delivered`. Any exception after the Slack send begins is treated as `delivery_unknown`; this slice must not add provider-specific Slack error taxonomy.
+
+Each snapshot freezes the exact `(workspaceConnectionId, managerSlackUserId)` delivery target. Before delivery, that binding must still be valid for the snapshot's tenant and reporting cohort. If the manager or workspace binding changed, the snapshot is cancelled and must never be retargeted; only a later explicit report trigger may create a new snapshot for the current target.
+
+The first persisted snapshot is created only after AI returns a complete manager payload. TypeScript then revalidates contributors and the frozen delivery target before atomically storing the immutable payload and closed provenance under a database uniqueness constraint. Only the job that creates that unique snapshot may attempt Slack delivery; a concurrent loser stops. No pre-AI `generating` snapshot state is required.
 
 ### REQ-029: Final Reports
 

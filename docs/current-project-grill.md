@@ -1,6 +1,7 @@
 # Current Project Grill
 
-Date: 2026-08-21
+Created: 2026-08-21
+Updated: 2026-09-08
 
 Scope: current TypeScript product. MAF is intentionally out of scope.
 
@@ -14,6 +15,24 @@ The current product needs one sharper domain story:
 
 Everything else should serve that sentence.
 
+## Implementation Status
+
+The discovery and product-truth portion of the grill is complete. The canonical contract is the 47 requirements in `docs/collected-product-requirements.md`; the BA-facing rendering is superseded and retained only as historical review input.
+
+- Phase 0 — executable product contract: complete.
+- Phase 1 — focused baseline repair: complete.
+- Phase 2 — reportable-insight boundary: complete locally.
+- Phase 3 — team/cycle cohort scope: in progress; persisted cohorts, cycle opening, immutable snapshot/delivery, later intermediate snapshot version gating, final one-message cycle aggregation, and retention cleanup are complete locally.
+- Phase 4 — transfer and cycle lifecycle: complete locally.
+- Phase 5 — development dashboard boundary: complete locally; all manager-labelled admin dashboard endpoints fail closed unless `INTERNAL_DASHBOARD_ENABLED=true` or `1`.
+- Phase 6 pulse behavior is complete locally: numeric engagement capture/scoring, same-index backlog prioritization, and skipped-topic policy are covered by deterministic tests.
+- Phase 7 — end-to-end verification: complete locally; deterministic no-MAF prepush and database integration gates pass.
+- Other queued work is tracked in `_bmad-output/planning-artifacts/2026-09-03-pr5-product-conformance-audit-and-plan.md`.
+
+Phase 2 has production-verified reporting disclosure, exact delivered-summary binding, multi-group confirmation progression, localized confirmation prompts, and question-free post-agreement acknowledgements. Typed TypeScript de-identification plus correction/withdrawal are locally complete. Phase 3 now has local immutable intermediate snapshots: the first version is idempotent, `delivery_unknown` blocks unsafe resends, later versions require changed reportable inputs from at least five distinct employees, final close sends one consolidated cycle message with only eligible Pulse Indices, and retention cleanup prevents expired/deleted records from returning through active lifecycle paths. Phase 6 now suppresses repeat pressure on a skipped backlog topic while another pending topic is available.
+
+Manager-of-Managers roll-up, HR/HRBP reporting, and the released customer manager/HR surface and auth model remain deferred. Live Slack, production smoke, deploy, push, and PR actions remain separate operational steps requiring explicit authorization.
+
 ## Grill Findings
 
 ## Product Truths From Grill Session
@@ -22,11 +41,11 @@ Everything else should serve that sentence.
 
 For the employee persona, enTalent should feel first like a **friend at work**: someone who hears, understands, supports, and helps the employee understand themselves in work situations. The mentor may coach, mentor, and emotionally support, but it must not feel like an HR questionnaire.
 
-### Manager and HR experience
+### Team Lead experience
 
-For the manager/HR persona, enTalent should provide an honest team picture and useful recommendations for improving team management. This experience is separate from the employee chat and must not expose individual employee traces.
+For the Team Lead persona, enTalent should provide an honest team picture and useful recommendations for improving team management. This experience is separate from the employee chat and must not expose individual employee traces. Manager-of-Managers and HR/HRBP experiences are deferred.
 
-The dashboard that exists today is a development/testing dashboard for product visibility. It lets the product team inspect how insights are collected, confirmed, and promoted through the pipeline. It is not the customer-facing manager/HR dashboard for a released product and should be hidden from real customers, likely behind a feature toggle or equivalent environment gate.
+The dashboard that exists today is a development/testing dashboard for product visibility. It lets the product team inspect how insights are collected, confirmed, and promoted through the pipeline. It is not the customer-facing manager/HR dashboard for a released product and now fails closed unless `INTERNAL_DASHBOARD_ENABLED=true` or `1`.
 
 ### Trust-led guided pulse
 
@@ -56,39 +75,35 @@ The reporting pipeline has separate stages:
 4. If the employee confirms, the insight becomes a permanent anonymized employee-cycle insight for that pulse cycle. This is still per employee internally, but stripped of directly identifying details.
 5. If the employee corrects, rewrites, or asks to exclude information, the working insight must be changed or excluded before it can become permanent.
 6. After at least five employees in a team have permanent anonymized insights, the team-level aggregation can be generated.
-7. The manager/HR report is generated only from team-level generalized data and recommendations.
+7. The Team Lead report is generated only from team-level generalized data and recommendations.
 
-The employee is told during onboarding that anonymized team-level information may feed recommendations. Confirmation messages should not repeat that explanation unless the employee asks what the information is for or where it will be used.
+The employee is told during the onboarding lifecycle that anonymized team-level information may feed recommendations. The disclosure appears on the first safe survey-relevant turn rather than interrupting a fresh social greeting, and always before the first confirmation. Confirmation messages should not repeat that explanation unless the employee asks what the information is for or where it will be used.
 
 Temporary working insights are visible only to the development/product team in non-customer product testing contexts. Managers and HR must not see temporary insight content, pending-confirmation counts, or other progress hints that reveal who has answered what.
 
-If a temporary working insight is never confirmed, it cannot feed intermediate or final reports. It can remain available to the employee conversation context until the end of the pulse-check cycle, and any useful private-memory facts may remain in memory for future employee conversations. When the pulse-check cycle ends and final reports are generated, temporary working insights for that cycle should be cleared.
+If a temporary working insight is never confirmed, it cannot feed intermediate or final reports. It can remain available to the employee conversation context until the end of the pulse-check cycle, and any useful private-memory facts may remain in memory for future employee conversations. Temporary working insights for that cycle must expire after `periodEnd`, even when no report is eligible or report generation or delivery fails.
 
 If the employee corrects a confirmation summary, the corrected version replaces the old working version for product/reporting purposes. The confirmed corrected content is what becomes permanent.
 
-Intermediate reports may be generated for a specific index when at least 80% of the team, and no fewer than five employees, have confirmed all three questions in that index. Final reports at the end of the pulse-check cycle should include all confirmed permanent insights collected by then. Unconfirmed temporary insights remain excluded.
+If a queued report snapshot becomes invalid before delivery, it is cancelled and that worker attempt stops without regenerating a replacement. Only a later explicit report trigger may build a fresh snapshot from current eligible inputs.
 
-### Organization hierarchy and reporting cohorts
+If Slack delivery may have succeeded but the worker cannot prove it, the snapshot enters `delivery_unknown`. Automatic retries must not send it again, and later snapshots for the same tenant, cohort, and Pulse Index remain blocked until explicit reconciliation resolves the outcome.
 
-Company setup must include an organization hierarchy, entered manually or through automation. The hierarchy defines employees, team leads, managers of managers, and HR ownership boundaries.
+A pre-send TypeScript validation failure cancels the snapshot. A successful Slack receipt with an external message ID marks it delivered. Any exception after sending begins becomes `delivery_unknown`; no Slack provider taxonomy is added in this slice.
 
-For MVP, each employee belongs to exactly one team and one branch of the hierarchy. Multi-team or project-team membership is out of scope.
+Each snapshot freezes its exact Slack workspace connection and manager user target. Delivery revalidates that binding; a changed manager or workspace cancels the snapshot. An existing snapshot is never retargeted, and only a later explicit report trigger may create a new snapshot for the current target.
 
-Core roles:
+The first snapshot is persisted only after AI returns a complete manager payload. TypeScript then revalidates contributors and the frozen delivery target before atomically storing the immutable payload and provenance under a database unique key. Only the insertion winner may attempt Slack delivery; a concurrent loser stops. There is no pre-AI `generating` snapshot state unless measured contention later proves it necessary.
 
-- Employee: an individual contributor with no subordinates.
-- Team Lead: a manager with direct employee subordinates.
-- Manager of Managers: a manager whose subordinates include multiple team leads.
+Intermediate reports may be generated for a specific index when at least 80% of the team, and no fewer than five employees, have confirmed all three questions in that index. Final close enqueueing starts only after the immutable `periodEnd` cutoff and uses the final floor of at least five distinct frozen-roster employees per Pulse Index; the intermediate 80% threshold does not apply. Final close now enqueues one cycle-level job per cohort; the worker reuses the existing per-index report use case, omits ineligible indices, and sends one consolidated manager message only when at least one index is eligible. Unconfirmed temporary insights remain excluded and are expired by cycle close.
 
-Reports depend on the audience:
+### MVP teams and deferred hierarchy
 
-- A Team Lead report is based on that team lead's direct employee team, if the anonymity floor is satisfied.
-- A Manager of Managers report can include the teams/subteams under that manager's hierarchy.
-- If a Team Lead has fewer than five employees, no team-level report is generated for that team lead. The data can roll up to the next eligible manager-level cohort, where it is mixed with other teams and generalized.
+The active MVP roles are Employee and Team Lead. Each employee belongs to exactly one direct team; multi-team and project-team membership are out of scope. A Team Lead report is based only on that direct team and is generated only when the anonymity floor is satisfied. Small-team roll-up and Manager-of-Managers reporting are disabled until their inference-risk policy is approved.
 
-If an employee changes teams in the middle of a pulse-check cycle, the previous team's insights should not move into the new team's reporting context. The pulse check should restart for the employee in the new team, because the prior answers likely describe a different manager/team environment.
+If an employee changes teams in the middle of a pulse-check cycle, the previous team's insights must not move into the new team's reporting context. The pulse check restarts in a new team-bound working window, which becomes report-eligible only at the next cycle open. Current local implementation closes the old active window and creates an unreportable current-team window for that cycle.
 
-HR and HRBP reporting roles are intentionally deferred until Team Lead and Manager of Managers reporting is modeled.
+The broader organization hierarchy, Manager-of-Managers reports, and HR/HRBP ownership and access rules are deferred product scope.
 
 ### 1. The orchestrator is carrying too much product policy.
 
@@ -132,7 +147,7 @@ If that answer is fuzzy, the mentor will eventually feel spooky: it will remembe
 
 ### 5. Manager analytics can outrun the privacy story.
 
-The dashboard and admin APIs expose per-employee rows, evidence summaries, active risk flags, group status, and pulse backlog state. That is operationally useful, but it is close to identifiable employee monitoring.
+The internal dashboard and named admin APIs expose per-employee rows, evidence summaries, active risk flags, group status, and pulse backlog state only when the internal dashboard gate is explicitly enabled. That is operationally useful, but it is still close to identifiable employee monitoring.
 
 Sharp question:
 
@@ -162,15 +177,11 @@ Sharp question:
 - Manager insight: aggregated or identifiable dashboard data with privacy constraints.
 - Open loop: any future-oriented item the mentor may return to.
 
-## Next Grill Questions
+## Current Open And Deferred Product Questions
 
-1. What is the product's primary promise: better employee reflection, manager visibility, retention risk detection, or continuous pulse measurement?
-2. What is the one thing the mentor must never optimize for if it harms trust?
-3. Should pulse evidence be invisible background extraction, explicit confirmation, or a hybrid by dimension?
-4. Who is allowed to see evidence summaries: employee, manager, admin, or nobody?
-5. What exact behavior proves "TS runtime is the product spine" in production?
-6. Which old MAF artifacts are dangerous because they can still affect production behavior?
-7. What is the minimum domain API for "why did the mentor speak now?"
-8. Are proactive messages budgeted per product reason or globally per user per day?
-9. Is a group confirmation a consent step, a data-quality step, or both?
-10. What would make this product feel creepy, even if the code is technically correct?
+The core MVP truths above are captured. Current implementation work should follow the numbered requirements rather than reopen them.
+
+1. **Active now — data-model mapping:** What is the smallest mapping from working candidate through de-identification decision, confirmation, exclusion/withdrawal, and reportable employee-cycle insight?
+2. **Deferred — Manager of Managers inference risk:** When roll-up is reopened, what subteam breakdowns can be shown without identifying a small team or Team Lead?
+3. **Deferred — HR/HRBP reporting:** What visibility, scope, authorization, and audit rules apply?
+4. **Deferred — released manager/HR surface:** What customer-facing experience replaces the current development dashboard?

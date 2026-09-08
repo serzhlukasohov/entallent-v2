@@ -85,6 +85,48 @@
       "when": 1788459218480,
       "tag": "0011_whole_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788685353203,
+      "tag": "0012_odd_exodus",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788688500000,
+      "tag": "0013_withdrawn_mercury",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788707335659,
+      "tag": "0014_magical_nemesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1788710393019,
+      "tag": "0015_gigantic_scream",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788771156524,
+      "tag": "0016_fast_vision",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788789487597,
+      "tag": "0017_overjoyed_justice",
+      "breakpoints": true
     }
   ]
 }

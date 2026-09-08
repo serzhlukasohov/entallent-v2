@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { ManagerTeamController } from './manager-team.controller';
 import { ManagerTrendsController } from './manager-trends.controller';
@@ -23,8 +23,9 @@ describe('manager dashboard read model boundary', () => {
     const readModel = {
       getTeamOverview: vi.fn().mockResolvedValue(response),
     } as unknown as ManagerDashboardReadModel;
+    const config = { get: vi.fn(() => true) };
 
-    await expect(new ManagerTeamController(readModel).getTeamOverview(TENANT_ID)).resolves.toBe(
+    await expect(new ManagerTeamController(readModel, config as never).getTeamOverview(TENANT_ID)).resolves.toBe(
       response,
     );
     expect(readModel.getTeamOverview).toHaveBeenCalledWith(TENANT_ID);
@@ -50,11 +51,21 @@ describe('manager dashboard read model boundary', () => {
     const readModel = {
       getTrends: vi.fn().mockResolvedValue(response),
     } as unknown as ManagerDashboardReadModel;
+    const config = { get: vi.fn(() => true) };
 
-    await expect(new ManagerTrendsController(readModel).getTrends(undefined, '999')).resolves.toBe(
+    await expect(new ManagerTrendsController(readModel, config as never).getTrends(undefined, '999')).resolves.toBe(
       response,
     );
     expect(readModel.getTrends).toHaveBeenCalledWith(undefined, '999');
+  });
+
+  it('refuses manager trends when the internal dashboard gate is disabled', async () => {
+    const readModel = { getTrends: vi.fn().mockResolvedValue({}) };
+    const config = { get: vi.fn(() => false) };
+    const controller = new ManagerTrendsController(readModel as never, config as never);
+
+    await expect(controller.getTrends(TENANT_ID, '14')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(readModel.getTrends).not.toHaveBeenCalled();
   });
 
   it('normalizes trends tenant fallback and preserves day clamping', () => {

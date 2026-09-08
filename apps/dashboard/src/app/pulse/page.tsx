@@ -147,7 +147,10 @@ export default async function PulsePage() {
                     {/* Score */}
                     {g.employeeScore !== null && (
                       <div style={{ marginBottom: 10 }}>
-                        <ScoreBar score={g.employeeScore} />
+                        <ScoreBar
+                          score={g.employeeScore}
+                          scale={g.questionGroup === 'engagement' ? 'ten' : 'hundred'}
+                        />
                       </div>
                     )}
 
@@ -250,14 +253,15 @@ export default async function PulsePage() {
   );
 }
 
-function ScoreBar({ score }: { score: number }) {
-  const pct = Math.min(100, Math.max(0, score));
+function ScoreBar({ score, scale }: { score: number; scale: 'ten' | 'hundred' }) {
+  const pct = Math.min(100, Math.max(0, scale === 'ten' ? score * 10 : score));
   const color = pct >= 60 ? 'var(--green)' : pct >= 35 ? '#f59e0b' : '#ef4444';
+  const display = scale === 'ten' ? `${score.toFixed(1)} / 10` : score.toFixed(1);
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Index</span>
-        <span style={{ fontSize: 12, fontWeight: 600, color }}>{score.toFixed(1)}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color }}>{display}</span>
       </div>
       <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2 }} />

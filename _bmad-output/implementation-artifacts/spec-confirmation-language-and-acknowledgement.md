@@ -72,12 +72,16 @@ context:
 - `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts` -- orchestration RED then GREEN.
 - `pnpm --filter @entalent/ai-openai typecheck && pnpm --filter @entalent/application typecheck && pnpm --filter @entalent/worker typecheck` -- affected TypeScript boundaries compile.
 - `pnpm prepush` -- root typecheck, lint, package tests, and script tests pass; rerun only sandbox-blocked script tests outside the sandbox.
-- After separately approved push/deploy: Railway `worker` deployment reports `SUCCESS`, then one explicitly approved real Slack lifecycle in `D0BJDC2MPE2` shows localized confirmation and a question-free acknowledgement without production reset.
+- After separately approved push/deploy and scoped test setup: Railway `worker` deployment reports `SUCCESS`, then one explicitly approved real Slack lifecycle in `D0BJDC2MPE2` shows localized confirmation and a question-free acknowledgement. Any production reset requires its own explicit authorization.
 
 **Results:**
 - Focused GREEN: prompt 23/23, provider 29/29, orchestrator 50/50.
 - `pnpm prepush`: typecheck, lint, and all package tests passed; script tests hit the known sandbox TSX IPC restriction.
 - `pnpm test:scripts` outside the sandbox: all three script checks passed.
+- Commit `95e9f03` was pushed and manual Railway deployment `0d268486-ac30-470a-bec7-df50df7bf8a7` succeeded for `worker` only.
+- After the explicitly approved scoped reset, Slack marker `slack-confirm95e9f03-20260905T210302Z` started a fresh production lifecycle in `D0BJDC2MPE2`.
+- Production DB evidence confirmed `belonging`, `autonomy`, `growth`, and `engagement`: disclosure preceded each prompt, each prompt contained its exact persisted summary with one localized question and no technical label or English suffix, agreement preceded acknowledgement, and each acknowledgement had `maxQuestions=0`, `askedQuestion=false`, and no visible question.
+- Fresh-start persistence produced six active memory items; no second reset or non-worker deployment was performed.
 
 ## Suggested Review Order
 
@@ -105,7 +109,7 @@ context:
 
 **Verification trail**
 
-- Failure stays open until the separately approved production Slack cycle passes.
+- Production Slack verification passed and the lifecycle failure is closed.
   [`agent-failures.md:305`](../../docs/agent-failures.md#L305)
 
 - Review-only architecture gaps remain explicitly deferred from this patch.

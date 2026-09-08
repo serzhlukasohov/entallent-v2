@@ -43,8 +43,12 @@ export interface SurveyEvidencePayload {
 }
 
 export interface GroupReportPayload {
+  reportingCohortId: string;
+  tenantId: string;
   teamId: string;
   questionGroup: string;
+  questionGroups?: string[];
+  reportKind?: 'intermediate' | 'final';
   traceId: string;
 }
 

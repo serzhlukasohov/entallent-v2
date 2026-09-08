@@ -20,6 +20,7 @@
     "@entalent/contracts": "workspace:*",
     "@entalent/crypto-utils": "workspace:*",
     "@entalent/database": "workspace:*",
+    "@entalent/domain": "workspace:*",
     "@entalent/observability": "workspace:*",
     "@nestjs/bullmq": "^10.2.1",
     "@nestjs/common": "^10.4.1",

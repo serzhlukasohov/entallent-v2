@@ -73,6 +73,8 @@ function makeBacklogRepo(
     findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry()),
     markActive: vi.fn().mockResolvedValue(undefined),
     markDone: vi.fn().mockResolvedValue(undefined),
+    prioritizeQuestionGroup: vi.fn().mockResolvedValue(undefined),
+    deprioritizeQuestionGroup: vi.fn().mockResolvedValue(undefined),
     unlockEngagementIfNeeded: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -153,6 +155,30 @@ describe('PulseBacklogService', () => {
       expect(ignoreOrder).toBeLessThan(findOrder);
     });
 
+    it('moves skipped topic groups behind other pending topics before selecting next', async () => {
+      const autonomyQuestion = makeQuestion({ id: 'q-autonomy', questionGroup: 'autonomy' });
+      const belongingQuestion = makeQuestion({ id: 'q-belonging', questionGroup: 'belonging' });
+      const backlogRepo = makeBacklogRepo({
+        resolveIgnoredEntries: vi.fn().mockResolvedValue([{
+          questionId: 'q-autonomy',
+          newPosition: 7,
+          ignoreCount: 1,
+        }]),
+      });
+      const service = new PulseBacklogService(
+        backlogRepo,
+        makeSurveyRepo(makeWindow(), [autonomyQuestion, belongingQuestion]),
+      );
+
+      await service.getNextProbeQuestion('u-1', 't-1');
+
+      expect(backlogRepo.deprioritizeQuestionGroup).toHaveBeenCalledWith('u-1', 'w-1', 'autonomy');
+      const backlogRepoAny = backlogRepo as unknown as Record<string, { mock: { invocationCallOrder: number[] } }>;
+      const deprioritizeOrder = backlogRepoAny.deprioritizeQuestionGroup.mock.invocationCallOrder[0];
+      const findOrder = backlogRepoAny.findNextPending.mock.invocationCallOrder[0];
+      expect(deprioritizeOrder).toBeLessThan(findOrder);
+    });
+
     it('uses ignoreWindowHours from config when calling resolveIgnoredEntries', async () => {
       const backlogRepo = makeBacklogRepo();
       const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow()));
@@ -217,6 +243,19 @@ describe('PulseBacklogService', () => {
       expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, undefined);
     });
 
+    it('does NOT unlock engagement after periodEnd has passed', async () => {
+      const backlogRepo = makeBacklogRepo();
+      const service = new PulseBacklogService(
+        backlogRepo,
+        makeSurveyRepo(makeWindow({ periodEnd: new Date(Date.now() - 86_400_000) })),
+      );
+
+      await service.getNextProbeQuestion('u-1', 't-1');
+
+      expect(backlogRepo.unlockEngagementIfNeeded).not.toHaveBeenCalled();
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, undefined);
+    });
+
     it('does NOT pass engagement questions to initializeIfNeeded', async () => {
       const engQuestion = makeQuestion({ id: 'q-eng', questionGroup: 'engagement', displayOrder: 30 });
       const regularQuestion = makeQuestion({ id: 'q-1', questionGroup: 'autonomy' });
@@ -274,6 +313,23 @@ describe('PulseBacklogService', () => {
       await service.markQuestionCovered('u-1', 'w-1', 'q-1', 3);
 
       expect(backlogRepo.markDone).toHaveBeenCalledWith('u-1', 'w-1', 'q-1', 3);
+    });
+
+    it('prioritizes the covered question group for the next pending probe', async () => {
+      const backlogRepo = {
+        ...makeBacklogRepo(),
+        prioritizeQuestionGroup: vi.fn().mockResolvedValue(undefined),
+      };
+      const questions = [
+        makeQuestion({ id: 'q-autonomy', questionGroup: 'autonomy' }),
+        makeQuestion({ id: 'q-belonging-1', questionGroup: 'belonging' }),
+        makeQuestion({ id: 'q-belonging-2', questionGroup: 'belonging' }),
+      ];
+      const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), questions));
+
+      await service.markQuestionCovered('u-1', 'w-1', 'q-belonging-1', 1);
+
+      expect(backlogRepo.prioritizeQuestionGroup).toHaveBeenCalledWith('u-1', 'w-1', 'belonging');
     });
   });
 });

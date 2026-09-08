@@ -17,6 +17,7 @@ export const surveyGroupStates = pgTable(
     aiSummary: text('ai_summary'),
     employeeScore: numeric('employee_score', { precision: 5, scale: 2 }),
     personalRecs: jsonb('personal_recs'),
+    deidentificationDecision: jsonb('deidentification_decision'),
     confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
     reportingDisclosureVersion: text('reporting_disclosure_version'),
     reportingDisclosureShownAt: timestamp('reporting_disclosure_shown_at', { withTimezone: true }),
@@ -24,6 +25,8 @@ export const surveyGroupStates = pgTable(
     confirmationPromptMessageId: uuid('confirmation_prompt_message_id')
       .unique()
       .references(() => messages.id),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    withdrawalMessageId: uuid('withdrawal_message_id').references(() => messages.id),
     reportSentAt: timestamp('report_sent_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -41,6 +44,10 @@ export const surveyGroupStates = pgTable(
     confirmedDisplayedSummaryProof: check(
       'survey_group_states_confirmed_displayed_summary_proof_check',
       sql`${t.status} <> 'confirmed' OR (${t.confirmationPromptMessageId} IS NOT NULL AND ${t.aiSummary} IS NOT NULL AND btrim(${t.aiSummary}) <> '')`,
+    ),
+    confirmedDeidentificationProof: check(
+      'survey_group_states_confirmed_deidentification_proof_check',
+      sql`${t.status} <> 'confirmed' OR (${t.deidentificationDecision}->>'status' = 'accepted' AND ${t.deidentificationDecision}->>'policyVersion' = 'deidentification-v1' AND jsonb_typeof(${t.deidentificationDecision}->'reasons') = 'array' AND jsonb_array_length(${t.deidentificationDecision}->'reasons') = 0)`,
     ),
   }),
 );

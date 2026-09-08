@@ -42,6 +42,7 @@ export interface SurveyQuestionForEvaluation {
   positiveIndicators: string[];
   negativeIndicators: string[];
   contraindications: string[];
+  responseType: string;
 }
 
 export interface ReplyPlan {
@@ -125,7 +126,7 @@ export interface ResponseContext {
    */
   confirmationRequest?: {
     questionGroup: string;
-    evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string }>;
+    evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string; sourceMessageIds?: string[] }>;
   };
   /**
    * OBSERVED user style (EMA, per-axis 0..1) + adaptation weight (0..0.4) + a few of

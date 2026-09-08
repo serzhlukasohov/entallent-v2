@@ -70,12 +70,12 @@ Use this file to turn agent misses into harness improvements.
 - Status: fixed
 
 ## 2026-09-03: root integration command silently drops database environment
-- Symptom: `pnpm exec dotenv -e .env -- pnpm test:integration` exits successfully while all 19 database tests are skipped because Turbo does not pass `DATABASE_URL` to the package task.
+- Symptom: `pnpm exec dotenv -e .env -- pnpm test:integration` exits successfully while all database tests are skipped because Turbo does not pass `DATABASE_URL` to the package task.
 - Expected: With a local database URL present, the documented root command should execute the integration tests or fail clearly.
 - Root cause layer: workflow
-- Harness fix: Declare the integration environment in Turbo or load `.env` inside the database integration command; fail when every integration test is skipped in an intended DB run.
-- Regression check: `pnpm exec dotenv -e .env -- pnpm test:integration` must report 19 executed tests, not 19 skipped.
-- Status: open
+- Harness fix: `turbo.json` declares `DATABASE_URL` for `test:integration`, so package integration tests receive the database URL.
+- Regression check: `pnpm exec dotenv -e .env -- pnpm test:integration` must report 25 executed tests, not 25 skipped.
+- Status: fixed
 
 ## 2026-08-19: TS quality gate misclassifies repeated memory assertion
 - Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console again mislabeled the product assertion as `infra_failed`, causing an unnecessary retry.
@@ -148,6 +148,33 @@ Use this file to turn agent misses into harness improvements.
 - Status: fixed
 
 ## Fixed Failures
+
+## 2026-09-07: Homebrew Node drift left active node linked to a removed dylib
+
+- Symptom: After installing `node@24`, active Homebrew `node` still pointed at `node` 25.2.1 and failed with `Library not loaded: /opt/homebrew/opt/simdjson/lib/libsimdjson.29.dylib`.
+- Expected: The repo shell uses a working Node 24 runtime matching CI before running pnpm/tsx gates.
+- Root cause layer: environment
+- Harness fix: Add `.node-version`/`.nvmrc`, install `node@24`, and link Homebrew to `node@24` so `node`, `npm`, and `corepack` resolve to the CI major.
+- Regression check: `node -v`, `pnpm -v`, and `pnpm run agent:preflight`.
+- Status: fixed
+
+## 2026-09-07: Full prepush aggregates a MAF script under non-MAF task boundaries
+
+- Symptom: `pnpm prepush` passed typecheck, lint, and package tests, then reached `test:scripts`; rerunning `pnpm test:scripts` outside the sandbox was rejected because the aggregate includes `scripts/live-maf-primary-app-smoke.test.ts` while the task explicitly prohibited MAF and agent-service work.
+- Expected: A non-MAF implementation slice should have a deterministic prepush-equivalent gate that does not execute MAF smoke scripts.
+- Root cause layer: workflow
+- Harness fix: Split `test:scripts` into MAF and non-MAF script-test commands, add `prepush:non-maf`, and add `agent:preflight` so scoped verification does not cross MAF boundaries.
+- Regression check: `pnpm run agent:preflight` and `pnpm run prepush:non-maf`.
+- Status: fixed
+
+## 2026-09-07: Parallel BMad memlog appends race on a shared temp file
+
+- Symptom: Two concurrent `memlog.py append` calls to the same workspace caused one append to fail with `.memlog.md.tmp` missing during `os.replace`.
+- Expected: BMad decision logging should be append-only and reliable.
+- Root cause layer: tooling
+- Harness fix: Never run multiple `memlog.py append` calls for the same workspace in parallel; append sequentially.
+- Regression check: BMad spec self-validation entries are appended one at a time.
+- Status: fixed
 
 ## 2026-09-05: confirmation summary label leaked into Slack text
 
@@ -309,7 +336,7 @@ Use this file to turn agent misses into harness improvements.
 - Root cause layer: architecture
 - Harness fix: Remove the literal English confirmation exemplar, disable ordinary follow-up after a successful confirmation, and revalidate the corrected zero-question draft at the provider boundary.
 - Regression check: Focused orchestrator/provider tests plus a real Slack confirmation cycle.
-- Status: open
+- Status: fixed
 
 ## 2026-09-05: Documented deterministic harness command does not exist
 
@@ -319,3 +346,84 @@ Use this file to turn agent misses into harness improvements.
 - Harness fix: Use the current root `pnpm prepush` gate and verify available scripts from `package.json` before copying older handoff commands.
 - Regression check: `jq -e '.scripts.prepush and (.scripts["harness:check"] | not)' package.json` followed by `pnpm prepush`.
 - Status: fixed
+
+## 2026-09-06: De-identification gate missed delivery activation and strict accepted proof
+
+- Symptom: Initial typed gate allowed a delivered staged confirmation to become `awaiting_confirmation` without row/message `deidentificationDecision`, accepted malformed decisions with non-empty reasons, and omitted known team identifiers.
+- Expected: No candidate reaches confirmation or reporting unless TypeScript records `accepted`, exact `deidentification-v1`, and `reasons: []`, bound to the delivered candidate.
+- Root cause layer: architecture
+- Harness fix: Share one accepted-proof predicate across stage, delivery activation, confirm, report projection, and parser/type guard; include existing team identifiers in policy input.
+- Regression check: `pnpm --filter @entalent/application test -- src/utils/deidentification-policy.test.ts src/use-cases/conversation-orchestrator.test.ts` and `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts`
+- Status: fixed
+
+## 2026-09-06: Withdrawal columns appended to already-applied migration
+
+- Symptom: Database integration failed after adding `withdrawn_at` and `withdrawal_message_id` to existing `0012` because the local test database had already recorded that migration.
+- Expected: New persisted columns apply through a forward migration when any environment may have already applied the previous migration.
+- Root cause layer: workflow
+- Harness fix: Before editing an uncommitted migration, check whether local integration DB has recorded it; if yes, add the new persistence change as the next migration.
+- Regression check: `pnpm exec dotenv -e .env -- pnpm --filter @entalent/database test:integration`
+- Status: fixed
+
+## 2026-09-06: Dependent package checks used missing or stale dist output
+
+- Symptom: Parallel affected builds briefly failed with missing `@entalent/contracts` / `@entalent/ai-openai` declarations while sibling builds rewrote `dist`; later worker typecheck also missed a newly exported application type until application was rebuilt.
+- Expected: Package builds that consume sibling package `dist` artifacts run after those dependencies finish building.
+- Root cause layer: workflow
+- Harness fix: After changing a package export, build that dependency before any consumer typecheck/build; keep parallelism only for checks that do not read sibling `dist` output.
+- Regression check: Sequential dependency builds, then `pnpm --filter @entalent/worker typecheck` and `pnpm --filter @entalent/worker build`.
+- Status: fixed
+
+## 2026-09-06: Exclusion verdict schema lacked prompt semantics
+
+- Symptom: Confirmation interpreter schema accepted `exclude`, but the system prompt still listed only `agree`, `correct`, and `unclear` verdict meanings.
+- Expected: Prompt and typed schema define the same machine-readable verdict set so explicit withdrawal language can reach the TypeScript withdrawal path.
+- Root cause layer: architecture
+- Harness fix: Add prompt-rendering regression test for new structured verdict semantics, not only parser/schema tests.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- src/prompts/confirm-interpret.test.ts src/openai-provider.test.ts`
+- Status: fixed
+
+## 2026-09-06: Malformed awaiting de-identification proof could hold confirmation slot
+
+- Symptom: A delivered awaiting group with missing or malformed accepted proof returned early in the orchestrator without clearing `confirmation_prompt_message_id`, blocking later pending confirmations for the user.
+- Expected: Confirmation cannot proceed without typed accepted proof, and invalid awaiting proof returns the row to pending so a new accepted candidate can be generated.
+- Root cause layer: architecture
+- Harness fix: Add orchestrator regression for awaiting group state with `deidentificationDecision: null`.
+- Regression check: `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts`
+- Status: fixed
+
+## 2026-09-06: Cohort membership patch changed the wrong focused test mock
+
+- Symptom: The focused team repository suite failed with `this.db.client.select is not a function` after the test mock for the current-membership lookup was changed to `selectDistinct`, while only the historical cycle lookup had changed in production.
+- Expected: The patch and its test double target the exact changed method without altering a sibling query path.
+- Root cause layer: workflow
+- Harness fix: Use symbol-qualified CodeGraph context before each same-file patch and rerun the smallest affected test immediately after the edit.
+- Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/team.repository.test.ts`
+- Status: fixed
+
+## 2026-09-06: BMad uv activation could not initialize the home cache in sandbox
+
+- Symptom: `uv run _bmad/scripts/resolve_customization.py` failed with `Operation not permitted` while opening `/Users/serzh/.cache/uv/sdists-v9/.git`.
+- Expected: BMad customization resolution should run inside the workspace sandbox without requiring writes to the user cache.
+- Root cause layer: tooling
+- Harness fix: Set `UV_CACHE_DIR` to a task-scoped writable directory under `/private/tmp` for BMad `uv run` commands.
+- Regression check: `UV_CACHE_DIR=/private/tmp/entalent-bmad-uv-cache uv run _bmad/scripts/resolve_customization.py --skill .agents/skills/bmad-spec --key workflow`
+- Status: fixed
+
+## 2026-09-06: Grill decision patches repeatedly failed before application
+
+- Symptom: Multiple documentation patches assumed non-matching paragraph context or had malformed orchestration/patch syntax. Failed attempts did not change files partially.
+- Expected: Decision capture should use the current on-disk requirement text and apply atomically.
+- Root cause layer: tooling/context
+- Harness fix: Read exact target paragraphs in the immediately preceding command, then apply one file per patch with a validated terminator and minimal JavaScript wrapper.
+- Regression check: `git diff --check`
+- Status: fixed
+
+## 2026-09-06: BMad spec customization references missing project context
+
+- Symptom: BMad spec activation resolved `file:{project-root}/project-context.md` as a persistent fact, but that file does not exist in the checkout.
+- Expected: Every configured persistent-fact file exists and can be loaded before the workflow starts.
+- Root cause layer: workflow/configuration
+- Harness fix: Either generate the canonical root project context or remove the stale persistent-fact reference after confirming which source should own it.
+- Regression check: `test -f project-context.md`
+- Status: open

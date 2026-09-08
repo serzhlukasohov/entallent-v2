@@ -40,6 +40,7 @@ function baseMocks() {
     detectRisk: vi.fn(),
     generateResponse: vi.fn().mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false }),
     interpretConfirmationResponse: vi.fn(),
+    scoreSentiment: vi.fn().mockResolvedValue(0.9),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,10 +50,18 @@ function baseMocks() {
     findAwaitingConfirmationGroups: vi.fn().mockResolvedValue([]),
     findOrCreateActiveWindow: vi.fn().mockResolvedValue({ id: 'w-1' }),
     findQuestionsForWindow: vi.fn().mockResolvedValue([{ id: 'q-1', stableKey: 'q12', questionGroup: 'autonomy' }]),
-    findEvidenceForQuestion: vi.fn().mockResolvedValue([{ evidenceSummary: 'values ownership', polarity: 'positive', createdAt: new Date() }]),
+    findEvidenceForQuestion: vi.fn().mockResolvedValue([{
+      evidenceSummary: 'values ownership',
+      polarity: 'positive',
+      createdAt: new Date(),
+      sourceMessageIds: ['m-1'],
+    }]),
+    findAssessmentsForWindow: vi.fn().mockResolvedValue([]),
     upsertGroupState: vi.fn().mockResolvedValue({}),
+    recordGroupDeidentificationDecision: vi.fn().mockResolvedValue(true),
     stageGroupConfirmation: vi.fn().mockResolvedValue(true),
     transitionAwaitingGroupState: vi.fn().mockResolvedValue(true),
+    withdrawGroupState: vi.fn().mockResolvedValue(true),
     confirmGroupState: vi.fn().mockResolvedValue(true),
     findTeamByMemberId: vi.fn().mockResolvedValue(null),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,6 +74,12 @@ function baseMocks() {
 const INPUT = {
   messageId: 'm-1', conversationId: 'c-1', userId: 'u-1', tenantId: 't-1',
   externalWorkspaceId: 'ws', externalConversationId: 'ec', traceId: 'tr',
+};
+
+const ACCEPTED_DEIDENTIFICATION = {
+  status: 'accepted' as const,
+  policyVersion: 'deidentification-v1' as const,
+  reasons: [],
 };
 
 function surveyReadyHistory() {
@@ -454,6 +469,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       {
         surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
         aiSummary: 's', confirmationSummary: 's', confirmationPromptMessageId: 'out-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
       },
     ]);
     m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'unclear' });
@@ -566,6 +582,11 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledWith(expect.objectContaining({
       questionGroup: 'belonging',
       confirmationPromptMessageId: 'out-1',
+      deidentificationDecision: {
+        status: 'accepted',
+        policyVersion: 'deidentification-v1',
+        reasons: [],
+      },
     }));
   });
 
@@ -614,6 +635,11 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledWith(expect.objectContaining({
       questionGroup: 'autonomy',
       confirmationPromptMessageId: 'out-1',
+      deidentificationDecision: {
+        status: 'accepted',
+        policyVersion: 'deidentification-v1',
+        reasons: [],
+      },
     }));
   });
 
@@ -652,6 +678,11 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
       questionPolicyReason: 'confirmation_requires_question',
     });
     expect(metadata.confirmationSummary).toBe('You value ownership.');
+    expect(metadata.deidentificationDecision).toEqual({
+      status: 'accepted',
+      policyVersion: 'deidentification-v1',
+      reasons: [],
+    });
     expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledWith({
       surveyWindowId: 'w-1',
       conversationId: 'c-1',
@@ -660,8 +691,112 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
       questionGroup: 'autonomy',
       expectedUpdatedAt: new Date('2026-09-03T09:59:00.000Z'),
       confirmationPromptMessageId: 'out-1',
+      deidentificationDecision: {
+        status: 'accepted',
+        policyVersion: 'deidentification-v1',
+        reasons: [],
+      },
     });
     expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalled();
+  });
+
+  it('records rejected de-identification and does not stage an identifying confirmation candidate', async () => {
+    const m = baseMocks();
+    const updatedAt = new Date('2026-09-03T09:59:00.000Z');
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'autonomy',
+        updatedAt,
+      },
+    ]);
+    m.aiProvider.generateResponse
+      .mockResolvedValueOnce({
+        text: 'Alice is blocked by Project Apollo on 2026-09-03. Did I get that right?',
+        confirmationSummary: 'Alice is blocked by Project Apollo on 2026-09-03.',
+        confidence: 0.9,
+        containsSurveyProbe: false,
+      })
+      .mockResolvedValueOnce({
+        text: 'I hear you. We can keep talking through what would help.',
+        confidence: 0.9,
+        containsSurveyProbe: false,
+      });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('I hear you. We can keep talking through what would help.');
+    expect(m.surveyRepo.recordGroupDeidentificationDecision).toHaveBeenCalledWith({
+      surveyWindowId: 'w-1',
+      userId: 'u-1',
+      tenantId: 't-1',
+      questionGroup: 'autonomy',
+      expectedUpdatedAt: updatedAt,
+      deidentificationDecision: {
+        status: 'rejected',
+        policyVersion: 'deidentification-v1',
+        reasons: ['exact_date_or_time', 'project_or_customer_identifier'],
+      },
+    });
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.confirmationSummary).toBeUndefined();
+  });
+
+  it('rejects a confirmation candidate containing the known team identifier', async () => {
+    const m = baseMocks();
+    const updatedAt = new Date('2026-09-03T09:59:00.000Z');
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'autonomy',
+        updatedAt,
+      },
+    ]);
+    m.surveyRepo.findTeamByMemberId.mockResolvedValue({
+      teamId: 'team-1',
+      teamName: 'Platform Team',
+      managerSlackUserId: 'U_MANAGER',
+      activeTeamSize: 3,
+      memberUserIds: ['u-1', 'u-2', 'u-3'],
+    });
+    m.aiProvider.generateResponse
+      .mockResolvedValueOnce({
+        text: 'Platform Team feels blocked by unclear ownership. Did I get that right?',
+        confirmationSummary: 'Platform Team feels blocked by unclear ownership.',
+        confidence: 0.9,
+        containsSurveyProbe: false,
+      })
+      .mockResolvedValueOnce({
+        text: 'I hear you. We can keep working through ownership.',
+        confidence: 0.9,
+        containsSurveyProbe: false,
+      });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.recordGroupDeidentificationDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deidentificationDecision: {
+          status: 'rejected',
+          policyVersion: 'deidentification-v1',
+          reasons: ['known_identifier'],
+        },
+      }),
+    );
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
   });
 
   it('rejects confirmation text that exposes the confirmationSummary label', async () => {
@@ -1084,9 +1219,10 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
         aiSummary: 'A mutable legacy summary.',
         confirmationSummary: 'The exact summary shown to the employee.',
         confirmationPromptMessageId: 'out-confirmation-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
       },
     ]);
-    m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1' });
+    m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1', reportingCohortId: 'cohort-1' });
     m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -1117,13 +1253,93 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
         REPORTING_DISCLOSURE_VERSION,
         INBOUND_OCCURRED_AT,
       );
-    expect(m.outbox.enqueueGroupReport).toHaveBeenCalled();
-    expect(m.surveyRepo.findTeamByMemberId).toHaveBeenCalledWith('u-1', 't-1');
+    expect(m.outbox.enqueueGroupReport).toHaveBeenCalledWith({
+      reportingCohortId: 'cohort-1',
+      tenantId: 't-1',
+      teamId: 'team-1',
+      questionGroup: 'growth',
+      traceId: 'group-report-cohort-1-growth',
+    });
+    expect(m.surveyRepo.findTeamByMemberId).toHaveBeenCalledWith('u-1', 't-1', 'w-1');
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(ctxArg.topicConfirmed).toMatchObject({ questionGroup: 'growth' });
     expect(strategyArg.includeFollowUpQuestion).toBe(false);
     expect(ctxArg.replyPlan.questionPolicy.maxQuestions).toBe(0);
+  });
+
+  it('uses persisted explicit 1-10 answers for engagement employee score', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'engagement',
+        aiSummary: null,
+        confirmationSummary: 'Your engagement answers are ready.',
+        confirmationPromptMessageId: 'out-confirmation-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
+      },
+    ]);
+    m.surveyRepo.findQuestionsForWindow.mockResolvedValue([
+      { id: 'q-eng-1', stableKey: 'eng_1', questionGroup: 'engagement' },
+      { id: 'q-eng-2', stableKey: 'eng_2', questionGroup: 'engagement' },
+      { id: 'q-eng-3', stableKey: 'eng_3', questionGroup: 'engagement' },
+    ]);
+    m.surveyRepo.findAssessmentsForWindow.mockResolvedValue([
+      { surveyQuestionId: 'q-eng-1', status: 'scored', score: 4 },
+      { surveyQuestionId: 'q-eng-2', status: 'scored', score: 7 },
+      { surveyQuestionId: 'q-eng-3', status: 'scored', score: 10 },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.confirmGroupState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questionGroup: 'engagement',
+        employeeScore: 7,
+      }),
+    );
+    expect(m.aiProvider.scoreSentiment).not.toHaveBeenCalled();
+  });
+
+  it('clears an awaiting confirmation that lacks accepted de-identification proof', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1',
+        userId: 'u-1',
+        tenantId: 't-1',
+        questionGroup: 'growth',
+        aiSummary: 's',
+        confirmationSummary: 's',
+        confirmationPromptMessageId: 'out-1',
+        deidentificationDecision: null,
+      },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith({
+      surveyWindowId: 'w-1',
+      userId: 'u-1',
+      tenantId: 't-1',
+      questionGroup: 'growth',
+      confirmationPromptMessageId: 'out-1',
+      status: 'pending_confirmation',
+    });
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
   });
 
   it('uses the interpreted displayed summary as the confirmation compare-and-set token', async () => {
@@ -1138,6 +1354,7 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
         aiSummary: null,
         confirmationSummary: storedSummary,
         confirmationPromptMessageId: 'out-confirmation-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
       },
     ]);
     m.surveyRepo.findTeamByMemberId.mockResolvedValue({ teamId: 'team-1' });
@@ -1167,6 +1384,7 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
       {
         surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
         aiSummary: null, confirmationSummary: 'Summary A', confirmationPromptMessageId: 'out-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
       },
     ]);
     m.surveyRepo.confirmGroupState.mockResolvedValue(false);
@@ -1194,6 +1412,7 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
       {
         surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
         aiSummary: 's', confirmationSummary: 's', confirmationPromptMessageId: 'out-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
       },
     ]);
     m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'correct', correctionNote: 'not about promotion' });
@@ -1207,6 +1426,37 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
     expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(
       expect.objectContaining({ questionGroup: 'growth', status: 'in_progress' }),
     );
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it('exclude → withdraws group state and does not confirm or report', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
+        aiSummary: 's', confirmationSummary: 's', confirmationPromptMessageId: 'out-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
+      },
+    ]);
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'exclude' });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.withdrawGroupState).toHaveBeenCalledWith({
+      surveyWindowId: 'w-1',
+      userId: 'u-1',
+      tenantId: 't-1',
+      questionGroup: 'growth',
+      confirmationPromptMessageId: 'out-1',
+      conversationId: 'c-1',
+      withdrawalMessageId: 'm-1',
+      withdrawnAt: INBOUND_OCCURRED_AT,
+    });
+    expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
   });
 

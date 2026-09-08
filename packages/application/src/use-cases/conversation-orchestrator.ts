@@ -32,6 +32,11 @@ import {
   appendReportingDisclosure,
   getReportingDisclosureText,
 } from '../utils/reporting-disclosure';
+import {
+  type DeidentificationDecision,
+  evaluateDeidentification,
+  isAcceptedDeidentificationDecision,
+} from '../utils/deidentification-policy';
 import type {
   ProcessMessageRequest,
   ProcessMessageResult,
@@ -335,7 +340,7 @@ export class ConversationOrchestrator {
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
     const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
     const sessionStart = isSessionStart(lastPriorAt, new Date());
-    const replyPlan = confirmationRequest
+    let replyPlan = confirmationRequest
       ? undefined
       : buildReplyPlan({
           classification,
@@ -344,7 +349,7 @@ export class ConversationOrchestrator {
           surveyProbeQuestionId: probeQuestion?.id,
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
-    const strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
+    let strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
     const shouldOfferReportingDisclosure =
@@ -363,7 +368,7 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
-    const generated = canAnswerReportingExplanation
+    let generated = canAnswerReportingExplanation
       ? {
           text: getReportingDisclosureText(languagePolicy.responseLanguage),
           confidence: 1,
@@ -390,11 +395,12 @@ export class ConversationOrchestrator {
       replyBrief: replyPlan,
       replyPlan,
         });
-    const shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
-    const responseText = shouldAppendReportingDisclosure
+    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
+    let responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
-    const confirmationSummary = confirmationRequest ? generated.confirmationSummary : undefined;
+    let confirmationSummary = confirmationRequest ? generated.confirmationSummary : undefined;
+    let deidentificationDecision: Extract<DeidentificationDecision, { status: 'accepted' }> | undefined;
     if (
       confirmationRequest
       && (
@@ -405,6 +411,70 @@ export class ConversationOrchestrator {
       )
     ) {
       throw new Error('Confirmation response requires a non-empty confirmationSummary copied verbatim as a proper substring of text');
+    }
+    if (confirmationRequest && surfacedGroup && confirmationSummary && this.surveyRepo) {
+      const team = await this.surveyRepo.findTeamByMemberId(userId, tenantId);
+      const decision = evaluateDeidentification({
+        text: confirmationSummary,
+        knownIdentifiers: [
+          userName,
+          input.userId,
+          input.tenantId,
+          input.externalWorkspaceId,
+          input.externalConversationId,
+          team?.teamId,
+          team?.teamName,
+          team?.managerSlackUserId,
+          ...(team?.memberUserIds ?? []),
+        ].filter((identifier): identifier is string => typeof identifier === 'string' && identifier.trim().length > 0),
+        sourceMessageIds: confirmationRequest.evidence.flatMap((item) => item.sourceMessageIds ?? []),
+      });
+
+      if (isAcceptedDeidentificationDecision(decision)) {
+        deidentificationDecision = decision;
+      } else {
+        await this.surveyRepo.recordGroupDeidentificationDecision({
+          surveyWindowId: surfacedGroup.surveyWindowId,
+          userId: surfacedGroup.userId,
+          tenantId: surfacedGroup.tenantId,
+          questionGroup: surfacedGroup.questionGroup,
+          expectedUpdatedAt: surfacedGroup.updatedAt,
+          deidentificationDecision: decision,
+        });
+        confirmationRequest = undefined;
+        surfacedGroup = undefined;
+        confirmationSummary = undefined;
+        replyPlan = buildReplyPlan({
+          classification,
+          memoryItems,
+          includeFollowUpQuestion: applyTerseStyle(
+            buildReplyStrategy(classification, risk, undefined),
+            memoryEnabled ? profile : null,
+          ).includeFollowUpQuestion,
+          surveyProbeQuestionId: undefined,
+          sensitiveMode: false,
+        });
+        strategy = applyReplyPlanToStrategy(
+          applyTerseStyle(buildReplyStrategy(classification, risk, undefined), memoryEnabled ? profile : null),
+          replyPlan,
+        );
+        generated = await this.aiProvider.generateResponse(turns, strategy, {
+          userName,
+          languagePolicy,
+          memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
+          reminderConfirmation,
+          topicConfirmed: typeof confirmedGroup === 'string'
+            ? { questionGroup: confirmedGroup }
+            : undefined,
+          styleAdaptation,
+          localTime: describeLocalTime(conversation.userTimezone),
+          isSessionStart: sessionStart,
+          replyBrief: replyPlan,
+          replyPlan,
+        });
+        responseText = generated.text;
+        shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage));
+      }
     }
     const containsSurveyProbe =
       probeQuestion !== null
@@ -431,12 +501,16 @@ export class ConversationOrchestrator {
         }),
         ...(shouldAppendReportingDisclosure
           ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
-          : {}),
+            : {}),
         ...(confirmationSummary ? { confirmationSummary } : {}),
+        ...(deidentificationDecision ? { deidentificationDecision } : {}),
       },
     });
 
     if (surfacedGroup && this.surveyRepo) {
+      if (!deidentificationDecision) {
+        throw new Error(`Confirmation candidate lacks accepted de-identification: ${surfacedGroup.questionGroup}`);
+      }
       const staged = await this.surveyRepo.stageGroupConfirmation({
         surveyWindowId: surfacedGroup.surveyWindowId,
         conversationId,
@@ -445,6 +519,7 @@ export class ConversationOrchestrator {
         questionGroup: surfacedGroup.questionGroup,
         expectedUpdatedAt: surfacedGroup.updatedAt,
         confirmationPromptMessageId: outbound.id,
+        deidentificationDecision,
       });
       if (!staged) {
         throw new Error(`Confirmation candidate became stale: ${surfacedGroup.questionGroup}`);
@@ -538,10 +613,35 @@ export class ConversationOrchestrator {
     if (!group.confirmationSummary || !group.confirmationPromptMessageId) {
       return { confirmedGroup: false, awaitingPresent: true };
     }
+    if (!isAcceptedDeidentificationDecision(group.deidentificationDecision)) {
+      await surveyRepo.transitionAwaitingGroupState({
+        surveyWindowId: group.surveyWindowId,
+        userId: group.userId,
+        tenantId: group.tenantId,
+        questionGroup: group.questionGroup,
+        confirmationPromptMessageId: group.confirmationPromptMessageId,
+        status: 'pending_confirmation',
+      });
+      return { confirmedGroup: false, awaitingPresent: true };
+    }
 
     const verdict = await this.aiProvider.interpretConfirmationResponse(turns, group.confirmationSummary);
 
     if (verdict.verdict === 'unclear') return { confirmedGroup: false, awaitingPresent: true };
+
+    if (verdict.verdict === 'exclude') {
+      await surveyRepo.withdrawGroupState({
+        surveyWindowId: group.surveyWindowId,
+        userId: group.userId,
+        tenantId: group.tenantId,
+        questionGroup: group.questionGroup,
+        confirmationPromptMessageId: group.confirmationPromptMessageId,
+        conversationId: input.conversationId,
+        withdrawalMessageId: input.messageId,
+        withdrawnAt: confirmingMessageOccurredAt,
+      });
+      return { confirmedGroup: false, awaitingPresent: true };
+    }
 
     if (verdict.verdict === 'correct') {
       await surveyRepo.transitionAwaitingGroupState({
@@ -574,16 +674,19 @@ export class ConversationOrchestrator {
       reportingDisclosureVersion: reportingDisclosureReceipt.version,
       reportingDisclosureShownAt: reportingDisclosureReceipt.shownAt,
       confirmationMessageId: input.messageId,
+      deidentificationDecision: group.deidentificationDecision,
     });
 
     if (!confirmed) return { confirmedGroup: false, awaitingPresent: true };
 
-    const team = await surveyRepo.findTeamByMemberId(input.userId, input.tenantId);
-    if (team) {
+    const team = await surveyRepo.findTeamByMemberId(input.userId, input.tenantId, group.surveyWindowId);
+    if (team?.reportingCohortId) {
       await this.outbox.enqueueGroupReport({
+        reportingCohortId: team.reportingCohortId,
+        tenantId: input.tenantId,
         teamId: team.teamId,
         questionGroup: group.questionGroup,
-        traceId: `group-report-${group.surveyWindowId}-${group.questionGroup}`,
+        traceId: `group-report-${team.reportingCohortId}-${group.questionGroup}`,
       });
     }
 
@@ -604,19 +707,17 @@ export class ConversationOrchestrator {
 
     let employeeScore: number | undefined;
     if (questionGroup === 'engagement') {
-      const evidenceItems = await surveyRepo.findQuestionsForWindow(windowId)
-        .then(async (questions) => {
-          const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
-          const evidenceList = await Promise.all(
-            groupQs.map((q) => surveyRepo.findEvidenceForQuestion(userId, q.id, windowId)),
-          );
-          return evidenceList.flat();
-        });
-      const numericValues = evidenceItems
-        .filter((e) => e.polarity === 'positive' || e.polarity === 'neutral' || e.polarity === 'negative')
-        .slice(0, 3)
-        .map((e) => ({ positive: 10, neutral: 5, negative: 0, mixed: 5 }[e.polarity] ?? 5));
-      if (numericValues.length === 3) {
+      const questions = await surveyRepo.findQuestionsForWindow(windowId);
+      const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
+      const assessmentScores = new Map(
+        (await surveyRepo.findAssessmentsForWindow(windowId)).map((a) => [a.surveyQuestionId, a.score]),
+      );
+      const numericValues = groupQs
+        .map((q) => assessmentScores.get(q.id))
+        .filter((score): score is number =>
+          typeof score === 'number' && Number.isInteger(score) && score >= 1 && score <= 10,
+        );
+      if (groupQs.length === 3 && numericValues.length === 3) {
         employeeScore = computeEngagementIndex(numericValues[0], numericValues[1], numericValues[2]);
       }
     } else {
@@ -642,15 +743,22 @@ export class ConversationOrchestrator {
     userId: string,
     windowId: string,
     questionGroup: string,
-  ): Promise<Array<{ stableKey: string; evidenceSummary: string; polarity: string }>> {
+  ): Promise<Array<{ stableKey: string; evidenceSummary: string; polarity: string; sourceMessageIds: string[] }>> {
     if (!this.surveyRepo) return [];
     const questions = await this.surveyRepo.findQuestionsForWindow(windowId);
     const groupQs = questions.filter((q) => q.questionGroup === questionGroup);
-    const out: Array<{ stableKey: string; evidenceSummary: string; polarity: string }> = [];
+    const out: Array<{ stableKey: string; evidenceSummary: string; polarity: string; sourceMessageIds: string[] }> = [];
     for (const q of groupQs) {
       const evidence = await this.surveyRepo.findEvidenceForQuestion(userId, q.id, windowId);
       const latest = [...evidence].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
-      if (latest) out.push({ stableKey: q.stableKey, evidenceSummary: latest.evidenceSummary, polarity: latest.polarity });
+      if (latest) {
+        out.push({
+          stableKey: q.stableKey,
+          evidenceSummary: latest.evidenceSummary,
+          polarity: latest.polarity,
+          sourceMessageIds: latest.sourceMessageIds ?? [],
+        });
+      }
     }
     return out;
   }

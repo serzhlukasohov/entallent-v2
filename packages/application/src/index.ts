@@ -12,7 +12,7 @@ export type { GoalRepositoryPort, SaveGoalParams } from './ports/goal.repository
 export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from './ports/scheduled-action.repository.port';
 export type { FollowUpContextPort, FollowUpContextData } from './ports/follow-up-context.port';
 export type { ProactiveSchedulerRepositoryPort, FindCheckInCandidatesParams, CheckInCandidate, CheckInEnqueuePort, CheckInEnqueuePayload } from './ports/proactive-scheduler.repository.port';
-export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams, StageGroupConfirmationParams, TransitionAwaitingGroupStateParams, ConfirmGroupStateParams } from './ports/survey.repository.port';
+export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams, StageGroupConfirmationParams, RecordGroupDeidentificationDecisionParams, TransitionAwaitingGroupStateParams, WithdrawGroupStateParams, ConfirmGroupStateParams, FindConfirmedGroupStatesParams, ConfirmedGroupReportStateRecord, SurveyTeamRecord, OpenSurveyReportingCycleParams, FindReportingCohortsReadyForFinalReportsParams, ExpireTemporaryGroupStatesForClosedCohortsParams } from './ports/survey.repository.port';
 export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';
 export type { PulseBacklogRepositoryPort, PulseBacklogRecord, ResolvedIgnore, ProactivePulseConfig } from './ports/pulse-backlog.repository.port';
 export { DEFAULT_PULSE_CONFIG } from './ports/pulse-backlog.repository.port';
@@ -24,8 +24,11 @@ export { FEATURE_FLAGS, RUNTIME_CONTROL_FLAGS } from './ports/feature-flag.port'
 export type { EscalationPort, EscalationEvent } from './ports/escalation.port';
 export type { EncryptionPort } from './ports/encryption.port';
 export type { DataDeletionRepositoryPort } from './ports/data-deletion.repository.port';
+export type { RetentionCleanupRepositoryPort, RetentionCleanupParams, RetentionCleanupResult, RetentionPolicy, RetentionTenant } from './ports/retention.repository.port';
 export type { StyleProfileRepositoryPort } from './ports/style-profile.repository.port';
-export type { ConversationRecord, MessageRecord, ReportingDisclosureReceiptRecord, WorkspaceConnectionRecord, ChannelAccountRecord, MemoryItemRecord, UserGoalRecord, UserRecord, ScheduledActionRecord, SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord, RiskSignalRecord, SurveyGroupStateRecord, TeamRecord, TeamMembershipRecord, StyleProfileRecord, StyleDimensions, StylePhrase } from './types/records';
+export type { ConversationRecord, MessageRecord, ReportingDisclosureReceiptRecord, WorkspaceConnectionRecord, ChannelAccountRecord, MemoryItemRecord, UserGoalRecord, UserRecord, ScheduledActionRecord, SurveyQuestionRecord, SurveyWindowRecord, SurveyReportingCohortRecord, SurveyEvidenceRecord, RiskSignalRecord, SurveyGroupStateRecord, TeamRecord, TeamMembershipRecord, StyleProfileRecord, StyleDimensions, StylePhrase } from './types/records';
+export { DEIDENTIFICATION_POLICY_VERSION, evaluateDeidentification, isAcceptedDeidentificationDecision } from './utils/deidentification-policy';
+export type { DeidentificationDecision, DeidentificationRejectionReason, DeidentificationPolicyInput } from './utils/deidentification-policy';
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
@@ -66,8 +69,13 @@ export type { SurveyEvidenceExtractionInput } from './use-cases/survey-evidence.
 export { DataDeletionUseCase } from './use-cases/data-deletion.use-case';
 export type { DataDeletionInput } from './use-cases/data-deletion.use-case';
 export type { DataDeletionResult } from './ports/data-deletion.repository.port';
+export { RetentionCleanupUseCase } from './use-cases/retention-cleanup.use-case';
+export type { RetentionCleanupInput, RetentionCleanupUseCaseResult } from './use-cases/retention-cleanup.use-case';
 export { GroupReportUseCase } from './use-cases/group-report.use-case';
 export type { GroupReportInput, GroupReportResult } from './use-cases/group-report.use-case';
+export { OpenSurveyReportingCycleUseCase } from './use-cases/open-survey-reporting-cycle.use-case';
+export { CloseSurveyReportingCycleUseCase } from './use-cases/close-survey-reporting-cycle.use-case';
+export type { CloseSurveyReportingCycleResult } from './use-cases/close-survey-reporting-cycle.use-case';
 export { PulseBacklogService } from './services/pulse-backlog.service';
 export { normalizeProfileDisplayName, resolveExternalProfileFacts, resolveUsableExternalDisplayName } from './services/profile-facts-policy';
 export type { CurrentUserProfileFacts, ExternalProfileFactsInput, ProfileFactsWriteDecision } from './services/profile-facts-policy';

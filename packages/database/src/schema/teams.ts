@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, timestamp } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, uuid, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { users } from './users';
 
@@ -10,14 +11,22 @@ export const teams = pgTable('teams', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const teamMemberships = pgTable('team_memberships', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  teamId: uuid('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  role: text('role').notNull().default('member'),
-  joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
-  leftAt: timestamp('left_at', { withTimezone: true }),
-});
+export const teamMemberships = pgTable(
+  'team_memberships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    teamId: uuid('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role').notNull().default('member'),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+    leftAt: timestamp('left_at', { withTimezone: true }),
+  },
+  (t) => ({
+    oneActiveMemberTeam: uniqueIndex('team_memberships_one_active_member_team_idx')
+      .on(t.userId)
+      .where(sql`${t.role} = 'member' AND ${t.leftAt} IS NULL`),
+  }),
+);
 
 export type DbTeam = typeof teams.$inferSelect;
 export type DbTeamMembership = typeof teamMemberships.$inferSelect;

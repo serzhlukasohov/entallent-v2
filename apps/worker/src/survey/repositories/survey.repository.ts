@@ -1,11 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { eq, and, gt, isNull, inArray, lte, or, sql } from 'drizzle-orm';
 import {
   surveyDefinitions,
+  surveyReportingCohorts,
   surveyWindows,
   surveyQuestions,
   surveyEvidence,
+  surveyGroupStates,
   surveyAssessments,
+  teamMemberships,
+  teams,
+  users,
   type DbSurveyQuestion,
 } from '@entalent/database';
 import {
@@ -16,11 +21,19 @@ import {
   type UpsertGroupStateParams,
   type StageGroupConfirmationParams,
   type ConfirmGroupStateParams,
+  type RecordGroupDeidentificationDecisionParams,
   type TransitionAwaitingGroupStateParams,
+  type WithdrawGroupStateParams,
+  type FindConfirmedGroupStatesParams,
+  type FindReportingCohortsReadyForFinalReportsParams,
+  type ConfirmedGroupReportStateRecord,
+  type SurveyTeamRecord,
   type SurveyQuestionRecord,
   type SurveyWindowRecord,
   type SurveyEvidenceRecord,
   type SurveyGroupStateRecord,
+  type OpenSurveyReportingCycleParams,
+  type SurveyReportingCohortRecord,
 } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
 import { GroupStateRepository } from './group-state.repository';
@@ -41,6 +54,160 @@ export class SurveyRepository implements SurveyRepositoryPort {
     private readonly teamRepo: TeamRepository,
   ) {}
 
+  async openReportingCycle(
+    params: OpenSurveyReportingCycleParams,
+  ): Promise<SurveyReportingCohortRecord[]> {
+    return this.db.client.transaction(async (tx) => {
+      const [definition] = await tx
+        .select({ id: surveyDefinitions.id })
+        .from(surveyDefinitions)
+        .where(and(
+          eq(surveyDefinitions.id, params.surveyDefinitionId),
+          eq(surveyDefinitions.active, true),
+          or(eq(surveyDefinitions.tenantId, params.tenantId), isNull(surveyDefinitions.tenantId)),
+        ))
+        .limit(1);
+      if (!definition) throw new Error('survey_reporting_definition_not_available');
+
+      const existingCohorts = await tx
+        .select()
+        .from(surveyReportingCohorts)
+        .where(and(
+          eq(surveyReportingCohorts.tenantId, params.tenantId),
+          eq(surveyReportingCohorts.surveyDefinitionId, params.surveyDefinitionId),
+          eq(surveyReportingCohorts.periodStart, params.periodStart),
+          eq(surveyReportingCohorts.periodEnd, params.periodEnd),
+        ))
+        .orderBy(surveyReportingCohorts.teamId);
+      if (existingCohorts.length > 0) return existingCohorts.map(mapReportingCohort);
+
+      const tenantTeams = await tx
+        .select({ teamId: teams.id })
+        .from(teams)
+        .where(eq(teams.tenantId, params.tenantId));
+      if (tenantTeams.length === 0) throw new Error('survey_reporting_cycle_has_no_teams');
+      const eligibleMemberships = await tx
+        .select({ teamId: teamMemberships.teamId, userId: teamMemberships.userId })
+        .from(teamMemberships)
+        .innerJoin(teams, eq(teams.id, teamMemberships.teamId))
+        .innerJoin(users, eq(users.id, teamMemberships.userId))
+        .where(and(
+          eq(teams.tenantId, params.tenantId),
+          eq(teamMemberships.role, 'member'),
+          lte(teamMemberships.joinedAt, params.openedAt),
+          or(isNull(teamMemberships.leftAt), gt(teamMemberships.leftAt, params.openedAt)),
+          eq(users.tenantId, params.tenantId),
+          eq(users.status, 'active'),
+          isNull(users.deletedAt),
+          sql`${users.consentState}->'surveyEnabled' = 'true'::jsonb`,
+          sql`not exists (
+            select 1
+            from ${teamMemberships} other_membership
+            join ${teams} other_team on other_team.id = other_membership.team_id
+            where other_membership.user_id = ${teamMemberships.userId}
+              and other_membership.team_id <> ${teamMemberships.teamId}
+              and other_membership.role = 'member'
+              and other_membership.joined_at <= ${params.openedAt}
+              and (other_membership.left_at is null or other_membership.left_at > ${params.openedAt})
+              and other_team.tenant_id = ${params.tenantId}
+          )`,
+        ));
+
+      const rosters = new Map(tenantTeams.map((team) => [team.teamId, [] as string[]]));
+      for (const membership of eligibleMemberships) {
+        const roster = rosters.get(membership.teamId) ?? [];
+        roster.push(membership.userId);
+        rosters.set(membership.teamId, roster);
+      }
+      if (rosters.size > 0) {
+        await tx
+          .insert(surveyReportingCohorts)
+          .values([...rosters].map(([teamId, userIds]) => ({
+            tenantId: params.tenantId,
+            teamId,
+            surveyDefinitionId: params.surveyDefinitionId,
+            periodStart: params.periodStart,
+            periodEnd: params.periodEnd,
+            rosterUserIds: [...new Set(userIds)].sort(),
+            openedAt: params.openedAt,
+          })))
+          .onConflictDoNothing();
+      }
+
+      const cohorts = await tx
+        .select()
+        .from(surveyReportingCohorts)
+        .where(and(
+          eq(surveyReportingCohorts.tenantId, params.tenantId),
+          eq(surveyReportingCohorts.surveyDefinitionId, params.surveyDefinitionId),
+          eq(surveyReportingCohorts.periodStart, params.periodStart),
+          eq(surveyReportingCohorts.periodEnd, params.periodEnd),
+        ))
+        .orderBy(surveyReportingCohorts.teamId);
+      return cohorts.map(mapReportingCohort);
+    });
+  }
+
+  async findReportingCohortsReadyForFinalReports(
+    params: FindReportingCohortsReadyForFinalReportsParams,
+  ): Promise<SurveyReportingCohortRecord[]> {
+    const rows = await this.db.client
+      .select()
+      .from(surveyReportingCohorts)
+      .where(and(
+        eq(surveyReportingCohorts.tenantId, params.tenantId),
+        params.surveyDefinitionId
+          ? eq(surveyReportingCohorts.surveyDefinitionId, params.surveyDefinitionId)
+          : undefined,
+        lte(surveyReportingCohorts.periodEnd, params.now),
+      ))
+      .orderBy(surveyReportingCohorts.teamId);
+    return rows.map(mapReportingCohort);
+  }
+
+  async expireTemporaryGroupStatesForClosedCohorts(
+    params: FindReportingCohortsReadyForFinalReportsParams,
+  ): Promise<number> {
+    const closeInstantIso = params.now.toISOString();
+    const rows = await this.db.client
+      .update(surveyGroupStates)
+      .set({
+        status: 'expired',
+        aiSummary: null,
+        employeeScore: null,
+        personalRecs: null,
+        deidentificationDecision: null,
+        confirmationPromptMessageId: null,
+        confirmedAt: null,
+        reportingDisclosureVersion: null,
+        reportingDisclosureShownAt: null,
+        confirmationMessageId: null,
+        withdrawnAt: null,
+        withdrawalMessageId: null,
+        updatedAt: params.now,
+      })
+      .where(and(
+        eq(surveyGroupStates.tenantId, params.tenantId),
+        inArray(surveyGroupStates.status, ['in_progress', 'pending_confirmation', 'awaiting_confirmation']),
+        sql`exists (
+          select 1
+          from ${surveyWindows}
+          join ${surveyReportingCohorts}
+            on ${surveyWindows.reportingCohortId} = ${surveyReportingCohorts.id}
+          where ${surveyWindows.id} = ${surveyGroupStates.surveyWindowId}
+            and ${surveyWindows.tenantId} = ${params.tenantId}
+            and ${surveyWindows.userId} = ${surveyGroupStates.userId}
+            and ${surveyReportingCohorts.tenantId} = ${params.tenantId}
+            ${params.surveyDefinitionId
+              ? sql`and ${surveyReportingCohorts.surveyDefinitionId} = ${params.surveyDefinitionId}`
+              : sql``}
+            and ${surveyReportingCohorts.periodEnd} <= ${closeInstantIso}::timestamptz
+        )`,
+      ))
+      .returning({ id: surveyGroupStates.id });
+    return rows.length;
+  }
+
   async findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | null> {
     const [existing] = await this.db.client
       .select()
@@ -53,8 +220,6 @@ export class SurveyRepository implements SurveyRepositoryPort {
         ),
       )
       .limit(1);
-
-    if (existing) return mapWindow(existing);
 
     // Find active definition for this tenant (tenant-specific first, then global)
     const [tenantDef] = await this.db.client
@@ -71,22 +236,98 @@ export class SurveyRepository implements SurveyRepositoryPort {
           .where(and(isNull(surveyDefinitions.tenantId), eq(surveyDefinitions.active, true)))
           .limit(1);
 
-    if (!globalDef) return null;
+    if (!globalDef) return existing ? mapWindow(existing) : null;
 
-    const { periodStart, periodEnd } = currentQuarterBounds();
+    const now = new Date();
+    const currentTeam = await this.teamRepo.findTeamByMemberId(userId, tenantId);
+    const cohorts = await this.db.client
+      .select()
+      .from(surveyReportingCohorts)
+      .where(and(
+        eq(surveyReportingCohorts.tenantId, tenantId),
+        eq(surveyReportingCohorts.surveyDefinitionId, globalDef.id),
+        lte(surveyReportingCohorts.periodStart, now),
+        gt(surveyReportingCohorts.periodEnd, now),
+        sql`${userId} = any(${surveyReportingCohorts.rosterUserIds})`,
+      ))
+      .limit(2);
+    const cohort = cohorts.length === 1 && currentTeam?.teamId === cohorts[0].teamId
+      ? cohorts[0]
+      : null;
+    if (!cohort) {
+      if (existing && currentTeam && (existing.reportingCohortId || existing.reportingTeamId !== currentTeam.teamId)) {
+        const created = await this.db.client.transaction(async (tx) => {
+          await tx
+            .update(surveyWindows)
+            .set({ status: 'closed', completedAt: now })
+            .where(and(
+              eq(surveyWindows.userId, userId),
+              eq(surveyWindows.tenantId, tenantId),
+              eq(surveyWindows.status, 'active'),
+            ));
+          const [row] = await tx.insert(surveyWindows).values({
+            tenantId,
+            userId,
+            surveyDefinitionId: globalDef.id,
+            periodType: 'quarter',
+            periodStart: existing.periodStart,
+            periodEnd: existing.periodEnd,
+            reportingCohortId: null,
+            reportingTeamId: currentTeam.teamId,
+            reportingRosterUserIds: [],
+            status: 'active',
+          }).returning();
+          return row;
+        });
+        return mapWindow(created);
+      }
+      if (existing && existing.reportingCohortId) {
+        await this.db.client
+          .update(surveyWindows)
+          .set({ status: 'closed', completedAt: now })
+          .where(and(
+            eq(surveyWindows.userId, userId),
+            eq(surveyWindows.tenantId, tenantId),
+            eq(surveyWindows.status, 'active'),
+          ));
+        return null;
+      }
+      return existing ? mapWindow(existing) : null;
+    }
+    const sameScope = existing?.reportingCohortId === cohort.id
+      && existing.surveyDefinitionId === cohort.surveyDefinitionId
+      && existing.periodStart.getTime() === cohort.periodStart.getTime()
+      && existing.periodEnd.getTime() === cohort.periodEnd.getTime()
+      && existing.reportingTeamId === cohort.teamId
+      && existing.reportingRosterUserIds.length === cohort.rosterUserIds.length
+      && existing.reportingRosterUserIds.every((id, index) => id === cohort.rosterUserIds[index]);
+    if (sameScope) return mapWindow(existing);
 
-    const [created] = await this.db.client
-      .insert(surveyWindows)
-      .values({
+    const created = await this.db.client.transaction(async (tx) => {
+      if (existing) {
+        await tx
+          .update(surveyWindows)
+          .set({ status: 'closed', completedAt: now })
+          .where(and(
+            eq(surveyWindows.userId, userId),
+            eq(surveyWindows.tenantId, tenantId),
+            eq(surveyWindows.status, 'active'),
+          ));
+      }
+      const [row] = await tx.insert(surveyWindows).values({
         tenantId,
         userId,
         surveyDefinitionId: globalDef.id,
         periodType: 'quarter',
-        periodStart,
-        periodEnd,
+        periodStart: cohort.periodStart,
+        periodEnd: cohort.periodEnd,
+        reportingCohortId: cohort.id,
+        reportingTeamId: cohort.teamId,
+        reportingRosterUserIds: cohort.rosterUserIds,
         status: 'active',
-      })
-      .returning();
+      }).returning();
+      return row;
+    });
 
     return mapWindow(created);
   }
@@ -159,6 +400,7 @@ export class SurveyRepository implements SurveyRepositoryPort {
       await this.db.client
         .update(surveyAssessments)
         .set({
+          score: params.score == null ? null : String(params.score),
           confidence: String(params.confidence),
           status: params.status,
           evidenceIds: updatedIds,
@@ -170,6 +412,7 @@ export class SurveyRepository implements SurveyRepositoryPort {
       await this.db.client.insert(surveyAssessments).values({
         surveyWindowId: params.surveyWindowId,
         surveyQuestionId: params.surveyQuestionId,
+        score: params.score == null ? null : String(params.score),
         confidence: String(params.confidence),
         status: params.status,
         evidenceIds: [params.evidenceId],
@@ -198,12 +441,21 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return rows.map(mapEvidence);
   }
 
-  async findAssessmentsForWindow(windowId: string): Promise<Array<{ surveyQuestionId: string; status: string }>> {
+  async findAssessmentsForWindow(
+    windowId: string,
+  ): Promise<Array<{ surveyQuestionId: string; status: string; score: number | null }>> {
     const rows = await this.db.client
-      .select({ surveyQuestionId: surveyAssessments.surveyQuestionId, status: surveyAssessments.status })
+      .select({
+        surveyQuestionId: surveyAssessments.surveyQuestionId,
+        status: surveyAssessments.status,
+        score: surveyAssessments.score,
+      })
       .from(surveyAssessments)
       .where(eq(surveyAssessments.surveyWindowId, windowId));
-    return rows;
+    return rows.map((row) => ({
+      ...row,
+      score: row.score == null ? null : Number(row.score),
+    }));
   }
 
   // Group state methods — delegated to GroupStateRepository
@@ -234,6 +486,10 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return this.groupStateRepo.upsertGroupState(params);
   }
 
+  recordGroupDeidentificationDecision(params: RecordGroupDeidentificationDecisionParams): Promise<boolean> {
+    return this.groupStateRepo.recordGroupDeidentificationDecision(params);
+  }
+
   stageGroupConfirmation(params: StageGroupConfirmationParams): Promise<boolean> {
     return this.groupStateRepo.stageGroupConfirmation(params);
   }
@@ -242,29 +498,33 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return this.groupStateRepo.transitionAwaitingGroupState(params);
   }
 
+  withdrawGroupState(params: WithdrawGroupStateParams): Promise<boolean> {
+    return this.groupStateRepo.withdrawGroupState(params);
+  }
+
   confirmGroupState(params: ConfirmGroupStateParams): Promise<boolean> {
     return this.groupStateRepo.confirmGroupState(params);
   }
 
-  findConfirmedGroupStates(
-    userIds: string[],
-    questionGroup: string,
-  ): Promise<SurveyGroupStateRecord[]> {
-    return this.groupStateRepo.findConfirmedGroupStates(userIds, questionGroup);
+  findConfirmedGroupStates(params: FindConfirmedGroupStatesParams): Promise<ConfirmedGroupReportStateRecord[]> {
+    return this.groupStateRepo.findConfirmedGroupStates(params);
   }
 
   // Team methods — delegated to TeamRepository
   findTeamByMemberId(
     userId: string,
     tenantId: string,
-  ): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null> {
-    return this.teamRepo.findTeamByMemberId(userId, tenantId);
+    surveyWindowId?: string,
+  ): Promise<SurveyTeamRecord | null> {
+    return this.teamRepo.findTeamByMemberId(userId, tenantId, surveyWindowId);
   }
 
   findTeamById(
     teamId: string,
-  ): Promise<{ teamId: string; managerSlackUserId: string | null; activeTeamSize: number; memberUserIds: string[] } | null> {
-    return this.teamRepo.findTeamById(teamId);
+    tenantId: string,
+    reportingCohortId?: string,
+  ): Promise<SurveyTeamRecord | null> {
+    return this.teamRepo.findTeamById(teamId, tenantId, reportingCohortId);
   }
 }
 
@@ -281,7 +541,25 @@ function mapWindow(row: typeof surveyWindows.$inferSelect): SurveyWindowRecord {
     periodType: row.periodType,
     periodStart: row.periodStart,
     periodEnd: row.periodEnd,
+    reportingCohortId: row.reportingCohortId,
+    reportingTeamId: row.reportingTeamId,
+    reportingRosterUserIds: row.reportingRosterUserIds,
     status: row.status,
+  };
+}
+
+function mapReportingCohort(
+  row: typeof surveyReportingCohorts.$inferSelect,
+): SurveyReportingCohortRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    teamId: row.teamId,
+    surveyDefinitionId: row.surveyDefinitionId,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    rosterUserIds: row.rosterUserIds,
+    openedAt: row.openedAt,
   };
 }
 
@@ -325,14 +603,4 @@ function mapEvidence(row: typeof surveyEvidence.$inferSelect): SurveyEvidenceRec
     promptVersion: row.promptVersion,
     createdAt: row.createdAt,
   };
-}
-
-function currentQuarterBounds(): { periodStart: Date; periodEnd: Date } {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth(); // 0-indexed
-  const quarter = Math.floor(month / 3);
-  const periodStart = new Date(year, quarter * 3, 1);
-  const periodEnd = new Date(year, quarter * 3 + 3, 0, 23, 59, 59, 999);
-  return { periodStart, periodEnd };
 }

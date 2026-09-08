@@ -40,14 +40,14 @@ const EVIDENCE_BY_STATUS: Record<string, { confidence: number; completeness: num
   partially_covered: { strength: 0.6, completeness: 0.5,  confidence: 0.6  },
 };
 
-function makeAi(status: string): AiProviderPort {
+function makeAi(status: string, numericValue?: number): AiProviderPort {
   const vals = EVIDENCE_BY_STATUS[status] ?? EVIDENCE_BY_STATUS['scored'];
   return {
     evaluateSurveyEvidence: vi.fn().mockResolvedValue({
       evidence: [{
         questionId: 'q-1', evidenceSummary: 'Knows their goals clearly',
         polarity: 'positive', strength: vals.strength, completeness: vals.completeness,
-        confidence: vals.confidence, assessmentShouldRemainUnknown: false,
+        confidence: vals.confidence, assessmentShouldRemainUnknown: false, numericValue,
       }],
     }),
     generateResponse: vi.fn(),
@@ -153,6 +153,59 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     );
 
     await expect(useCase.execute(BASE_INPUT)).resolves.not.toThrow();
+  });
+
+  it('persists explicit numeric answers as assessment score', async () => {
+    const surveyRepo = makeSurveyRepo('scored');
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      makeAi('scored', 7),
+      makeConversationRepo(),
+      surveyRepo,
+      makePulseService(),
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(surveyRepo.upsertAssessment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        score: 7,
+      }),
+    );
+  });
+
+  it('does not evaluate engagement questions before the final 14 days', async () => {
+    const surveyRepo = makeSurveyRepo('scored');
+    const ai = makeAi('scored');
+    const regularQuestion = makeQuestion('q-1', 'autonomy');
+    const engagementQuestion = {
+      ...makeQuestion('q-engagement', 'engagement'),
+      stableKey: 'engagement_current',
+      responseType: 'numeric_0_10',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (surveyRepo.findOrCreateActiveWindow as any).mockResolvedValue({
+      ...makeWindow(),
+      periodEnd: new Date(Date.now() + 90 * 86_400_000),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (surveyRepo.findQuestionsForWindow as any).mockResolvedValue([regularQuestion, engagementQuestion]);
+
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      ai,
+      makeConversationRepo(),
+      surveyRepo,
+      makePulseService(),
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledWith(
+      expect.any(Array),
+      [
+        expect.objectContaining({ id: 'q-1' }),
+      ],
+    );
   });
 
   it('backfill slides windows over the full history and evaluates each', async () => {

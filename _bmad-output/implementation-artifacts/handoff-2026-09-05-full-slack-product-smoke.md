@@ -1,5 +1,7 @@
 # Handoff: PR #5 Slack product smoke and next blocker
 
+> Superseded on 2026-09-06. The blocker documented below is resolved by `_bmad-output/implementation-artifacts/spec-multi-group-confirmation-after-disclosure.md` and `_bmad-output/implementation-artifacts/spec-confirmation-language-and-acknowledgement.md`. Continue from `_bmad-output/implementation-artifacts/handoff-2026-09-06-grill-phase-2.md`.
+
 Date: 2026-09-05
 Branch: `codex/grill-session-docs`
 PR: https://github.com/serzhlukasohov/entallent-v2/pull/5

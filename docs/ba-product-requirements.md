@@ -2,9 +2,11 @@
 
 Date: 2026-09-04
 
-Status: draft for Business Analyst review
+Status: superseded on 2026-09-06
 
 Scope: current TypeScript product. MAF is intentionally out of scope.
+
+> This 45-requirement BA draft is retained as historical review input. It is not the implementation contract. Use `docs/collected-product-requirements.md`, which contains the current 47 requirements, accepted privacy/reportability defaults, and deferred product scope.
 
 ## 1. Executive Summary
 
