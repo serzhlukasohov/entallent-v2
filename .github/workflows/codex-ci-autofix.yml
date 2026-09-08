@@ -1,0 +1,162 @@
+name: Codex CI draft repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to repair
+        required: true
+        default: main
+        type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      eligible: ${{ steps.guard.outputs.eligible }}
+      ref: ${{ steps.guard.outputs.ref }}
+      base_branch: ${{ steps.guard.outputs.base_branch }}
+      run_id: ${{ steps.guard.outputs.run_id }}
+    steps:
+      - name: Check bounded trigger
+        id: guard
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          AUTO_ENABLED: ${{ vars.CODEX_CI_AUTOFIX_ENABLED }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          MANUAL_REF: ${{ inputs.ref }}
+        run: |
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            case "$MANUAL_REF" in ''|*[!A-Za-z0-9._/-]*) echo 'Invalid ref; no repair started.' >> "$GITHUB_STEP_SUMMARY"; echo 'eligible=false' >> "$GITHUB_OUTPUT"; exit 0;; esac
+            echo 'eligible=true' >> "$GITHUB_OUTPUT"
+            echo "ref=$MANUAL_REF" >> "$GITHUB_OUTPUT"
+            echo "base_branch=$MANUAL_REF" >> "$GITHUB_OUTPUT"
+            echo 'run_id=' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$AUTO_ENABLED" = 'true' ] && [ "$CONCLUSION" = 'failure' ] && [ "$HEAD_REPOSITORY" = "$REPOSITORY" ]; then
+            case "$WORKFLOW_BRANCH" in codex/*) echo 'eligible=false' >> "$GITHUB_OUTPUT"; echo 'Generated Codex branches do not recursively trigger repair.' >> "$GITHUB_STEP_SUMMARY"; exit 0;; esac
+            echo 'eligible=true' >> "$GITHUB_OUTPUT"
+            echo "ref=$WORKFLOW_REF" >> "$GITHUB_OUTPUT"
+            echo "base_branch=$WORKFLOW_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'eligible=false' >> "$GITHUB_OUTPUT"
+          echo 'No eligible CI repair; automatic repair is opt-in and same-repository failures only.' >> "$GITHUB_STEP_SUMMARY"
+
+  model_patch:
+    needs: authorize
+    if: needs.authorize.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      has_patch: ${{ steps.patch.outputs.has_patch }}
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.authorize.outputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pin source revision
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Preserve trusted validator
+        run: cp scripts/agent-harness.ts "$RUNNER_TEMP/agent-harness.ts"
+
+      - name: Retrieve failed CI log
+        if: needs.authorize.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_RUN_ID: ${{ needs.authorize.outputs.run_id }}
+        run: |
+          mkdir -p runs/harness
+          gh run view "$FAILED_RUN_ID" --log-failed > runs/harness/ci-failure.log
+
+      - name: Prepare one CI repair
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+          prompt: |
+            Reproduce the deterministic CI failure at this checkout and prepare exactly one minimal root-cause repair.
+            Follow AGENTS.md, read runs/harness/ci-failure.log when present plus the relevant open entries in docs/agent-failures.md, and run the smallest deterministic verification.
+            Do not touch or invoke MAF or agent-service. Do not commit, push, deploy, open a PR, use production data, or run live model evaluations.
+            If there is no evidence-backed repair, leave the worktree unchanged.
+
+      - name: Validate patch with deterministic harness
+        run: pnpm exec tsx "$RUNNER_TEMP/agent-harness.ts" check --base HEAD
+
+      - name: Export patch only
+        id: patch
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'has_patch=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --cached --binary > codex.patch
+          echo 'has_patch=true' >> "$GITHUB_OUTPUT"
+
+      - name: Upload isolated patch
+        if: steps.patch.outputs.has_patch == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: codex-ci-patch-${{ github.run_id }}
+          path: codex.patch
+          retention-days: 1
+
+  draft_pr:
+    needs: [authorize, model_patch]
+    if: needs.model_patch.outputs.has_patch == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.model_patch.outputs.source_sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: codex-ci-patch-${{ github.run_id }}
+
+      - name: Apply patch and open draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ needs.authorize.outputs.base_branch }}
+          BRANCH: codex/ci-autofix-${{ github.run_id }}
+        run: |
+          git apply --index codex.patch
+          git switch -c "$BRANCH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: repair deterministic CI failure'
+          git push origin "$BRANCH"
+          gh pr create --draft --base "$BASE_BRANCH" --head "$BRANCH" --title 'fix: Codex CI repair' --body 'Draft repair generated from one bounded Codex pass. Human review and merge are required.'

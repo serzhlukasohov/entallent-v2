@@ -105,6 +105,47 @@ describe('buildReplyPlan', () => {
     expect(brief.forbiddenMoves).toContain('action_plan');
   });
 
+  it('resets prior memory and questions when the employee corrects the frame', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'correction',
+        latestUserSubstance: 'I wanted criteria for evaluating chatbot answers',
+        topicAnchor: 'manager-facing pulse report',
+      }),
+      memoryItems: memory([
+        { category: 'project_context', content: 'manager-facing pulse report', importance: 1 },
+        { category: 'goal', content: 'pressure-test belonging', importance: 0.9 },
+      ]),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief.responseMove).toBe('address_new_substance');
+    expect(brief.memoryAnchors).toEqual([]);
+    expect(brief.requiredGrounding).toEqual([]);
+    expect(brief.questionPolicy).toEqual({
+      maxQuestions: 0,
+      reason: 'strategy_disallows_questions',
+    });
+  });
+
+  it('keeps rejected framing out during the correction carryover window', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'request',
+        latestUserSubstance: 'Give me relevance criteria',
+        topicAnchor: 'chatbot answer quality',
+      }),
+      memoryItems: memory([
+        { category: 'project_context', content: 'manager-facing pulse report', importance: 1 },
+      ]),
+      includeFollowUpQuestion: true,
+      correctionCarryover: true,
+    });
+
+    expect(brief.correctionCarryover).toBe(true);
+    expect(brief.memoryAnchors).toEqual([]);
+  });
+
   it('keeps memory anchors without required grounding for emotional check-ins', () => {
     const brief = buildReplyPlan({
       classification: base({

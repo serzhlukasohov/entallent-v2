@@ -9,6 +9,7 @@ export interface ReplyPlanInput {
   classification: SituationClassification;
   memoryItems?: Pick<MemoryItemRecord, 'category' | 'content' | 'importance'>[];
   includeFollowUpQuestion: boolean;
+  correctionCarryover?: boolean;
   surveyProbeQuestionId?: string;
   sensitiveMode?: boolean;
 }
@@ -20,7 +21,10 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
   const topicAnchor = classification.topicAnchor?.trim() || null;
   const safetyOverridesPause = (input.sensitiveMode ?? false) &&
     (dialogueAct === 'closing' || dialogueAct === 'acknowledgement');
-  const memoryAnchors = safetyOverridesPause ? [] : selectMemoryAnchors(input.memoryItems ?? []);
+  const correctionCarryover = input.correctionCarryover ?? false;
+  const memoryAnchors = safetyOverridesPause || dialogueAct === 'correction' || correctionCarryover
+    ? []
+    : selectMemoryAnchors(input.memoryItems ?? []);
   const responseMove = safetyOverridesPause ? 'support_emotion' : responseMoveFor(dialogueAct);
   const mayInferFromBrevity = latestUserSubstance !== null;
   const questionPolicy = buildQuestionPolicy({
@@ -30,6 +34,7 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
 
   return {
     dialogueAct,
+    correctionCarryover,
     latestUserSubstance,
     topicAnchor,
     memoryAnchors,
@@ -83,6 +88,10 @@ function buildQuestionPolicy(input: {
   includeFollowUpQuestion: boolean;
 }): ReplyPlan['questionPolicy'] {
   if (input.dialogueAct === 'closing') {
+    return { maxQuestions: 0, reason: 'strategy_disallows_questions' };
+  }
+
+  if (input.dialogueAct === 'correction') {
     return { maxQuestions: 0, reason: 'strategy_disallows_questions' };
   }
 

@@ -31,7 +31,7 @@ export interface UpsertAssessmentParams {
   status: string;
   evidenceId: string;
   evaluatorVersion: string;
-  score?: number;
+  score?: number | null;
 }
 
 export interface UpsertGroupStateParams {
@@ -178,7 +178,7 @@ export interface SurveyRepositoryPort {
   // Assessment methods
   findAssessmentsForWindow(
     windowId: string,
-  ): Promise<Array<{ surveyQuestionId: string; status: string; score?: number | null }>>;
+  ): Promise<Array<{ surveyQuestionId: string; status: string; score: number | null }>>;
   // Group state methods
   findGroupState(userId: string, windowId: string, questionGroup: string): Promise<SurveyGroupStateRecord | null>;
   findPendingConfirmationGroups(userId: string, tenantId: string): Promise<SurveyGroupStateRecord[]>;

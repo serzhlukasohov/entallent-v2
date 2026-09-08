@@ -1,4 +1,5 @@
 import type {
+  ConversationActiveTopicRecord,
   ConversationRecord,
   MessageRecord,
   ReportingDisclosureReceiptRecord,
@@ -27,6 +28,12 @@ export interface ConversationRepositoryPort {
     version: string,
     before: Date,
   ): Promise<ReportingDisclosureReceiptRecord | null>;
+  updateActiveTopic(
+    conversationId: string,
+    tenantId: string,
+    userId: string,
+    activeTopic: ConversationActiveTopicRecord,
+  ): Promise<void>;
   saveMessage(params: SaveMessageParams): Promise<MessageRecord>;
   updateMessageDelivery(
     messageId: string,

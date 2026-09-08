@@ -1,14 +1,26 @@
 import type { PulseBacklogRepositoryPort, ProactivePulseConfig } from '../ports/pulse-backlog.repository.port';
 import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
-import type { SurveyQuestionRecord } from '../types/records';
+import type { SurveyQuestionRecord, SurveyWindowRecord } from '../types/records';
 
 /** Canonical group order for backlog initialization (engagement is excluded). */
 const CANONICAL_GROUP_ORDER = ['autonomy', 'belonging', 'growth', 'purpose'] as const;
+const DAY_MS = 86_400_000;
+export const ENGAGEMENT_WINDOW_DAYS = 14;
+
+export function isEngagementWindowEligible(
+  window: Pick<SurveyWindowRecord, 'periodEnd'>,
+  now = new Date(),
+): boolean {
+  const end = window.periodEnd.getTime();
+  const start = end - ENGAGEMENT_WINDOW_DAYS * DAY_MS;
+  const current = now.getTime();
+  return current >= start && current <= end;
+}
 
 export function isWithinEngagementWindow(
   periodEnd: Date,
-  engagementUnlockDays: number = DEFAULT_PULSE_CONFIG.engagementUnlockDays,
+  engagementUnlockDays: number = DEFAULT_PULSE_CONFIG.engagementUnlockDays ?? ENGAGEMENT_WINDOW_DAYS,
 ): boolean {
   const now = Date.now();
   const engagementUnlockAt = periodEnd.getTime() - engagementUnlockDays * 86_400_000;
@@ -46,10 +58,18 @@ export class PulseBacklogService {
         return groupDiff !== 0 ? groupDiff : a.displayOrder - b.displayOrder;
       });
 
+    const coverageSnapshotAt = new Date();
     const assessments = await this.surveyRepo.findAssessmentsForWindow(window.id);
+    const questionById = new Map(allQuestions.map((question) => [question.id, question]));
     const coveredIds = new Set(
       assessments
-        .filter((a) => a.status === 'scored' || a.status === 'covered')
+        .filter((assessment) => {
+          const question = questionById.get(assessment.surveyQuestionId);
+          if (!question) return false;
+          return question.responseType === 'numeric_0_10'
+            ? assessment.status === 'scored' && assessment.score !== null
+            : ['partially_covered', 'covered', 'scored'].includes(assessment.status);
+        })
         .map((a) => a.surveyQuestionId),
     );
 
@@ -59,6 +79,7 @@ export class PulseBacklogService {
       window.id,
       nonEngagementQuestions,
       coveredIds,
+      coverageSnapshotAt,
     );
 
     const resolvedIgnores = await this.backlogRepo.resolveIgnoredEntries(userId, window.id, config.ignoreWindowHours);
@@ -75,14 +96,25 @@ export class PulseBacklogService {
 
     if (isEndOfQuarter && !questionGroup) {
       const engagementQuestions = allQuestions
-        .filter((q) => q.questionGroup === 'engagement')
+        .filter((q) => q.questionGroup === 'engagement' && !coveredIds.has(q.id))
         .sort((a, b) => a.displayOrder - b.displayOrder);
       await this.backlogRepo.unlockEngagementIfNeeded(userId, tenantId, window.id, engagementQuestions);
     }
 
-    let entry = await this.backlogRepo.findNextPending(userId, window.id, isEndOfQuarter, questionGroup);
+    const focusedGroup = !questionGroup
+      ? selectFocusedRegularGroup(nonEngagementQuestions, coveredIds)
+      : undefined;
+    let entry = await this.backlogRepo.findNextPending(
+      userId,
+      window.id,
+      isEndOfQuarter,
+      questionGroup ?? (isEndOfQuarter ? undefined : focusedGroup),
+    );
     if (!entry && isEndOfQuarter && !questionGroup) {
       // Engagement questions exhausted — fall back to remaining regular questions
+      entry = await this.backlogRepo.findNextPending(userId, window.id, false, focusedGroup);
+    }
+    if (!entry && focusedGroup && !questionGroup) {
       entry = await this.backlogRepo.findNextPending(userId, window.id, false);
     }
     if (!entry) return null;
@@ -116,4 +148,20 @@ export class PulseBacklogService {
     if (!question?.questionGroup) return;
     await this.backlogRepo.prioritizeQuestionGroup(userId, windowId, question.questionGroup);
   }
+}
+
+function selectFocusedRegularGroup(
+  questions: SurveyQuestionRecord[],
+  completedQuestionIds: Set<string>,
+): string | undefined {
+  const progress = CANONICAL_GROUP_ORDER.map((group) => {
+    const groupQuestions = questions.filter((question) => question.questionGroup === group);
+    return {
+      group,
+      total: groupQuestions.length,
+      completed: groupQuestions.filter((question) => completedQuestionIds.has(question.id)).length,
+    };
+  }).filter(({ total, completed }) => total > 0 && completed < total);
+
+  return progress.sort((a, b) => b.completed - a.completed)[0]?.group;
 }

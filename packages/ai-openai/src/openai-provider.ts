@@ -135,6 +135,19 @@ function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext):
   return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
 }
 
+function numericProbeQuestion(context: ResponseContext): { id: string } | undefined {
+  const probe = context.surveyProbeQuestion ?? context.proactiveCheckIn?.probeQuestion;
+  return probe?.responseType === 'numeric_0_10' ? probe : undefined;
+}
+
+function isValidNumericProbeResponse(response: GeneratedResponse, questionId: string): boolean {
+  const includesScale = /(?:\b0\b[\s\S]*\b10\b|\b10\b[\s\S]*\b0\b)/u.test(response.text);
+  return response.containsSurveyProbe === true &&
+    response.surveyProbeQuestionId === questionId &&
+    countQuestionGroups(response.text) === 1 &&
+    includesScale;
+}
+
 /** Structural shape of a Zod schema's safeParse — lets keepValid stay decoupled from zod. */
 type SafeParser<T> = { safeParse(input: unknown): { success: true; data: T } | { success: false } };
 
@@ -201,7 +214,10 @@ export class OpenAiProvider implements AiProviderPort {
         record['primaryIntent'] = 'casual_conversation';
       }
     }
-    return SituationClassificationSchema.parse(parsed);
+    return normalizeExplicitCorrectionRequest(
+      normalizeExplicitClosing(SituationClassificationSchema.parse(parsed), turns),
+      turns,
+    );
   }
 
   async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
@@ -260,7 +276,7 @@ export class OpenAiProvider implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     const system = buildRespondSystemPrompt(strategy, context);
-    const user = buildRespondUserPrompt(turns, context);
+    const user = buildRespondUserPrompt(turns, context, strategy);
 
     const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
@@ -280,6 +296,12 @@ export class OpenAiProvider implements AiProviderPort {
         retries.push(questionRetryInstruction(maxQuestions));
       }
     }
+    const numericProbe = numericProbeQuestion(context);
+    if (numericProbe && !isValidNumericProbeResponse(first, numericProbe.id)) {
+      retries.push(
+        '\n\nYour previous draft did not ask the selected numeric probe correctly. Rewrite it as exactly one question that explicitly asks for a rating from 0 to 10, and set the matching survey-probe metadata.',
+      );
+    }
     if (retries.length === 0) return first;
 
     const corrected = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
@@ -292,6 +314,9 @@ export class OpenAiProvider implements AiProviderPort {
     }
     if (!context.confirmationRequest && countQuestionGroups(corrected.text) > maxAllowedQuestions(strategy, context)) {
       throw new Error('Generated response exceeds the question limit after one corrective attempt');
+    }
+    if (numericProbe && !isValidNumericProbeResponse(corrected, numericProbe.id)) {
+      throw new Error('OpenAI returned a noncompliant numeric survey probe after retry');
     }
     return corrected;
   }
@@ -387,4 +412,43 @@ export class OpenAiProvider implements AiProviderPort {
       return content;
     });
   }
+}
+
+const EXPLICIT_CORRECTION_REQUEST_PREFIX =
+  /^(?:no\b(?!\s+(?:idea|problem|worries)\b)|that(?:'s| is) not what\b|this is not what\b|you (?:keep|are still|still)\b|i (?:didn['’]?t|did not|don['’]?t|do not) mean\b|нет\b|ні\b|это не то\b|це не те\b)/i;
+const EXPLICIT_CLOSING =
+  /^(?:(?:no|нет|ні)[,\s-]*(?:forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь|неважно|досить|достаточно)|forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь(?: про це|об этом)?|неважно|досить|достаточно)[.!]?$/i;
+
+function normalizeExplicitClosing(
+  classification: SituationClassification,
+  turns: ConversationTurn[],
+): SituationClassification {
+  const latestEmployeeText = [...turns]
+    .reverse()
+    .find((turn) => turn.role === 'user')
+    ?.content.trim();
+  if (!latestEmployeeText || !EXPLICIT_CLOSING.test(latestEmployeeText)) {
+    return classification;
+  }
+  return {
+    ...classification,
+    dialogueAct: 'closing',
+    latestUserSubstance: null,
+    topicAnchor: null,
+  };
+}
+
+function normalizeExplicitCorrectionRequest(
+  classification: SituationClassification,
+  turns: ConversationTurn[],
+): SituationClassification {
+  if (classification.dialogueAct !== 'request') return classification;
+  const latestEmployeeText = [...turns]
+    .reverse()
+    .find((turn) => turn.role === 'user')
+    ?.content.trim();
+  if (!latestEmployeeText || !EXPLICIT_CORRECTION_REQUEST_PREFIX.test(latestEmployeeText)) {
+    return classification;
+  }
+  return { ...classification, dialogueAct: 'correction' };
 }

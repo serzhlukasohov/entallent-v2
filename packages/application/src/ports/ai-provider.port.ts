@@ -10,6 +10,7 @@ import type {
   ConfirmationResponse,
   ObservedStyle,
 } from '@entalent/contracts';
+import type { SurveyResponseType } from '../types/records';
 
 export interface ConversationTurn {
   role: 'user' | 'assistant';
@@ -20,6 +21,8 @@ export interface ConversationTurn {
 export interface ClassifyContext {
   userName: string;
   tenantContext?: string;
+  /** Persisted user-derived thread summary; untrusted and optional classifier context. */
+  continuitySummary?: string;
   /** Current time as ISO 8601 — lets the classifier compute reminder dueAt values */
   now?: string;
   /** IANA timezone of the employee — reminder times are interpreted in it */
@@ -42,11 +45,13 @@ export interface SurveyQuestionForEvaluation {
   positiveIndicators: string[];
   negativeIndicators: string[];
   contraindications: string[];
-  responseType: string;
+  responseType?: SurveyResponseType;
 }
 
 export interface ReplyPlan {
   dialogueAct: import('@entalent/contracts').DialogueAct;
+  /** A correction occurred in the last two mentor replies; do not revive its rejected frame. */
+  correctionCarryover?: boolean;
   latestUserSubstance: string | null;
   topicAnchor: string | null;
   memoryAnchors: Array<{ category: string; content: string }>;
@@ -109,10 +114,10 @@ export interface ResponseContext {
    */
   reminderIntent?: string;
   /** Survey probe to embed naturally in the response */
-  surveyProbeQuestion?: { id: string; probeStrategies: string[] };
+  surveyProbeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
   /** Agent-initiated check-in: the agent writes first, optionally steering toward a survey topic */
   proactiveCheckIn?: {
-    probeQuestion?: { id: string; probeStrategies: string[] };
+    probeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
   };
   /**
    * Set when the employee just confirmed a summary the agent proposed.

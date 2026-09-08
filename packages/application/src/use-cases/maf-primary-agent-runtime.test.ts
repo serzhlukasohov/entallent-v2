@@ -1064,6 +1064,7 @@ function createRuntime(options: {
       createdAt: new Date(),
     })),
     updateMessageDelivery: vi.fn(async () => new Date()),
+    updateActiveTopic: vi.fn(async () => undefined),
   } satisfies ConversationRepositoryPort;
   const outbox = {
     enqueueMessageSend: vi.fn(async () => undefined),

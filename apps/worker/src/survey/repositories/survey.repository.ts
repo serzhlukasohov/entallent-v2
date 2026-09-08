@@ -400,7 +400,9 @@ export class SurveyRepository implements SurveyRepositoryPort {
       await this.db.client
         .update(surveyAssessments)
         .set({
-          score: params.score == null ? null : String(params.score),
+          ...(params.score !== undefined
+            ? { score: params.score === null ? null : String(params.score) }
+            : {}),
           confidence: String(params.confidence),
           status: params.status,
           evidenceIds: updatedIds,
@@ -582,9 +584,14 @@ function mapQuestion(row: DbSurveyQuestion): SurveyQuestionRecord {
     maxFollowUpProbes: row.maxFollowUpProbes,
     displayOrder: row.displayOrder,
     questionGroup: row.questionGroup,
-    responseType: row.responseType,
+    responseType: mapResponseType(row.responseType),
     version: row.version,
   };
+}
+
+function mapResponseType(value: string): SurveyQuestionRecord['responseType'] {
+  if (value === 'open_ended' || value === 'numeric_0_10') return value;
+  throw new Error(`Unsupported survey response type: ${value}`);
 }
 
 function mapEvidence(row: typeof surveyEvidence.$inferSelect): SurveyEvidenceRecord {

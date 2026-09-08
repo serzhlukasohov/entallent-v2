@@ -1,0 +1,117 @@
+name: Conversation simulation gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Samples per scenario
+        required: true
+        default: '1'
+        type: choice
+        options: ['1', '5']
+  schedule:
+    - cron: '17 2 * * *'
+    - cron: '23 3 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.guard.outputs.should_run }}
+      runs: ${{ steps.guard.outputs.runs }}
+    steps:
+      - name: Check opt-in and credentials
+        id: guard
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          SCHEDULED_ENABLED: ${{ vars.CONVERSATION_SIM_SCHEDULED_ENABLED }}
+          REQUESTED_RUNS: ${{ inputs.runs }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+        run: |
+          if [ "$EVENT_NAME" != 'workflow_dispatch' ] && [ "$SCHEDULED_ENABLED" != 'true' ]; then
+            echo 'Scheduled simulation is disabled; set CONVERSATION_SIM_SCHEDULED_ENABLED=true to opt in.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'should_run=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$AZURE_OPENAI_ENDPOINT" ] && { [ -z "$AZURE_OPENAI_API_KEY" ] || [ -z "$AZURE_OPENAI_API_VERSION" ] || [ -z "$AZURE_OPENAI_TESTING_DEPLOYMENT" ]; }; then
+            echo 'Simulation skipped: AZURE_OPENAI_ENDPOINT requires the complete Azure OpenAI secret set.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'should_run=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$AZURE_OPENAI_ENDPOINT" ] && [ -z "$OPENAI_API_KEY" ]; then
+            echo 'Simulation skipped: configure OPENAI_API_KEY or the complete Azure OpenAI secret set.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'should_run=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          runs=1
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then runs="$REQUESTED_RUNS"; fi
+          if [ "$SCHEDULE" = '23 3 * * 0' ]; then runs=5; fi
+          echo 'should_run=true' >> "$GITHUB_OUTPUT"
+          echo "runs=$runs" >> "$GITHUB_OUTPUT"
+
+  simulate:
+    needs: authorize
+    if: needs.authorize.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run conversation simulation gate
+        id: gate
+        env:
+          SIM_GATE_RUNS: ${{ needs.authorize.outputs.runs }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          OPENAI_MODEL_BALANCED: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          LANGWATCH_API_KEY: ''
+        run: |
+          set +e
+          pnpm sim:gate
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Classify gate result
+        run: |
+          summary=$(find packages/conversation-sim/runs/gates -name summary.json -print -quit)
+          if [ -z "$summary" ]; then
+            echo 'Simulation failed before producing a report.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          status=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).status)" "$summary")
+          echo "Simulation status: $status" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" = 'manual_review_required' ]; then
+            echo '::warning::Automated thresholds passed; sensitive scenarios require human review.'
+            exit 0
+          fi
+          [ "$status" = 'passed' ]
+
+      - name: Upload simulation reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: conversation-sim-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/conversation-sim/runs/gates/
+          if-no-files-found: warn
+          retention-days: 14

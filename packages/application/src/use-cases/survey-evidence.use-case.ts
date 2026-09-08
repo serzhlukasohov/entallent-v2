@@ -4,7 +4,8 @@ import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { SurveyQuestionRecord, SurveyWindowRecord, MessageRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
-import { isWithinEngagementWindow, type PulseBacklogService } from '../services/pulse-backlog.service';
+import type { PulseBacklogService } from '../services/pulse-backlog.service';
+import { isEngagementWindowEligible } from '../services/pulse-backlog.service';
 
 /** Evidence weaker than this is noise ("said hi, fine") — not worth persisting */
 const MIN_EVIDENCE_STRENGTH = 0.35;
@@ -17,6 +18,7 @@ const EVIDENCE_SIMILARITY_THRESHOLD = 0.5;
  * let accumulation decide.
  */
 const OPINION_REVERSAL_CONFIDENCE_THRESHOLD = 0.75;
+const COMPLETED_ASSESSMENT_STATUSES = new Set(['partially_covered', 'covered', 'scored']);
 
 export interface SurveyEvidenceExtractionInput {
   conversationId: string;
@@ -38,12 +40,15 @@ export class SurveyEvidenceExtractionUseCase {
     if (!window) return;
 
     const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
-    if (!questions.length) return;
-
     const messages = await this.conversationRepo.findRecentMessages(input.conversationId, 15);
     if (!messages.some((m) => m.direction === 'inbound')) return;
+    const evaluatedAt = messages.find(
+      (message) => message.id === input.inboundMessageId && message.direction === 'inbound',
+    )?.occurredAt;
+    const eligibleQuestions = this.eligibleQuestions(window, questions, evaluatedAt);
+    if (!eligibleQuestions.length) return;
 
-    await this.processMessageWindow(input, window, questions, messages, input.inboundMessageId);
+    await this.processMessageWindow(input, window, eligibleQuestions, messages, input.inboundMessageId);
   }
 
   /**
@@ -82,7 +87,9 @@ export class SurveyEvidenceExtractionUseCase {
       const slice = history.slice(start, start + WINDOW_SIZE);
       if (!slice.some((m) => m.direction === 'inbound')) continue;
       const lastInbound = [...slice].reverse().find((m) => m.direction === 'inbound')!;
-      await this.processMessageWindow(input, window, questions, slice, lastInbound.id);
+      const eligibleQuestions = this.eligibleQuestions(window, questions, lastInbound.occurredAt);
+      if (!eligibleQuestions.length) continue;
+      await this.processMessageWindow(input, window, eligibleQuestions, slice, lastInbound.id);
       windowsProcessed++;
     }
 
@@ -97,11 +104,6 @@ export class SurveyEvidenceExtractionUseCase {
     messages: MessageRecord[],
     sourceMessageId: string,
   ): Promise<void> {
-    const eligibleQuestions = questions.filter(
-      (q) => q.questionGroup !== 'engagement' || isWithinEngagementWindow(window.periodEnd),
-    );
-    if (!eligibleQuestions.length) return;
-
     const turns: ConversationTurn[] = messages.map((m) => ({
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       content: m.text,
@@ -110,24 +112,40 @@ export class SurveyEvidenceExtractionUseCase {
 
     if (!turns.some((t) => t.role === 'user')) return;
 
-    const questionsForEval: SurveyQuestionForEvaluation[] = eligibleQuestions.map((q) => ({
+    const sourceProbeQuestionId = surveyProbeQuestionIdForSource(messages, sourceMessageId);
+    const evaluationQuestions = questions.filter(
+      (question) => question.responseType !== 'numeric_0_10' || question.id === sourceProbeQuestionId,
+    );
+    if (!evaluationQuestions.length) return;
+
+    const questionsForEval: SurveyQuestionForEvaluation[] = evaluationQuestions.map((q) => ({
       id: q.id,
       stableKey: q.stableKey,
       canonicalMeaning: q.canonicalMeaning,
+      responseType: q.responseType,
       positiveIndicators: q.positiveIndicators,
       negativeIndicators: q.negativeIndicators,
       contraindications: q.contraindications,
-      responseType: q.responseType,
     }));
 
     const evaluation = await this.ai.evaluateSurveyEvidence(turns, questionsForEval);
+    const assessmentByQuestion = new Map(
+      (await this.surveyRepo.findAssessmentsForWindow(window.id)).map((assessment) => [
+        assessment.surveyQuestionId,
+        assessment,
+      ]),
+    );
 
     for (const ev of evaluation.evidence) {
       if (ev.assessmentShouldRemainUnknown) continue;
-      if (ev.strength < MIN_EVIDENCE_STRENGTH) continue;
 
-      const question = eligibleQuestions.find((q) => q.id === ev.questionId);
+      const question = evaluationQuestions.find((q) => q.id === ev.questionId);
       if (!question) continue;
+      const isNumeric = question.responseType === 'numeric_0_10';
+      const numericValue = isNumeric
+        ? validatedExplicitRating(messages, sourceMessageId, question.id, ev.numericValue)
+        : undefined;
+      if (ev.strength < MIN_EVIDENCE_STRENGTH && numericValue === undefined) continue;
 
       // The evaluator re-reads the same transcript every message, so consecutive
       // runs restate the same finding. The new record replaces prior records that
@@ -175,22 +193,34 @@ export class SurveyEvidenceExtractionUseCase {
         await this.surveyRepo.markEvidenceSuperseded(supersededIds);
       }
 
-      const status = computeAssessmentStatus(ev, question);
+      const existingAssessment = assessmentByQuestion.get(ev.questionId);
+      const hasNumericScore = numericValue !== undefined || existingAssessment?.score != null;
+      const status = isNumeric
+        ? hasNumericScore ? 'scored' : 'partially_covered'
+        : computeAssessmentStatus(ev, question);
 
       await this.surveyRepo.upsertAssessment({
         surveyWindowId: window.id,
         surveyQuestionId: ev.questionId,
+        ...(numericValue !== undefined ? { score: numericValue } : {}),
         confidence: ev.confidence,
         status,
         evidenceId: evidenceRecord.id,
         evaluatorVersion: 'v1',
-        score: ev.numericValue,
+      });
+      assessmentByQuestion.set(ev.questionId, {
+        surveyQuestionId: ev.questionId,
+        status,
+        score: numericValue ?? existingAssessment?.score ?? null,
       });
 
-      // Any saved evidence means the question has a root cause — mark it done
-      // for this pulse cycle so the agent stops probing it.
+      // Qualitative questions close on usable evidence. Numeric questions stay
+      // pending until an explicit rating has been validated and stored.
       // Evidence can still be updated if the employee voluntarily revisits the topic.
-      if (this.pulseBacklogService) {
+      if (
+        this.pulseBacklogService &&
+        (isNumeric ? status === 'scored' : COMPLETED_ASSESSMENT_STATUSES.has(status))
+      ) {
         const allEvidence = await this.surveyRepo.findEvidenceForQuestion(
           input.userId,
           ev.questionId,
@@ -204,7 +234,7 @@ export class SurveyEvidenceExtractionUseCase {
         );
       }
 
-      await this.checkGroupCompletion(input, window.id, ev.questionId, eligibleQuestions);
+      await this.checkGroupCompletion(input, window.id, ev.questionId, questions);
     }
   }
 
@@ -229,10 +259,13 @@ export class SurveyEvidenceExtractionUseCase {
     if (groupQuestions.length === 0) return;
 
     const assessments = await this.surveyRepo.findAssessmentsForWindow(windowId);
-    const assessmentMap = new Map(assessments.map((a) => [a.surveyQuestionId, a.status]));
 
-    const COMPLETE_STATUSES = new Set(['partially_covered', 'scored']);
-    const allComplete = groupQuestions.every((q) => COMPLETE_STATUSES.has(assessmentMap.get(q.id) ?? ''));
+    const allComplete = groupQuestions.every((q) => {
+      const assessment = assessments.find((candidate) => candidate.surveyQuestionId === q.id);
+      return q.responseType === 'numeric_0_10'
+        ? assessment?.status === 'scored' && assessment.score !== null
+        : COMPLETED_ASSESSMENT_STATUSES.has(assessment?.status ?? '');
+    });
 
     if (!allComplete) return;
 
@@ -245,4 +278,66 @@ export class SurveyEvidenceExtractionUseCase {
     });
 
   }
+
+  private eligibleQuestions(
+    window: SurveyWindowRecord,
+    questions: SurveyQuestionRecord[],
+    evaluatedAt: Date | undefined,
+  ): SurveyQuestionRecord[] {
+    if (evaluatedAt && isEngagementWindowEligible(window, evaluatedAt)) {
+      return questions;
+    }
+    return questions.filter((question) => question.questionGroup !== 'engagement');
+  }
+}
+
+function validatedExplicitRating(
+  messages: MessageRecord[],
+  sourceMessageId: string,
+  questionId: string,
+  evaluatedValue: number | null | undefined,
+): number | undefined {
+  const sourceIndex = messages.findIndex(
+    (message) => message.id === sourceMessageId && message.direction === 'inbound',
+  );
+  if (sourceIndex < 0) return undefined;
+
+  if (surveyProbeQuestionIdForSource(messages, sourceMessageId) !== questionId) return undefined;
+
+  const explicitValue = parseExplicitZeroToTen(messages[sourceIndex]!.text);
+  if (explicitValue === undefined) return undefined;
+  if (typeof evaluatedValue === 'number' && evaluatedValue !== explicitValue) return undefined;
+  return explicitValue;
+}
+
+function parseExplicitZeroToTen(text: string): number | undefined {
+  const labeled = text.match(
+    /(?:^|[^\d.,])((?:10|[0-9])(?:[.,]\d+)?)\s*(?:\/\s*10\b|out\s+of\s+10\b)/iu,
+  );
+  if (labeled?.[1]) return Number(labeled[1].replace(',', '.'));
+
+  const values = [...text.matchAll(/(?:^|[^\d.,])((?:10|[0-9])(?:[.,]\d+)?)(?=$|[^\d.,])/gu)]
+    .map((match) => Number(match[1]!.replace(',', '.')))
+    .filter((value) => value >= 0 && value <= 10);
+  const uniqueValues = [...new Set(values)];
+  return uniqueValues.length === 1 ? uniqueValues[0] : undefined;
+}
+
+function surveyProbeQuestionIdForSource(
+  messages: MessageRecord[],
+  sourceMessageId: string,
+): string | undefined {
+  const sourceIndex = messages.findIndex(
+    (message) => message.id === sourceMessageId && message.direction === 'inbound',
+  );
+  if (sourceIndex < 0) return undefined;
+
+  const previousOutbound = messages
+    .slice(0, sourceIndex)
+    .reverse()
+    .find((message) => message.direction === 'outbound');
+  return previousOutbound?.metadata?.['containsSurveyProbe'] === true &&
+    typeof previousOutbound.metadata['surveyProbeQuestionId'] === 'string'
+    ? previousOutbound.metadata['surveyProbeQuestionId']
+      : undefined;
 }

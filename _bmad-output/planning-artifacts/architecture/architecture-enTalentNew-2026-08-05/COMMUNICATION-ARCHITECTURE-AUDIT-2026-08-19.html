@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>enTalent Communication Architecture Audit — 2026-08-19</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#0b1020; --panel:#141b2d; --text:#edf2ff; --muted:#a9b4cc; --line:#2a3551; --red:#ff7373; --amber:#ffc766; --green:#75d69c; --blue:#77b7ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 Inter, ui-sans-serif, system-ui, sans-serif; }
+    .main { max-width:1120px; margin:auto; padding:48px 24px 72px; }
+    h1 { font-size:36px; line-height:1.1; margin:0 0 10px; }
+    h2 { margin:42px 0 14px; font-size:24px; }
+    h3 { margin:28px 0 10px; color:var(--blue); }
+    p, li { max-width:88ch; }
+    code { background:#202942; padding:2px 5px; border-radius:4px; }
+    .lede { color:var(--muted); font-size:18px; max-width:82ch; }
+    .verdict { border:1px solid var(--red); background:#2a1722; padding:18px 20px; border-radius:12px; margin:28px 0; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+    .card { background:var(--panel); border:1px solid var(--line); padding:16px; border-radius:10px; }
+    .metric { font-size:25px; font-weight:750; display:block; }
+    .muted { color:var(--muted); }
+    .critical { color:var(--red); } .high { color:var(--amber); } .target { color:var(--green); }
+    table { width:100%; border-collapse:collapse; margin:14px 0; }
+    th, td { border:1px solid var(--line); padding:10px; text-align:left; vertical-align:top; }
+    th { background:var(--panel); }
+    pre { overflow:auto; background:#080c17; border:1px solid var(--line); border-radius:10px; padding:18px; color:#cfe0ff; }
+    .tag { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:3px 9px; margin-right:6px; color:var(--muted); }
+  </style>
+</head>
+<body>
+<div class="main" role="main">
+  <span class="tag">Architecture validation</span><span class="tag">Ponytail audit</span><span class="tag">2026-08-19</span>
+  <h1>Communication Architecture Audit</h1>
+  <p class="lede">The intended architecture is sound, but implementation ownership has split across two conversation brains, four commit paths, two context snapshots, and a runtime contract broader than the accepted mentor-companion model.</p>
+
+  <div class="verdict"><strong>Verdict: changes required.</strong> Do not add another framework, graph, queue, or store. Converge the existing code into one TypeScript prepare-render-commit turn and narrow MAF to a renderer.</div>
+
+  <div class="grid">
+    <div class="card"><span class="metric">4</span><span class="muted">outbound commit paths</span></div>
+    <div class="card"><span class="metric">2</span><span class="muted">classifiers on a MAF turn</span></div>
+    <div class="card"><span class="metric">11</span><span class="muted">registered queue names; 2 dead</span></div>
+    <div class="card"><span class="metric">~7.7k</span><span class="muted">core TS/Python hot-path lines</span></div>
+  </div>
+
+  <h2>What blocks further feature work</h2>
+  <table>
+    <thead><tr><th>Priority</th><th>Finding</th><th>Required decision</th></tr></thead>
+    <tbody>
+      <tr><td class="critical">Critical</td><td>MAF runtime endpoint is not protected by the configured internal secret.</td><td>Enforce service auth at the FastAPI boundary and send it from TypeScript.</td></tr>
+      <tr><td class="critical">Critical</td><td>User insights accepts but ignores tenant ID; the dashboard omits it.</td><td>Require tenant scope in the contract and every query.</td></tr>
+      <tr><td class="high">High</td><td>Canonical OpenAPI and packaged Python schema have drifted; the parity test fails.</td><td>Generate the packaged artifact from one editable source in build/CI.</td></tr>
+      <tr><td class="high">High</td><td>Ledger phases do not describe actual committed actions and queue side effects.</td><td>Advance the ledger from the same idempotent commit boundary.</td></tr>
+      <tr><td class="high">High</td><td>Redis marks Slack events handled before durable persistence and enqueue.</td><td>Use PostgreSQL uniqueness plus stable BullMQ job IDs.</td></tr>
+      <tr><td class="high">High</td><td>TypeScript and Python independently classify and apply conversation policy.</td><td>TypeScript owns classification/policy; Python renders the supplied plan.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="target">Small target architecture</h2>
+  <pre>Slack adapters
+  → durable PostgreSQL inbound idempotency
+  → BullMQ conversation job
+  → ProcessConversationTurn (TypeScript)
+      → one context snapshot + real goals + DialogueState
+      → one classification/risk pass
+      → DialoguePolicy → ReplyPlan
+      → ReplyRendererPort
+          ├─ direct OpenAI renderer
+          └─ MAF HTTP renderer
+      → validate candidate
+      → one idempotent TypeScript commit
+          → messages / state / risk / actions / ledger
+          → message-send queue
+          → independent memory / survey / style jobs</pre>
+  <p>Seed <code>DialogueState v1</code> in the existing <code>conversations.active_topic</code>. Reuse <code>scheduled_actions</code> and the follow-up executor for consented loops and warm initiatives. Add no table and no queue in the first slice.</p>
+
+  <h2>Order of work</h2>
+  <h3>P0 — trustworthy boundaries</h3>
+  <ol>
+    <li>Runtime endpoint auth.</li>
+    <li>Tenant-scoped user insights.</li>
+    <li>Generated OpenAPI package artifact and default CI parity gate.</li>
+    <li>PostgreSQL Slack idempotency and deterministic BullMQ job IDs.</li>
+    <li>Truthful ledger phases tied to real commits.</li>
+  </ol>
+  <h3>P1 — one vertical conversation slice</h3>
+  <ol>
+    <li>One TypeScript context snapshot with goals and persisted dialogue state.</li>
+    <li>One classifier/risk pass and one DialoguePolicy.</li>
+    <li>MAF reduced to reply rendering and diagnostics.</li>
+    <li>One validate-and-commit function for direct OpenAI and MAF candidates.</li>
+    <li>Silent extractor-created follow-ups disabled until consent is modeled.</li>
+  </ol>
+  <h3>P2 — remove scaffolding</h3>
+  <ol>
+    <li>One proactive initiative executor and daily budget.</li>
+    <li>Remove the conversation queue's special check-in branch.</li>
+    <li>After the rollback window, delete shadow/canary-only machinery and the legacy whole-turn runtime path.</li>
+    <li>Resolve admin-versus-manager privacy semantics.</li>
+  </ol>
+
+  <h2>Ponytail result</h2>
+  <p>Delete dead risk/follow-up-planning queues, the deprecated ReplyBrief path, Python's duplicate classifier/memory/follow-up workflow, nominal unused ports, and one of the two context snapshots. Shrink four commit paths into one and use generated schema validation.</p>
+  <div class="card"><strong>Net:</strong> approximately <strong>−1,500 to −2,500 production lines</strong>, zero new dependencies. Another roughly 1,000 lines become removable after the MAF rollback window closes.</div>
+
+  <h2>Reviewer gate</h2>
+  <ul>
+    <li>Mechanical spine lint: pass, zero findings.</li>
+    <li>Good-spine rubric: semantic fail as a current build substrate.</li>
+    <li>Version/reality review: changes required.</li>
+    <li>Adversarial divergence review: fail on context authority, mutation timing, ledger ownership, and session recovery.</li>
+  </ul>
+  <p class="muted">No production code, architecture spine, database, or deployment state was changed by this audit.</p>
+</div>
+</body>
+</html>

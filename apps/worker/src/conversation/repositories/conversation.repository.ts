@@ -23,6 +23,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         channelType: conversations.channelType,
         externalConversationId: conversations.externalConversationId,
         status: conversations.status,
+        activeTopic: conversations.activeTopic,
         userDisplayName: users.preferredName,
         userLocale: users.locale,
         userTimezone: users.timezone,
@@ -42,11 +43,30 @@ export class ConversationRepository implements ConversationRepositoryPort {
       channelType: row.channelType,
       externalConversationId: row.externalConversationId,
       status: row.status,
+      activeTopic: toConversationActiveTopic(row.activeTopic),
       userDisplayName: row.userDisplayName ?? undefined,
       userLocale: row.userLocale ?? undefined,
       userTimezone: row.userTimezone ?? undefined,
       userTimezoneUpdatedAt: row.userTimezoneUpdatedAt ?? undefined,
     };
+  }
+
+  async updateActiveTopic(
+    conversationId: string,
+    tenantId: string,
+    userId: string,
+    activeTopic: NonNullable<ConversationRecord['activeTopic']>,
+  ): Promise<void> {
+    await this.db.client
+      .update(conversations)
+      .set({ activeTopic, updatedAt: new Date() })
+      .where(
+        and(
+          eq(conversations.id, conversationId),
+          eq(conversations.tenantId, tenantId),
+          eq(conversations.userId, userId),
+        ),
+      );
   }
 
   async findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
@@ -224,4 +244,33 @@ export class ConversationRepository implements ConversationRepositoryPort {
 
     throw new Error(`Delivery update scope mismatch: ${messageId}`);
   }
+}
+
+export function toConversationActiveTopic(
+  value: unknown,
+): NonNullable<ConversationRecord['activeTopic']> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const topic = value as Record<string, unknown>;
+  const summary = typeof topic['summary'] === 'string'
+    ? topic['summary'].trim().replace(/\s+/gu, ' ')
+    : '';
+  const startedAt = typeof topic['startedAt'] === 'string' ? topic['startedAt'] : '';
+  const startedAtDate = new Date(startedAt);
+  if (
+    !summary ||
+    [...summary].length > 500 ||
+    (topic['status'] !== 'active' && topic['status'] !== 'parked') ||
+    !startedAt ||
+    Number.isNaN(startedAtDate.getTime()) ||
+    startedAtDate.toISOString() !== startedAt
+  ) {
+    return undefined;
+  }
+
+  return {
+    summary,
+    status: topic['status'],
+    startedAt,
+  };
 }

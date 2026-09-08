@@ -146,11 +146,11 @@ Trigger a check-in twice with different `tenantId`s, or make sure one company ha
 
 ### Scenario 5: End of quarter — engagement questions
 
-This scenario needs a developer: set `engagementUnlockDays` to a very large value, or manually move the quarter-end date closer.
+This scenario needs a developer to move the quarter-end date closer. Engagement eligibility is fixed to the inclusive final 14 days of the survey window.
 
 **What should happen:**
 - Regular questions stop being sent
-- 3 engagement questions arrive — more direct, about engagement and intent to stay
+- 3 engagement questions arrive as direct 0–10 rating questions about engagement and intent to stay
 
 **What we're checking:**
 - ✅ The question topic differs from the regular ones (more direct, about a sense of belonging to the company)
@@ -177,9 +177,8 @@ This scenario needs a developer: set `engagementUnlockDays` to a very large valu
 | Parameter | Default | Description |
 |----------|-------------|----------|
 | `ignoreWindowHours` | 48 hours | How long to wait for a reply before counting it as ignored |
-| `engagementUnlockDays` | 14 days | How many days before quarter-end to enable engagement questions |
 
-To change these — ask a developer to update `proactive_messaging_policy` for the company in question.
+To change this — ask a developer to update `proactive_messaging_policy` for the company in question. The engagement window is a fixed product rule and is not tenant-configurable.
 
 ---
 

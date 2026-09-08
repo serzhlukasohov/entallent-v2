@@ -38,7 +38,7 @@ const questions = [
     positiveIndicators: [],
     negativeIndicators: [],
     contraindications: [],
-    responseType: 'open_ended',
+    responseType: 'open_ended' as const,
   },
 ];
 
@@ -151,6 +151,77 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(normalized.primaryIntent).toBe('casual_conversation');
     expect(normalized.dialogueAct).toBe('closing');
     await expect(provider.classifySituation(turns, { userName: 'X' })).rejects.toThrow();
+  });
+
+  it('promotes an explicit rejection plus corrected request to correction', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks for criteria.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'Give criteria for human-like and relevant answers.',
+            topicAnchor: 'chatbot evaluation criteria',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{
+        role: 'user',
+        content: 'No, you keep circling. I want you to give me criteria.',
+        timestamp: new Date(),
+      }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.dialogueAct).toBe('correction');
+    expect(result.latestUserSubstance).toBe('Give criteria for human-like and relevant answers.');
+  });
+
+  it('normalizes an explicit stop phrase to closing', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee gives a short acknowledgement.',
+            reminderRequest: null,
+            dialogueAct: 'acknowledgement',
+            latestUserSubstance: null,
+            topicAnchor: 'chatbot evaluation criteria',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content: 'No, forget', timestamp: new Date() }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.dialogueAct).toBe('closing');
+    expect(result.latestUserSubstance).toBeNull();
+    expect(result.topicAnchor).toBeNull();
   });
 });
 
@@ -511,6 +582,54 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     );
     expect(createMock).toHaveBeenCalledTimes(2);
     expect(res.text).toBe('That tracks.');
+  });
+
+  it('regenerates a numeric probe that omits the explicit 0-to-10 scale', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'How engaged do you feel?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'From 0 to 10, how engaged do you feel?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }] });
+    const provider = makeProvider();
+
+    const result = await provider.generateResponse(
+      turns,
+      { mode: 'survey_probe', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] },
+      responseContext({
+        userName: 'X',
+        surveyProbeQuestion: {
+          id: 'q-engagement', responseType: 'numeric_0_10', probeStrategies: ['Ask for a rating.'],
+        },
+      }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(result.text).toContain('0 to 10');
+  });
+
+  it('fails closed when a numeric probe retry is still noncompliant', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'How engaged do you feel?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }],
+    });
+    const provider = makeProvider();
+
+    await expect(provider.generateResponse(
+      turns,
+      { mode: 'survey_probe', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] },
+      responseContext({
+        userName: 'X',
+        surveyProbeQuestion: {
+          id: 'q-engagement', responseType: 'numeric_0_10', probeStrategies: ['Ask for a rating.'],
+        },
+      }),
+    )).rejects.toThrow(/noncompliant numeric survey probe/);
   });
 });
 

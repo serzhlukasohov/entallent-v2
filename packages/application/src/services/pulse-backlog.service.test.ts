@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PulseBacklogService } from './pulse-backlog.service';
+import { isEngagementWindowEligible, PulseBacklogService } from './pulse-backlog.service';
 import type { PulseBacklogRepositoryPort, PulseBacklogRecord, ResolvedIgnore } from '../ports/pulse-backlog.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { SurveyQuestionRecord, SurveyWindowRecord } from '../types/records';
@@ -89,7 +89,7 @@ function makeSurveyRepo(
     findOrCreateActiveWindow: vi.fn().mockResolvedValue(window),
     findQuestionsForWindow: vi.fn().mockResolvedValue(questions),
     findAssessmentsForWindow: vi.fn().mockResolvedValue(
-      coveredIds.map((id) => ({ surveyQuestionId: id, status: 'scored' })),
+      coveredIds.map((id) => ({ surveyQuestionId: id, status: 'scored', score: null })),
     ),
     saveEvidence: vi.fn(),
     markEvidenceSuperseded: vi.fn(),
@@ -143,6 +143,30 @@ describe('PulseBacklogService', () => {
       expect(coveredSet.has('q-2')).toBe(false);
     });
 
+    it('captures the coverage snapshot immediately before reading assessments', async () => {
+      vi.useFakeTimers();
+      const snapshotAt = new Date('2026-08-30T12:00:00.000Z');
+      const afterAssessmentRead = new Date('2026-08-30T12:00:01.000Z');
+      vi.setSystemTime(snapshotAt);
+
+      try {
+        const backlogRepo = makeBacklogRepo();
+        const surveyRepo = makeSurveyRepo(makeWindow());
+        (surveyRepo.findAssessmentsForWindow as ReturnType<typeof vi.fn>).mockImplementation(() => {
+          vi.setSystemTime(afterAssessmentRead);
+          return Promise.resolve([]);
+        });
+        const service = new PulseBacklogService(backlogRepo, surveyRepo);
+
+        await service.getNextProbeQuestion('u-1', 't-1');
+
+        const call = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(call[5]).toEqual(snapshotAt);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('calls resolveIgnoredEntries before finding next', async () => {
       const backlogRepo = makeBacklogRepo();
       const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow()));
@@ -183,7 +207,7 @@ describe('PulseBacklogService', () => {
       const backlogRepo = makeBacklogRepo();
       const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow()));
 
-      await service.getNextProbeQuestion('u-1', 't-1', { engagementUnlockDays: 14, ignoreWindowHours: 72 });
+      await service.getNextProbeQuestion('u-1', 't-1', { ignoreWindowHours: 72 });
 
       expect(backlogRepo.resolveIgnoredEntries).toHaveBeenCalledWith('u-1', 'w-1', 72);
     });
@@ -217,20 +241,49 @@ describe('PulseBacklogService', () => {
 
       await service.getNextProbeQuestion('u-1', 't-1');
 
-      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, undefined);
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, 'autonomy');
     });
 
-    it('uses engagementOnly=true and unlocks engagement when periodEnd is within engagementUnlockDays', async () => {
+    it('uses engagementOnly=true and unlocks engagement within the final 14 days', async () => {
       const engQuestion = makeQuestion({ id: 'q-eng', questionGroup: 'engagement', displayOrder: 30, stableKey: 'engagement_nps' });
       const regularQuestion = makeQuestion({ id: 'q-1' });
       const backlogRepo = makeBacklogRepo();
       const surveyRepo = makeSurveyRepo(makeWindow({ periodEnd: QUARTER_END_NEAR }), [regularQuestion, engQuestion]);
       const service = new PulseBacklogService(backlogRepo, surveyRepo);
 
-      await service.getNextProbeQuestion('u-1', 't-1', { engagementUnlockDays: 14, ignoreWindowHours: 48 });
+      await service.getNextProbeQuestion('u-1', 't-1', { ignoreWindowHours: 48 });
 
       expect(backlogRepo.unlockEngagementIfNeeded).toHaveBeenCalledOnce();
       expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', true, undefined);
+    });
+
+    it('does not unlock engagement 15 days before period end', async () => {
+      const periodEnd = new Date(Date.now() + 15 * 86_400_000);
+      const backlogRepo = makeBacklogRepo();
+      const service = new PulseBacklogService(
+        backlogRepo,
+        makeSurveyRepo(makeWindow({ periodEnd })),
+      );
+
+      await service.getNextProbeQuestion('u-1', 't-1', { ignoreWindowHours: 48 });
+
+      expect(backlogRepo.unlockEngagementIfNeeded).not.toHaveBeenCalled();
+    });
+
+    it('does not unlock an engagement question that already has a stored score', async () => {
+      const engagement = makeQuestion({
+        id: 'q-eng', questionGroup: 'engagement', responseType: 'numeric_0_10',
+      });
+      const backlogRepo = makeBacklogRepo();
+      const surveyRepo = makeSurveyRepo(makeWindow({ periodEnd: QUARTER_END_NEAR }), [engagement]);
+      (surveyRepo.findAssessmentsForWindow as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { surveyQuestionId: engagement.id, status: 'scored', score: 8 },
+      ]);
+      const service = new PulseBacklogService(backlogRepo, surveyRepo);
+
+      await service.getNextProbeQuestion('u-1', 't-1');
+
+      expect(backlogRepo.unlockEngagementIfNeeded).toHaveBeenCalledWith('u-1', 't-1', 'w-1', []);
     });
 
     it('does NOT unlock engagement when periodEnd is far away', async () => {
@@ -240,7 +293,7 @@ describe('PulseBacklogService', () => {
       await service.getNextProbeQuestion('u-1', 't-1');
 
       expect(backlogRepo.unlockEngagementIfNeeded).not.toHaveBeenCalled();
-      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, undefined);
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, 'autonomy');
     });
 
     it('does NOT unlock engagement after periodEnd has passed', async () => {
@@ -253,7 +306,7 @@ describe('PulseBacklogService', () => {
       await service.getNextProbeQuestion('u-1', 't-1');
 
       expect(backlogRepo.unlockEngagementIfNeeded).not.toHaveBeenCalled();
-      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, undefined);
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, 'autonomy');
     });
 
     it('does NOT pass engagement questions to initializeIfNeeded', async () => {
@@ -280,7 +333,6 @@ describe('PulseBacklogService', () => {
       const service = new PulseBacklogService(backlogRepo, surveyRepo);
 
       const result = await service.getNextProbeQuestion('u-1', 't-1', {
-        engagementUnlockDays: 14,
         ignoreWindowHours: 48,
         questionGroup: 'autonomy',
       });
@@ -290,6 +342,53 @@ describe('PulseBacklogService', () => {
       expect(questions.map((q) => q.id)).toEqual(['q-autonomy']);
       expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, 'autonomy');
       expect(result?.question.id).toBe('q-autonomy');
+    });
+
+    it('prioritizes the regular group with the most completed questions', async () => {
+      const questions = [
+        makeQuestion({ id: 'a-1', questionGroup: 'autonomy' }),
+        makeQuestion({ id: 'a-2', questionGroup: 'autonomy' }),
+        makeQuestion({ id: 'g-1', questionGroup: 'growth' }),
+        makeQuestion({ id: 'g-2', questionGroup: 'growth' }),
+      ];
+      const backlogRepo = makeBacklogRepo({
+        findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry({ surveyQuestionId: 'g-2' })),
+      });
+      const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), questions, ['g-1']));
+
+      await service.getNextProbeQuestion('u-1', 't-1');
+
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, 'growth');
+    });
+
+    it('uses canonical group order to break equal-progress ties', async () => {
+      const questions = [
+        makeQuestion({ id: 'g-1', questionGroup: 'growth' }),
+        makeQuestion({ id: 'a-1', questionGroup: 'autonomy' }),
+      ];
+      const backlogRepo = makeBacklogRepo({
+        findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry({ surveyQuestionId: 'a-1' })),
+      });
+      const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), questions));
+
+      await service.getNextProbeQuestion('u-1', 't-1');
+
+      expect(backlogRepo.findNextPending).toHaveBeenCalledWith('u-1', 'w-1', false, 'autonomy');
+    });
+
+    it('falls back to the canonical pending lookup when the focused group has no entry', async () => {
+      const findNextPending = vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(makeBacklogEntry({ surveyQuestionId: 'q-1' }));
+      const backlogRepo = makeBacklogRepo({ findNextPending });
+      const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow()));
+
+      await service.getNextProbeQuestion('u-1', 't-1');
+
+      expect(findNextPending.mock.calls).toEqual([
+        ['u-1', 'w-1', false, 'autonomy'],
+        ['u-1', 'w-1', false],
+      ]);
     });
   });
 
@@ -331,5 +430,30 @@ describe('PulseBacklogService', () => {
 
       expect(backlogRepo.prioritizeQuestionGroup).toHaveBeenCalledWith('u-1', 'w-1', 'belonging');
     });
+  });
+});
+
+describe('isEngagementWindowEligible', () => {
+  it('includes the exact lower boundary', () => {
+    const periodEnd = new Date('2026-09-30T12:00:00.000Z');
+    const now = new Date('2026-09-16T12:00:00.000Z');
+    expect(isEngagementWindowEligible({ periodEnd }, now)).toBe(true);
+  });
+
+  it('excludes one millisecond before the lower boundary', () => {
+    const periodEnd = new Date('2026-09-30T12:00:00.000Z');
+    const now = new Date('2026-09-16T11:59:59.999Z');
+    expect(isEngagementWindowEligible({ periodEnd }, now)).toBe(false);
+  });
+
+  it('includes the exact period end', () => {
+    const periodEnd = new Date('2026-09-30T12:00:00.000Z');
+    expect(isEngagementWindowEligible({ periodEnd }, periodEnd)).toBe(true);
+  });
+
+  it('excludes an expired active window', () => {
+    const periodEnd = new Date('2026-09-30T12:00:00.000Z');
+    const now = new Date('2026-09-30T12:00:00.001Z');
+    expect(isEngagementWindowEligible({ periodEnd }, now)).toBe(false);
   });
 });

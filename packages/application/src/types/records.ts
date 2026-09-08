@@ -1,5 +1,11 @@
 import type { DeidentificationDecision } from '../utils/deidentification-policy';
 
+export interface ConversationActiveTopicRecord {
+  summary: string;
+  status: 'active' | 'parked';
+  startedAt: string;
+}
+
 export interface ConversationRecord {
   id: string;
   tenantId: string;
@@ -12,6 +18,7 @@ export interface ConversationRecord {
   /** IANA timezone of the conversation's user, if known */
   userTimezone?: string;
   userTimezoneUpdatedAt?: Date;
+  activeTopic?: ConversationActiveTopicRecord;
 }
 
 export interface MessageMetadata {
@@ -134,6 +141,8 @@ export interface RiskSignalRecord {
   expiresAt?: Date;
 }
 
+export type SurveyResponseType = 'open_ended' | 'numeric_0_10';
+
 export interface SurveyQuestionRecord {
   id: string;
   surveyDefinitionId: string;
@@ -153,7 +162,7 @@ export interface SurveyQuestionRecord {
   displayOrder: number;
   version: string;
   questionGroup: string;  // 'autonomy' | 'growth' | 'purpose' | 'belonging' | 'engagement'
-  responseType: string;   // 'open_ended' | 'numeric_0_10'
+  responseType: SurveyResponseType;
 }
 
 export interface SurveyWindowRecord {

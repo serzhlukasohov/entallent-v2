@@ -31,6 +31,7 @@
 #   - open: Committed during a retrospective, not yet addressed
 #   - in-progress: Actively being worked on
 #   - done: Completed
+#   - obsolete: No longer applicable after a product or architecture retirement
 #
 # WORKFLOW NOTES:
 # ===============
@@ -41,7 +42,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-09T19:40:00+02:00
+last_updated: 2026-08-28T11:09:38+02:00
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -149,7 +150,7 @@ action_items:
   - epic: 3
     action: 'Carry fail-closed redaction and stable reason-code allowlists into Python service validation, tool-call audit records, and future shadow candidate diagnostics.'
     owner: 'Amelia / Developer'
-    status: in-progress
+    status: obsolete
   - epic: 3
     action: 'Keep Epic 4 Story 4.1 limited to scaffold and liveness; defer runtime endpoint, service auth, durable session store, worker client, MAF workflow, shadow execution, canary routing, and UI to their planned stories.'
     owner: 'Winston / Architect'
@@ -229,7 +230,7 @@ action_items:
   - epic: 6
     action: 'Maintain allowlisted stable reason-code and known-ID evidence rules for future Python validation and tool audit records.'
     owner: 'Amelia / Developer'
-    status: open
+    status: obsolete
   - epic: 7
     action: 'Run a local live model smoke test for agent-service with real OpenAI or Azure OpenAI env vars.'
     owner: 'Amelia / Developer'

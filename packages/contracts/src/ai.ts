@@ -189,10 +189,10 @@ export const SurveyEvidenceEvaluationSchema = z.object({
       strength: z.number().min(0).max(1),
       completeness: z.number().min(0).max(1),
       confidence: z.number().min(0).max(1),
+      numericValue: z.number().min(0).max(10).nullable().optional(),
       followUpProbeNeeded: z.boolean(),
       thresholdReached: z.boolean(),
       assessmentShouldRemainUnknown: z.boolean(),
-      numericValue: z.number().int().min(1).max(10).optional(),
     }),
   ),
 });

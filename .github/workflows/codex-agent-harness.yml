@@ -1,0 +1,215 @@
+name: Codex agent harness draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Bounded automation mode
+        required: true
+        default: spec
+        type: choice
+        options: [spec, reflection]
+      spec_path:
+        description: Ready spec under _bmad-output/implementation-artifacts
+        required: false
+        type: string
+      ref:
+        description: Branch to read and target
+        required: true
+        default: main
+        type: string
+  schedule:
+    - cron: '41 4 * * 1'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      eligible: ${{ steps.context.outputs.eligible }}
+      mode: ${{ steps.context.outputs.mode }}
+      ref: ${{ steps.context.outputs.ref }}
+      source_sha: ${{ steps.context.outputs.source_sha }}
+      spec_path: ${{ steps.context.outputs.spec_path }}
+    steps:
+      - name: Resolve trigger
+        id: trigger
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULED_ENABLED: ${{ vars.CODEX_HARNESS_REFLECTION_ENABLED }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+          REQUESTED_REF: ${{ inputs.ref }}
+          SPEC_PATH: ${{ inputs.spec_path }}
+        run: |
+          if [ "$EVENT_NAME" = 'schedule' ] && [ "$SCHEDULED_ENABLED" != 'true' ]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'Scheduled reflection is disabled; set CODEX_HARNESS_REFLECTION_ENABLED=true to opt in.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" != 'schedule' ]; then
+            case "$REQUESTED_REF" in ''|*[!A-Za-z0-9._/-]*) echo 'Invalid ref; no automation started.' >> "$GITHUB_STEP_SUMMARY"; echo 'enabled=false' >> "$GITHUB_OUTPUT"; exit 0;; esac
+          fi
+          echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = 'schedule' ]; then
+            echo 'mode=reflection' >> "$GITHUB_OUTPUT"
+            echo 'ref=main' >> "$GITHUB_OUTPUT"
+            echo 'spec_path=' >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=$REQUESTED_MODE" >> "$GITHUB_OUTPUT"
+            echo "ref=$REQUESTED_REF" >> "$GITHUB_OUTPUT"
+            echo "spec_path=$SPEC_PATH" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.trigger.outputs.enabled == 'true'
+        with:
+          ref: ${{ steps.trigger.outputs.ref }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        if: steps.trigger.outputs.enabled == 'true'
+
+      - uses: actions/setup-node@v6
+        if: steps.trigger.outputs.enabled == 'true'
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.trigger.outputs.enabled == 'true'
+
+      - name: Build bounded context
+        id: context
+        if: steps.trigger.outputs.enabled == 'true'
+        env:
+          MODE: ${{ steps.trigger.outputs.mode }}
+          REF: ${{ steps.trigger.outputs.ref }}
+          SPEC_PATH: ${{ steps.trigger.outputs.spec_path }}
+        run: |
+          set +e
+          if [ "$MODE" = 'spec' ]; then
+            pnpm exec tsx scripts/agent-harness.ts validate-spec --spec "$SPEC_PATH"
+          else
+            pnpm exec tsx scripts/agent-harness.ts reflection
+          fi
+          code=$?
+          set -e
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "spec_path=$SPEC_PATH" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            echo 'eligible=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'eligible=false' >> "$GITHUB_OUTPUT"
+            echo 'No eligible ready spec or open harness fix; exiting without model or write permissions.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload reflection context
+        if: steps.context.outputs.eligible == 'true' && steps.context.outputs.mode == 'reflection'
+        uses: actions/upload-artifact@v6
+        with:
+          name: harness-context-${{ github.run_id }}
+          path: runs/harness/reflection.md
+          retention-days: 1
+
+  model_patch:
+    needs: prepare
+    if: needs.prepare.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      has_patch: ${{ steps.patch.outputs.has_patch }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v7
+        if: needs.prepare.outputs.mode == 'reflection'
+        with:
+          name: harness-context-${{ github.run_id }}
+          path: runs/harness
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Preserve trusted validator
+        run: cp scripts/agent-harness.ts "$RUNNER_TEMP/agent-harness.ts"
+
+      - name: Prepare one bounded patch
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+          prompt: |
+            Mode: ${{ needs.prepare.outputs.mode }}
+            Ready spec path: ${{ needs.prepare.outputs.spec_path }}
+            For spec mode, implement only the approved ready spec. For reflection mode, read runs/harness/reflection.md and make exactly one smallest durable harness fix backed by one regression check.
+            Follow AGENTS.md. Do not change frozen intent, touch or invoke MAF/agent-service, commit, push, deploy, open a PR, use production data, or run live model evaluations.
+            If no bounded evidence-backed change remains, leave the worktree unchanged.
+
+      - name: Validate patch with deterministic harness
+        run: pnpm exec tsx "$RUNNER_TEMP/agent-harness.ts" check --base HEAD
+
+      - name: Export patch only
+        id: patch
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'has_patch=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --cached --binary > codex.patch
+          echo 'has_patch=true' >> "$GITHUB_OUTPUT"
+
+      - name: Upload isolated patch
+        if: steps.patch.outputs.has_patch == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: codex-harness-patch-${{ github.run_id }}
+          path: codex.patch
+          retention-days: 1
+
+  draft_pr:
+    needs: [prepare, model_patch]
+    if: needs.model_patch.outputs.has_patch == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: codex-harness-patch-${{ github.run_id }}
+
+      - name: Apply patch and open draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ needs.prepare.outputs.ref }}
+          MODE: ${{ needs.prepare.outputs.mode }}
+          BRANCH: codex/harness-${{ needs.prepare.outputs.mode }}-${{ github.run_id }}
+        run: |
+          git apply --index codex.patch
+          git switch -c "$BRANCH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore: Codex harness $MODE patch"
+          git push origin "$BRANCH"
+          gh pr create --draft --base "$BASE_BRANCH" --head "$BRANCH" --title "chore: Codex harness $MODE" --body 'One bounded Codex patch. Human review and merge are required.'

@@ -298,32 +298,40 @@ describe('Contract: SurveyEvidenceEvaluationSchema', () => {
     ).toThrow();
   });
 
-  it('accepts only explicit integer 1-10 numeric evidence values', () => {
-    const payload = {
+  it.each([0, 7, 10])('accepts an explicit numeric value of %s', (numericValue) => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
       candidateQuestionIds: ['q-1'],
-      evidence: [
-        {
-          questionId: 'q-1',
-          evidenceSummary: 'User explicitly answered 7 out of 10.',
-          polarity: 'mixed',
-          strength: 0.8,
-          completeness: 0.7,
-          confidence: 0.9,
-          followUpProbeNeeded: false,
-          thresholdReached: true,
-          assessmentShouldRemainUnknown: false,
-          numericValue: 7,
-        },
-      ],
-    };
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: `Explicit rating: ${numericValue}`,
+        polarity: 'neutral', strength: 1, completeness: 1, confidence: 1,
+        followUpProbeNeeded: false, thresholdReached: true,
+        assessmentShouldRemainUnknown: false, numericValue,
+      }],
+    });
+    expect(parsed.evidence[0]?.numericValue).toBe(numericValue);
+  });
 
-    expect(SurveyEvidenceEvaluationSchema.parse(payload).evidence[0]!.numericValue).toBe(7);
-    expect(() =>
-      SurveyEvidenceEvaluationSchema.parse({
-        ...payload,
-        evidence: [{ ...payload.evidence[0], numericValue: 7.5 }],
-      }),
-    ).toThrow();
+  it.each([-1, 11])('rejects an out-of-range numeric value of %s', (numericValue) => {
+    expect(() => SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: 'Invalid rating', polarity: 'neutral',
+        strength: 1, completeness: 1, confidence: 1, followUpProbeNeeded: false,
+        thresholdReached: true, assessmentShouldRemainUnknown: false, numericValue,
+      }],
+    })).toThrow();
+  });
+
+  it('accepts a null numeric value as no explicit rating', () => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [{
+        questionId: 'q-1', evidenceSummary: 'Qualitative signal only', polarity: 'neutral',
+        strength: 0.6, completeness: 0.5, confidence: 0.7, followUpProbeNeeded: true,
+        thresholdReached: false, assessmentShouldRemainUnknown: false, numericValue: null,
+      }],
+    });
+    expect(parsed.evidence[0]?.numericValue).toBeNull();
   });
 });
 

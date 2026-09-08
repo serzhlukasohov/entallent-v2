@@ -11,7 +11,12 @@ import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { RiskSignalRepositoryPort } from '../ports/risk-signal.repository.port';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
 import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
-import type { StyleProfileRecord } from '../types/records';
+import type { GoalRepositoryPort } from '../ports/goal.repository.port';
+import type {
+  ConversationActiveTopicRecord,
+  StyleProfileRecord,
+  UserGoalRecord,
+} from '../types/records';
 import { BASE_STYLE, STYLE_CONFIDENCE_FLOOR, STYLE_OFF_BASE_MARGIN } from '../utils/style-adaptation';
 import { buildReplyPlan } from '../utils/reply-plan';
 import type { EscalationPort } from '../ports/escalation.port';
@@ -61,6 +66,7 @@ export class ConversationOrchestrator {
     private readonly scheduledActionRepo?: ScheduledActionRepositoryPort,
     private readonly pulseBacklogService?: PulseBacklogService,
     private readonly styleProfileRepo?: StyleProfileRepositoryPort,
+    private readonly goalRepo?: GoalRepositoryPort,
   ) {}
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
@@ -117,6 +123,7 @@ export class ConversationOrchestrator {
       && deliveredReportingDisclosure.shownAt.getTime() < inboundMessage.occurredAt.getTime()
         ? deliveredReportingDisclosure
         : null;
+    const currentTurnAt = inboundMessage.occurredAt.toISOString();
 
     const turns: ConversationTurn[] = dbMessages.map((msg) => ({
       role: msg.direction === 'inbound' ? 'user' : 'assistant',
@@ -128,13 +135,14 @@ export class ConversationOrchestrator {
     const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
 
-    // Classify, feature flags, and memory load are all independent — run them together.
-    // Memory is loaded speculatively (cheap DB read); discarded if feature flag is off.
-    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile] = await Promise.all([
+    // Classification and enrichment reads are independent. Goal reads degrade to no goals;
+    // relevance is decided later, after safety and confirmation state are known.
+    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile, activeGoals] = await Promise.all([
       this.aiProvider.classifySituation(turns, {
         userName,
-        now: new Date().toISOString(),
+        now: currentTurnAt,
         timezone: userTimezone,
+        continuitySummary: conversation.activeTopic?.summary,
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -146,13 +154,18 @@ export class ConversationOrchestrator {
       this.styleProfileRepo
         ? this.styleProfileRepo.findByUser(userId, tenantId).catch(() => null)
         : Promise.resolve(null),
+      this.goalRepo
+        ? this.goalRepo.findActiveByUser(userId, tenantId).catch(() => [])
+        : Promise.resolve([]),
     ]);
 
     // Safety is too important to hinge on one model field. Intents that already route to
     // sensitive/crisis mode force the safety pass deterministically, even if the classifier
     // left requiresSafetyCheck false — otherwise detectRisk silently never runs on a burnout
     // or harassment turn and no risk signal can ever fire.
-    const classification: SituationClassification = SAFETY_INTENTS.has(rawClassification.primaryIntent)
+    const hasSafetyIntent = [rawClassification.primaryIntent, ...rawClassification.secondaryIntents]
+      .some((intent) => SAFETY_INTENTS.has(intent));
+    let classification: SituationClassification = hasSafetyIntent
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
     const reportingExplanationRequested =
@@ -165,6 +178,13 @@ export class ConversationOrchestrator {
     const pauseTurn = closingTurn || classification.dialogueAct === 'acknowledgement';
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
+    const recentOutbound = dbMessages.filter((m) => m.direction === 'outbound').slice(-2);
+    const correctionCarryover = classification.dialogueAct !== 'correction' && recentOutbound.some(
+      (message) => message.metadata?.['dialogueAct'] === 'correction',
+    );
+    const responseMemoryItems = classification.dialogueAct === 'correction' || correctionCarryover
+      ? []
+      : memoryItems;
 
     // Blend the user's learned style profile toward the base style, gated on the
     // same flag as memory. Only build adaptation when a profile actually exists.
@@ -175,23 +195,19 @@ export class ConversationOrchestrator {
       ? { dimensions: profile.dimensions, weight: profile.adaptationWeight, phrases: profile.phrases.map((p) => p.text) }
       : undefined;
 
-    const memoryContext = {
-      items: memoryItems.map((i) => ({
-        id: i.id,
-        category: i.category,
-        content: i.content,
-        importance: i.importance,
-      })),
-      goals: memoryItems
-        .filter((i) => i.category === 'goal')
-        .map((i) => ({ id: i.id, title: i.content, status: i.status })),
-    };
+    const memoryContextItems = responseMemoryItems
+      .filter((item) => item.category !== 'goal')
+      .map((item) => ({
+        id: item.id,
+        category: item.category,
+        content: item.content,
+        importance: item.importance,
+      }));
 
     // Probe pacing is computable from already-loaded messages — no I/O needed.
     const userTurnCount = dbMessages.filter(
       (m) => m.direction === 'inbound' && m.text !== '__init__',
     ).length;
-    const recentOutbound = dbMessages.filter((m) => m.direction === 'outbound').slice(-2);
     const probedRecently = recentOutbound.some(
       (m) => m.metadata?.['containsSurveyProbe'] === true,
     );
@@ -253,6 +269,41 @@ export class ConversationOrchestrator {
         }
       }
     }
+
+    const continuity = resolveContinuity({
+      classification,
+      activeTopic: conversation.activeTopic,
+      safetyTurn: classification.requiresSafetyCheck || risk.severity !== 'none',
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined,
+      now: currentTurnAt,
+    });
+    const continuityDecision = continuity.decision;
+    classification = continuity.classification;
+
+    const relevantGoal = selectRelevantGoal(activeGoals, {
+      classification,
+      risk,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined,
+    });
+    const goalDecision: {
+      selected: boolean;
+      selectedGoalId?: string;
+      candidateGoalCount: number;
+      reason: string;
+    } = {
+      selected: !!relevantGoal,
+      candidateGoalCount: activeGoals.length,
+      reason: relevantGoal ? 'exact_active_match' : 'not_selected',
+    };
+    if (relevantGoal?.id) {
+      goalDecision.selectedGoalId = relevantGoal.id;
+    }
+    const memoryContext = {
+      items: memoryContextItems,
+      goals: relevantGoal
+        ? [{ id: relevantGoal.id, title: relevantGoal.title, status: relevantGoal.status }]
+        : [],
+    };
 
     const probeQuestion =
       !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !risk.surveyMustBeBlocked
@@ -329,11 +380,14 @@ export class ConversationOrchestrator {
     const baseStrategy = confirmationRequest
       ? { mode: 'confirmation' as const, tone: 'warm' as const, includeFollowUpQuestion: false, maxResponseLength: 'medium' as const, forbiddenPatterns: [] }
       : buildReplyStrategy(classification, risk, probeQuestion?.id);
+    const probeStrategy = probeQuestion && baseStrategy.mode !== 'crisis' && baseStrategy.mode !== 'sensitive'
+      ? { ...baseStrategy, includeFollowUpQuestion: true }
+      : baseStrategy;
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
     const strategyWithStyle = applyTerseStyle(
-      confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : baseStrategy,
+      confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
       memoryEnabled ? profile : null,
     );
 
@@ -344,12 +398,16 @@ export class ConversationOrchestrator {
       ? undefined
       : buildReplyPlan({
           classification,
-          memoryItems,
+          memoryItems: responseMemoryItems,
           includeFollowUpQuestion: strategyWithStyle.includeFollowUpQuestion,
+          correctionCarryover,
           surveyProbeQuestionId: probeQuestion?.id,
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
     let strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
+    const responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
+      ? null
+      : probeQuestion;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
     const shouldOfferReportingDisclosure =
@@ -377,13 +435,19 @@ export class ConversationOrchestrator {
       : await this.aiProvider.generateResponse(turns, strategy, {
       userName,
       languagePolicy,
-      memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
+      memoryContext: memoryContext.items.length > 0 || memoryContext.goals.length > 0
+        ? memoryContext
+        : undefined,
       reportingDisclosure: shouldOfferReportingDisclosure
         ? getReportingDisclosureText(languagePolicy.responseLanguage)
         : undefined,
       reminderConfirmation,
-      surveyProbeQuestion: probeQuestion
-        ? { id: probeQuestion.id, probeStrategies: probeQuestion.probeStrategies }
+      surveyProbeQuestion: responseProbeQuestion
+        ? {
+            id: responseProbeQuestion.id,
+            probeStrategies: responseProbeQuestion.probeStrategies,
+            responseType: responseProbeQuestion.responseType,
+          }
         : undefined,
       topicConfirmed: typeof confirmedGroup === 'string'
         ? { questionGroup: confirmedGroup }
@@ -461,7 +525,9 @@ export class ConversationOrchestrator {
         generated = await this.aiProvider.generateResponse(turns, strategy, {
           userName,
           languagePolicy,
-          memoryContext: memoryItems.length > 0 ? memoryContext : undefined,
+          memoryContext: memoryContext.items.length > 0 || memoryContext.goals.length > 0
+            ? memoryContext
+            : undefined,
           reminderConfirmation,
           topicConfirmed: typeof confirmedGroup === 'string'
             ? { questionGroup: confirmedGroup }
@@ -481,6 +547,15 @@ export class ConversationOrchestrator {
       && !pauseTurn
       && generated.containsSurveyProbe === true;
 
+    if (continuity.activeTopicUpdate) {
+      await this.conversationRepo.updateActiveTopic(
+        conversationId,
+        tenantId,
+        userId,
+        continuity.activeTopicUpdate,
+      );
+    }
+
     const outbound = await this.conversationRepo.saveMessage({
       conversationId,
       tenantId,
@@ -498,6 +573,8 @@ export class ConversationOrchestrator {
           isSessionStart: sessionStart,
           containsSurveyProbe,
           surveyProbeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId : undefined,
+          continuityDecision,
+          goalDecision,
         }),
         ...(shouldAppendReportingDisclosure
           ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
@@ -599,10 +676,10 @@ export class ConversationOrchestrator {
           surveyRepo.transitionAwaitingGroupState({
             surveyWindowId: group.surveyWindowId,
             userId: group.userId,
-          tenantId: group.tenantId,
-          questionGroup: group.questionGroup,
-          confirmationPromptMessageId: group.confirmationPromptMessageId!,
-          status: 'pending_confirmation',
+            tenantId: group.tenantId,
+            questionGroup: group.questionGroup,
+            confirmationPromptMessageId: group.confirmationPromptMessageId!,
+            status: 'pending_confirmation',
           }),
         ),
       );
@@ -647,14 +724,14 @@ export class ConversationOrchestrator {
       await surveyRepo.transitionAwaitingGroupState({
         surveyWindowId: group.surveyWindowId,
         userId: group.userId,
-      tenantId: group.tenantId,
-      questionGroup: group.questionGroup,
-      confirmationPromptMessageId: group.confirmationPromptMessageId,
-      status: 'in_progress',
-      conversationId: input.conversationId,
-      responseMessageId: input.messageId,
-      responseOccurredAt: confirmingMessageOccurredAt,
-    });
+        tenantId: group.tenantId,
+        questionGroup: group.questionGroup,
+        confirmationPromptMessageId: group.confirmationPromptMessageId,
+        status: 'in_progress',
+        conversationId: input.conversationId,
+        responseMessageId: input.messageId,
+        responseOccurredAt: confirmingMessageOccurredAt,
+      });
       return { confirmedGroup: false, awaitingPresent: true };
     }
 
@@ -707,17 +784,31 @@ export class ConversationOrchestrator {
 
     let employeeScore: number | undefined;
     if (questionGroup === 'engagement') {
-      const questions = await surveyRepo.findQuestionsForWindow(windowId);
-      const groupQs = questions.filter((q) => q.questionGroup === 'engagement');
-      const assessmentScores = new Map(
-        (await surveyRepo.findAssessmentsForWindow(windowId)).map((a) => [a.surveyQuestionId, a.score]),
+      const [questions, assessments] = await Promise.all([
+        surveyRepo.findQuestionsForWindow(windowId),
+        surveyRepo.findAssessmentsForWindow(windowId),
+      ]);
+      const engagementQuestionIds = new Set(
+        questions
+          .filter((question) =>
+            question.questionGroup === 'engagement' && question.responseType === 'numeric_0_10')
+          .map((question) => question.id),
       );
-      const numericValues = groupQs
-        .map((q) => assessmentScores.get(q.id))
-        .filter((score): score is number =>
-          typeof score === 'number' && Number.isInteger(score) && score >= 1 && score <= 10,
-        );
-      if (groupQs.length === 3 && numericValues.length === 3) {
+      const scoreByQuestion = new Map<string, number>();
+      for (const assessment of assessments) {
+        if (
+          engagementQuestionIds.has(assessment.surveyQuestionId) &&
+          assessment.status === 'scored' &&
+          assessment.score !== null &&
+          Number.isFinite(assessment.score) &&
+          assessment.score >= 0 &&
+          assessment.score <= 10
+        ) {
+          scoreByQuestion.set(assessment.surveyQuestionId, assessment.score);
+        }
+      }
+      const numericValues = [...scoreByQuestion.values()];
+      if (engagementQuestionIds.size === 3 && numericValues.length === 3) {
         employeeScore = computeEngagementIndex(numericValues[0], numericValues[1], numericValues[2]);
       }
     } else {
@@ -768,6 +859,150 @@ export class ConversationOrchestrator {
     const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
     return result?.question ?? null;
   }
+}
+
+const ACTIVE_TOPIC_SUMMARY_MAX_LENGTH = 500;
+
+type ContinuityDecision = {
+  action: 'none' | 'park' | 'reuse' | 'replace';
+  anchorSource: 'none' | 'stored' | 'new';
+  hasSubstance: boolean;
+};
+
+function resolveContinuity(input: {
+  classification: SituationClassification;
+  activeTopic?: ConversationActiveTopicRecord;
+  safetyTurn: boolean;
+  confirmationTurn: boolean;
+  now: string;
+}): {
+  classification: SituationClassification;
+  activeTopicUpdate?: ConversationActiveTopicRecord;
+  decision: ContinuityDecision;
+} {
+  const { activeTopic } = input;
+  const dialogueAct = input.classification.dialogueAct;
+  const latestSubstance = boundedTopicSummary(input.classification.latestUserSubstance);
+  const classifiedAnchor = input.classification.topicAnchor || null;
+  const boundedClassifiedAnchor = boundedTopicSummary(classifiedAnchor);
+  const usesStoredAnchor = !!activeTopic && classifiedAnchor === activeTopic.summary;
+  const resemblesStoredAnchor = !!activeTopic &&
+    normalizeExactMatch(boundedClassifiedAnchor) === normalizeExactMatch(activeTopic.summary);
+  const withoutTopicAnchor = { ...input.classification, topicAnchor: null };
+
+  if (dialogueAct === 'closing') {
+    return {
+      classification: withoutTopicAnchor,
+      activeTopicUpdate: activeTopic?.status === 'active'
+        ? { ...activeTopic, status: 'parked' }
+        : undefined,
+      decision: {
+        action: activeTopic?.status === 'active' ? 'park' : 'none',
+        anchorSource: 'none',
+        hasSubstance: !!latestSubstance,
+      },
+    };
+  }
+
+  if (
+    dialogueAct === 'acknowledgement' ||
+    dialogueAct === 'greeting' ||
+    dialogueAct === 'social_checkin' ||
+    input.safetyTurn ||
+    input.confirmationTurn
+  ) {
+    return {
+      classification: withoutTopicAnchor,
+      decision: {
+        action: 'none',
+        anchorSource: 'none',
+        hasSubstance: !!latestSubstance,
+      },
+    };
+  }
+
+  if (!latestSubstance) {
+    return {
+      classification: input.classification,
+      decision: {
+        action: 'none',
+        anchorSource: 'none',
+        hasSubstance: false,
+      },
+    };
+  }
+
+  if (activeTopic && usesStoredAnchor) {
+    return {
+      classification: { ...input.classification, topicAnchor: activeTopic.summary },
+      activeTopicUpdate: activeTopic.status === 'parked'
+        ? { ...activeTopic, status: 'active' }
+        : undefined,
+      decision: {
+        action: activeTopic.status === 'parked' ? 'reuse' : 'none',
+        anchorSource: 'stored',
+        hasSubstance: true,
+      },
+    };
+  }
+
+  const summary = dialogueAct === 'continuation' && !resemblesStoredAnchor
+    ? boundedClassifiedAnchor ?? latestSubstance
+    : latestSubstance;
+  return {
+    classification: { ...input.classification, topicAnchor: summary },
+    activeTopicUpdate: {
+      summary,
+      status: 'active',
+      startedAt: input.now,
+    },
+    decision: {
+      action: 'replace',
+      anchorSource: boundedClassifiedAnchor ? 'stored' : 'new',
+      hasSubstance: true,
+    },
+  };
+}
+
+function boundedTopicSummary(value: string | null | undefined): string | null {
+  const normalized = value?.trim().replace(/\s+/gu, ' ');
+  return normalized
+    ? [...normalized].slice(0, ACTIVE_TOPIC_SUMMARY_MAX_LENGTH).join('')
+    : null;
+}
+
+function selectRelevantGoal(
+  goals: UserGoalRecord[],
+  input: {
+    classification: SituationClassification;
+    risk: RiskDetection;
+    confirmationTurn: boolean;
+  },
+): UserGoalRecord | undefined {
+  const { classification } = input;
+  if (
+    classification.primaryIntent !== 'progress_update' ||
+    !classification.latestUserSubstance?.trim() ||
+    classification.requiresSafetyCheck ||
+    input.risk.severity !== 'none' ||
+    input.confirmationTurn ||
+    classification.dialogueAct === 'greeting' ||
+    classification.dialogueAct === 'social_checkin' ||
+    classification.dialogueAct === 'acknowledgement' ||
+    classification.dialogueAct === 'closing'
+  ) {
+    return undefined;
+  }
+
+  const normalizedAnchor = normalizeExactMatch(classification.topicAnchor);
+  if (!normalizedAnchor) return undefined;
+  return goals
+    .filter((goal) => goal.status === 'active' && normalizeExactMatch(goal.title) === normalizedAnchor)
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || a.id.localeCompare(b.id))[0];
+}
+
+function normalizeExactMatch(value: string | null | undefined): string {
+  return value?.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase() ?? '';
 }
 
 /** Parse an LLM-provided ISO reminder time; reject invalid or past timestamps. */
@@ -873,6 +1108,13 @@ function conversationDecisionMetadata(input: {
   isSessionStart: boolean;
   containsSurveyProbe: boolean;
   surveyProbeQuestionId?: string;
+  continuityDecision: ContinuityDecision;
+  goalDecision: {
+    selected: boolean;
+    selectedGoalId?: string;
+    candidateGoalCount: number;
+    reason: string;
+  };
 }): Record<string, unknown> {
   const groundingCount = input.replyPlan?.requiredGrounding.length ?? 0;
   return {
@@ -894,6 +1136,8 @@ function conversationDecisionMetadata(input: {
       count: groundingCount,
     },
     containsSurveyProbe: input.containsSurveyProbe,
+    continuityDecision: input.continuityDecision,
+    goalDecision: input.goalDecision,
     ...(input.surveyProbeQuestionId
       ? { surveyProbeQuestionId: input.surveyProbeQuestionId }
       : {}),

@@ -22,24 +22,26 @@ export interface ResolvedIgnore {
 }
 
 export interface ProactivePulseConfig {
-  /** Days before quarter end when engagement questions unlock. Default: 14 */
-  engagementUnlockDays: number;
   /** Hours after probe sent before no-response counts as ignore. Default: 48 */
   ignoreWindowHours: number;
+  /** Days before period end when numeric engagement questions unlock. Default: 14 */
+  engagementUnlockDays?: number;
   /** Temporary test filter: only ask pending questions from this question group. */
   questionGroup?: string;
 }
 
 export const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = {
-  engagementUnlockDays: 14,
   ignoreWindowHours: 48,
+  engagementUnlockDays: 14,
 };
 
 export interface PulseBacklogRepositoryPort {
   /**
-   * Creates 12 backlog entries (non-engagement questions in canonical group order)
-   * if no entries exist yet for this user/window pair. Idempotent.
-   * Questions whose IDs are in coveredQuestionIds are created with status='done'.
+   * Idempotently inserts missing non-engagement backlog entries in canonical group order.
+   * Questions whose IDs are in coveredQuestionIds are created with status='done'; supplied
+   * uncovered questions previously marked 'done' are reopened without changing queue position
+   * or ignore count when they were last updated by coverageSnapshotAt. Active, covered, and
+   * more recently updated entries remain unchanged.
    */
   initializeIfNeeded(
     userId: string,
@@ -47,6 +49,7 @@ export interface PulseBacklogRepositoryPort {
     windowId: string,
     questions: SurveyQuestionRecord[],
     coveredQuestionIds: Set<string>,
+    coverageSnapshotAt: Date,
   ): Promise<void>;
 
   /**

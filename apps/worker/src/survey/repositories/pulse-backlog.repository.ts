@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { eq, and, lt, gt, max, ne, sql, type SQL } from 'drizzle-orm';
+import { eq, and, lt, lte, gt, max, ne, sql, inArray, type SQL } from 'drizzle-orm';
 import {
   pulseBacklog,
   surveyQuestions,
@@ -24,18 +24,11 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
     windowId: string,
     questions: SurveyQuestionRecord[],
     coveredQuestionIds: Set<string>,
+    coverageSnapshotAt: Date,
   ): Promise<void> {
-    // Check if already initialized — any row for this user/window means it's done
-    const [existing] = await this.db.client
-      .select({ id: pulseBacklog.id })
-      .from(pulseBacklog)
-      .where(and(eq(pulseBacklog.userId, userId), eq(pulseBacklog.surveyWindowId, windowId)))
-      .limit(1);
-
-    if (existing) return;
-
     if (!questions.length) return;
 
+    const now = new Date();
     const values = questions.map((q, idx) => ({
       surveyWindowId: windowId,
       userId,
@@ -43,10 +36,36 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
       surveyQuestionId: q.id,
       position: idx + 1,
       status: coveredQuestionIds.has(q.id) ? 'done' : 'pending',
-      doneAt: coveredQuestionIds.has(q.id) ? new Date() : null,
+      doneAt: coveredQuestionIds.has(q.id) ? now : null,
     }));
 
     await this.db.client.insert(pulseBacklog).values(values).onConflictDoNothing();
+
+    const uncoveredQuestionIds = questions
+      .filter((question) => !coveredQuestionIds.has(question.id))
+      .map((question) => question.id);
+    if (!uncoveredQuestionIds.length) return;
+
+    await this.db.client
+      .update(pulseBacklog)
+      .set({
+        status: 'pending',
+        evidenceCapturedCount: 0,
+        proactiveSentAt: null,
+        resultedInCoverage: null,
+        doneAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(pulseBacklog.userId, userId),
+          eq(pulseBacklog.tenantId, tenantId),
+          eq(pulseBacklog.surveyWindowId, windowId),
+          eq(pulseBacklog.status, 'done'),
+          inArray(pulseBacklog.surveyQuestionId, uncoveredQuestionIds),
+          lte(pulseBacklog.updatedAt, coverageSnapshotAt),
+        ),
+      );
   }
 
   async resolveIgnoredEntries(
@@ -132,9 +151,9 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
     engagementOnly: boolean,
     questionGroup?: string,
   ): Promise<PulseBacklogRecord | null> {
-    const rows = await this.db.client.execute(
+    const rows = (await this.db.client.execute(
       buildFindNextPendingSql(userId, windowId, engagementOnly, questionGroup),
-    ) as unknown as PulseBacklogRecord[];
+    )) as unknown as PulseBacklogRecord[];
 
     if (!rows.length) return null;
     return rows[0] as PulseBacklogRecord;
@@ -325,7 +344,7 @@ export function buildFindNextPendingSql(
           and active_backlog.status = 'active'
           and active_question.question_group = survey_questions.question_group
       )
-    order by ${pulseBacklog.position} asc
+    order by ${pulseBacklog.position} asc, ${surveyQuestions.displayOrder} asc
     limit 1
   `;
 }
