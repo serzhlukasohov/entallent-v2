@@ -25,6 +25,35 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: `TENANT_ID=<tenant> SURVEY_DEFINITION_ID=<definition> CONFIRM_SURVEY_CYCLE_OPEN=<tenant> SURVEY_PERIOD_START=<iso> SURVEY_PERIOD_END=<iso> SURVEY_OPENED_AT=<iso> pnpm exec tsx scripts/open-survey-reporting-cycle.ts`
 - Status: open
 
+## 2026-09-08: terse style adaptation still asks a question every turn
+
+- Symptom: Post-Grill `terse-user` scenario failed twice because the follow-up conversation produced question counts `1, 1, 1, 1`; the code comment says terse style should ask only every other turn, but `applyTerseStyle()` only shortens the response.
+- Expected: A learned terse style should keep a normal colleague tone while allowing at least one short statement-only reply instead of interrogating every terse acknowledgement.
+- Root cause layer: architecture
+- Harness fix: Enforce question pacing in the shared reply strategy/plan boundary for confident terse profiles, not in scenario-specific prompt wording.
+- Local fix: `applyTerseStyle()` now uses the already-loaded user-turn count to keep questions only on odd terse turns; focused orchestrator regressions and the live pacing assertions pass.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/terse-user.sim.test.ts`
+- Status: fixed
+
+## 2026-09-08: exact Annna replay still re-enters rejected pulse/report framing
+
+- Symptom: Post-Grill `annna-intent-fidelity` failed twice: one gate sample kept answering with reporting disclosure after the user asked for chatbot-answer criteria, and the repeat classified the `No, you keep circling` correction turn as `closing` instead of `correction`.
+- Expected: Consultation requests about another chatbot should be answered directly; when the employee rejects the prior frame, the corrected request should control the response and stale pulse/report assumptions should stay out.
+- Root cause layer: architecture
+- Harness fix: Narrow the reporting-disclosure route and harden latest-turn correction normalization/classification for mixed rejection-plus-request messages.
+- Local fix: Provider normalization now accepts reporting-question evidence only from the raw latest user message, preserves explicit Russian reporting questions, and promotes mixed rejection requests misclassified as `closing` to `correction`; focused AI/application regressions and the final live sample pass.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/annna-intent-fidelity.sim.test.ts`
+- Status: fixed
+
+## 2026-09-08: scenario reports mark deterministic checks clear before post-report assertions
+
+- Symptom: `memory-recall`, `terse-user`, and `annna-intent-fidelity` markdown reports show `Deterministic checks all clear` even though later test assertions fail the same scenario.
+- Expected: Scenario artifacts should include post-report hard assertion failures so a failed gate cannot look clean when read from the per-scenario report.
+- Root cause layer: verification
+- Harness fix: Move scenario hard assertions into the reported deterministic check path or append assertion failures to the report before the test exits.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/memory-recall.sim.test.ts`
+- Status: open
+
 ## 2026-09-03: BMad config resolver called without project root
 
 - Symptom: `resolve_config.py` exited with a required `--project-root` argument error.
@@ -91,7 +120,9 @@ Use this file to turn agent misses into harness improvements.
 - Root cause layer: verification
 - Harness fix: Classify scenario assertion failures separately from model/network failures in the gate runner; address memory grounding in its own story rather than expanding Story 11.2.
 - Regression check: `SIM_GATE_RUNS=1 pnpm sim:gate`
-- Status: open
+- Recurrence: On 2026-09-08 post-Grill verification, `memory-recall` reproduced twice: final replies remembered the payments-architecture defense, but `requiredGrounding` was empty.
+- Harness fix: Require the planner's highest-priority memory anchor for unanchored emotional support; the focused unit regression and live Azure OpenAI/LangWatch scenario pass.
+- Status: fixed
 
 ## Obsolete / Retired Failures
 
@@ -622,7 +653,8 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: environment
 - Harness fix: Keep exact private-transcript scenarios out of LangWatch, request explicit approval for the remaining Azure scenario egress, and use deterministic prompt regressions as the safe default.
 - Regression check: Before a live sim with private transcript text, confirm LangWatch reporting is disabled and explicit approval exists for the model-provider destination; otherwise do not run it.
-- Status: fixed
+- Recurrence: On 2026-09-08, a post-fix `memory-recall` run hit sandbox DNS and the outside-sandbox retry was rejected because Azure OpenAI and LangWatch scenario egress had not been explicitly approved.
+- Status: open
 
 ## 2026-08-28: Closing turn created durable anti-goal memories
 - Symptom: The production Annna replay classified `No, forget` as `closing` and replied without a question, but memory extraction stored four active `goal` items phrased as “Employee no longer wants to continue…” from that closing turn.
@@ -694,7 +726,8 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: verification
 - Harness fix: Derive existing colocated tests from changed paths, run them through their owning package, and reject any derived retired target; never fall back to root `pnpm test`.
 - Regression check: `pnpm exec tsx scripts/agent-harness.test.ts` proves a changed package source runs only its colocated active test while an adjacent archived test and root broad test remain untouched.
-- Status: fixed
+- Recurrence: On 2026-09-08, the documented `prepush:non-maf` script still called `turbo run test`, which executed archived MAF unit tests despite its name; no MAF service or live runtime was invoked.
+- Status: open
 
 ## 2026-08-30: Harness reflection IPC was blocked by the managed sandbox
 - Symptom: The first focused reflection command failed with `listen EPERM` while creating the local tsx IPC socket.
@@ -718,4 +751,20 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: tooling
 - Harness fix: Run one-off read-only database checks through `@entalent/database` and its existing `postgres` client.
 - Regression check: `pnpm --filter @entalent/database exec node -e 'console.log(require.resolve("postgres"))'` resolves locally before the Railway command runs.
+- Status: fixed
+
+## 2026-09-08: Live conversation scenarios lacked explicit destination approval
+- Symptom: The post-deploy `memory-recall` and `terse-user` live run was rejected before execution because its test dialogue and context would be sent to Azure OpenAI and LangWatch.
+- Expected: External model/evaluation payloads run only after the user explicitly approves the payload class and named destinations.
+- Root cause layer: instructions
+- Harness fix: Before the live command, request one explicit approval that names test dialogue/context, Azure OpenAI, and LangWatch; note that Annna disables LangWatch.
+- Regression check: The approval text and the exact focused scenario command are present before any external run.
+- Status: fixed
+
+## 2026-09-08: Conversation simulation used a stale built workspace dependency
+- Symptom: The first Annna repeat after changing `packages/ai-openai/src` still exercised the previous `dist` behavior and repeated the reporting-disclosure failure.
+- Expected: A live conversation simulation should exercise the current affected workspace package source.
+- Root cause layer: workflow
+- Harness fix: Build each changed workspace dependency consumed through its package entry point before running conversation simulations.
+- Regression check: `pnpm --filter @entalent/ai-openai build` succeeds before the focused Annna command.
 - Status: fixed
