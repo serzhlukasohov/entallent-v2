@@ -16,6 +16,15 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-09-08: production survey cycle open script rejects Date values
+
+- Symptom: `railway run --service api -- ... pnpm exec tsx scripts/open-survey-reporting-cycle.ts` failed with `The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date`.
+- Expected: The production open-cycle helper should create a reporting cohort using the same Date inputs accepted by the application use case and Drizzle schema.
+- Root cause layer: tooling
+- Harness fix: Add a focused script regression or adjust the helper/repository boundary so production `survey:cycle:open` serializes timestamp inputs consistently.
+- Regression check: `TENANT_ID=<tenant> SURVEY_DEFINITION_ID=<definition> CONFIRM_SURVEY_CYCLE_OPEN=<tenant> SURVEY_PERIOD_START=<iso> SURVEY_PERIOD_END=<iso> SURVEY_OPENED_AT=<iso> pnpm exec tsx scripts/open-survey-reporting-cycle.ts`
+- Status: open
+
 ## 2026-09-03: BMad config resolver called without project root
 
 - Symptom: `resolve_config.py` exited with a required `--project-root` argument error.
