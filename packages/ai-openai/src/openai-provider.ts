@@ -214,8 +214,11 @@ export class OpenAiProvider implements AiProviderPort {
         record['primaryIntent'] = 'casual_conversation';
       }
     }
-    return normalizeExplicitCorrectionRequest(
-      normalizeExplicitClosing(SituationClassificationSchema.parse(parsed), turns),
+    return normalizeExplicitClosing(
+      normalizeExplicitCorrectionRequest(
+        normalizeReportingExplanation(SituationClassificationSchema.parse(parsed), turns),
+        turns,
+      ),
       turns,
     );
   }
@@ -418,6 +421,30 @@ const EXPLICIT_CORRECTION_REQUEST_PREFIX =
   /^(?:no\b(?!\s+(?:idea|problem|worries)\b)|that(?:'s| is) not what\b|this is not what\b|you (?:keep|are still|still)\b|i (?:didn['’]?t|did not|don['’]?t|do not) mean\b|нет\b|ні\b|это не то\b|це не те\b)/i;
 const EXPLICIT_CLOSING =
   /^(?:(?:no|нет|ні)[,\s-]*(?:forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь|неважно|досить|достаточно)|forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь(?: про це|об этом)?|неважно|досить|достаточно)[.!]?$/i;
+const EXPLICIT_REPORTING_EXPLANATION_REQUEST =
+  /(?:\b(?:where|who).{0,80}\b(?:confirm(?:ed)?|pulse|information|data|report)|\b(?:confirm(?:ed)?|pulse|information|data|report).{0,80}\b(?:go|used?|shared?|reported?|sees?)\b|\bhow .{0,80}\b(?:used?|shared?|reported?)\b|(?:куда|кто).{0,80}(?:подтвержд|информац|данн|отч[её]т)|(?:подтвержд|информац|данн|отч[её]т).{0,80}(?:пойд|использ|увид|доступ)|(?:куди|хто).{0,80}(?:підтвердж|інформац|дан|звіт)|(?:підтвердж|інформац|дан|звіт).{0,80}(?:піде|використ|побач|доступ))/i;
+
+function normalizeReportingExplanation(
+  classification: SituationClassification,
+  turns: ConversationTurn[],
+): SituationClassification {
+  const hasReportingIntent = classification.primaryIntent === 'reporting_explanation'
+    || classification.secondaryIntents.includes('reporting_explanation');
+  if (!hasReportingIntent) return classification;
+  const latestEmployeeText = [...turns]
+    .reverse()
+    .find((turn) => turn.role === 'user')
+    ?.content.trim() ?? '';
+  const evidence = `${latestEmployeeText}\n${classification.latestUserSubstance ?? ''}`;
+  if (EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(evidence)) return classification;
+  return {
+    ...classification,
+    primaryIntent: classification.primaryIntent === 'reporting_explanation'
+      ? classification.dialogueAct === 'request' ? 'clarification' : 'casual_conversation'
+      : classification.primaryIntent,
+    secondaryIntents: classification.secondaryIntents.filter((intent) => intent !== 'reporting_explanation'),
+  };
+}
 
 function normalizeExplicitClosing(
   classification: SituationClassification,
@@ -442,7 +469,7 @@ function normalizeExplicitCorrectionRequest(
   classification: SituationClassification,
   turns: ConversationTurn[],
 ): SituationClassification {
-  if (classification.dialogueAct !== 'request') return classification;
+  if (classification.dialogueAct !== 'request' && classification.dialogueAct !== 'closing') return classification;
   const latestEmployeeText = [...turns]
     .reverse()
     .find((turn) => turn.role === 'user')

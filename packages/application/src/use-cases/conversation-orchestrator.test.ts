@@ -2062,17 +2062,19 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
 
-  it('keeps one follow-up available for a terse user while the topic remains open', async () => {
+  it('drops the follow-up on every second terse user turn', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'yeah', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-0', ...OWNERSHIP, direction: 'inbound', text: 'same issue', occurredAt: new Date('2026-09-03T09:58:00.000Z'), metadata: undefined },
       {
         id: 'o-1',
+        ...OWNERSHIP,
         direction: 'outbound',
         text: 'what exactly is holding you back?',
-        occurredAt: new Date(),
+        occurredAt: new Date('2026-09-03T09:59:00.000Z'),
         metadata: { replyShape: { askedQuestion: true, maxQuestions: 1, questionPolicyReason: 'new_substance_allows_question' } },
       },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'yeah', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
     ]);
     m.aiProvider.classifySituation.mockResolvedValue({
       primaryIntent: 'casual_conversation',
@@ -2096,8 +2098,8 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
     expect(strategyArg.maxResponseLength).toBe('short');
-    expect(strategyArg.includeFollowUpQuestion).toBe(true);
-    expect(ctxArg.replyPlan.questionPolicy).toEqual({ maxQuestions: 1, reason: 'new_substance_allows_question' });
+    expect(strategyArg.includeFollowUpQuestion).toBe(false);
+    expect(ctxArg.replyPlan.questionPolicy).toEqual({ maxQuestions: 0, reason: 'strategy_disallows_questions' });
   });
 
   it('ignores legacy punctuation when previous reply has no reply-shape metadata', async () => {

@@ -41,7 +41,7 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
     responseMove,
     mayInferFromBrevity,
     questionPolicy,
-    requiredGrounding: safetyOverridesPause ? [] : buildRequiredGrounding(responseMove, topicAnchor, memoryAnchors),
+    requiredGrounding: safetyOverridesPause ? [] : buildRequiredGrounding(responseMove, memoryAnchors),
     forbiddenMoves: buildForbiddenMoves({
       responseMove,
       mayInferFromBrevity,
@@ -116,11 +116,9 @@ function buildQuestionPolicy(input: {
 
 function buildRequiredGrounding(
   responseMove: ReplyPlan['responseMove'],
-  topicAnchor: string | null,
   memoryAnchors: ReplyPlan['memoryAnchors'],
 ): ReplyPlan['requiredGrounding'] {
   if (responseMove !== 'support_emotion') return [];
-  if (!topicAnchor) return [];
   const anchor = selectGroundingAnchor(memoryAnchors);
   if (!anchor) return [];
   return [{

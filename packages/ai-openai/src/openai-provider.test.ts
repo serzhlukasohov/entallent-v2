@@ -168,7 +168,7 @@ describe('OpenAiProvider.classifySituation', () => {
             surveyAllowed: true,
             reasoningSummary: 'The employee asks for criteria.',
             reminderRequest: null,
-            dialogueAct: 'request',
+            dialogueAct: 'closing',
             latestUserSubstance: 'Give criteria for human-like and relevant answers.',
             topicAnchor: 'chatbot evaluation criteria',
           }),
@@ -188,6 +188,72 @@ describe('OpenAiProvider.classifySituation', () => {
 
     expect(result.dialogueAct).toBe('correction');
     expect(result.latestUserSubstance).toBe('Give criteria for human-like and relevant answers.');
+  });
+
+  it('drops reporting explanation copied from older product context', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: ['reporting_explanation'],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The older transcript mentioned pulse reporting.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'I have no idea, that is why I am asking you.',
+            topicAnchor: 'chatbot answer quality',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content: 'have no idea\nthat’s why I asking you', timestamp: new Date() }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('clarification');
+    expect(result.secondaryIntents).toEqual([]);
+    expect(result.dialogueAct).toBe('request');
+  });
+
+  it('keeps an explicit reporting destination question', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee explicitly asks where confirmed information goes.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'Куда пойдёт подтверждённая информация?',
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content: 'Куда пойдёт подтверждённая информация?', timestamp: new Date() }],
+      { userName: 'Игорь' },
+    );
+
+    expect(result.primaryIntent).toBe('reporting_explanation');
   });
 
   it('normalizes an explicit stop phrase to closing', async () => {

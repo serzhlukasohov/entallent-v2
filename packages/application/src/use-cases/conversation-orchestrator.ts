@@ -389,6 +389,7 @@ export class ConversationOrchestrator {
     const strategyWithStyle = applyTerseStyle(
       confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
       memoryEnabled ? profile : null,
+      userTurnCount,
     );
 
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
@@ -514,12 +515,17 @@ export class ConversationOrchestrator {
           includeFollowUpQuestion: applyTerseStyle(
             buildReplyStrategy(classification, risk, undefined),
             memoryEnabled ? profile : null,
+            userTurnCount,
           ).includeFollowUpQuestion,
           surveyProbeQuestionId: undefined,
           sensitiveMode: false,
         });
         strategy = applyReplyPlanToStrategy(
-          applyTerseStyle(buildReplyStrategy(classification, risk, undefined), memoryEnabled ? profile : null),
+          applyTerseStyle(
+            buildReplyStrategy(classification, risk, undefined),
+            memoryEnabled ? profile : null,
+            userTurnCount,
+          ),
           replyPlan,
         );
         generated = await this.aiProvider.generateResponse(turns, strategy, {
@@ -1070,6 +1076,7 @@ function describeLocalTime(timezone: string | undefined | null): string | undefi
 function applyTerseStyle(
   strategy: ReplyStrategy,
   profile: StyleProfileRecord | null,
+  userTurnCount: number,
 ): ReplyStrategy {
   if (!profile) return strategy;
   if (strategy.mode === 'crisis' || strategy.mode === 'sensitive' || strategy.mode === 'confirmation') return strategy;
@@ -1077,7 +1084,11 @@ function applyTerseStyle(
     profile.adaptationWeight >= STYLE_CONFIDENCE_FLOOR &&
     BASE_STYLE.verbosity - profile.dimensions.verbosity >= STYLE_OFF_BASE_MARGIN;
   if (!terse) return strategy;
-  return { ...strategy, maxResponseLength: 'short' };
+  return {
+    ...strategy,
+    includeFollowUpQuestion: strategy.includeFollowUpQuestion && userTurnCount % 2 === 1,
+    maxResponseLength: 'short',
+  };
 }
 
 function applyReplyPlanToStrategy(strategy: ReplyStrategy, plan: ResponseContext['replyPlan']): ReplyStrategy {
