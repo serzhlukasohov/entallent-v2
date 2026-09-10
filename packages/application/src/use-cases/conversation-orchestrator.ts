@@ -179,6 +179,12 @@ export class ConversationOrchestrator {
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
     const recentOutbound = dbMessages.filter((m) => m.direction === 'outbound').slice(-2);
+    const latestReplyShape = recentOutbound.at(-1)?.metadata?.['replyShape'];
+    const previousReplyAskedQuestion = typeof latestReplyShape === 'object'
+      && latestReplyShape !== null
+      && 'askedQuestion' in latestReplyShape
+        ? latestReplyShape.askedQuestion === true
+        : undefined;
     const correctionCarryover = classification.dialogueAct !== 'correction' && recentOutbound.some(
       (message) => message.metadata?.['dialogueAct'] === 'correction',
     );
@@ -389,7 +395,7 @@ export class ConversationOrchestrator {
     const strategyWithStyle = applyTerseStyle(
       confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
       memoryEnabled ? profile : null,
-      userTurnCount,
+      previousReplyAskedQuestion,
     );
 
     const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
@@ -410,6 +416,10 @@ export class ConversationOrchestrator {
       ? null
       : probeQuestion;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
+    const consultationTurn = classification.dialogueAct === 'request'
+      || classification.dialogueAct === 'correction'
+      || classification.primaryIntent === 'clarification'
+      || classification.primaryIntent === 'feedback_request';
 
     const shouldOfferReportingDisclosure =
       this.surveyRepo !== undefined
@@ -420,7 +430,7 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
-      && (reportingExplanationRequested || probePacingAllows || phaseB.awaitingPresent);
+      && (reportingExplanationRequested || (!consultationTurn && probePacingAllows) || phaseB.awaitingPresent);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
       && classification.surveyAllowed
@@ -515,7 +525,7 @@ export class ConversationOrchestrator {
           includeFollowUpQuestion: applyTerseStyle(
             buildReplyStrategy(classification, risk, undefined),
             memoryEnabled ? profile : null,
-            userTurnCount,
+            previousReplyAskedQuestion,
           ).includeFollowUpQuestion,
           surveyProbeQuestionId: undefined,
           sensitiveMode: false,
@@ -524,7 +534,7 @@ export class ConversationOrchestrator {
           applyTerseStyle(
             buildReplyStrategy(classification, risk, undefined),
             memoryEnabled ? profile : null,
-            userTurnCount,
+            previousReplyAskedQuestion,
           ),
           replyPlan,
         );
@@ -1076,7 +1086,7 @@ function describeLocalTime(timezone: string | undefined | null): string | undefi
 function applyTerseStyle(
   strategy: ReplyStrategy,
   profile: StyleProfileRecord | null,
-  userTurnCount: number,
+  previousReplyAskedQuestion: boolean | undefined,
 ): ReplyStrategy {
   if (!profile) return strategy;
   if (strategy.mode === 'crisis' || strategy.mode === 'sensitive' || strategy.mode === 'confirmation') return strategy;
@@ -1086,7 +1096,7 @@ function applyTerseStyle(
   if (!terse) return strategy;
   return {
     ...strategy,
-    includeFollowUpQuestion: strategy.includeFollowUpQuestion && userTurnCount % 2 === 1,
+    includeFollowUpQuestion: strategy.includeFollowUpQuestion && previousReplyAskedQuestion !== true,
     maxResponseLength: 'short',
   };
 }

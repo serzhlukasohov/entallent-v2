@@ -202,6 +202,36 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       .not.toHaveProperty('reportingDisclosureVersion');
   });
 
+  it('keeps a chatbot consultation free of reporting disclosure when survey pacing is ready', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'feedback_request', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'chatbot evaluation consultation',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'new_substance',
+      latestUserSubstance: 'Give criteria for human-like and relevant chatbot answers.',
+      topicAnchor: 'chatbot answer quality',
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Use relevance, specificity, continuity, and natural phrasing.',
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('Use relevance, specificity, continuity, and natural phrasing.');
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].reportingDisclosure).toBeUndefined();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('reportingDisclosureVersion');
+  });
+
   it('appends the localized disclosure once survey pacing is ready and blocks confirmation and probes', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
@@ -2100,6 +2130,41 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     expect(strategyArg.maxResponseLength).toBe('short');
     expect(strategyArg.includeFollowUpQuestion).toBe(false);
     expect(ctxArg.replyPlan.questionPolicy).toEqual({ maxQuestions: 0, reason: 'strategy_disallows_questions' });
+  });
+
+  it('continues terse question alternation after the recent-message window fills', async () => {
+    const m = baseMocks();
+    const priorPairs = Array.from({ length: 9 }, (_, index) => [
+      {
+        id: `m-prior-${index}`, ...OWNERSHIP, direction: 'inbound', text: 'ok',
+        occurredAt: new Date(INBOUND_OCCURRED_AT.getTime() - (20 - index * 2) * 1_000), metadata: undefined,
+      },
+      {
+        id: `o-prior-${index}`, ...OWNERSHIP, direction: 'outbound', text: 'reply',
+        occurredAt: new Date(INBOUND_OCCURRED_AT.getTime() - (19 - index * 2) * 1_000),
+        metadata: { replyShape: { askedQuestion: index % 2 === 0, maxQuestions: 1, questionPolicyReason: 'new_substance_allows_question' } },
+      },
+    ]).flat();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      ...priorPairs,
+      {
+        id: 'o-latest', ...OWNERSHIP, direction: 'outbound', text: 'got it',
+        occurredAt: new Date(INBOUND_OCCURRED_AT.getTime() - 1_000),
+        metadata: { replyShape: { askedQuestion: false, maxQuestions: 0, questionPolicyReason: 'strategy_disallows_questions' } },
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'yeah', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined, profile(0.27, 0.3),
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1]).toMatchObject({
+      maxResponseLength: 'short',
+      includeFollowUpQuestion: true,
+    });
   });
 
   it('ignores legacy punctuation when previous reply has no reply-shape metadata', async () => {
