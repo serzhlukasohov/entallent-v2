@@ -57,6 +57,7 @@ export class SurveyRepository implements SurveyRepositoryPort {
   async openReportingCycle(
     params: OpenSurveyReportingCycleParams,
   ): Promise<SurveyReportingCohortRecord[]> {
+    const openedAtIso = params.openedAt.toISOString();
     return this.db.client.transaction(async (tx) => {
       const [definition] = await tx
         .select({ id: surveyDefinitions.id })
@@ -107,8 +108,8 @@ export class SurveyRepository implements SurveyRepositoryPort {
             where other_membership.user_id = ${teamMemberships.userId}
               and other_membership.team_id <> ${teamMemberships.teamId}
               and other_membership.role = 'member'
-              and other_membership.joined_at <= ${params.openedAt}
-              and (other_membership.left_at is null or other_membership.left_at > ${params.openedAt})
+              and other_membership.joined_at <= ${openedAtIso}::timestamptz
+              and (other_membership.left_at is null or other_membership.left_at > ${openedAtIso}::timestamptz)
               and other_team.tenant_id = ${params.tenantId}
           )`,
         ));

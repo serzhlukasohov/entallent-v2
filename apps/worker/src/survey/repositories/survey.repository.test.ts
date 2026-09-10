@@ -109,6 +109,7 @@ describe('SurveyRepository', () => {
     const eligibilityQuery = compileSql(membershipWhere.mock.calls[0]?.[0]);
     expect(eligibilityQuery.sql).toContain("\"users\".\"consent_state\"->'surveyEnabled' = 'true'::jsonb");
     expect(eligibilityQuery.sql).toContain('other_membership.team_id <> "team_memberships"."team_id"');
+    expect(eligibilityQuery.params.filter((value) => value instanceof Date)).toEqual([]);
   });
 
   it('does not recompute a cycle after its first cohort was persisted', async () => {
