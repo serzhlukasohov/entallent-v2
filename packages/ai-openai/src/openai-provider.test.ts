@@ -228,6 +228,44 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.dialogueAct).toBe('request');
   });
 
+  it('does not treat answer-quality criteria as a reporting usage question', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: ['feedback_request'],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The turn mentions pulse reporting before asking how to evaluate answers.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'What criteria should I use to judge answer quality?',
+            topicAnchor: 'chatbot answer quality',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{
+        role: 'user',
+        content: 'It builds a manager report, but that is only background. What criteria should I use to judge whether its answers sound human and stay relevant?',
+        timestamp: new Date(),
+      }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('clarification');
+    expect(result.secondaryIntents).toEqual(['feedback_request']);
+    expect(result.dialogueAct).toBe('request');
+  });
+
   it('keeps an explicit reporting destination question', async () => {
     createMock.mockResolvedValue({
       choices: [{
