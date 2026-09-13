@@ -101,6 +101,7 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
     );
 
   const empty = employee.signals.filter((s) => !s.evidenceSummary);
+  const previousWithEvidence = employee.previousWindow?.signals.filter((s) => s.evidenceSummary) ?? [];
 
   return (
     <div style={{ padding: '0 20px 20px 20px' }}>
@@ -118,7 +119,7 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
         </div>
       ) : (
         <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-          No insights — no conversations yet.
+          {employee.previousWindow ? 'No insights in the current window.' : 'No insights — no conversations yet.'}
         </p>
       )}
       {empty.length > 0 && (
@@ -143,6 +144,28 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
               </span>
             ))}
           </div>
+        </div>
+      )}
+      {employee.previousWindow && (
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+            Previous window · closed {formatRelative(employee.previousWindow.completedAt)}
+          </div>
+          {previousWithEvidence.length > 0 ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+                gap: 10,
+              }}
+            >
+              {previousWithEvidence.map((signal) => (
+                <EvidenceCard key={signal.stableKey} signal={signal} />
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No saved insights.</p>
+          )}
         </div>
       )}
     </div>
@@ -309,11 +332,18 @@ export function TeamTable({ employees }: { employees: AdminManagerTeamEmployee[]
             </div>
 
             {/* Coverage bar */}
-            <CoverageBar
-              pct={emp.coveragePct}
-              total={emp.totalQuestions}
-              scored={emp.scoredCount}
-            />
+            <div>
+              <CoverageBar
+                pct={emp.coveragePct}
+                total={emp.totalQuestions}
+                scored={emp.scoredCount}
+              />
+              {emp.previousWindow && (
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
+                  previous {emp.previousWindow.scoredCount}/{emp.previousWindow.totalQuestions}
+                </div>
+              )}
+            </div>
 
             {/* Last active */}
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
