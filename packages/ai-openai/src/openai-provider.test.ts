@@ -298,6 +298,149 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.primaryIntent).toBe('reporting_explanation');
   });
 
+  it.each([
+    [
+      "We're in EnTalent on Slack. I mean my manager's EnTalent access: can they open my messages, personal summary or tasks?",
+      'clarification',
+    ],
+    [
+      'If I confirm a pulse summary, does that let HR read my own answers?',
+      'reporting_explanation',
+    ],
+  ] as const)('recognizes the D02-01 individual-access question: %s', async (content, primaryIntent) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent,
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks about individual access.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('reporting_explanation');
+  });
+
+  it('keeps safety primary when an unsafe turn also asks about individual manager access', async () => {
+    const content = 'I might hurt myself. Can my manager open my messages?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'potential_crisis',
+            secondaryIntents: [],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.9,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee may be in immediate danger.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).toContain('reporting_explanation');
+  });
+
+  it('restores safety primary when the classifier puts it behind reporting', async () => {
+    const content = 'I might hurt myself. Can my manager open my messages?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: ['potential_crisis'],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.9,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee may be in immediate danger.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).toContain('reporting_explanation');
+  });
+
+  it('does not promote a descriptive manager-access statement', async () => {
+    const content = 'My manager can access weekly updates in my personal summary.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee describes their current setup.',
+            reminderRequest: null,
+            dialogueAct: 'new_substance',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('casual_conversation');
+    expect(result.secondaryIntents).toEqual([]);
+  });
+
   it('normalizes an explicit stop phrase to closing', async () => {
     createMock.mockResolvedValue({
       choices: [{

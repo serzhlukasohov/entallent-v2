@@ -36,6 +36,7 @@ import {
   REPORTING_DISCLOSURE_VERSION,
   appendReportingDisclosure,
   getReportingDisclosureText,
+  getReportingExplanationText,
 } from '../utils/reporting-disclosure';
 import {
   type DeidentificationDecision,
@@ -428,13 +429,12 @@ export class ConversationOrchestrator {
       && (reportingExplanationRequested || phaseB.awaitingPresent);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
-      && classification.surveyAllowed
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
     let generated = canAnswerReportingExplanation
       ? {
-          text: getReportingDisclosureText(languagePolicy.responseLanguage),
+          text: getReportingExplanationText(languagePolicy.responseLanguage),
           confidence: 1,
           containsSurveyProbe: false,
         }

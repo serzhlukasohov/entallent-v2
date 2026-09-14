@@ -3,6 +3,7 @@ import { ConversationOrchestrator } from './conversation-orchestrator';
 import {
   REPORTING_DISCLOSURE_VERSION,
   getReportingDisclosureText,
+  getReportingExplanationText,
 } from '../utils/reporting-disclosure';
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
 import type { UserGoalRecord } from '../types/records';
@@ -477,7 +478,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     const result = await orch.orchestrate(INPUT);
 
-    expect(result.responseText).toBe(getReportingDisclosureText('ru'));
+    expect(result.responseText).toBe(getReportingExplanationText('ru'));
     expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
     expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(
@@ -485,6 +486,65 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     );
     expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it('explains that pulse confirmation does not grant HR individual access', async () => {
+    const m = baseMocks();
+    const question = 'If I confirm a pulse summary, does that let HR read my own answers?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1', ...OWNERSHIP, direction: 'inbound',
+        text: question,
+        occurredAt: INBOUND_OCCURRED_AT,
+      },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'reporting_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'individual access question',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+    const answer = result.responseText.toLowerCase();
+
+    expect(answer).toContain('approves only the exact de-identified summary shown');
+    expect(answer).toContain('does not change access permissions');
+    expect(answer).toContain('managers or hr');
+    expect(answer).toContain('individual messages, answers, personal summary, tasks, goals, or identity');
+    expect(result.responseText).toContain(getReportingDisclosureText('en'));
+    expect(answer).not.toMatch(/assume admins may see|visible to (?:the )?people who administer|depending on (?:the )?setup/);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it('answers reporting access deterministically when surveyAllowed is falsely disabled', async () => {
+    const m = baseMocks();
+    const question = 'If I confirm a pulse summary, does that let HR read my own answers?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question,
+        occurredAt: INBOUND_OCCURRED_AT,
+      },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'reporting_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'individual access question',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(getReportingExplanationText('en'));
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
   });
 
   it('answers a reporting explanation defaulted to new substance deterministically', async () => {
@@ -502,7 +562,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     const result = await orch.orchestrate(INPUT);
 
-    expect(result.responseText).toBe(getReportingDisclosureText('en'));
+    expect(result.responseText).toBe(getReportingExplanationText('en'));
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
   });
 
@@ -525,18 +585,25 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     const result = await orch.orchestrate(INPUT);
 
-    expect(result.responseText).toBe(getReportingDisclosureText('en'));
+    expect(result.responseText).toBe(getReportingExplanationText('en'));
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
   });
 
   it('keeps a survey-blocking safety response free of reporting disclosure', async () => {
     const m = baseMocks();
+    const question = 'I might hurt myself. Can my manager open my messages?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question,
+        occurredAt: INBOUND_OCCURRED_AT,
+      },
+    ]);
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
     m.aiProvider.classifySituation.mockResolvedValue({
-      primaryIntent: 'potential_crisis', secondaryIntents: [], urgency: 'critical',
+      primaryIntent: 'potential_crisis', secondaryIntents: ['reporting_explanation'], urgency: 'critical',
       emotionalState: ['unsafe'], confidence: 0.9, reasoningSummary: 'risk',
       surveyAllowed: false, requiresSafetyCheck: true, reminderRequest: null,
-      dialogueAct: 'emotional_disclosure', latestUserSubstance: 'unsafe', topicAnchor: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: question, topicAnchor: null,
     });
     m.aiProvider.detectRisk.mockResolvedValue({
       severity: 'critical', riskType: 'self_harm', confidence: 0.9,

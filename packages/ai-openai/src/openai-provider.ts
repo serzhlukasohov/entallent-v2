@@ -423,6 +423,8 @@ const EXPLICIT_CLOSING =
   /^(?:(?:no|нет|ні)[,\s-]*(?:forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь|неважно|досить|достаточно)|forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь(?: про це|об этом)?|неважно|досить|достаточно)[.!]?$/i;
 const EXPLICIT_REPORTING_EXPLANATION_REQUEST =
   /(?:\b(?:where|who).{0,80}\b(?:confirm(?:ed)?|pulse|information|data|report)|\b(?:confirm(?:ed)?|pulse|information|data|report).{0,80}\b(?:go|used|shared?|reported?|sees?)\b|\bhow .{0,80}\b(?:used?|shared?|reported?)\b|(?:куда|кто).{0,80}(?:подтвержд|информац|данн|отч[её]т)|(?:подтвержд|информац|данн|отч[её]т).{0,80}(?:пойд|использ|увид|доступ)|(?:куди|хто).{0,80}(?:підтвердж|інформац|дан|звіт)|(?:підтвердж|інформац|дан|звіт).{0,80}(?:піде|використ|побач|доступ))/i;
+const EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST =
+  /\b(?:manager(?:'s)?|hr)\b.{0,120}\b(?:access|open|read|see)\b.{0,120}\b(?:messages?|answers?|personal summar(?:y|ies)|tasks?|goals?|identity)\b/i;
 
 function normalizeReportingExplanation(
   classification: SituationClassification,
@@ -430,11 +432,39 @@ function normalizeReportingExplanation(
 ): SituationClassification {
   const hasReportingIntent = classification.primaryIntent === 'reporting_explanation'
     || classification.secondaryIntents.includes('reporting_explanation');
-  if (!hasReportingIntent) return classification;
   const latestEmployeeText = [...turns]
     .reverse()
     .find((turn) => turn.role === 'user')
     ?.content.trim() ?? '';
+  const safetyIntent = [classification.primaryIntent, ...classification.secondaryIntents]
+    .find((intent) => intent === 'burnout_signal'
+      || intent === 'harassment_signal'
+      || intent === 'potential_crisis');
+  if (
+    EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST.test(latestEmployeeText)
+    && (classification.dialogueAct === 'request' || safetyIntent)
+  ) {
+    if (safetyIntent) {
+      return {
+        ...classification,
+        primaryIntent: safetyIntent,
+        secondaryIntents: [
+          ...classification.secondaryIntents.filter(
+            (intent) => intent !== safetyIntent && intent !== 'reporting_explanation',
+          ),
+          'reporting_explanation',
+        ],
+      };
+    }
+    return {
+      ...classification,
+      primaryIntent: 'reporting_explanation',
+      secondaryIntents: classification.secondaryIntents.filter(
+        (intent) => intent !== 'reporting_explanation',
+      ),
+    };
+  }
+  if (!hasReportingIntent) return classification;
   if (EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(latestEmployeeText)) return classification;
   return {
     ...classification,
