@@ -416,11 +416,6 @@ export class ConversationOrchestrator {
       ? null
       : probeQuestion;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
-    const consultationTurn = classification.dialogueAct === 'request'
-      || classification.dialogueAct === 'correction'
-      || classification.primaryIntent === 'clarification'
-      || classification.primaryIntent === 'feedback_request';
-
     const shouldOfferReportingDisclosure =
       this.surveyRepo !== undefined
       && surveyEnabled
@@ -430,7 +425,7 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
-      && (reportingExplanationRequested || (!consultationTurn && probePacingAllows) || phaseB.awaitingPresent);
+      && (reportingExplanationRequested || phaseB.awaitingPresent);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
       && classification.surveyAllowed
