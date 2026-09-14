@@ -101,6 +101,15 @@ function d05ReadyHistory(text: string) {
   ];
 }
 
+function d05RepeatedTeamScoreHistory(text: string) {
+  return [
+    { id: 'm-prior-1', ...OWNERSHIP, direction: 'inbound', text: 'first', occurredAt: new Date('2026-09-03T09:57:00.000Z'), metadata: undefined },
+    { id: 'm-prior-2', ...OWNERSHIP, direction: 'inbound', text: 'second', occurredAt: new Date('2026-09-03T09:58:00.000Z'), metadata: undefined },
+    { id: 'm-prior-3', ...OWNERSHIP, direction: 'inbound', text: 'What are the engagement scores for my team this quarter?', occurredAt: new Date('2026-09-03T09:59:00.000Z'), metadata: undefined },
+    { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text, occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+  ];
+}
+
 function goalRecord(id: string, title: string): UserGoalRecord {
   const now = new Date();
   return {
@@ -298,7 +307,11 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     reminderRequest,
   ) => {
     const m = baseMocks();
-    m.conversationRepo.findRecentMessages.mockResolvedValue(d05ReadyHistory(text));
+    m.conversationRepo.findRecentMessages.mockResolvedValue(
+      _case === 'D05-02 repeated team-score question'
+        ? d05RepeatedTeamScoreHistory(text)
+        : d05ReadyHistory(text),
+    );
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
     m.aiProvider.classifySituation.mockResolvedValue({
       primaryIntent,
