@@ -436,6 +436,11 @@ describe('ConfirmationResponseSchema', () => {
     expect(r.correctionNote).toBe('not about pay');
   });
 
+  it('accepts an exclusion verdict', () => {
+    const r = ConfirmationResponseSchema.parse({ verdict: 'exclude' });
+    expect(r.verdict).toBe('exclude');
+  });
+
   it('rejects an unknown verdict', () => {
     expect(() => ConfirmationResponseSchema.parse({ verdict: 'maybe' })).toThrow();
   });

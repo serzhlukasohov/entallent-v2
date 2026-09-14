@@ -1,0 +1,77 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardian.py\" SessionStart",
+            "timeout": 5,
+            "statusMessage": "Checking context guardian..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardian.py\" UserPromptSubmit",
+            "timeout": 5,
+            "statusMessage": "Checking context guardian..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardian.py\" PreToolUse",
+            "timeout": 5,
+            "statusMessage": "Checking context guardian..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardian.py\" PostToolUse",
+            "timeout": 5,
+            "statusMessage": "Checking context guardian..."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardian.py\" PreCompact",
+            "timeout": 5,
+            "statusMessage": "Creating emergency context handoff..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guardian.py\" Stop",
+            "timeout": 5,
+            "statusMessage": "Saving context handoff..."
+          }
+        ]
+      }
+    ]
+  }
+}

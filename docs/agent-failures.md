@@ -16,6 +16,114 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-09-08: production survey cycle open script rejects Date values
+
+- Symptom: `railway run --service api -- ... pnpm exec tsx scripts/open-survey-reporting-cycle.ts` failed with `The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date`.
+- Expected: The production open-cycle helper should create a reporting cohort using the same Date inputs accepted by the application use case and Drizzle schema.
+- Root cause layer: tooling
+- Harness fix: Add a focused script regression or adjust the helper/repository boundary so production `survey:cycle:open` serializes timestamp inputs consistently.
+- Regression check: `TENANT_ID=<tenant> SURVEY_DEFINITION_ID=<definition> CONFIRM_SURVEY_CYCLE_OPEN=<tenant> SURVEY_PERIOD_START=<iso> SURVEY_PERIOD_END=<iso> SURVEY_OPENED_AT=<iso> pnpm exec tsx scripts/open-survey-reporting-cycle.ts`
+- Status: open
+
+## 2026-09-08: terse style adaptation still asks a question every turn
+
+- Symptom: Post-Grill `terse-user` scenario failed twice because the follow-up conversation produced question counts `1, 1, 1, 1`; the code comment says terse style should ask only every other turn, but `applyTerseStyle()` only shortens the response.
+- Expected: A learned terse style should keep a normal colleague tone while allowing at least one short statement-only reply instead of interrogating every terse acknowledgement.
+- Root cause layer: architecture
+- Harness fix: Enforce question pacing in the shared reply strategy/plan boundary for confident terse profiles, not in scenario-specific prompt wording.
+- Local fix: `applyTerseStyle()` now uses the already-loaded user-turn count to keep questions only on odd terse turns; focused orchestrator regressions and the live pacing assertions pass.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/terse-user.sim.test.ts`
+- Status: fixed
+
+## 2026-09-08: exact Annna replay still re-enters rejected pulse/report framing
+
+- Symptom: Post-Grill `annna-intent-fidelity` failed twice: one gate sample kept answering with reporting disclosure after the user asked for chatbot-answer criteria, and the repeat classified the `No, you keep circling` correction turn as `closing` instead of `correction`.
+- Expected: Consultation requests about another chatbot should be answered directly; when the employee rejects the prior frame, the corrected request should control the response and stale pulse/report assumptions should stay out.
+- Root cause layer: architecture
+- Harness fix: Narrow the reporting-disclosure route and harden latest-turn correction normalization/classification for mixed rejection-plus-request messages.
+- Local fix: Provider normalization now accepts reporting-question evidence only from the raw latest user message, preserves explicit Russian reporting questions, and promotes mixed rejection requests misclassified as `closing` to `correction`; focused AI/application regressions and the final live sample pass.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/annna-intent-fidelity.sim.test.ts`
+- Status: fixed
+
+## 2026-09-08: scenario reports mark deterministic checks clear before post-report assertions
+
+- Symptom: `memory-recall`, `terse-user`, and `annna-intent-fidelity` markdown reports show `Deterministic checks all clear` even though later test assertions fail the same scenario.
+- Expected: Scenario artifacts should include post-report hard assertion failures so a failed gate cannot look clean when read from the per-scenario report.
+- Root cause layer: verification
+- Harness fix: Move scenario hard assertions into the reported deterministic check path or append assertion failures to the report before the test exits.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/memory-recall.sim.test.ts`
+- Status: open
+
+## 2026-09-03: BMad config resolver called without project root
+
+- Symptom: `resolve_config.py` exited with a required `--project-root` argument error.
+- Expected: BMad configuration resolves before planning the implementation slice.
+- Root cause layer: tooling
+- Harness fix: Use `python3 _bmad/scripts/resolve_config.py --project-root "$PWD"` and the customization resolver command from the skill.
+- Regression check: Both resolver commands exit zero before creating the next spec.
+- Status: fixed
+
+## 2026-09-03: Local PostgreSQL check blocked by sandbox socket policy
+
+- Symptom: the first Docker status and localhost database test attempts returned permission errors.
+- Expected: approved local integration verification reaches the existing Postgres container.
+- Root cause layer: environment
+- Harness fix: Run read-only Docker status and local integration tests with the required sandbox escalation, without changing container state.
+- Regression check: `pnpm exec dotenv -e .env -- pnpm --filter @entalent/database test:integration`
+- Status: fixed
+
+## 2026-09-03: Index inspection used unsafe shell quoting
+
+- Symptom: the first ad hoc PostgreSQL index query was parsed incorrectly before the successful schema check.
+- Expected: inspect the generated active-confirmation index without shell interpolation errors.
+- Root cause layer: tooling
+- Harness fix: Pass inspection SQL through a quoted heredoc or a migration-aware test instead of nested command-line quoting.
+- Regression check: the integration test asserts staged-candidate uniqueness directly.
+- Status: fixed
+
+## 2026-09-03: ambiguous one-line patch changed the wrong test fixture
+- Symptom: A patch intended for the acknowledgement assertion matched the first `topicAnchor: null` in the file and changed the shared base fixture; the targeted test stayed red.
+- Expected: The patch should update only the assertion inside `passes acknowledgement dialogue state to response generation`.
+- Root cause layer: tooling
+- Harness fix: Include the enclosing test or assertion context when patching repeated literals, then inspect the focused file diff before running tests.
+- Regression check: `git diff -- packages/application/src/use-cases/conversation-orchestrator.test.ts` must show only the intended assertion line before the targeted test runs.
+- Recurrence: On 2026-09-05 an unscoped status-line patch changed the first failure entry; it was immediately corrected with heading-scoped context.
+- Status: fixed
+
+## 2026-09-03: GitHub PR metadata refresh blocked by network
+- Symptom: Two consecutive `gh pr view 5 --repo serzhlukasohov/entallent-v2` refreshes failed with `error connecting to api.github.com` after the PR metadata had been captured earlier in the audit.
+- Expected: A read-only PR metadata refresh should return the current branch, file, review, and check state.
+- Root cause layer: environment
+- Harness fix: Treat an earlier captured PR snapshot as evidence for the same audit run, report that the final live refresh was unavailable, and avoid repeated retries without a network-state change.
+- Regression check: Run one `gh pr view 5 --repo serzhlukasohov/entallent-v2 --json state,headRefName,baseRefName,statusCheckRollup`; retry only after connectivity changes.
+- Status: open
+
+## 2026-09-03: acknowledgement reply-plan test contradicts its fixture
+- Symptom: `pnpm test` fails because the acknowledgement fixture sets `topicAnchor` to `the release shipped over the weekend` while the assertion expects `topicAnchor: null`.
+- Expected: The test should assert the intended typed plan and agree with the fixture and renderer pause behavior.
+- Root cause layer: verification
+- Harness fix: Correct the stale assertion or explicitly normalize acknowledgement anchors in `buildReplyPlan`, then keep one focused regression for the chosen behavior.
+- Regression check: `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts -t "passes acknowledgement dialogue state"`
+- Status: fixed
+
+## 2026-09-03: root integration command silently drops database environment
+- Symptom: `pnpm exec dotenv -e .env -- pnpm test:integration` exits successfully while all database tests are skipped because Turbo does not pass `DATABASE_URL` to the package task.
+- Expected: With a local database URL present, the documented root command should execute the integration tests or fail clearly.
+- Root cause layer: workflow
+- Harness fix: `turbo.json` declares `DATABASE_URL` for `test:integration`, so package integration tests receive the database URL.
+- Regression check: `pnpm exec dotenv -e .env -- pnpm test:integration` must report 25 executed tests, not 25 skipped.
+- Status: fixed
+
+## 2026-08-19: TS quality gate misclassifies repeated memory assertion
+- Symptom: Story 11.2 made `terse-user` pass hard/judge, but `memory-recall` again failed its required-grounding assertion and the console again mislabeled the product assertion as `infra_failed`, causing an unnecessary retry.
+- Expected: The gate should report the memory assertion as a hard product failure without an infrastructure retry; turn-taking scenarios should remain green.
+- Root cause layer: verification
+- Harness fix: Classify scenario assertion failures separately from model/network failures in the gate runner; address memory grounding in its own story rather than expanding Story 11.2.
+- Regression check: `SIM_GATE_RUNS=1 pnpm sim:gate`
+- Recurrence: On 2026-09-08 post-Grill verification, `memory-recall` reproduced twice: final replies remembered the payments-architecture defense, but `requiredGrounding` was empty.
+- Harness fix: Require the planner's highest-priority memory anchor for unanchored emotional support; the focused unit regression and live Azure OpenAI/LangWatch scenario pass.
+- Status: fixed
+
 ## Obsolete / Retired Failures
 
 These entries are retained as historical evidence but are not active work because MAF and `agent-service` are no longer supported.
@@ -36,7 +144,130 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: Not active while MAF and `agent-service` remain unsupported.
 - Status: obsolete
 
+## 2026-09-03: BMad resolver scripts have different CLI contracts
+
+- Symptom: `resolve_config.py` required `--project-root`, while passing that same flag to `resolve_customization.py` failed as an unknown argument.
+- Expected: Resolve BMad config and skill customization without trial-and-error invocations.
+- Root cause layer: workflow
+- Harness fix: Call `resolve_config.py --project-root <root>` and run `resolve_customization.py --skill <path> --key workflow` from the project root.
+- Regression check: Run both commands before entering the selected BMad workflow step.
+- Status: fixed
+
+## 2026-09-03: Worker SQL test read stale database declarations
+
+- Symptom: A focused worker repository test compiled malformed SQL until `@entalent/database` was rebuilt after schema changes.
+- Expected: Consumer tests resolve current workspace schema declarations.
+- Root cause layer: workflow
+- Harness fix: Build changed producer packages before running focused consumer tests.
+- Regression check: `pnpm --filter @entalent/database build` before worker repository verification.
+- Status: fixed
+
+## 2026-09-03: Review agents failed after writing edits
+
+- Symptom: Two REQ-015 agents ended with local `404 /v1/responses`, so they could not return their final reports although their filesystem edits remained.
+- Expected: Agent completion returns both edits and a reviewable result.
+- Root cause layer: tooling
+- Harness fix: Treat the shared worktree as authoritative, inspect the diff locally, then restart failed agents for read-only review.
+- Regression check: `collaboration.list_agents` followed by local `git diff` before reassigning failed work.
+- Status: fixed
+
+## 2026-09-03: Focused simulation command ran the full live suite
+
+- Symptom: `pnpm --filter @entalent/conversation-sim sim -- <file>` passed an extra separator to Vitest, ran live scenarios, and hit blocked model/network calls.
+- Expected: Run only the deterministic receipt regression.
+- Root cause layer: workflow
+- Harness fix: Use `pnpm --filter @entalent/conversation-sim exec vitest run <file>` for focused simulation tests.
+- Regression check: Output must list only the requested test file.
+- Status: fixed
+
+## 2026-09-03: Local integration test blocked by sandbox network policy
+
+- Symptom: The first local Postgres run failed with `connect EPERM` to `localhost:5434` despite the database being available.
+- Expected: Execute migration and constraint tests against the confirmed local database.
+- Root cause layer: environment
+- Harness fix: Verify the redacted database target, then rerun the same test with local network escalation.
+- Regression check: `pnpm --filter @entalent/database test:integration` reports executed tests rather than connection errors or skips.
+- Status: fixed
+
+## 2026-09-03: Simulation TypeScript target lacks Array.findLast
+
+- Symptom: Root typecheck rejected `MessageRecord[].findLast` in the simulation receipt fake.
+- Expected: The deterministic fake compiles under the repository's ES2022 target.
+- Root cause layer: architecture
+- Harness fix: Use the existing array APIs supported by ES2022.
+- Regression check: `pnpm --filter @entalent/conversation-sim typecheck`.
+- Status: fixed
+
 ## Fixed Failures
+
+## 2026-09-07: Homebrew Node drift left active node linked to a removed dylib
+
+- Symptom: After installing `node@24`, active Homebrew `node` still pointed at `node` 25.2.1 and failed with `Library not loaded: /opt/homebrew/opt/simdjson/lib/libsimdjson.29.dylib`.
+- Expected: The repo shell uses a working Node 24 runtime matching CI before running pnpm/tsx gates.
+- Root cause layer: environment
+- Harness fix: Add `.node-version`/`.nvmrc`, install `node@24`, and link Homebrew to `node@24` so `node`, `npm`, and `corepack` resolve to the CI major.
+- Regression check: `node -v`, `pnpm -v`, and `pnpm run agent:preflight`.
+- Status: fixed
+
+## 2026-09-07: Full prepush aggregates a MAF script under non-MAF task boundaries
+
+- Symptom: `pnpm prepush` passed typecheck, lint, and package tests, then reached `test:scripts`; rerunning `pnpm test:scripts` outside the sandbox was rejected because the aggregate includes `scripts/live-maf-primary-app-smoke.test.ts` while the task explicitly prohibited MAF and agent-service work.
+- Expected: A non-MAF implementation slice should have a deterministic prepush-equivalent gate that does not execute MAF smoke scripts.
+- Root cause layer: workflow
+- Harness fix: Split `test:scripts` into MAF and non-MAF script-test commands, add `prepush:non-maf`, and add `agent:preflight` so scoped verification does not cross MAF boundaries.
+- Regression check: `pnpm run agent:preflight` and `pnpm run prepush:non-maf`.
+- Status: fixed
+
+## 2026-09-07: Parallel BMad memlog appends race on a shared temp file
+
+- Symptom: Two concurrent `memlog.py append` calls to the same workspace caused one append to fail with `.memlog.md.tmp` missing during `os.replace`.
+- Expected: BMad decision logging should be append-only and reliable.
+- Root cause layer: tooling
+- Harness fix: Never run multiple `memlog.py append` calls for the same workspace in parallel; append sequentially.
+- Regression check: BMad spec self-validation entries are appended one at a time.
+- Status: fixed
+
+## 2026-09-05: confirmation summary label leaked into Slack text
+
+- Symptom: Real Slack confirmation prompt displayed the internal `confirmationSummary:` field label before the employee-facing summary.
+- Expected: The employee sees only natural confirmation copy, while `metadata.confirmationSummary` remains available for exact-summary persistence.
+- Root cause layer: architecture
+- Harness fix: Reject label-bearing confirmation drafts at the OpenAI provider validation boundary and fail closed in the orchestrator if any provider returns one.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- src/openai-provider.test.ts` and `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts`.
+- Status: fixed
+
+## 2026-09-03: channel-slack package has no Vitest dependency
+
+- Symptom: The first Slack timestamp regression used Vitest and package typecheck could not resolve the import.
+- Expected: A package-local timestamp check runs with declared dependencies.
+- Root cause layer: tooling
+- Harness fix: Use Node's built-in `node:test` and `node:assert` for the two adapter checks.
+- Regression check: `node --import tsx --test packages/channel-slack/src/slack.adapter.test.ts`
+- Status: fixed
+
+## 2026-08-24: GitHub auth/permission unavailable for PR creation
+- Symptom: `git push -u origin codex/grill-session-docs` failed with `could not read Username for 'https://github.com': Device not configured`; SSH push failed with `Permission denied (publickey)`; `gh` was not installed. Reproduced on 2026-09-02 after GitHub CLI auth was configured: account `yjinia` was authenticated, but push to `serzhlukasohov/entallent-v2` was denied with HTTP 403.
+- Expected: A requested PR should be pushed and opened from the local branch.
+- Root cause layer: environment
+- Harness fix: Configure GitHub auth for an account with write access to the repo, grant `yjinia` write access, or push to a fork and open a cross-repo PR.
+- Regression check: `git push -u origin <branch>` with the intended account or authenticated PR creation through the GitHub connector.
+- Status: fixed on 2026-09-02 after repo write access was granted; push and PR creation succeeded.
+
+## 2026-08-21: npx unavailable for skill install command
+- Symptom: `npx skills add https://github.com/mattpocock/skills --skill grill-with-docs` failed with `zsh:1: command not found: npx`.
+- Expected: A user-provided skill install command should either run directly or have a documented fallback.
+- Root cause layer: environment
+- Harness fix: Use the preinstalled skill-installer helper script to install GitHub skills when Node/npm shims are unavailable.
+- Regression check: `python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py --repo mattpocock/skills --path skills/grill-with-docs`
+- Status: fixed
+
+## 2026-08-20: TSX IPC socket blocks full pre-push inside sandbox
+- Symptom: `pnpm prepush` passed monorepo typecheck, lint, and package tests, then `test:scripts` failed with `listen EPERM` for the TSX IPC socket.
+- Expected: Complete script-test verification despite the sandbox IPC restriction.
+- Root cause layer: environment
+- Harness fix: Rerun the scoped `pnpm test:scripts` check outside the sandbox when TSX IPC is denied; the outside-sandbox verification passed.
+- Regression check: `pnpm test:scripts`
+- Status: fixed
 
 ## 2026-08-29: Initial autonomous harness review found boundary gaps
 - Symptom: Independent review found that shallow/default diffs could miss committed retired changes, overrides were not receipted, malformed preflight had no receipt, and generated repair branches could recurse or validate with a self-modified harness.
@@ -206,6 +437,168 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: `agent-service/.venv/bin/python -m pytest agent-service/tests/unit/test_model_provider.py -q`
 - Status: fixed
 
+## 2026-09-03: Live Slack smoke write rejected by approval review
+
+- Symptom: Slack channel history was readable, but the approved REQ-012 marker message was rejected before delivery; a schema-probe retry was also rejected.
+- Expected: One explicitly authorized marker reaches `D0BJDC2MPE2`, then channel history provides delivery and agent-reply evidence.
+- Root cause layer: tooling
+- Harness fix: Treat connector write rejection as a hard stop; surface the exact target and message for renewed user approval instead of probing or switching tools.
+- Regression check: Read the target first, invoke one direct Slack send only after explicit approval, then verify the unique marker through `slack_read_channel`.
+- Status: open
+
+## 2026-09-03: Live Slack smoke transcript hidden after approved send
+
+- Symptom: After renewed explicit approval, one REQ-012 marker delivered to `D0BJDC2MPE2`, but Slack read/search transcript content was returned to Codex as opaque `ccr:` references, so the agent reply text and confirmation summary could not be inspected.
+- Expected: Slack smoke should expose model-readable channel history after delivery so follow-up turns can be sent only in response to actual agent text.
+- Root cause layer: tooling
+- Harness fix: Require a model-readable transcript source before continuing live Slack follow-up turns; use connector message links/search only as delivery evidence.
+- Regression check: Send one approved marker, verify returned Slack `ts`, then verify read/search output contains text before sending any reply.
+- Status: open
+
+## 2026-09-03: Reporting disclosure receipt did not advance pending confirmation
+
+- Symptom: Live Slack after delivered reporting disclosure repeated disclosure-only text and left `survey_group_states.status = pending_confirmation`.
+- Expected: Once current reporting disclosure is delivered before the inbound turn, the next safe non-closing turn should surface the exact displayed confirmation prompt and stage `awaiting_confirmation`.
+- Root cause layer: architecture
+- Harness fix: Add orchestrator regression for acknowledgement after delivered disclosure and avoid passing disclosure policy hints after current receipt exists.
+- Regression check: `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts`
+- Status: fixed
+
+## 2026-09-03: Delivered confirmation prompt stayed pending after Slack delivery
+
+- Symptom: Slack delivered a confirmation prompt with valid `confirmationSummary`, but `survey_group_states.status` stayed `pending_confirmation` with `confirmation_prompt_message_id` set.
+- Expected: A delivered prompt with a valid displayed summary should be treated as awaiting confirmation, including rows that missed the delivery activation hook.
+- Root cause layer: architecture
+- Harness fix: Make delivered-prompt queries accept both staged pending and awaiting states, guarded by `messages.sent_at IS NOT NULL` and summary validity.
+- Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts src/message-send/message-send.processor.test.ts`
+- Status: fixed
+
+## 2026-09-03: Confirmation state SQL passed JS Date through raw template
+
+- Symptom: Real Slack confirmation reply retried and failed with `TypeError [ERR_INVALID_ARG_TYPE]: ArrayBuffer. Received an instance Date` in `ConversationProcessor`.
+- Expected: Group confirmation SQL should compare timestamps without passing raw JS `Date` values through untyped SQL template parameters.
+- Root cause layer: architecture
+- Harness fix: Convert raw timestamp parameters to ISO `::timestamptz` and keep disclosure-before-confirmation check in TypeScript before the SQL update.
+- Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts src/message-send/message-send.processor.test.ts`
+- Status: fixed
+
+## 2026-09-05: Confirmation label retry failed closed without Slack reply
+
+- Symptom: After the first label-leak fix, a production Slack turn reached `pending_confirmation`, but worker job 390 failed closed when the model repeated a confirmation draft containing the technical `confirmationSummary:` label; no outbound Slack prompt was delivered.
+- Expected: A simple exposed provider label should be normalized before confirmation validation so the user receives the clean confirmation prompt, while invalid summaries still fail closed.
+- Root cause layer: architecture
+- Harness fix: Strip the simple `confirmationSummary:` label at the OpenAI provider boundary before validation and keep the orchestrator contract guard as the cross-provider safety net.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- src/openai-provider.test.ts`
+- Status: fixed
+
+## 2026-09-05: Additional pending groups repeat disclosure without confirmation prompt
+
+- Symptom: Full production Slack smoke created `belonging` and `engagement` pending confirmation states, but repeated the reporting disclosure message after acknowledgement and never surfaced a confirmation prompt.
+- Expected: Once a pending group has enough evidence and disclosure is delivered, the next safe acknowledgement should show the exact confirmation summary prompt.
+- Root cause layer: architecture
+- Harness fix: Normalize stale `reporting_explanation` intent at the shared orchestrator boundary only for a substance-free acknowledgement after a delivered disclosure, with a multi-group regression.
+- Regression check: Real Slack smoke or orchestrator test covering `belonging`/`engagement` pending states after existing confirmed groups.
+- Status: fixed
+
+## 2026-09-05: Confirmation lifecycle copy breaks language and acknowledgement
+
+- Symptom: The full Slack lifecycle confirmed both `engagement` and `belonging`, but both Russian prompts ended with `did I get that right?`; after the second explicit agreement, the bot continued the topic with another question instead of visibly acknowledging confirmation.
+- Expected: Confirmation prompts stay in the resolved response language, and an accepted confirmation produces a clear, question-free acknowledgement before normal conversation resumes.
+- Root cause layer: architecture
+- Harness fix: Remove the literal English confirmation exemplar, disable ordinary follow-up after a successful confirmation, and revalidate the corrected zero-question draft at the provider boundary.
+- Regression check: Focused orchestrator/provider tests plus a real Slack confirmation cycle.
+- Status: fixed
+
+## 2026-09-05: Documented deterministic harness command does not exist
+
+- Symptom: `pnpm harness:check -- --base HEAD` failed because the root package exposes no `harness:check` script.
+- Expected: The specification should name a runnable deterministic repository gate.
+- Root cause layer: workflow
+- Harness fix: Use the current root `pnpm prepush` gate and verify available scripts from `package.json` before copying older handoff commands.
+- Regression check: `jq -e '.scripts.prepush and (.scripts["harness:check"] | not)' package.json` followed by `pnpm prepush`.
+- Status: fixed
+
+## 2026-09-06: De-identification gate missed delivery activation and strict accepted proof
+
+- Symptom: Initial typed gate allowed a delivered staged confirmation to become `awaiting_confirmation` without row/message `deidentificationDecision`, accepted malformed decisions with non-empty reasons, and omitted known team identifiers.
+- Expected: No candidate reaches confirmation or reporting unless TypeScript records `accepted`, exact `deidentification-v1`, and `reasons: []`, bound to the delivered candidate.
+- Root cause layer: architecture
+- Harness fix: Share one accepted-proof predicate across stage, delivery activation, confirm, report projection, and parser/type guard; include existing team identifiers in policy input.
+- Regression check: `pnpm --filter @entalent/application test -- src/utils/deidentification-policy.test.ts src/use-cases/conversation-orchestrator.test.ts` and `pnpm --filter @entalent/worker test -- src/survey/repositories/group-state.repository.test.ts`
+- Status: fixed
+
+## 2026-09-06: Withdrawal columns appended to already-applied migration
+
+- Symptom: Database integration failed after adding `withdrawn_at` and `withdrawal_message_id` to existing `0012` because the local test database had already recorded that migration.
+- Expected: New persisted columns apply through a forward migration when any environment may have already applied the previous migration.
+- Root cause layer: workflow
+- Harness fix: Before editing an uncommitted migration, check whether local integration DB has recorded it; if yes, add the new persistence change as the next migration.
+- Regression check: `pnpm exec dotenv -e .env -- pnpm --filter @entalent/database test:integration`
+- Status: fixed
+
+## 2026-09-06: Dependent package checks used missing or stale dist output
+
+- Symptom: Parallel affected builds briefly failed with missing `@entalent/contracts` / `@entalent/ai-openai` declarations while sibling builds rewrote `dist`; later worker typecheck also missed a newly exported application type until application was rebuilt.
+- Expected: Package builds that consume sibling package `dist` artifacts run after those dependencies finish building.
+- Root cause layer: workflow
+- Harness fix: After changing a package export, build that dependency before any consumer typecheck/build; keep parallelism only for checks that do not read sibling `dist` output.
+- Regression check: Sequential dependency builds, then `pnpm --filter @entalent/worker typecheck` and `pnpm --filter @entalent/worker build`.
+- Status: fixed
+
+## 2026-09-06: Exclusion verdict schema lacked prompt semantics
+
+- Symptom: Confirmation interpreter schema accepted `exclude`, but the system prompt still listed only `agree`, `correct`, and `unclear` verdict meanings.
+- Expected: Prompt and typed schema define the same machine-readable verdict set so explicit withdrawal language can reach the TypeScript withdrawal path.
+- Root cause layer: architecture
+- Harness fix: Add prompt-rendering regression test for new structured verdict semantics, not only parser/schema tests.
+- Regression check: `pnpm --filter @entalent/ai-openai test -- src/prompts/confirm-interpret.test.ts src/openai-provider.test.ts`
+- Status: fixed
+
+## 2026-09-06: Malformed awaiting de-identification proof could hold confirmation slot
+
+- Symptom: A delivered awaiting group with missing or malformed accepted proof returned early in the orchestrator without clearing `confirmation_prompt_message_id`, blocking later pending confirmations for the user.
+- Expected: Confirmation cannot proceed without typed accepted proof, and invalid awaiting proof returns the row to pending so a new accepted candidate can be generated.
+- Root cause layer: architecture
+- Harness fix: Add orchestrator regression for awaiting group state with `deidentificationDecision: null`.
+- Regression check: `pnpm --filter @entalent/application test -- src/use-cases/conversation-orchestrator.test.ts`
+- Status: fixed
+
+## 2026-09-06: Cohort membership patch changed the wrong focused test mock
+
+- Symptom: The focused team repository suite failed with `this.db.client.select is not a function` after the test mock for the current-membership lookup was changed to `selectDistinct`, while only the historical cycle lookup had changed in production.
+- Expected: The patch and its test double target the exact changed method without altering a sibling query path.
+- Root cause layer: workflow
+- Harness fix: Use symbol-qualified CodeGraph context before each same-file patch and rerun the smallest affected test immediately after the edit.
+- Regression check: `pnpm --filter @entalent/worker test -- src/survey/repositories/team.repository.test.ts`
+- Status: fixed
+
+## 2026-09-06: BMad uv activation could not initialize the home cache in sandbox
+
+- Symptom: `uv run _bmad/scripts/resolve_customization.py` failed with `Operation not permitted` while opening `/Users/serzh/.cache/uv/sdists-v9/.git`.
+- Expected: BMad customization resolution should run inside the workspace sandbox without requiring writes to the user cache.
+- Root cause layer: tooling
+- Harness fix: Set `UV_CACHE_DIR` to a task-scoped writable directory under `/private/tmp` for BMad `uv run` commands.
+- Regression check: `UV_CACHE_DIR=/private/tmp/entalent-bmad-uv-cache uv run _bmad/scripts/resolve_customization.py --skill .agents/skills/bmad-spec --key workflow`
+- Status: fixed
+
+## 2026-09-06: Grill decision patches repeatedly failed before application
+
+- Symptom: Multiple documentation patches assumed non-matching paragraph context or had malformed orchestration/patch syntax. Failed attempts did not change files partially.
+- Expected: Decision capture should use the current on-disk requirement text and apply atomically.
+- Root cause layer: tooling/context
+- Harness fix: Read exact target paragraphs in the immediately preceding command, then apply one file per patch with a validated terminator and minimal JavaScript wrapper.
+- Regression check: `git diff --check`
+- Status: fixed
+
+## 2026-09-06: BMad spec customization references missing project context
+
+- Symptom: BMad spec activation resolved `file:{project-root}/project-context.md` as a persistent fact, but that file does not exist in the checkout.
+- Expected: Every configured persistent-fact file exists and can be loaded before the workflow starts.
+- Root cause layer: workflow/configuration
+- Harness fix: Either generate the canonical root project context or remove the stale persistent-fact reference after confirming which source should own it.
+- Regression check: `test -f project-context.md`
+- Status: open
+
 ## 2026-08-20: MAF prompt rewrite changed a regression marker's case
 - Symptom: The focused prompt test failed because `Do not paraphrase` replaced the asserted lowercase marker.
 - Expected: Engagement wording changes should preserve unrelated prompt contracts.
@@ -260,7 +653,8 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: environment
 - Harness fix: Keep exact private-transcript scenarios out of LangWatch, request explicit approval for the remaining Azure scenario egress, and use deterministic prompt regressions as the safe default.
 - Regression check: Before a live sim with private transcript text, confirm LangWatch reporting is disabled and explicit approval exists for the model-provider destination; otherwise do not run it.
-- Status: fixed
+- Recurrence: On 2026-09-08, a post-fix `memory-recall` run hit sandbox DNS and the outside-sandbox retry was rejected because Azure OpenAI and LangWatch scenario egress had not been explicitly approved.
+- Status: open
 
 ## 2026-08-28: Closing turn created durable anti-goal memories
 - Symptom: The production Annna replay classified `No, forget` as `closing` and replied without a question, but memory extraction stored four active `goal` items phrased as “Employee no longer wants to continue…” from that closing turn.
@@ -332,7 +726,8 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: verification
 - Harness fix: Derive existing colocated tests from changed paths, run them through their owning package, and reject any derived retired target; never fall back to root `pnpm test`.
 - Regression check: `pnpm exec tsx scripts/agent-harness.test.ts` proves a changed package source runs only its colocated active test while an adjacent archived test and root broad test remain untouched.
-- Status: fixed
+- Recurrence: On 2026-09-08, the documented `prepush:non-maf` script still called `turbo run test`, which executed archived MAF unit tests despite its name; no MAF service or live runtime was invoked.
+- Status: open
 
 ## 2026-08-30: Harness reflection IPC was blocked by the managed sandbox
 - Symptom: The first focused reflection command failed with `listen EPERM` while creating the local tsx IPC socket.
@@ -356,4 +751,20 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: tooling
 - Harness fix: Run one-off read-only database checks through `@entalent/database` and its existing `postgres` client.
 - Regression check: `pnpm --filter @entalent/database exec node -e 'console.log(require.resolve("postgres"))'` resolves locally before the Railway command runs.
+- Status: fixed
+
+## 2026-09-08: Live conversation scenarios lacked explicit destination approval
+- Symptom: The post-deploy `memory-recall` and `terse-user` live run was rejected before execution because its test dialogue and context would be sent to Azure OpenAI and LangWatch.
+- Expected: External model/evaluation payloads run only after the user explicitly approves the payload class and named destinations.
+- Root cause layer: instructions
+- Harness fix: Before the live command, request one explicit approval that names test dialogue/context, Azure OpenAI, and LangWatch; note that Annna disables LangWatch.
+- Regression check: The approval text and the exact focused scenario command are present before any external run.
+- Status: fixed
+
+## 2026-09-08: Conversation simulation used a stale built workspace dependency
+- Symptom: The first Annna repeat after changing `packages/ai-openai/src` still exercised the previous `dist` behavior and repeated the reporting-disclosure failure.
+- Expected: A live conversation simulation should exercise the current affected workspace package source.
+- Root cause layer: workflow
+- Harness fix: Build each changed workspace dependency consumed through its package entry point before running conversation simulations.
+- Regression check: `pnpm --filter @entalent/ai-openai build` succeeds before the focused Annna command.
 - Status: fixed

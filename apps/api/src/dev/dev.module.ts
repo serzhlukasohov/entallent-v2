@@ -5,6 +5,7 @@ import { ChannelModule } from '../channel/channel.module';
 import { DatabaseModule } from '../database/database.module';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { QUEUE_NAMES } from '../queue/queue.module';
+import { UserResetService } from '../admin/user-reset.service';
 
 @Module({
   imports: [
@@ -16,6 +17,6 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     ),
   ],
   controllers: [DevSimulateController],
-  providers: [ApiKeyGuard],
+  providers: [ApiKeyGuard, UserResetService],
 })
 export class DevModule {}

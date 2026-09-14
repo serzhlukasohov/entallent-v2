@@ -78,7 +78,7 @@ describe('Annna direct-address and current-intent fidelity', () => {
       questionPolicy: { maxQuestions: 0 },
     });
     expect(harness.replies[10]).toMatch(
-      /fair point|you(?:'re| are) right|I (?:misread|misunderstood|over[- ]?read|drifted|took|was (?:over[- ]?reading|reading|treating|assuming))|earlier (?:read|reading|assumptions?).{0,100}(?:drop|missed|off|wrong)|not (?:for )?a read on your motives/i,
+      /fair point|you(?:'re| are) right|I (?:misread|misunderstood|over[- ]?read|drifted|took|was (?:over[- ]?reading|reading|treating|assuming|too quick to (?:treat|read|assume)))|earlier (?:read|reading|assumptions?).{0,100}(?:drop|missed|off|wrong)|not (?:for )?a read on your motives/i,
     );
     expect(harness.replies[10]).toMatch(/AI|chat-?bot|answer/i);
     expect(countQuestions(harness.replies[10] ?? '')).toBe(0);

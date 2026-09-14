@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { PulseOverviewController } from './pulse-overview.controller';
 
@@ -16,6 +17,26 @@ function fromOnlyQuery(rows: unknown[]) {
 }
 
 describe('PulseOverviewController', () => {
+  it('refuses named pulse rows when the internal dashboard gate is disabled', async () => {
+    const db = {
+      client: {
+        select: vi.fn()
+          .mockReturnValueOnce(query([]))
+          .mockReturnValueOnce(query([])),
+      },
+    };
+    const config = {
+      get: vi.fn((key: string) => {
+        if (key === 'INTERNAL_DASHBOARD_ENABLED') return false;
+        return 'tenant-1';
+      }),
+    };
+    const controller = new PulseOverviewController(db as never, config as never);
+
+    await expect(controller.getOverview('tenant-1')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(db.client.select).not.toHaveBeenCalled();
+  });
+
   it('Manager Pulse dashboard maf_primary regression exposes MAF-created survey state without raw private fields', async () => {
     const db = {
       client: {
@@ -71,7 +92,12 @@ describe('PulseOverviewController', () => {
           ])),
       },
     };
-    const config = { get: vi.fn(() => 'tenant-1') };
+    const config = {
+      get: vi.fn((key: string) => {
+        if (key === 'INTERNAL_DASHBOARD_ENABLED') return true;
+        return 'tenant-1';
+      }),
+    };
     const controller = new PulseOverviewController(db as never, config as never);
 
     const response = await controller.getOverview('tenant-1');

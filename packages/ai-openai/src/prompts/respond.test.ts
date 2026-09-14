@@ -34,11 +34,46 @@ describe('buildRespondSystemPrompt confirmation branch', () => {
     }));
     expect(prompt).toMatch(/only one question/i);
     expect(prompt).toContain('autonomy');
+    expect(prompt).toContain('"confirmationSummary"');
+    expect(prompt).toMatch(/byte-for-byte/i);
+  });
+
+  it('requests a Russian confirmation question without an English exemplar', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      languagePolicy: {
+        responseLanguage: 'ru',
+        source: 'current_turn',
+        confidence: 0.95,
+        shouldUpdateUserLocale: true,
+      },
+      confirmationRequest: {
+        questionGroup: 'belonging',
+        evidence: [{ stableKey: 'q-belonging', evidenceSummary: 'feels included', polarity: 'positive' }],
+      },
+    }));
+
+    expect(prompt).toMatch(/exactly ONE confirmation question in Russian/i);
+    expect(prompt).not.toMatch(/did I get that right/i);
   });
 
   it('does not emit confirm instructions otherwise', () => {
     const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
     expect(prompt).not.toMatch(/did i get that right/i);
+  });
+});
+
+describe('buildRespondSystemPrompt reporting transparency', () => {
+  it('uses the canonical explanation when asked and does not volunteer it every turn', () => {
+    const reportingDisclosure = 'Confirmed de-identified information may feed team recommendations.';
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      reportingDisclosure,
+    }));
+
+    expect(prompt).toContain(reportingDisclosure);
+    expect(prompt).toMatch(/if the employee asks/i);
+    expect(prompt).toMatch(/do not volunteer|do not repeat/i);
   });
 });
 

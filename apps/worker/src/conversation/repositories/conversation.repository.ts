@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { conversations, messages, users } from '@entalent/database';
 import type {
   ConversationRepositoryPort,
   ConversationRecord,
   MessageRecord,
+  ReportingDisclosureReceiptRecord,
   SaveMessageParams,
 } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
@@ -126,18 +127,122 @@ export class ConversationRepository implements ConversationRepositoryPort {
     };
   }
 
+  async findOutboundMessageForDelivery(
+    messageId: string,
+    tenantId: string,
+    conversationId: string,
+  ): Promise<{
+    text: string;
+    sentAt: Date | null;
+    channelType: string;
+    externalConversationId: string;
+  } | null> {
+    const [row] = await this.db.client
+      .select({
+        text: messages.text,
+        sentAt: messages.sentAt,
+        channelType: conversations.channelType,
+        externalConversationId: conversations.externalConversationId,
+      })
+      .from(messages)
+      .innerJoin(
+        conversations,
+        and(
+          eq(conversations.id, messages.conversationId),
+          eq(conversations.tenantId, messages.tenantId),
+        ),
+      )
+      .where(and(
+        eq(messages.id, messageId),
+        eq(messages.tenantId, tenantId),
+        eq(messages.conversationId, conversationId),
+        eq(messages.direction, 'outbound'),
+        isNull(messages.deletedAt),
+      ))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async findLatestDeliveredReportingDisclosure(
+    tenantId: string,
+    userId: string,
+    version: string,
+    before: Date,
+  ): Promise<ReportingDisclosureReceiptRecord | null> {
+    const [row] = await this.db.client
+      .select({
+        shownAt: messages.sentAt,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.tenantId, tenantId),
+          eq(messages.userId, userId),
+        eq(messages.direction, 'outbound'),
+        isNotNull(messages.sentAt),
+        isNull(messages.deletedAt),
+        sql`${messages.metadata}->>'reportingDisclosureVersion' = ${version}`,
+        lt(messages.sentAt, before),
+        ),
+      )
+      .orderBy(desc(messages.sentAt))
+      .limit(1);
+
+    if (!row?.shownAt) return null;
+
+    return {
+      version,
+      shownAt: row.shownAt,
+    };
+  }
+
   async updateMessageDelivery(
     messageId: string,
-    params: { externalMessageId: string; externalThreadId?: string; sentAt: Date },
-  ): Promise<void> {
-    await this.db.client
+    params: {
+      tenantId: string;
+      conversationId: string;
+      externalMessageId: string;
+      externalThreadId?: string;
+      sentAt: Date;
+    },
+  ): Promise<Date> {
+    const rows = await this.db.client
       .update(messages)
       .set({
         externalMessageId: params.externalMessageId,
-        externalThreadId: params.externalThreadId,
+        externalThreadId: params.externalThreadId ?? null,
         sentAt: params.sentAt,
       })
-      .where(eq(messages.id, messageId));
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.tenantId, params.tenantId),
+          eq(messages.conversationId, params.conversationId),
+          eq(messages.direction, 'outbound'),
+          isNull(messages.sentAt),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .returning({ id: messages.id, sentAt: messages.sentAt });
+    if (rows[0]?.sentAt) return rows[0].sentAt;
+
+    const [existing] = await this.db.client
+      .select({ sentAt: messages.sentAt })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.tenantId, params.tenantId),
+          eq(messages.conversationId, params.conversationId),
+          eq(messages.direction, 'outbound'),
+          isNotNull(messages.sentAt),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (existing?.sentAt) return existing.sentAt;
+
+    throw new Error(`Delivery update scope mismatch: ${messageId}`);
   }
 }
 

@@ -38,6 +38,7 @@ const questions = [
     positiveIndicators: [],
     negativeIndicators: [],
     contraindications: [],
+    responseType: 'open_ended' as const,
   },
 ];
 
@@ -67,6 +68,18 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
     );
     expect(r.verdict).toBe('correct');
     expect(r.correctionNote).toBe('not about money');
+  });
+
+  it('parses an exclusion verdict', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: '{"verdict":"exclude"}' } }],
+    });
+    const provider = makeProvider();
+    const r = await provider.interpretConfirmationResponse(
+      [{ role: 'user', content: 'do not include that in reports', timestamp: new Date() }],
+      'summary',
+    );
+    expect(r.verdict).toBe('exclude');
   });
 });
 
@@ -155,7 +168,7 @@ describe('OpenAiProvider.classifySituation', () => {
             surveyAllowed: true,
             reasoningSummary: 'The employee asks for criteria.',
             reminderRequest: null,
-            dialogueAct: 'request',
+            dialogueAct: 'closing',
             latestUserSubstance: 'Give criteria for human-like and relevant answers.',
             topicAnchor: 'chatbot evaluation criteria',
           }),
@@ -175,6 +188,257 @@ describe('OpenAiProvider.classifySituation', () => {
 
     expect(result.dialogueAct).toBe('correction');
     expect(result.latestUserSubstance).toBe('Give criteria for human-like and relevant answers.');
+  });
+
+  it('drops reporting explanation inferred from descriptive product context', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: ['reporting_explanation'],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The older transcript mentioned pulse reporting.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'Who sees the pulse report?',
+            topicAnchor: 'chatbot answer quality',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{
+        role: 'user',
+        content: 'The bot builds a report so managers understand mood and who they need to support, mentor, or appreciate more.',
+        timestamp: new Date(),
+      }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('clarification');
+    expect(result.secondaryIntents).toEqual([]);
+    expect(result.dialogueAct).toBe('request');
+  });
+
+  it('does not treat answer-quality criteria as a reporting usage question', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: ['feedback_request'],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The turn mentions pulse reporting before asking how to evaluate answers.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'What criteria should I use to judge answer quality?',
+            topicAnchor: 'chatbot answer quality',
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{
+        role: 'user',
+        content: 'It builds a manager report, but that is only background. What criteria should I use to judge whether its answers sound human and stay relevant?',
+        timestamp: new Date(),
+      }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('clarification');
+    expect(result.secondaryIntents).toEqual(['feedback_request']);
+    expect(result.dialogueAct).toBe('request');
+  });
+
+  it('keeps an explicit reporting destination question', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee explicitly asks where confirmed information goes.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: 'Куда пойдёт подтверждённая информация?',
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content: 'Куда пойдёт подтверждённая информация?', timestamp: new Date() }],
+      { userName: 'Игорь' },
+    );
+
+    expect(result.primaryIntent).toBe('reporting_explanation');
+  });
+
+  it.each([
+    [
+      "We're in EnTalent on Slack. I mean my manager's EnTalent access: can they open my messages, personal summary or tasks?",
+      'clarification',
+    ],
+    [
+      'If I confirm a pulse summary, does that let HR read my own answers?',
+      'reporting_explanation',
+    ],
+  ] as const)('recognizes the D02-01 individual-access question: %s', async (content, primaryIntent) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent,
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks about individual access.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('reporting_explanation');
+  });
+
+  it('keeps safety primary when an unsafe turn also asks about individual manager access', async () => {
+    const content = 'I might hurt myself. Can my manager open my messages?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'potential_crisis',
+            secondaryIntents: [],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.9,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee may be in immediate danger.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).toContain('reporting_explanation');
+  });
+
+  it('restores safety primary when the classifier puts it behind reporting', async () => {
+    const content = 'I might hurt myself. Can my manager open my messages?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: ['potential_crisis'],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.9,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee may be in immediate danger.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).toContain('reporting_explanation');
+  });
+
+  it('does not promote a descriptive manager-access statement', async () => {
+    const content = 'My manager can access weekly updates in my personal summary.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee describes their current setup.',
+            reminderRequest: null,
+            dialogueAct: 'new_substance',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('casual_conversation');
+    expect(result.secondaryIntents).toEqual([]);
   });
 
   it('normalizes an explicit stop phrase to closing', async () => {
@@ -249,7 +513,7 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
   });
 
   it('does not run the opener gate for confirmation replies (confirmationRequest set)', async () => {
-    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"It seems like autonomy matters more to you — did I get that right?","confidence":0.9,"containsSurveyProbe":false}' } }] });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: '{"text":"Autonomy matters more to you — did I get that right?","confirmationSummary":"Autonomy matters more to you","confidence":0.9,"containsSurveyProbe":false}' } }] });
     const provider = makeProvider();
     const res = await provider.generateResponse(
       [{ role: 'user', content: 'yes', timestamp: new Date() }],
@@ -258,6 +522,117 @@ describe('OpenAiProvider.generateResponse opener behavior', () => {
     );
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(res.text).toContain('did I get that right');
+  });
+
+  it('regenerates once when a confirmation draft omits its exact reportable summary', async () => {
+    createMock
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'stop',
+          message: { content: '{"text":"Did I get that right?","confidence":0.9,"containsSurveyProbe":false}' },
+        }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'stop',
+          message: {
+            content: JSON.stringify({
+              text: 'You value ownership. Did I get that right?',
+              confirmationSummary: 'You value ownership.',
+              confidence: 0.9,
+              containsSurveyProbe: false,
+            }),
+          },
+        }],
+      });
+    const provider = makeProvider();
+
+    const response = await provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(response.confirmationSummary).toBe('You value ownership.');
+  });
+
+  it('rejects a confirmation after one corrective draft still lacks a verbatim summary', async () => {
+    createMock
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'stop',
+          message: {
+            content: '{"text":"You value ownership. Did I get that right?","confirmationSummary":"Different text","confidence":0.9,"containsSurveyProbe":false}',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: 'stop',
+          message: { content: '{"text":"Did I get that right?","confidence":0.9,"containsSurveyProbe":false}' },
+        }],
+      });
+    const provider = makeProvider();
+
+    await expect(provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    )).rejects.toThrow(/confirmationSummary/);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('strips an exposed confirmationSummary label before validating a confirmation draft', async () => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            text: 'confirmationSummary: You value ownership. Did I get that right?',
+            confirmationSummary: 'You value ownership.',
+            confidence: 0.9,
+            containsSurveyProbe: false,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const response = await provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(response.text).toBe('You value ownership. Did I get that right?');
+    expect(response.confirmationSummary).toBe('You value ownership.');
+  });
+
+  it('rejects a confirmation when the reportable summary is the whole reply', async () => {
+    const wholeReply = 'You value ownership. Did I get that right?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            text: wholeReply,
+            confirmationSummary: wholeReply,
+            confidence: 0.9,
+            containsSurveyProbe: false,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    await expect(provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    )).rejects.toThrow(/confirmationSummary/);
+    expect(createMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not use the reflective-opener regex gate when a typed reply plan is present', async () => {
@@ -330,6 +705,20 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     expect(res.text).toBe('Makes sense.');
   });
 
+  it('rejects a corrected draft that still violates the zero-question policy', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What changes first?', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'What comes next?', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    await expect(provider.generateResponse(
+      [{ role: 'user', content: 'ok', timestamp: new Date() }],
+      { mode: 'normal', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X' }),
+    )).rejects.toThrow(/question/i);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
   it('regenerates for an embedded Armenian question mark on a zero-question turn', async () => {
     createMock
       .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Why՞ I will leave it there.', confidence: 0.9, containsSurveyProbe: false }) } }] })
@@ -360,8 +749,8 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
 
   it('regenerates a confirmation with more than one Unicode question group', async () => {
     createMock
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Really？？ Did I get that right؟', confidence: 0.9, containsSurveyProbe: false }) } }] })
-      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Did I get that right؟', confidence: 0.9, containsSurveyProbe: false }) } }] });
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Ownership matters. Really？？ Did I get that right؟', confirmationSummary: 'Ownership matters.', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Ownership matters. Did I get that right؟', confirmationSummary: 'Ownership matters.', confidence: 0.9, containsSurveyProbe: false }) } }] });
     const provider = makeProvider();
 
     const res = await provider.generateResponse(
@@ -371,7 +760,53 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
     );
 
     expect(createMock).toHaveBeenCalledTimes(2);
-    expect(res.text).toBe('Did I get that right؟');
+    expect(res.text).toBe('Ownership matters. Did I get that right؟');
+  });
+
+  it('regenerates a confirmation with no question group', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Ownership matters. I got that right.', confirmationSummary: 'Ownership matters.', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Ownership matters. Did I get that right?', confirmationSummary: 'Ownership matters.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe('Ownership matters. Did I get that right?');
+  });
+
+  it('rejects a corrected confirmation that still has more than one question group', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Ownership matters. Really? Did I get that right?', confirmationSummary: 'Ownership matters.', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Ownership matters. Sure? Did I get that right?', confirmationSummary: 'Ownership matters.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    await expect(provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    )).rejects.toThrow(/confirmation/i);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('regenerates when confirmationSummary contains a question group', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Does ownership matter? Tell me if that is right.', confirmationSummary: 'Does ownership matter?', confidence: 0.9, containsSurveyProbe: false }) } }] })
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text: 'Ownership matters. Is that right?', confirmationSummary: 'Ownership matters.', confidence: 0.9, containsSurveyProbe: false }) } }] });
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(
+      turns,
+      { mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [] },
+      responseContext({ userName: 'X', confirmationRequest: { questionGroup: 'autonomy', evidence: [] } }),
+    );
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.confirmationSummary).toBe('Ownership matters.');
   });
 
   it('uses typed replyPlan question policy instead of the legacy strategy flag', async () => {

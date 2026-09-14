@@ -146,7 +146,7 @@ describe('buildReplyPlan', () => {
     expect(brief.memoryAnchors).toEqual([]);
   });
 
-  it('keeps memory anchors without required grounding for emotional check-ins', () => {
+  it('requires the best memory anchor for vague emotional check-ins', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'emotional_disclosure',
@@ -169,7 +169,14 @@ describe('buildReplyPlan', () => {
       maxQuestions: 1,
       reason: 'new_substance_allows_question',
     });
-    expect(brief.requiredGrounding).toEqual([]);
+    expect(brief.requiredGrounding).toEqual([
+      {
+        source: 'memory',
+        category: 'milestone',
+        content: 'defending the payments architecture on Friday',
+        requirement: 'mention_explicitly',
+      },
+    ]);
   });
 
   it('selects concrete grounding anchors for anchored emotional support', () => {

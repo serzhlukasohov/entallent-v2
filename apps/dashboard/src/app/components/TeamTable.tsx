@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { AdminManagerTeamEmployee, AdminManagerTeamQuestionSignal } from '@entalent/contracts';
+import { resetTeamUser } from '../actions';
 
 const POLARITY_COLOR: Record<string, string> = {
   positive: 'var(--green)',
@@ -100,6 +101,7 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
     );
 
   const empty = employee.signals.filter((s) => !s.evidenceSummary);
+  const previousWithEvidence = employee.previousWindow?.signals.filter((s) => s.evidenceSummary) ?? [];
 
   return (
     <div style={{ padding: '0 20px 20px 20px' }}>
@@ -117,7 +119,7 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
         </div>
       ) : (
         <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-          No insights — no conversations yet.
+          {employee.previousWindow ? 'No insights in the current window.' : 'No insights — no conversations yet.'}
         </p>
       )}
       {empty.length > 0 && (
@@ -142,6 +144,28 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
               </span>
             ))}
           </div>
+        </div>
+      )}
+      {employee.previousWindow && (
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+            Previous window · closed {formatRelative(employee.previousWindow.completedAt)}
+          </div>
+          {previousWithEvidence.length > 0 ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+                gap: 10,
+              }}
+            >
+              {previousWithEvidence.map((signal) => (
+                <EvidenceCard key={signal.stableKey} signal={signal} />
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No saved insights.</p>
+          )}
         </div>
       )}
     </div>
@@ -190,6 +214,26 @@ function CoverageBar({ pct, total, scored }: { pct: number; total: number; score
 
 export function TeamTable({ employees }: { employees: AdminManagerTeamEmployee[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [resetting, setResetting] = useState<string | null>(null);
+  const [resetStatus, setResetStatus] = useState<{ userId: string; message: string; error?: boolean } | null>(null);
+
+  async function handleReset(user: AdminManagerTeamEmployee) {
+    if (!window.confirm(`Reset all agent history for ${user.displayName}?`)) return;
+    setResetting(user.userId);
+    setResetStatus(null);
+    try {
+      const result = await resetTeamUser(user.userId);
+      setResetStatus({
+        userId: user.userId,
+        message: `Reset ${result.messages} messages, ${result.memoryItems} memories`,
+      });
+      setExpanded(null);
+    } catch (error) {
+      setResetStatus({ userId: user.userId, message: String(error), error: true });
+    } finally {
+      setResetting(null);
+    }
+  }
 
   return (
     <div
@@ -204,7 +248,7 @@ export function TeamTable({ employees }: { employees: AdminManagerTeamEmployee[]
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '200px 1fr 120px 100px 80px',
+          gridTemplateColumns: '200px 1fr 120px 100px 120px',
           padding: '10px 20px',
           borderBottom: '1px solid var(--border)',
           color: 'var(--text-muted)',
@@ -228,7 +272,7 @@ export function TeamTable({ employees }: { employees: AdminManagerTeamEmployee[]
             onClick={() => setExpanded(expanded === emp.userId ? null : emp.userId)}
             style={{
               display: 'grid',
-              gridTemplateColumns: '200px 1fr 120px 100px 80px',
+              gridTemplateColumns: '200px 1fr 120px 100px 120px',
               padding: '14px 20px',
               alignItems: 'center',
               gap: 12,
@@ -288,31 +332,71 @@ export function TeamTable({ employees }: { employees: AdminManagerTeamEmployee[]
             </div>
 
             {/* Coverage bar */}
-            <CoverageBar
-              pct={emp.coveragePct}
-              total={emp.totalQuestions}
-              scored={emp.scoredCount}
-            />
+            <div>
+              <CoverageBar
+                pct={emp.coveragePct}
+                total={emp.totalQuestions}
+                scored={emp.scoredCount}
+              />
+              {emp.previousWindow && (
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
+                  previous {emp.previousWindow.scoredCount}/{emp.previousWindow.totalQuestions}
+                </div>
+              )}
+            </div>
 
             {/* Last active */}
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
               {formatRelative(emp.lastActiveAt)}
             </span>
 
-            {/* Expand toggle */}
-            <span
+            {/* Actions */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleReset(emp);
+                }}
+                disabled={resetting === emp.userId}
+                style={{
+                  fontSize: 11,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--red)',
+                  color: resetting === emp.userId ? 'var(--text-muted)' : 'var(--red)',
+                  background: 'transparent',
+                  cursor: resetting === emp.userId ? 'not-allowed' : 'pointer',
+                  opacity: resetting === emp.userId ? 0.6 : 1,
+                }}
+              >
+                {resetting === emp.userId ? 'Resetting…' : 'Reset'}
+              </button>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  transition: 'transform 0.15s',
+                  display: 'inline-block',
+                  transform: expanded === emp.userId ? 'rotate(90deg)' : 'none',
+                }}
+              >
+                ›
+              </span>
+            </div>
+          </div>
+
+          {resetStatus?.userId === emp.userId && (
+            <div
               style={{
+                padding: '0 20px 12px 20px',
                 fontSize: 12,
-                color: 'var(--text-muted)',
-                textAlign: 'right',
-                transition: 'transform 0.15s',
-                display: 'inline-block',
-                transform: expanded === emp.userId ? 'rotate(90deg)' : 'none',
+                color: resetStatus.error ? 'var(--red)' : 'var(--text-muted)',
               }}
             >
-              ›
-            </span>
-          </div>
+              {resetStatus.message}
+            </div>
+          )}
 
           {/* Expanded detail */}
           {expanded === emp.userId && <EmployeeDetail employee={emp} />}

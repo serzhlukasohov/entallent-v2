@@ -2,20 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from './group-scoring';
 
 describe('computeEngagementIndex', () => {
-  it('computes average of three 0-10 scores scaled to 0-100', () => {
-    expect(computeEngagementIndex(6, 8, 10)).toBeCloseTo(80, 1);
+  it('computes the average of three explicit 1-10 scores', () => {
+    expect(computeEngagementIndex(6, 8, 10)).toBeCloseTo(8, 1);
   });
 
-  it('returns 0 for all zeros', () => {
-    expect(computeEngagementIndex(0, 0, 0)).toBe(0);
+  it('returns 1 for all ones', () => {
+    expect(computeEngagementIndex(1, 1, 1)).toBe(1);
   });
 
-  it('returns 100 for all tens', () => {
-    expect(computeEngagementIndex(10, 10, 10)).toBe(100);
+  it('returns 10 for all tens', () => {
+    expect(computeEngagementIndex(10, 10, 10)).toBe(10);
   });
 
   it('rounds to two decimal places', () => {
-    expect(computeEngagementIndex(1, 2, 3)).toBeCloseTo(20, 1);
+    expect(computeEngagementIndex(1, 2, 4)).toBeCloseTo(2.33, 2);
   });
 });
 

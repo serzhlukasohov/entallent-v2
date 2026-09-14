@@ -1,3 +1,5 @@
+import type { DeidentificationDecision } from '../utils/deidentification-policy';
+
 export interface ConversationActiveTopicRecord {
   summary: string;
   status: 'active' | 'parked';
@@ -22,6 +24,8 @@ export interface ConversationRecord {
 export interface MessageMetadata {
   containsSurveyProbe?: boolean;
   surveyProbeQuestionId?: string;
+  reportingDisclosureVersion?: string;
+  deidentificationDecision?: DeidentificationDecision;
   replyShape?: {
     askedQuestion?: boolean;
     maxQuestions?: 0 | 1;
@@ -41,6 +45,11 @@ export interface MessageRecord {
   occurredAt: Date;
   createdAt: Date;
   metadata?: MessageMetadata & Record<string, unknown>;
+}
+
+export interface ReportingDisclosureReceiptRecord {
+  version: string;
+  shownAt: Date;
 }
 
 export interface WorkspaceConnectionRecord {
@@ -164,7 +173,21 @@ export interface SurveyWindowRecord {
   periodType: string;
   periodStart: Date;
   periodEnd: Date;
+  reportingCohortId?: string | null;
+  reportingTeamId?: string | null;
+  reportingRosterUserIds?: string[];
   status: string;
+}
+
+export interface SurveyReportingCohortRecord {
+  id: string;
+  tenantId: string;
+  teamId: string;
+  surveyDefinitionId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  rosterUserIds: string[];
+  openedAt: Date;
 }
 
 export interface SurveyEvidenceRecord {
@@ -209,13 +232,23 @@ export interface SurveyGroupStateRecord {
   questionGroup: string;
   status: string;  // 'in_progress' | 'pending_confirmation' | 'confirmed' | 'report_sent'
   aiSummary: string | null;
+  confirmationSummary: string | null;
+  reportableSummary: string | null;
+  deidentificationDecision: DeidentificationDecision | null;
   employeeScore: number | null;
   personalRecs: unknown | null;
   confirmedAt: Date | null;
+  withdrawnAt: Date | null;
+  withdrawalMessageId: string | null;
   reportSentAt: Date | null;
+  reportingDisclosureVersion: string | null;
+  reportingDisclosureShownAt: Date | null;
+  confirmationMessageId: string | null;
+  confirmationPromptMessageId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
 
 export interface TeamRecord {
   id: string;

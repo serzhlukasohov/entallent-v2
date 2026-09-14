@@ -2,7 +2,15 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import type { SurveyQuestionRecord } from '@entalent/application';
-import { PulseBacklogRepository, shouldRequeueStaleActiveEntry } from './pulse-backlog.repository';
+import {
+  buildFindNextPendingSql,
+  PulseBacklogRepository,
+  shouldRequeueStaleActiveEntry,
+} from './pulse-backlog.repository';
+
+function compileSql(value: unknown) {
+  return new PgDialect().sqlToQuery(value as SQL);
+}
 
 function makeQuestion(id: string): SurveyQuestionRecord {
   return {
@@ -30,8 +38,7 @@ function makeQuestion(id: string): SurveyQuestionRecord {
 
 function createDbMock() {
   const limit = vi.fn().mockResolvedValue([{ id: 'existing-row' }]);
-  const orderBy = vi.fn((_primary: SQL, _secondary?: SQL) => ({ limit }));
-  const selectWhere = vi.fn(() => ({ limit, orderBy }));
+  const selectWhere = vi.fn(() => ({ limit }));
   const innerJoin = vi.fn(() => ({ where: selectWhere }));
   const from = vi.fn(() => ({ where: selectWhere, innerJoin }));
   const select = vi.fn(() => ({ from }));
@@ -44,7 +51,7 @@ function createDbMock() {
 
   return {
     client: { select, insert, update },
-    calls: { insert, values, onConflictDoNothing, update, set, updateWhere, orderBy },
+    calls: { values, onConflictDoNothing, update, set, updateWhere },
   };
 }
 
@@ -87,13 +94,9 @@ describe('PulseBacklogRepository', () => {
       updatedAt: expect.any(Date),
     });
 
-    const updateSet = db.calls.set.mock.calls[0]![0];
-    expect(updateSet).not.toHaveProperty('position');
-    expect(updateSet).not.toHaveProperty('ignoreCount');
-
-    const condition = db.calls.updateWhere.mock.calls[0]![0];
-    const query = new PgDialect().sqlToQuery(condition);
+    const query = compileSql(db.calls.updateWhere.mock.calls[0]![0]);
     expect(query.sql).toContain('"pulse_backlog"."status" = $4');
+    expect(query.sql).toContain('"pulse_backlog"."updated_at" <= $6');
     expect(query.params).toEqual([
       'user-1',
       'tenant-1',
@@ -121,47 +124,41 @@ describe('PulseBacklogRepository', () => {
     expect(db.calls.update).not.toHaveBeenCalled();
   });
 
-  it('only reopens stale done rows last updated by the assessment snapshot', async () => {
-    const db = createDbMock();
-    const repository = new PulseBacklogRepository(db as never);
-    const coverageSnapshotAt = new Date('2026-08-30T12:00:00.000Z');
+  it('prioritizes pending questions from the covered group ahead of other pending questions', async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+    const repository = new PulseBacklogRepository({ client: { execute } } as never);
 
-    await repository.initializeIfNeeded(
-      'user-1',
-      'tenant-1',
-      'window-1',
-      [makeQuestion('q-uncovered')],
-      new Set(),
-      coverageSnapshotAt,
-    );
+    await repository.prioritizeQuestionGroup('user-1', 'window-1', 'belonging');
 
-    const condition = db.calls.updateWhere.mock.calls[0]![0];
-    const query = new PgDialect().sqlToQuery(condition);
-    expect(query.sql).toContain('"pulse_backlog"."updated_at" <= $6');
-    expect(query.params).toEqual([
-      'user-1',
-      'tenant-1',
-      'window-1',
-      'done',
-      'q-uncovered',
-      '2026-08-30T12:00:00.000Z',
-    ]);
+    const query = compileSql(execute.mock.calls[0]?.[0]);
+    expect(query.sql).toContain('row_number() over');
+    expect(query.sql).toContain('"survey_questions"."question_group" = $1');
+    expect(query.sql).toContain('"pulse_backlog"."status" = \'pending\'');
+    expect(query.params).toEqual(['belonging', 'user-1', 'window-1']);
   });
 
-  it('uses question display order to break equal backlog-position ties', async () => {
-    const db = createDbMock();
-    const repository = new PulseBacklogRepository(db as never);
+  it('deprioritizes pending questions from a skipped group behind other pending questions', async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+    const repository = new PulseBacklogRepository({ client: { execute } } as never);
 
-    await repository.findNextPending('user-1', 'window-1', false);
+    await repository.deprioritizeQuestionGroup('user-1', 'window-1', 'autonomy');
 
-    expect(db.calls.orderBy).toHaveBeenCalledWith(expect.anything(), expect.anything());
-    const [primaryOrder, secondaryOrder] = db.calls.orderBy.mock.calls[0]!;
-    expect(new PgDialect().sqlToQuery(primaryOrder).sql).toContain(
-      '"pulse_backlog"."position" asc',
-    );
-    expect(new PgDialect().sqlToQuery(secondaryOrder!).sql).toContain(
-      '"survey_questions"."display_order" asc',
-    );
+    const query = compileSql(execute.mock.calls[0]?.[0]);
+    expect(query.sql).toContain('row_number() over');
+    expect(query.sql).toContain('"survey_questions"."question_group" = $1');
+    expect(query.sql).toContain('THEN 1 ELSE 0 END');
+    expect(query.sql).toContain('"pulse_backlog"."status" = \'pending\'');
+    expect(query.params).toEqual(['autonomy', 'user-1', 'window-1']);
+  });
+
+  it('excludes pending questions from groups that already have an active probe', () => {
+    const query = compileSql(buildFindNextPendingSql('user-1', 'window-1', false));
+
+    expect(query.sql).toContain('not exists');
+    expect(query.sql).toContain("active_backlog.status = 'active'");
+    expect(query.sql).toContain('active_question.question_group = survey_questions.question_group');
+    expect(query.sql).toContain('"pulse_backlog"."status" = \'pending\'');
+    expect(query.sql).toContain('"survey_questions"."display_order" asc');
   });
 });
 

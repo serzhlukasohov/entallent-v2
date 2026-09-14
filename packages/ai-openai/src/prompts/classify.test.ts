@@ -11,6 +11,8 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain('mentor/agent is doing');
     expect(prompt).toContain('primaryIntent and dialogueAct are separate fields');
     expect(prompt).toContain('primaryIntent="casual_conversation" and dialogueAct="acknowledgement"');
+    expect(prompt).toContain('reporting_explanation');
+    expect(prompt).toContain('in any language');
     expect(prompt).toContain('only when the ENTIRE latest message is a backchannel');
     expect(prompt).toContain('an explicit correction always wins over the leading acknowledgement');
     expect(prompt).toContain('copy the persisted summary EXACTLY, character for character, into topicAnchor');

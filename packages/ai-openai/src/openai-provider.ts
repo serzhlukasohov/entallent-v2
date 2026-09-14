@@ -78,6 +78,30 @@ function questionRetryInstruction(maxQuestions: 0 | 1): string {
     : '\n\nYour previous draft asked more than one question. Rewrite with at most one question in the entire reply.';
 }
 
+const CONFIRMATION_RETRY_INSTRUCTION =
+  '\n\nYour previous confirmation draft was invalid. Return a non-empty reportable "confirmationSummary" with no question punctuation, copy that exact byte-for-byte string into "text" as a proper substring (never the entire reply), do not expose field labels like "confirmationSummary:", and ask exactly one question in the full "text" outside that summary.';
+
+function exposesConfirmationSummaryLabel(text: string): boolean {
+  return /\bconfirmationSummary\s*:/i.test(text);
+}
+
+function stripExposedConfirmationSummaryLabel(response: GeneratedResponse): GeneratedResponse {
+  return response.confirmationSummary
+    ? { ...response, text: response.text.replace(/\bconfirmationSummary\s*:\s*/i, '') }
+    : response;
+}
+
+function isValidConfirmationResponse(response: GeneratedResponse): boolean {
+  const summary = response.confirmationSummary;
+  return typeof summary === 'string'
+    && summary.trim().length > 0
+    && summary.trim() !== response.text.trim()
+    && response.text.includes(summary)
+    && !exposesConfirmationSummaryLabel(response.text)
+    && countQuestionGroups(summary) === 0
+    && countQuestionGroups(response.text) === 1;
+}
+
 /** Firm rewrite instruction when a reply overruns its length budget. */
 function lengthRetryInstruction(maxChars: number): string {
   const words = Math.max(8, Math.round(maxChars / 6));
@@ -106,7 +130,6 @@ function countQuestionGroups(text: string): number {
 }
 
 function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext): 0 | 1 {
-  if (context.confirmationRequest) return 1;
   const replyPlan = context.replyPlan ?? context.replyBrief;
   if (replyPlan) return replyPlan.questionPolicy.maxQuestions;
   return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
@@ -191,8 +214,11 @@ export class OpenAiProvider implements AiProviderPort {
         record['primaryIntent'] = 'casual_conversation';
       }
     }
-    return normalizeExplicitCorrectionRequest(
-      normalizeExplicitClosing(SituationClassificationSchema.parse(parsed), turns),
+    return normalizeExplicitClosing(
+      normalizeExplicitCorrectionRequest(
+        normalizeReportingExplanation(SituationClassificationSchema.parse(parsed), turns),
+        turns,
+      ),
       turns,
     );
   }
@@ -255,19 +281,23 @@ export class OpenAiProvider implements AiProviderPort {
     const system = buildRespondSystemPrompt(strategy, context);
     const user = buildRespondUserPrompt(turns, context, strategy);
 
-    const first = GeneratedResponseSchema.parse(
+    const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
-    );
+    ));
 
     // Deterministic invariants the persona won't respect from a soft prompt hint. Collect
-    // what fired, do ONE corrective regeneration addressing all of it, and return unconditionally.
+    // what fired, do ONE corrective regeneration, then fail closed on an invalid confirmation.
     const retries: string[] = [];
-    if (!context.confirmationRequest && first.text.length > maxReplyChars(strategy, context)) {
-      retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
-    }
-    const maxQuestions = maxAllowedQuestions(strategy, context);
-    if (countQuestionGroups(first.text) > maxQuestions) {
-      retries.push(questionRetryInstruction(maxQuestions));
+    if (context.confirmationRequest) {
+      if (!isValidConfirmationResponse(first)) retries.push(CONFIRMATION_RETRY_INSTRUCTION);
+    } else {
+      if (first.text.length > maxReplyChars(strategy, context)) {
+        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
+      }
+      const maxQuestions = maxAllowedQuestions(strategy, context);
+      if (countQuestionGroups(first.text) > maxQuestions) {
+        retries.push(questionRetryInstruction(maxQuestions));
+      }
     }
     const numericProbe = numericProbeQuestion(context);
     if (numericProbe && !isValidNumericProbeResponse(first, numericProbe.id)) {
@@ -277,14 +307,21 @@ export class OpenAiProvider implements AiProviderPort {
     }
     if (retries.length === 0) return first;
 
-    // ponytail: one corrective draft bounds latency/cost; validate the second draft if escaped violations become observable.
-    const second = GeneratedResponseSchema.parse(
+    const corrected = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system + retries.join(''), user, this.generationModel)),
-    );
-    if (numericProbe && !isValidNumericProbeResponse(second, numericProbe.id)) {
+    ));
+    if (context.confirmationRequest && !isValidConfirmationResponse(corrected)) {
+      throw new Error(
+        'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
+      );
+    }
+    if (!context.confirmationRequest && countQuestionGroups(corrected.text) > maxAllowedQuestions(strategy, context)) {
+      throw new Error('Generated response exceeds the question limit after one corrective attempt');
+    }
+    if (numericProbe && !isValidNumericProbeResponse(corrected, numericProbe.id)) {
       throw new Error('OpenAI returned a noncompliant numeric survey probe after retry');
     }
-    return second;
+    return corrected;
   }
 
   async generateGroupSummary(
@@ -384,6 +421,59 @@ const EXPLICIT_CORRECTION_REQUEST_PREFIX =
   /^(?:no\b(?!\s+(?:idea|problem|worries)\b)|that(?:'s| is) not what\b|this is not what\b|you (?:keep|are still|still)\b|i (?:didn['’]?t|did not|don['’]?t|do not) mean\b|нет\b|ні\b|это не то\b|це не те\b)/i;
 const EXPLICIT_CLOSING =
   /^(?:(?:no|нет|ні)[,\s-]*(?:forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь|неважно|досить|достаточно)|forget(?: it)?|never ?mind|drop it|leave it(?: there)?|забудь(?: про це|об этом)?|неважно|досить|достаточно)[.!]?$/i;
+const EXPLICIT_REPORTING_EXPLANATION_REQUEST =
+  /(?:\b(?:where|who).{0,80}\b(?:confirm(?:ed)?|pulse|information|data|report)|\b(?:confirm(?:ed)?|pulse|information|data|report).{0,80}\b(?:go|used|shared?|reported?|sees?)\b|\bhow .{0,80}\b(?:used?|shared?|reported?)\b|(?:куда|кто).{0,80}(?:подтвержд|информац|данн|отч[её]т)|(?:подтвержд|информац|данн|отч[её]т).{0,80}(?:пойд|использ|увид|доступ)|(?:куди|хто).{0,80}(?:підтвердж|інформац|дан|звіт)|(?:підтвердж|інформац|дан|звіт).{0,80}(?:піде|використ|побач|доступ))/i;
+const EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST =
+  /\b(?:manager(?:'s)?|hr)\b.{0,120}\b(?:access|open|read|see)\b.{0,120}\b(?:messages?|answers?|personal summar(?:y|ies)|tasks?|goals?|identity)\b/i;
+
+function normalizeReportingExplanation(
+  classification: SituationClassification,
+  turns: ConversationTurn[],
+): SituationClassification {
+  const hasReportingIntent = classification.primaryIntent === 'reporting_explanation'
+    || classification.secondaryIntents.includes('reporting_explanation');
+  const latestEmployeeText = [...turns]
+    .reverse()
+    .find((turn) => turn.role === 'user')
+    ?.content.trim() ?? '';
+  const safetyIntent = [classification.primaryIntent, ...classification.secondaryIntents]
+    .find((intent) => intent === 'burnout_signal'
+      || intent === 'harassment_signal'
+      || intent === 'potential_crisis');
+  if (
+    EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST.test(latestEmployeeText)
+    && (classification.dialogueAct === 'request' || safetyIntent)
+  ) {
+    if (safetyIntent) {
+      return {
+        ...classification,
+        primaryIntent: safetyIntent,
+        secondaryIntents: [
+          ...classification.secondaryIntents.filter(
+            (intent) => intent !== safetyIntent && intent !== 'reporting_explanation',
+          ),
+          'reporting_explanation',
+        ],
+      };
+    }
+    return {
+      ...classification,
+      primaryIntent: 'reporting_explanation',
+      secondaryIntents: classification.secondaryIntents.filter(
+        (intent) => intent !== 'reporting_explanation',
+      ),
+    };
+  }
+  if (!hasReportingIntent) return classification;
+  if (EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(latestEmployeeText)) return classification;
+  return {
+    ...classification,
+    primaryIntent: classification.primaryIntent === 'reporting_explanation'
+      ? classification.dialogueAct === 'request' ? 'clarification' : 'casual_conversation'
+      : classification.primaryIntent,
+    secondaryIntents: classification.secondaryIntents.filter((intent) => intent !== 'reporting_explanation'),
+  };
+}
 
 function normalizeExplicitClosing(
   classification: SituationClassification,
@@ -408,7 +498,7 @@ function normalizeExplicitCorrectionRequest(
   classification: SituationClassification,
   turns: ConversationTurn[],
 ): SituationClassification {
-  if (classification.dialogueAct !== 'request') return classification;
+  if (classification.dialogueAct !== 'request' && classification.dialogueAct !== 'closing') return classification;
   const latestEmployeeText = [...turns]
     .reverse()
     .find((turn) => turn.role === 'user')

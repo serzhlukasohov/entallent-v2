@@ -42,10 +42,10 @@ export interface SurveyQuestionForEvaluation {
   id: string;
   stableKey: string;
   canonicalMeaning: string;
-  responseType?: SurveyResponseType;
   positiveIndicators: string[];
   negativeIndicators: string[];
   contraindications: string[];
+  responseType?: SurveyResponseType;
 }
 
 export interface ReplyPlan {
@@ -99,6 +99,8 @@ export interface ResponseContext {
   tenantContext?: string;
   languagePolicy: LanguagePolicy;
   memoryContext?: MemoryContext;
+  /** Canonical policy text for answering employee questions about reporting. */
+  reportingDisclosure?: string;
   /** For proactive follow-ups: the original reason + message strategy hint for the LLM */
   followUpIntent?: string;
   /**
@@ -129,7 +131,7 @@ export interface ResponseContext {
    */
   confirmationRequest?: {
     questionGroup: string;
-    evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string }>;
+    evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string; sourceMessageIds?: string[] }>;
   };
   /**
    * OBSERVED user style (EMA, per-axis 0..1) + adaptation weight (0..0.4) + a few of

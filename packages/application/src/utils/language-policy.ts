@@ -48,20 +48,30 @@ export function resolveLanguagePolicy(turns: ConversationTurn[], userLocale?: st
 }
 
 function inferLanguage(text: string, profileLanguage?: LanguageCode | null): LanguageCode | null {
-  const userText = stripSlackConnectorAttribution(text);
-  const cyrillic = (userText.match(/\p{Script=Cyrillic}/gu) ?? []).length;
-  const latin = (userText.match(/\p{Script=Latin}/gu) ?? []).length;
-  if (cyrillic === 0 && latin === 0) return null;
-  if (cyrillic > 0) {
+  const userText = stripNonLanguageArtifacts(text);
+  const cyrillicWords = userText.match(/\p{Script=Cyrillic}+(?:['’ʼ-]\p{Script=Cyrillic}+)*/gu) ?? [];
+  const latinWords = userText.match(/\p{Script=Latin}+(?:['’ʼ/-]\p{Script=Latin}+)*/gu) ?? [];
+  if (cyrillicWords.length === 0 && latinWords.length === 0) return null;
+  if (cyrillicWords.length === latinWords.length) return null;
+  if (cyrillicWords.length > latinWords.length) {
     if (isLikelyUkrainian(userText) || profileLanguage === 'uk') return 'uk';
     return 'ru';
   }
-  if (latin <= 2 || /^[\p{Script=Latin}\d._-]{1,20}$/u.test(userText.trim())) return null;
+  const latinLetters = latinWords.join('').replace(/['’ʼ/-]/gu, '').length;
+  if (latinLetters <= 2 || /^[\p{Script=Latin}\d._-]{1,20}$/u.test(userText.trim())) return null;
   return 'en';
 }
 
-function stripSlackConnectorAttribution(text: string): string {
-  return text.replace(/\*Sent using\*\s*<@[A-Z0-9]+(?:\|[^>]+)?>/gu, '').trim();
+function stripNonLanguageArtifacts(text: string): string {
+  const withoutSlack = text
+    .replace(/\*Sent using\*\s*<@[A-Z0-9]+(?:\|[^>]+)?>/gu, '')
+    .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>/gu, '')
+    .replace(/\b(?:https?:\/\/|www\.)\S+/giu, '')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, '')
+    .replace(/\b[\p{Script=Latin}\d]+(?:[._][\p{Script=Latin}\d]+)+\b/gu, '')
+    .replace(/\b[A-Z\d]+(?:\/[A-Z\d]+)+\b/gu, '')
+    .replace(/\b(?=[\p{Script=Latin}\d-]*\d)[\p{Script=Latin}\d]+(?:-[\p{Script=Latin}\d]+)+\b/gu, '');
+  return withoutSlack.trim();
 }
 
 function normalizeLocale(locale?: string): LanguageCode | null {
