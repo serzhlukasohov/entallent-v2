@@ -253,7 +253,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     [
       'D05-01 onboarding statement',
       'you know, the onboarding in this company is great',
-      'onboarding',
+      'casual_conversation',
       'new_substance',
       'Onboarding sounds like a good start.',
       null,
@@ -398,6 +398,12 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     const disclosure = getReportingDisclosureText('en');
     m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's',
+        confirmationPromptMessageId: 'out-confirmation-1',
+      },
+    ]);
     m.aiProvider.generateResponse.mockResolvedValue({
       text: disclosure,
       confidence: 0.9,
@@ -411,6 +417,34 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     const result = await orch.orchestrate(INPUT);
 
     expect(result.responseText).toBe(disclosure);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .toHaveProperty('reportingDisclosureVersion', REPORTING_DISCLOSURE_VERSION);
+  });
+
+  it('does not disclose when pacing is ready but only a pending group exists without a receipt', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([
+      { surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth', aiSummary: 's' },
+    ]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Requested ordinary answer.',
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('Requested ordinary answer.');
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].reportingDisclosure).toBeUndefined();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('reportingDisclosureVersion');
+    expect(m.surveyRepo.findPendingConfirmationGroups).not.toHaveBeenCalled();
   });
 
   it('answers a reporting explanation request deterministically without confirming or probing', async () => {
