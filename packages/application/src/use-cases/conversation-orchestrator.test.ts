@@ -521,6 +521,68 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
   });
 
+  it('explains that unconfirmed answers may be retained but cannot enter reports', async () => {
+    const m = baseMocks();
+    const question = "And if I don't confirm it, can my answers still be used in team reports?";
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1', ...OWNERSHIP, direction: 'inbound',
+        text: question,
+        occurredAt: INBOUND_OCCURRED_AT,
+      },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'reporting_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'unconfirmed reporting question',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
+        aiSummary: 's', confirmationPromptMessageId: 'out-confirmation-1',
+      },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+    const answer = result.responseText.toLowerCase();
+
+    expect(answer).toContain('may still be retained under product retention rules');
+    expect(answer).toContain('storage alone never makes it reportable');
+    expect(answer).toContain('unconfirmed pulse answers and temporary summaries');
+    expect(answer).toContain('scoring, aggregation, themes, recommendations, intermediate reports, or final reports');
+    expect(answer).toContain('confirmed, de-identified, and non-withdrawn');
+    expect(answer).not.toMatch(
+      /possibly|depending on (?:the )?setup|rolled up into reports|may be rolled into reporting|\bdeleted\b|never stored/,
+    );
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
+    expect(m.surveyRepo.transitionAwaitingGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.withdrawGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['en-US', 'storage alone never makes it reportable', 'confirmed, de-identified, and non-withdrawn'],
+    ['ru-RU', 'само хранение никогда не делает их доступными для отчётности', 'если оно не отозвано'],
+    ['uk-UA', 'саме зберігання ніколи не робить їх придатними для звітності', 'якщо його не відкликано'],
+    ['fr-FR', 'storage alone never makes it reportable', 'confirmed, de-identified, and non-withdrawn'],
+  ])('localizes the CAP-4 boundary for %s', (locale, retentionBoundary, eligibilityBoundary) => {
+    const answer = getReportingExplanationText(locale).toLowerCase();
+
+    expect(answer).toContain(retentionBoundary);
+    expect(answer).toContain(eligibilityBoundary);
+    expect(answer).toContain(getReportingDisclosureText(locale).toLowerCase());
+  });
+
   it('answers reporting access deterministically when surveyAllowed is falsely disabled', async () => {
     const m = baseMocks();
     const question = 'If I confirm a pulse summary, does that let HR read my own answers?';
@@ -589,9 +651,11 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
   });
 
-  it('keeps a survey-blocking safety response free of reporting disclosure', async () => {
+  it.each([
+    ['individual access', 'I might hurt myself. Can my manager open my messages?'],
+    ['unconfirmed reporting', "I might hurt myself. And if I don't confirm it, can my answers still be used in team reports?"],
+  ])('keeps a survey-blocking safety response free of reporting disclosure for %s', async (_case, question) => {
     const m = baseMocks();
-    const question = 'I might hurt myself. Can my manager open my messages?';
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       {
         id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question,

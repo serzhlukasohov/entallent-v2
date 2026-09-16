@@ -339,6 +339,175 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.primaryIntent).toBe('reporting_explanation');
   });
 
+  it('recognizes the exact D02-02 unconfirmed-reportability question', async () => {
+    const content = "And if I don't confirm it, can my answers still be used in team reports?";
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks about unconfirmed answers.',
+            reminderRequest: null,
+            dialogueAct: 'new_substance',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('reporting_explanation');
+    expect(result.surveyAllowed).toBe(false);
+  });
+
+  it('keeps safety primary when D02-02 is misclassified as the primary intent', async () => {
+    const content = "I might hurt myself. And if I don't confirm it, can my answers still be used in team reports?";
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: ['potential_crisis'],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.9,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee may be in immediate danger.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).toContain('reporting_explanation');
+  });
+
+  it('does not promote a descriptive statement about unconfirmed reporting', async () => {
+    const content = 'Unconfirmed answers are not used in team reports.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee states the reporting boundary.',
+            reminderRequest: null,
+            dialogueAct: 'new_substance',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('casual_conversation');
+    expect(result.secondaryIntents).toEqual([]);
+  });
+
+  it('does not promote the quoted D02-02 question inside a translation request', async () => {
+    const content = 'Translate: "And if I don\'t confirm it, can my answers still be used in team reports?"';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks for a translation.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('casual_conversation');
+  });
+
+  it('demotes a descriptive statement that matches the generic reporting pattern', async () => {
+    const content = 'I did not confirm it, but my answers were used in team reports.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'reporting_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee describes prior reporting.',
+            reminderRequest: null,
+            dialogueAct: 'new_substance',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('casual_conversation');
+    expect(result.secondaryIntents).toEqual([]);
+  });
+
   it('keeps safety primary when an unsafe turn also asks about individual manager access', async () => {
     const content = 'I might hurt myself. Can my manager open my messages?';
     createMock.mockResolvedValue({

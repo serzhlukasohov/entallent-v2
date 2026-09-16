@@ -425,6 +425,10 @@ const EXPLICIT_REPORTING_EXPLANATION_REQUEST =
   /(?:\b(?:where|who).{0,80}\b(?:confirm(?:ed)?|pulse|information|data|report)|\b(?:confirm(?:ed)?|pulse|information|data|report).{0,80}\b(?:go|used|shared?|reported?|sees?)\b|\bhow .{0,80}\b(?:used?|shared?|reported?)\b|(?:куда|кто).{0,80}(?:подтвержд|информац|данн|отч[её]т)|(?:подтвержд|информац|данн|отч[её]т).{0,80}(?:пойд|использ|увид|доступ)|(?:куди|хто).{0,80}(?:підтвердж|інформац|дан|звіт)|(?:підтвердж|інформац|дан|звіт).{0,80}(?:піде|використ|побач|доступ))/i;
 const EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST =
   /\b(?:manager(?:'s)?|hr)\b.{0,120}\b(?:access|open|read|see)\b.{0,120}\b(?:messages?|answers?|personal summar(?:y|ies)|tasks?|goals?|identity)\b/i;
+const EXPLICIT_UNCONFIRMED_REPORTING_REQUEST =
+  /^(?:and\s+)?if i (?:do not|don['’]?t) confirm it,?\s*can my answers still be used in team reports\??$/i;
+const SAFETY_UNCONFIRMED_REPORTING_REQUEST =
+  /(?:^|[.!?]\s+)(?:and\s+)?if i (?:do not|don['’]?t) confirm it,?\s*can my answers still be used in team reports\??$/i;
 
 function normalizeReportingExplanation(
   classification: SituationClassification,
@@ -440,13 +444,18 @@ function normalizeReportingExplanation(
     .find((intent) => intent === 'burnout_signal'
       || intent === 'harassment_signal'
       || intent === 'potential_crisis');
+  const unconfirmedReportingRequest = EXPLICIT_UNCONFIRMED_REPORTING_REQUEST.test(latestEmployeeText)
+    || (safetyIntent !== undefined
+      && SAFETY_UNCONFIRMED_REPORTING_REQUEST.test(latestEmployeeText));
   if (
-    EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST.test(latestEmployeeText)
-    && (classification.dialogueAct === 'request' || safetyIntent)
+    unconfirmedReportingRequest
+    || (EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST.test(latestEmployeeText)
+      && (classification.dialogueAct === 'request' || safetyIntent))
   ) {
     if (safetyIntent) {
       return {
         ...classification,
+        surveyAllowed: unconfirmedReportingRequest ? false : classification.surveyAllowed,
         primaryIntent: safetyIntent,
         secondaryIntents: [
           ...classification.secondaryIntents.filter(
@@ -458,6 +467,7 @@ function normalizeReportingExplanation(
     }
     return {
       ...classification,
+      surveyAllowed: unconfirmedReportingRequest ? false : classification.surveyAllowed,
       primaryIntent: 'reporting_explanation',
       secondaryIntents: classification.secondaryIntents.filter(
         (intent) => intent !== 'reporting_explanation',
@@ -465,7 +475,10 @@ function normalizeReportingExplanation(
     };
   }
   if (!hasReportingIntent) return classification;
-  if (EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(latestEmployeeText)) return classification;
+  if (
+    EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(latestEmployeeText)
+    && (classification.dialogueAct === 'request' || safetyIntent)
+  ) return classification;
   return {
     ...classification,
     primaryIntent: classification.primaryIntent === 'reporting_explanation'
