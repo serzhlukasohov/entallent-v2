@@ -448,14 +448,14 @@ describe('OpenAiProvider.classifySituation', () => {
         finish_reason: 'stop',
         message: {
           content: JSON.stringify({
-            primaryIntent: 'casual_conversation',
+            primaryIntent: 'reporting_explanation',
             secondaryIntents: [],
             emotionalState: [],
             urgency: 'low',
             confidence: 0.9,
             requiresSafetyCheck: false,
             surveyAllowed: true,
-            reasoningSummary: 'The employee asks for a translation.',
+            reasoningSummary: 'The quoted sentence asks about reporting.',
             reminderRequest: null,
             dialogueAct: 'request',
             latestUserSubstance: content,
@@ -471,7 +471,7 @@ describe('OpenAiProvider.classifySituation', () => {
       { userName: 'Ed' },
     );
 
-    expect(result.primaryIntent).toBe('casual_conversation');
+    expect(result.primaryIntent).toBe('clarification');
   });
 
   it('demotes a descriptive statement that matches the generic reporting pattern', async () => {

@@ -429,6 +429,8 @@ const EXPLICIT_UNCONFIRMED_REPORTING_REQUEST =
   /^(?:and\s+)?if i (?:do not|don['’]?t) confirm it,?\s*can my answers still be used in team reports\??$/i;
 const SAFETY_UNCONFIRMED_REPORTING_REQUEST =
   /(?:^|[.!?]\s+)(?:and\s+)?if i (?:do not|don['’]?t) confirm it,?\s*can my answers still be used in team reports\??$/i;
+const EXPLICIT_TEXT_TRANSFORM_REQUEST =
+  /^(?:please\s+)?(?:translate|rewrite|paraphrase|proofread|explain\s+(?:why\s+)?(?:this|the)\s+(?:sentence|wording))\b/i;
 
 function normalizeReportingExplanation(
   classification: SituationClassification,
@@ -444,13 +446,16 @@ function normalizeReportingExplanation(
     .find((intent) => intent === 'burnout_signal'
       || intent === 'harassment_signal'
       || intent === 'potential_crisis');
+  const textTransformRequest = !safetyIntent
+    && EXPLICIT_TEXT_TRANSFORM_REQUEST.test(latestEmployeeText);
   const unconfirmedReportingRequest = EXPLICIT_UNCONFIRMED_REPORTING_REQUEST.test(latestEmployeeText)
     || (safetyIntent !== undefined
       && SAFETY_UNCONFIRMED_REPORTING_REQUEST.test(latestEmployeeText));
   if (
-    unconfirmedReportingRequest
-    || (EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST.test(latestEmployeeText)
-      && (classification.dialogueAct === 'request' || safetyIntent))
+    !textTransformRequest
+    && (unconfirmedReportingRequest
+      || (EXPLICIT_INDIVIDUAL_REPORTING_ACCESS_REQUEST.test(latestEmployeeText)
+        && (classification.dialogueAct === 'request' || safetyIntent)))
   ) {
     if (safetyIntent) {
       return {
@@ -476,6 +481,8 @@ function normalizeReportingExplanation(
   }
   if (!hasReportingIntent) return classification;
   if (
+    !textTransformRequest
+    &&
     EXPLICIT_REPORTING_EXPLANATION_REQUEST.test(latestEmployeeText)
     && (classification.dialogueAct === 'request' || safetyIntent)
   ) return classification;
