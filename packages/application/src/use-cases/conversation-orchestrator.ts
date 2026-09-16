@@ -35,6 +35,7 @@ import { resolveLanguagePolicy } from '../utils/language-policy';
 import {
   REPORTING_DISCLOSURE_VERSION,
   appendReportingDisclosure,
+  getDataUseExplanationText,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
@@ -175,6 +176,8 @@ export class ConversationOrchestrator {
         && !classification.latestUserSubstance?.trim())
       && (classification.primaryIntent === 'reporting_explanation'
         || classification.secondaryIntents.includes('reporting_explanation'));
+    const dataUseExplanationRequested = classification.primaryIntent === 'data_use_explanation'
+      || classification.secondaryIntents.includes('data_use_explanation');
     const closingTurn = classification.dialogueAct === 'closing';
     const pauseTurn = closingTurn || classification.dialogueAct === 'acknowledgement';
 
@@ -228,7 +231,8 @@ export class ConversationOrchestrator {
       && surveyEnabled
       && probePacingAllows
       && classification.surveyAllowed
-      && !reportingExplanationRequested;
+      && !reportingExplanationRequested
+      && !dataUseExplanationRequested;
     const [risk, speculativeProbe] = await Promise.all([
       classification.requiresSafetyCheck
         ? this.aiProvider.detectRisk(turns, { userName })
@@ -240,6 +244,7 @@ export class ConversationOrchestrator {
     // Safety classification must resolve before any survey state can change.
     const phaseB = this.surveyRepo && surveyEnabled
       && classification.surveyAllowed && !risk.surveyMustBeBlocked
+      && !dataUseExplanationRequested
       ? await this.handleAwaitingConfirmation(
         turns,
         input,
@@ -263,6 +268,7 @@ export class ConversationOrchestrator {
       && classification.surveyAllowed
       && !risk.surveyMustBeBlocked
       && !reportingExplanationRequested
+      && !dataUseExplanationRequested
       && !confirmationHandled
       && !phaseB.awaitingPresent
     ) {
@@ -432,7 +438,18 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
-    let generated = canAnswerReportingExplanation
+    const canAnswerDataUseExplanation =
+      dataUseExplanationRequested
+      && !risk.surveyMustBeBlocked
+      && strategy.mode !== 'sensitive'
+      && strategy.mode !== 'crisis';
+    let generated = canAnswerDataUseExplanation
+      ? {
+          text: getDataUseExplanationText(languagePolicy.responseLanguage),
+          confidence: 1,
+          containsSurveyProbe: false,
+        }
+      : canAnswerReportingExplanation
       ? {
           text: getReportingExplanationText(languagePolicy.responseLanguage),
           confidence: 1,

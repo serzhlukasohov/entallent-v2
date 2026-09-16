@@ -19,6 +19,7 @@ export const SituationIntentSchema = z.enum([
   'onboarding',
   'feedback_request',
   'reporting_explanation',
+  'data_use_explanation',
 ]);
 export type SituationIntent = z.infer<typeof SituationIntentSchema>;
 

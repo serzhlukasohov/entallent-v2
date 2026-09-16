@@ -570,6 +570,137 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
   });
 
+  it('answers exact D02-03 with complete product data use and no survey mutation', async () => {
+    const m = baseMocks();
+    const question = 'What do you use my messages for? Are you a real person?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-1', ...OWNERSHIP, direction: 'inbound',
+        text: question,
+        occurredAt: INBOUND_OCCURRED_AT,
+      },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'data_use_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'product data-use question',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'growth',
+        aiSummary: 's', confirmationPromptMessageId: 'out-confirmation-1',
+      },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+    const answer = result.responseText.toLowerCase();
+
+    expect(answer).toContain('i am an ai assistant, not a human');
+    expect(answer).toContain('respond in this conversation');
+    expect(answer).toContain('private memory');
+    expect(answer).toContain('goals, tasks, or reminders');
+    expect(answer).toContain('pulse measurement');
+    expect(answer).toContain('confirmed, de-identified, and non-withdrawn');
+    expect(answer).toContain('safety checks');
+    expect(answer).toContain('product retention rules');
+    expect(answer).toContain('audited internal admin and debugging access');
+    expect(answer).not.toMatch(/only to reply|depending on (?:the )?setup|human review|model training/);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
+    expect(m.surveyRepo.transitionAwaitingGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.withdrawGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('reportingDisclosureVersion');
+  });
+
+  it.each([
+    ['en-US', [
+      'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
+      'goals, tasks, or reminders', 'pulse measurement', 'confirmed, de-identified, and non-withdrawn',
+      'safety checks', 'product retention rules', 'audited internal admin and debugging access',
+    ], /only to reply|depending on (?:the )?setup|human review|model training/],
+    ['ru-RU', [
+      'я — ии-помощник, а не человек', 'отвечать в этом разговоре', 'личной памяти',
+      'целей, задач или напоминаний', 'измерения пульса команды', 'после подтверждения и обезличивания',
+      'если оно не отозвано', 'проверок безопасности', 'правилам хранения продукта',
+      'внутренний административный доступ', 'аудируется',
+    ], /только для ответ|в зависимости от настроек|провер(?:ка|яется) человеком|обучени[ея] модел/],
+    ['uk-UA', [
+      'я — ші-помічник, а не людина', 'відповідати в цій розмові', 'приватної пам’яті',
+      'цілей, завдань або нагадувань', 'вимірювання пульсу команди', 'після підтвердження й знеособлення',
+      'якщо його не відкликано', 'перевірок безпеки', 'правилами зберігання продукту',
+      'внутрішній адміністративний доступ', 'аудитується',
+    ], /лише для відпов|залежно від налаштувань|перевір(?:ка|яється) людиною|навчанн[яі] модел/],
+    ['fr-FR', [
+      'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
+      'goals, tasks, or reminders', 'pulse measurement', 'confirmed, de-identified, and non-withdrawn',
+      'safety checks', 'product retention rules', 'audited internal admin and debugging access',
+    ], /only to reply|depending on (?:the )?setup|human review|model training/],
+  ] as const)('localizes the complete CAP-5 policy for %s', async (locale, required, forbidden) => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: locale, userTimezone: 'UTC',
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'data_use_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'product data-use question',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: 'data use', topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    const answer = result.responseText.toLowerCase();
+    for (const phrase of required) expect(answer).toContain(phrase);
+    expect(answer).not.toMatch(forbidden);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('reportingDisclosureVersion');
+  });
+
+  it('suppresses the CAP-5 answer on a survey-blocking safety turn', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'potential_crisis', secondaryIntents: ['data_use_explanation'], urgency: 'critical',
+      emotionalState: ['unsafe'], confidence: 0.9, reasoningSummary: 'risk',
+      surveyAllowed: false, requiresSafetyCheck: true, reminderRequest: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: 'unsafe data-use question', topicAnchor: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity: 'critical', riskType: 'self_harm', confidence: 0.9,
+      surveyMustBeBlocked: true, immediateResponseRequired: true,
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Please contact emergency support now.', confidence: 0.9, containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('Please contact emergency support now.');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('reportingDisclosureVersion');
+  });
+
   it.each([
     ['en-US', 'storage alone never makes it reportable', 'confirmed, de-identified, and non-withdrawn'],
     ['ru-RU', 'само хранение никогда не делает их доступными для отчётности', 'если оно не отозвано'],

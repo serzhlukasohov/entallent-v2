@@ -373,6 +373,323 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.surveyAllowed).toBe(false);
   });
 
+  it('recognizes the exact D02-03 product data-use question', async () => {
+    const content = 'What do you use my messages for? Are you a real person?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks about the mentor.',
+            reminderRequest: { intent: 'hallucinated reminder', dueAt: '2026-09-17T09:00:00.000Z' },
+            dialogueAct: 'new_substance',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+    const provider = makeProvider();
+
+    const result = await provider.classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('data_use_explanation');
+    expect(result.surveyAllowed).toBe(false);
+    expect(result.reminderRequest).toBeNull();
+  });
+
+  it('keeps a reporting-specific message-use question on the reporting route', async () => {
+    const content = 'How do you use my messages in team reports?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'data_use_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks how messages enter team reports.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('reporting_explanation');
+    expect(result.secondaryIntents).not.toContain('data_use_explanation');
+  });
+
+  it('recognizes the explicit D02-03 follow-up about memory, tasks, pulse, and safety', async () => {
+    const content = 'Do you also use what I say for memory, tasks, pulse reporting or safety checks?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'clarification',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks a follow-up.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('data_use_explanation');
+    expect(result.surveyAllowed).toBe(false);
+  });
+
+  it('keeps safety primary when an unsafe turn also asks exact D02-03', async () => {
+    const content = 'I might hurt myself. What do you use my messages for? Are you a real person?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'potential_crisis',
+            secondaryIntents: [],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.9,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee may be in immediate danger.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).toContain('data_use_explanation');
+    expect(result.surveyAllowed).toBe(false);
+  });
+
+  it.each([
+    'Для чего ты используешь мои сообщения? Ты настоящий человек?',
+    'Для чого ти використовуєш мої повідомлення? Ти справжня людина?',
+  ])('keeps a localized direct data-use request on the typed route: %s', async (content) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee directly asks how their messages are used.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('data_use_explanation');
+    expect(result.surveyAllowed).toBe(false);
+  });
+
+  it.each([
+    ['Translate: "What do you use my messages for? Are you a real person?"', 'request', 'clarification'],
+    ['Could you translate: "What do you use my messages for? Are you a real person?"', 'request', 'clarification'],
+    ['Could you please translate: "What do you use my messages for?"', 'request', 'clarification'],
+    ['Evaluate another chatbot\'s reply: "What do you use my messages for? Are you a real person?"', 'request', 'clarification'],
+    ['Could you review another chatbot\'s reply: "What do you use my messages for?"', 'request', 'clarification'],
+    ['Review this response from another chatbot: "What do you use my messages for?"', 'request', 'clarification'],
+    ['Переведи: «Для чего ты используешь мои сообщения?»', 'request', 'clarification'],
+    ['Переклади: «Для чого ти використовуєш мої повідомлення?»', 'request', 'clarification'],
+    ['The transcript says, "What do you use my messages for?"', 'new_substance', 'casual_conversation'],
+    ['This assistant uses my messages for memory and safety checks.', 'new_substance', 'casual_conversation'],
+  ] as const)('does not promote quoted, evaluated, or descriptive D02-03 content: %s', async (content, dialogueAct, expectedIntent) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'data_use_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee is discussing text.',
+            reminderRequest: null,
+            dialogueAct,
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe(expectedIntent);
+    expect(result.surveyAllowed).toBe(true);
+  });
+
+  it('does not take over a mixed reminder action', async () => {
+    const content = 'What do you use my messages for? Also remind me to send the report tomorrow.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'goal_setting',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks for a reminder.',
+            reminderRequest: { intent: 'send the report', dueAt: '2026-09-17T09:00:00.000Z' },
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('goal_setting');
+    expect(result.reminderRequest).not.toBeNull();
+  });
+
+  it.each([
+    'What do you use my messages for; help me draft a privacy note.',
+    'Help me draft a privacy note. What do you use my messages for?',
+    'What do you use my messages for?\nCreate a task for tomorrow.',
+    'Send this summary, and tell me what you use my messages for.',
+  ])('does not take over a mixed non-reminder action: %s', async (content) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'coaching',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks for drafting help.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('coaching');
+    expect(result.surveyAllowed).toBe(true);
+  });
+
+  it('restores safety primary when a mixed action is misclassified as data use', async () => {
+    const content = 'What do you use my messages for, and help me write a note? I might hurt myself.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'data_use_explanation',
+            secondaryIntents: ['potential_crisis'],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.9,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee may be in immediate danger.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Ed' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).not.toContain('data_use_explanation');
+    expect(result.surveyAllowed).toBe(false);
+  });
+
   it('keeps safety primary when D02-02 is misclassified as the primary intent', async () => {
     const content = "I might hurt myself. And if I don't confirm it, can my answers still be used in team reports?";
     createMock.mockResolvedValue({

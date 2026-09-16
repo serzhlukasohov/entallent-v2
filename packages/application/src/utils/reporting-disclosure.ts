@@ -12,6 +12,12 @@ const REPORTING_ACCESS_EXPLANATION_TEXT = {
   uk: 'Підтвердження схвалює лише показаний точний текст знеособленого резюме й не змінює права доступу. Воно не дозволяє менеджерам або HR читати через звітність EnTalent твої особисті повідомлення, відповіді, персональне резюме, завдання, цілі чи дані, що розкривають особу. Окремий аудитований внутрішній операційний доступ не надається підтвердженням. Дані розмови або тимчасовий робочий стан можуть і далі зберігатися за правилами зберігання продукту, але саме зберігання ніколи не робить їх придатними для звітності. Непідтверджені відповіді пульс-опитування й тимчасові резюме ніколи не беруть участі в оцінюванні, агрегації, темах, рекомендаціях, проміжних або підсумкових звітах. До командної звітності може потрапити лише показане точне резюме після підтвердження й знеособлення, якщо його не відкликано.',
 } as const;
 
+const DATA_USE_EXPLANATION_TEXT = {
+  en: 'I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders; pulse measurement; and safety checks. Private memory and unconfirmed material are not reportable. Only the exact shown summary may contribute to team-level reporting after it is confirmed, de-identified, and non-withdrawn. Messages and derived product data are kept under product retention rules. Audited internal admin and debugging access is limited to authorized staff.',
+  ru: 'Я — ИИ-помощник, а не человек. Я использую твои сообщения, чтобы отвечать в этом разговоре. Они также могут использоваться для необязательной личной памяти и релевантных целей, задач или напоминаний, измерения пульса команды и проверок безопасности. Личная память и неподтверждённые материалы не подлежат отчётности. В командную отчётность может попасть только показанное точное резюме после подтверждения и обезличивания, если оно не отозвано. Сообщения и производные данные продукта хранятся согласно правилам хранения продукта. Внутренний административный доступ и доступ для отладки разрешён только уполномоченным сотрудникам и аудируется.',
+  uk: 'Я — ШІ-помічник, а не людина. Я використовую твої повідомлення, щоб відповідати в цій розмові. Вони також можуть використовуватися для необов’язкової приватної пам’яті та релевантних цілей, завдань або нагадувань, вимірювання пульсу команди й перевірок безпеки. Приватна пам’ять і непідтверджені матеріали не підлягають звітності. До командної звітності може потрапити лише показане точне резюме після підтвердження й знеособлення, якщо його не відкликано. Повідомлення та похідні дані продукту зберігаються за правилами зберігання продукту. Внутрішній адміністративний доступ і доступ для налагодження дозволений лише уповноваженим працівникам та аудитується.',
+} as const;
+
 export function getReportingDisclosureText(language?: string): string {
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof REPORTING_DISCLOSURE_TEXT;
   return REPORTING_DISCLOSURE_TEXT[baseLanguage] ?? REPORTING_DISCLOSURE_TEXT.en;
@@ -22,6 +28,11 @@ export function getReportingExplanationText(language?: string): string {
   const explanation = REPORTING_ACCESS_EXPLANATION_TEXT[baseLanguage]
     ?? REPORTING_ACCESS_EXPLANATION_TEXT.en;
   return `${explanation}\n\n${getReportingDisclosureText(language)}`;
+}
+
+export function getDataUseExplanationText(language?: string): string {
+  const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof DATA_USE_EXPLANATION_TEXT;
+  return DATA_USE_EXPLANATION_TEXT[baseLanguage] ?? DATA_USE_EXPLANATION_TEXT.en;
 }
 
 export function appendReportingDisclosure(responseText: string, language?: string): string {

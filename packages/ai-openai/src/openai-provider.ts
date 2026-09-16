@@ -216,7 +216,10 @@ export class OpenAiProvider implements AiProviderPort {
     }
     return normalizeExplicitClosing(
       normalizeExplicitCorrectionRequest(
-        normalizeReportingExplanation(SituationClassificationSchema.parse(parsed), turns),
+        normalizeDataUseExplanation(
+          normalizeReportingExplanation(SituationClassificationSchema.parse(parsed), turns),
+          turns,
+        ),
         turns,
       ),
       turns,
@@ -430,7 +433,101 @@ const EXPLICIT_UNCONFIRMED_REPORTING_REQUEST =
 const SAFETY_UNCONFIRMED_REPORTING_REQUEST =
   /(?:^|[.!?]\s+)(?:and\s+)?if i (?:do not|don['’]?t) confirm it,?\s*can my answers still be used in team reports\??$/i;
 const EXPLICIT_TEXT_TRANSFORM_REQUEST =
-  /^(?:please\s+)?(?:translate|rewrite|paraphrase|proofread|explain\s+(?:why\s+)?(?:this|the)\s+(?:sentence|wording))\b/i;
+  /^(?:(?:could|can|would)\s+you\s+(?:please\s+)?|please\s+)?(?:translate|rewrite|paraphrase|proofread|explain\s+(?:why\s+)?(?:this|the)\s+(?:sentence|wording))\b|^(?:пожалуйста[,\s]+|будь\s+ласка[,\s]+)?(?:переведи|переведите|переклади|перекладіть|перепиши|перефразируй|перефразуй|проверь|перевір)\b/iu;
+const EXPLICIT_CHATBOT_EVALUATION_REQUEST =
+  /^(?:(?:could|can|would)\s+you\s+(?:please\s+)?|please\s+)?(?:evaluate|review|critique|analy[sz]e)(?:\s+this\s+(?:response|reply)\s+from)?\s+(?:(?:another|the|this)\s+)?(?:chatbot|bot|assistant)(?:'s)?\b/i;
+const EXPLICIT_DATA_USE_REQUEST =
+  /^(?:what|how)\s+do\s+you\s+use\s+(?:my\s+messages?|what\s+i\s+(?:say|send)|my\s+(?:data|information))(?:\s+for)?\s*\?(?:\s*are\s+you\s+(?:a\s+)?(?:real\s+person|human)\s*\?)?\s*$/i;
+const EXPLICIT_TEAM_REPORT_DATA_USE_REQUEST =
+  /^how\s+do\s+you\s+use\s+(?:my\s+messages?|what\s+i\s+(?:say|send)|my\s+(?:data|information))\s+(?:in|for)\s+(?:team\s+)?reports?\s*\?\s*$/i;
+const EXPLICIT_LOCALIZED_DATA_USE_REQUEST =
+  /^(?:(?:для чего|как)\s+ты\s+используешь\s+мои\s+сообщения\s*\?(?:\s*ты\s+настоящий\s+человек\s*\?)?|(?:для чого|як)\s+ти\s+використовуєш\s+мої\s+повідомлення\s*\?(?:\s*ти\s+справжня\s+людина\s*\?)?)\s*$/iu;
+const EXPLICIT_DATA_USE_FOLLOW_UP =
+  /^do\s+you\s+(?:also\s+)?use\s+(?:my\s+messages?|what\s+i\s+(?:say|send)|my\s+(?:data|information))\s+for\b.{0,120}\b(?:memory|goals?|tasks?|reminders?|pulse|reporting|safety)\b[^.!?]*\?\s*$/i;
+const DATA_USE_QUESTION_FRAGMENT =
+  /(?:what|how)\s+do\s+you\s+use\s+(?:my\s+messages?|what\s+i\s+(?:say|send)|my\s+(?:data|information))|do\s+you\s+(?:also\s+)?use\s+(?:my\s+messages?|what\s+i\s+(?:say|send))\s+for\b|(?:для чего|как)\s+ты\s+используешь\s+мои\s+сообщения|(?:для чого|як)\s+ти\s+використовуєш\s+мої\s+повідомлення/iu;
+const MIXED_ACTION_REQUEST =
+  /\b(?:help\s+me|remind\s+me|(?:draft|write|create|set|schedule|add|update|delete|send)\s+(?:me\s+)?(?:a|an|the|this|that|my)\b|помоги|напомни|создай|отправь|допоможи|нагадай|створи|надішли)\b/iu;
+
+function normalizeDataUseExplanation(
+  classification: SituationClassification,
+  turns: ConversationTurn[],
+): SituationClassification {
+  const hasDataUseIntent = classification.primaryIntent === 'data_use_explanation'
+    || classification.secondaryIntents.includes('data_use_explanation');
+  const latestEmployeeText = [...turns]
+    .reverse()
+    .find((turn) => turn.role === 'user')
+    ?.content.trim() ?? '';
+  const safetyIntent = [classification.primaryIntent, ...classification.secondaryIntents]
+    .find((intent) => intent === 'burnout_signal'
+      || intent === 'harassment_signal'
+      || intent === 'potential_crisis');
+  const isControlRequest = EXPLICIT_TEXT_TRANSFORM_REQUEST.test(latestEmployeeText)
+    || EXPLICIT_CHATBOT_EVALUATION_REQUEST.test(latestEmployeeText)
+    || (/[“”«»"]/u.test(latestEmployeeText)
+      && DATA_USE_QUESTION_FRAGMENT.test(latestEmployeeText));
+  const explicitDataUseRequest = EXPLICIT_DATA_USE_REQUEST.test(latestEmployeeText)
+    || EXPLICIT_LOCALIZED_DATA_USE_REQUEST.test(latestEmployeeText)
+    || EXPLICIT_DATA_USE_FOLLOW_UP.test(latestEmployeeText);
+  const mixedActionRequest = MIXED_ACTION_REQUEST.test(latestEmployeeText);
+  const safetyDataUseRequest = safetyIntent !== undefined
+    && DATA_USE_QUESTION_FRAGMENT.test(latestEmployeeText);
+  const typedDataUseRequest = classification.primaryIntent === 'data_use_explanation'
+    && classification.dialogueAct === 'request';
+  if (!safetyIntent && EXPLICIT_TEAM_REPORT_DATA_USE_REQUEST.test(latestEmployeeText)) {
+    return {
+      ...classification,
+      primaryIntent: 'reporting_explanation',
+      secondaryIntents: classification.secondaryIntents.filter(
+        (intent) => intent !== 'data_use_explanation' && intent !== 'reporting_explanation',
+      ),
+    };
+  }
+  if (
+    !isControlRequest
+    && !mixedActionRequest
+    && classification.primaryIntent !== 'reporting_explanation'
+    && (explicitDataUseRequest || safetyDataUseRequest || typedDataUseRequest)
+  ) {
+    if (safetyIntent) {
+      return {
+        ...classification,
+        surveyAllowed: false,
+        primaryIntent: safetyIntent,
+        secondaryIntents: [
+          ...classification.secondaryIntents.filter(
+            (intent) => intent !== safetyIntent && intent !== 'data_use_explanation',
+          ),
+          'data_use_explanation',
+        ],
+      };
+    }
+    return {
+      ...classification,
+      surveyAllowed: false,
+      reminderRequest: null,
+      primaryIntent: 'data_use_explanation',
+      secondaryIntents: classification.secondaryIntents.filter(
+        (intent) => intent !== 'data_use_explanation',
+      ),
+    };
+  }
+  if (!hasDataUseIntent) return classification;
+  const fallbackPrimary = safetyIntent
+    ?? (classification.secondaryIntents.includes('reporting_explanation')
+      ? 'reporting_explanation'
+      : classification.primaryIntent === 'data_use_explanation'
+        ? classification.dialogueAct === 'request' ? 'clarification' : 'casual_conversation'
+        : classification.primaryIntent);
+  return {
+    ...classification,
+    primaryIntent: fallbackPrimary,
+    secondaryIntents: classification.secondaryIntents.filter(
+      (intent) => intent !== 'data_use_explanation' && intent !== fallbackPrimary,
+    ),
+  };
+}
 
 function normalizeReportingExplanation(
   classification: SituationClassification,
