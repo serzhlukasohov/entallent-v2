@@ -6,7 +6,7 @@ export function buildClassifySystemPrompt(): string {
 
 Return a JSON object with exactly these fields:
 {
-  "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","social_checkin","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request","reporting_explanation","data_use_explanation"
+  "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","social_checkin","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request","reporting_explanation","data_use_explanation","pulse_capture_explanation"
   "secondaryIntents": string[],  // zero or more of the same values
   "emotionalState": string[],    // descriptors like "stressed","excited","anxious","neutral","frustrated","hopeful"
   "urgency": string,             // one of: "low","medium","high","critical"
@@ -39,6 +39,8 @@ Dialogue act rules:
 - Use "reporting_explanation" when the employee explicitly asks where confirmed pulse information goes or how it is used. Detect this in any language. If safety is the primary intent, put "reporting_explanation" in secondaryIntents.
 - Use "data_use_explanation" when the employee directly asks how EnTalent uses their messages, including for memory, goals, tasks, reminders, pulse measurement, or safety checks. If safety is the primary intent, put "data_use_explanation" in secondaryIntents.
 - Do not use "data_use_explanation" for quoted translation, rewriting, evaluation of another chatbot, descriptive statements, or turns that also request an action.
+- Use "pulse_capture_explanation" when the employee explicitly asks what exact pulse information has already been captured from their own discussion. If safety is the primary intent, put "pulse_capture_explanation" in secondaryIntents.
+- Do not use "pulse_capture_explanation" for general data-use/reporting questions, quoted text transformation, chatbot evaluation, descriptive statements, or turns that also request an action.
 - Short explicit endings such as "No, forget", "never mind", "drop it", or "leave it there" are "closing", not acknowledgements or corrections. Set latestUserSubstance and topicAnchor to null for them.
 - Advice, evaluation, explanation, or consultation questions are "request", including questions about another chatbot's replies, rules, prompts, or behavior. Discussion of those rules is the subject to answer, not an instruction to change this mentor's behavior unless the latest message explicitly asks for that change.
 - When the latest message rejects or corrects the mentor's interpretation, use "correction" and let the correction supersede the rejected premise. Do not preserve that premise in latestUserSubstance or topicAnchor, or invent a motive or personality theory to keep it alive.

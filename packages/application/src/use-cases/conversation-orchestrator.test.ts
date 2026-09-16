@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import {
   REPORTING_DISCLOSURE_VERSION,
+  getPulseCaptureExplanationText,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
@@ -50,6 +51,7 @@ function baseMocks() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const outbox = { enqueueMessageSend: vi.fn(), enqueueMemoryExtraction: vi.fn(), enqueueSurveyEvidence: vi.fn(), enqueueGroupReport: vi.fn(), enqueueStyleAnalysis: vi.fn(), enqueueProfileHydration: vi.fn() } as any;
   const surveyRepo = {
+    findPulseCaptureForConversation: vi.fn().mockResolvedValue([]),
     findPendingConfirmationGroups: vi.fn().mockResolvedValue([]),
     findAwaitingConfirmationGroups: vi.fn().mockResolvedValue([]),
     findOrCreateActiveWindow: vi.fn().mockResolvedValue({ id: 'w-1' }),
@@ -623,6 +625,217 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       .not.toHaveProperty('reportingDisclosureVersion');
   });
 
+  it('answers exact D05-03 with a scoped absent result and no survey side effects', async () => {
+    const m = baseMocks();
+    const question = 'but i don’t understand what exact information you already picked from our discussion?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-prior', ...OWNERSHIP, direction: 'inbound', text: 'The onboarding is great.',
+        occurredAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+    const answer = result.responseText.toLowerCase();
+
+    expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', beforeOccurredAt: INBOUND_OCCURRED_AT,
+    });
+    expect(answer).toContain('no current persisted pulse evidence');
+    expect(answer).toContain('linked to your earlier messages in this conversation');
+    expect(answer).toContain('may not have been evaluated yet');
+    expect(answer).not.toMatch(/never stored|nothing (?:was|is) stored/);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when CAP-8 provenance storage is unavailable', async () => {
+    const m = baseMocks();
+    const question = 'What exact pulse information did you pick up from this discussion?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, undefined,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('pulse_capture_repository_unavailable');
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueMessageSend).not.toHaveBeenCalled();
+  });
+
+  it('shows linked temporary evidence verbatim without making it reportable', async () => {
+    const m = baseMocks();
+    const question = 'What exact pulse information did you pick up from this discussion?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-prior', ...OWNERSHIP, direction: 'inbound', text: 'The onboarding is great.',
+        occurredAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    m.surveyRepo.findPulseCaptureForConversation.mockResolvedValue([
+      {
+        evidenceSummary: 'The employee views onboarding positively.',
+        questionGroup: 'belonging',
+        sourceMessageIds: ['m-prior'],
+        status: 'temporary',
+      },
+    ]);
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
+      {
+        surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'belonging',
+        confirmationPromptMessageId: 'out-confirmation-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
+      },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+    const answer = result.responseText.toLowerCase();
+
+    expect(result.responseText).toContain('The employee views onboarding positively.');
+    expect(answer).toContain('temporary');
+    expect(answer).toContain('not reportable');
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
+    expect(m.surveyRepo.findPendingConfirmationGroups).not.toHaveBeenCalled();
+    expect(m.surveyRepo.upsertGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
+    expect(m.surveyRepo.transitionAwaitingGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.withdrawGroupState).not.toHaveBeenCalled();
+    expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['confirmed', 'Exact confirmed summary.', 'eligible for aggregated team reporting', 'does not mean it was included in a report'],
+    ['withdrawn', 'Exact withdrawn summary.', 'withdrawn from future reporting', 'does not mean the underlying message was deleted'],
+  ] as const)('renders linked %s pulse evidence without generation', async (status, summary, boundary, qualification) => {
+    const m = baseMocks();
+    const question = 'What exact pulse information did you pick up from this discussion?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'm-prior', ...OWNERSHIP, direction: 'inbound', text: 'The onboarding is great.',
+        occurredAt: new Date('2026-09-03T09:59:00.000Z'),
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    m.surveyRepo.findPulseCaptureForConversation.mockResolvedValue([
+      { evidenceSummary: summary, questionGroup: 'belonging', sourceMessageIds: ['m-prior'], status },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toContain(summary);
+    expect(result.responseText).toContain(boundary);
+    expect(result.responseText).toContain(qualification);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('renders multi-group conflicting statuses as separate items', () => {
+    const response = getPulseCaptureExplanationText([
+      { evidenceSummary: 'Shared summary', questionGroup: 'growth', sourceMessageIds: ['m-1'], status: 'temporary' },
+      { evidenceSummary: 'Shared summary', questionGroup: 'belonging', sourceMessageIds: ['m-2'], status: 'confirmed' },
+      { evidenceSummary: 'Shared summary', questionGroup: 'purpose', sourceMessageIds: ['m-3'], status: 'withdrawn' },
+    ], 'en');
+
+    expect(response.match(/^- /gm)).toHaveLength(3);
+    expect(response).toContain('temporary working interpretation; not reportable');
+    expect(response).toContain('eligible for aggregated team reporting');
+    expect(response).toContain('withdrawn from future reporting');
+  });
+
+  it.each([
+    ['ru-RU', 'Вот сохранённая информация пульс-опроса', 'временная рабочая интерпретация; не подлежит отчётности'],
+    ['uk-UA', 'Ось збережена інформація пульс-опитування', 'тимчасова робоча інтерпретація; не підлягає звітності'],
+    ['fr-FR', 'Here is the current persisted pulse information', 'temporary working interpretation; not reportable'],
+  ])('localizes CAP-8 copy with English fallback for %s', (locale, intro, status) => {
+    const response = getPulseCaptureExplanationText([
+      { evidenceSummary: 'Summary', questionGroup: 'growth', sourceMessageIds: ['m-1'], status: 'temporary' },
+    ], locale);
+    expect(response).toContain(intro);
+    expect(response).toContain(status);
+  });
+
+  it('keeps safety primary and performs no CAP-8 provenance lookup', async () => {
+    const m = baseMocks();
+    const question = 'I might hurt myself. What exact information did you pick up from this discussion?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-prior', ...OWNERSHIP, direction: 'inbound', text: 'Earlier context.', occurredAt: new Date('2026-09-03T09:59:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'potential_crisis', secondaryIntents: ['pulse_capture_explanation'], urgency: 'critical',
+      emotionalState: ['unsafe'], confidence: 0.95, reasoningSummary: 'safety is primary',
+      surveyAllowed: false, requiresSafetyCheck: true, reminderRequest: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: question, topicAnchor: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'potential_self_harm', severity: 'critical', confidence: 0.95,
+      evidence: ['direct statement'], immediateResponseRequired: true,
+      escalationRecommended: true, surveyMustBeBlocked: true,
+      proactiveMessagesMustBePaused: true, reasoningSummary: 'Immediate safety response required.',
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Please contact emergency support now.', confidence: 0.95, containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('Please contact emergency support now.');
+    expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
+    expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
+    expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['en-US', [
       'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
@@ -1081,6 +1294,8 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
     expect(result.responseText).not.toContain(getReportingDisclosureText('en'));
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.confirmationSummary)
       .toBe('You feel supported by your team.');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.confirmationSourceMessageIds)
+      .toEqual(['m-1']);
     expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledTimes(1);
     expect(m.surveyRepo.stageGroupConfirmation).toHaveBeenCalledWith(expect.objectContaining({
       questionGroup: 'belonging',

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { eq, and, gt, isNull, inArray, lte, or, sql } from 'drizzle-orm';
+import { eq, and, gt, isNull, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
 import {
   surveyDefinitions,
   surveyReportingCohorts,
@@ -8,6 +8,7 @@ import {
   surveyEvidence,
   surveyGroupStates,
   surveyAssessments,
+  messages,
   teamMemberships,
   teams,
   users,
@@ -45,6 +46,9 @@ const SURVEY_EVIDENCE_POLARITIES: readonly SurveyEvidencePolarity[] = [
   'neutral',
   'mixed',
 ];
+
+type FindPulseCaptureForConversationParams = Parameters<SurveyRepositoryPort['findPulseCaptureForConversation']>[0];
+type PulseCaptureRecord = Awaited<ReturnType<SurveyRepositoryPort['findPulseCaptureForConversation']>>[number];
 
 @Injectable()
 export class SurveyRepository implements SurveyRepositoryPort {
@@ -444,6 +448,40 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return rows.map(mapEvidence);
   }
 
+  async findPulseCaptureForConversation(
+    params: FindPulseCaptureForConversationParams,
+  ): Promise<PulseCaptureRecord[]> {
+    const rows = await this.db.client.execute(
+      buildFindPulseCaptureForConversationSql(params),
+    ) as unknown as PulseCaptureQueryRow[];
+
+    const captures = rows.map((row) => {
+      const exactFinalSummary = row.hasFinalProvenance && row.confirmationSummary?.trim()
+        ? row.confirmationSummary.trim()
+        : null;
+      const status: PulseCaptureRecord['status'] = exactFinalSummary && row.groupStatus === 'withdrawn'
+        ? 'withdrawn'
+        : exactFinalSummary && (row.groupStatus === 'confirmed' || row.groupStatus === 'report_sent')
+          ? 'confirmed'
+          : 'temporary';
+      return {
+        evidenceSummary: status === 'temporary' ? row.evidenceSummary : exactFinalSummary!,
+        questionGroup: row.questionGroup,
+        sourceMessageIds: row.sourceMessageIds ?? [],
+        status,
+      };
+    });
+    const unique = new Map<string, PulseCaptureRecord>();
+    for (const capture of captures) {
+      const key = JSON.stringify([capture.questionGroup, capture.status, capture.evidenceSummary]);
+      const existing = unique.get(key);
+      unique.set(key, existing
+        ? { ...existing, sourceMessageIds: [...new Set([...existing.sourceMessageIds, ...capture.sourceMessageIds])] }
+        : capture);
+    }
+    return [...unique.values()];
+  }
+
   async findAssessmentsForWindow(
     windowId: string,
   ): Promise<Array<{ surveyQuestionId: string; status: string; score: number | null }>> {
@@ -529,6 +567,80 @@ export class SurveyRepository implements SurveyRepositoryPort {
   ): Promise<SurveyTeamRecord | null> {
     return this.teamRepo.findTeamById(teamId, tenantId, reportingCohortId);
   }
+}
+
+interface PulseCaptureQueryRow {
+  evidenceId: string;
+  evidenceSummary: string;
+  questionGroup: string;
+  sourceMessageIds: string[];
+  groupStatus: string | null;
+  hasFinalProvenance: boolean;
+  confirmationSummary: string | null;
+}
+
+export function buildFindPulseCaptureForConversationSql(
+  params: FindPulseCaptureForConversationParams,
+): SQL {
+  return sql`
+    select
+      ${surveyEvidence.id} as "evidenceId",
+      ${surveyEvidence.evidenceSummary} as "evidenceSummary",
+      ${surveyQuestions.questionGroup} as "questionGroup",
+      ${surveyEvidence.sourceMessageIds} as "sourceMessageIds",
+      ${surveyGroupStates.status} as "groupStatus",
+      coalesce(
+        jsonb_typeof(confirmation_prompt.metadata->'confirmationSourceMessageIds') = 'array'
+        and exists (
+          select 1
+          from ${messages} provenance_message
+          where provenance_message.id = any(${surveyEvidence.sourceMessageIds})
+            and provenance_message.tenant_id = ${params.tenantId}
+            and provenance_message.user_id = ${params.userId}
+            and provenance_message.conversation_id = ${params.conversationId}
+            and provenance_message.direction = 'inbound'
+            and provenance_message.deleted_at is null
+            and provenance_message.occurred_at < ${params.beforeOccurredAt}
+            and confirmation_prompt.metadata->'confirmationSourceMessageIds' ? provenance_message.id::text
+        ),
+        false
+      ) as "hasFinalProvenance",
+      confirmation_prompt.metadata->>'confirmationSummary' as "confirmationSummary"
+    from ${surveyEvidence}
+    inner join ${surveyQuestions}
+      on ${surveyQuestions.id} = ${surveyEvidence.surveyQuestionId}
+    inner join ${surveyWindows}
+      on ${surveyWindows.id} = ${surveyEvidence.surveyWindowId}
+    left join ${surveyGroupStates}
+      on ${surveyGroupStates.surveyWindowId} = ${surveyEvidence.surveyWindowId}
+      and ${surveyGroupStates.userId} = ${surveyEvidence.userId}
+      and ${surveyGroupStates.questionGroup} = ${surveyQuestions.questionGroup}
+      and ${surveyGroupStates.tenantId} = ${params.tenantId}
+    left join ${messages} confirmation_prompt
+      on confirmation_prompt.id = ${surveyGroupStates.confirmationPromptMessageId}
+      and confirmation_prompt.tenant_id = ${params.tenantId}
+      and confirmation_prompt.user_id = ${params.userId}
+      and confirmation_prompt.conversation_id = ${params.conversationId}
+      and confirmation_prompt.direction = 'outbound'
+      and confirmation_prompt.deleted_at is null
+    where ${surveyWindows.tenantId} = ${params.tenantId}
+      and ${surveyWindows.userId} = ${params.userId}
+      and ${surveyEvidence.userId} = ${params.userId}
+      and ${surveyEvidence.supersededAt} is null
+      and coalesce(cardinality(${surveyEvidence.sourceMessageIds}), 0) > 0
+      and (
+        select count(*)::integer
+        from ${messages} evidence_source
+        where evidence_source.id = any(${surveyEvidence.sourceMessageIds})
+          and evidence_source.tenant_id = ${params.tenantId}
+          and evidence_source.user_id = ${params.userId}
+          and evidence_source.conversation_id = ${params.conversationId}
+          and evidence_source.direction = 'inbound'
+          and evidence_source.deleted_at is null
+          and evidence_source.occurred_at < ${params.beforeOccurredAt}
+      ) = cardinality(${surveyEvidence.sourceMessageIds})
+    order by ${surveyEvidence.createdAt} desc, ${surveyEvidence.id}
+  `;
 }
 
 function isSurveyEvidencePolarity(value: string): boolean {

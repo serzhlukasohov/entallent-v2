@@ -36,6 +36,7 @@ import {
   REPORTING_DISCLOSURE_VERSION,
   appendReportingDisclosure,
   getDataUseExplanationText,
+  getPulseCaptureExplanationText,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
@@ -178,6 +179,8 @@ export class ConversationOrchestrator {
         || classification.secondaryIntents.includes('reporting_explanation'));
     const dataUseExplanationRequested = classification.primaryIntent === 'data_use_explanation'
       || classification.secondaryIntents.includes('data_use_explanation');
+    const pulseCaptureExplanationRequested = classification.primaryIntent === 'pulse_capture_explanation'
+      || classification.secondaryIntents.includes('pulse_capture_explanation');
     const closingTurn = classification.dialogueAct === 'closing';
     const pauseTurn = closingTurn || classification.dialogueAct === 'acknowledgement';
 
@@ -232,7 +235,8 @@ export class ConversationOrchestrator {
       && probePacingAllows
       && classification.surveyAllowed
       && !reportingExplanationRequested
-      && !dataUseExplanationRequested;
+      && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested;
     const [risk, speculativeProbe] = await Promise.all([
       classification.requiresSafetyCheck
         ? this.aiProvider.detectRisk(turns, { userName })
@@ -245,6 +249,7 @@ export class ConversationOrchestrator {
     const phaseB = this.surveyRepo && surveyEnabled
       && classification.surveyAllowed && !risk.surveyMustBeBlocked
       && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested
       ? await this.handleAwaitingConfirmation(
         turns,
         input,
@@ -269,6 +274,7 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && !reportingExplanationRequested
       && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested
       && !confirmationHandled
       && !phaseB.awaitingPresent
     ) {
@@ -432,6 +438,7 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
+      && !pulseCaptureExplanationRequested
       && (reportingExplanationRequested || phaseB.awaitingPresent);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
@@ -443,7 +450,29 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
-    let generated = canAnswerDataUseExplanation
+    const canAnswerPulseCaptureExplanation =
+      pulseCaptureExplanationRequested
+      && !risk.surveyMustBeBlocked
+      && strategy.mode !== 'sensitive'
+      && strategy.mode !== 'crisis';
+    if (canAnswerPulseCaptureExplanation && !this.surveyRepo) {
+      throw new Error('pulse_capture_repository_unavailable');
+    }
+    const pulseCapture = canAnswerPulseCaptureExplanation
+      ? await this.surveyRepo!.findPulseCaptureForConversation({
+          tenantId,
+          userId,
+          conversationId,
+          beforeOccurredAt: inboundMessage.occurredAt,
+        })
+      : [];
+    let generated = canAnswerPulseCaptureExplanation
+      ? {
+          text: getPulseCaptureExplanationText(pulseCapture, languagePolicy.responseLanguage),
+          confidence: 1,
+          containsSurveyProbe: false,
+        }
+      : canAnswerDataUseExplanation
       ? {
           text: getDataUseExplanationText(languagePolicy.responseLanguage),
           confidence: 1,
@@ -607,7 +636,14 @@ export class ConversationOrchestrator {
         ...(shouldAppendReportingDisclosure
           ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
             : {}),
-        ...(confirmationSummary ? { confirmationSummary } : {}),
+        ...(confirmationSummary
+          ? {
+              confirmationSummary,
+              confirmationSourceMessageIds: [...new Set(
+                confirmationRequest?.evidence.flatMap((item) => item.sourceMessageIds ?? []) ?? [],
+              )],
+            }
+          : {}),
         ...(deidentificationDecision ? { deidentificationDecision } : {}),
       },
     });
@@ -659,7 +695,7 @@ export class ConversationOrchestrator {
       traceId: input.traceId,
     });
 
-    if (surveyEnabled) await this.outbox.enqueueSurveyEvidence({
+    if (surveyEnabled && !pulseCaptureExplanationRequested) await this.outbox.enqueueSurveyEvidence({
       conversationId,
       userId,
       tenantId,

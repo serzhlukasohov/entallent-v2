@@ -1,3 +1,5 @@
+import type { PulseCaptureRecord } from '../types/records';
+
 export const REPORTING_DISCLOSURE_VERSION = 'reporting-disclosure-v1';
 
 const REPORTING_DISCLOSURE_TEXT = {
@@ -18,6 +20,30 @@ const DATA_USE_EXPLANATION_TEXT = {
   uk: 'Я — ШІ-помічник, а не людина. Я використовую твої повідомлення, щоб відповідати в цій розмові. Вони також можуть використовуватися для необов’язкової приватної пам’яті та релевантних цілей, завдань або нагадувань, вимірювання пульсу команди й перевірок безпеки. Приватна пам’ять і непідтверджені матеріали не підлягають звітності. До командної звітності може потрапити лише показане точне резюме після підтвердження й знеособлення, якщо його не відкликано. Повідомлення та похідні дані продукту зберігаються за правилами зберігання продукту. Внутрішній адміністративний доступ і доступ для налагодження дозволений лише уповноваженим працівникам та аудитується.',
 } as const;
 
+const PULSE_CAPTURE_TEXT = {
+  en: {
+    absent: 'There is no current persisted pulse evidence linked to your earlier messages in this conversation. Pulse extraction can finish after a reply, so your most recent messages may not have been evaluated yet.',
+    intro: 'Here is the current persisted pulse information linked to your earlier messages in this conversation:',
+    temporary: 'temporary working interpretation; not reportable',
+    confirmed: 'confirmed; this exact de-identified summary is eligible for aggregated team reporting, but that does not mean it was included in a report',
+    withdrawn: 'withdrawn from future reporting; this does not mean the underlying message was deleted or a previously delivered report was changed',
+  },
+  ru: {
+    absent: 'Я не вижу сохранённых данных пульс-опроса, связанных с твоими предыдущими сообщениями в этом разговоре. Извлечение может завершиться уже после ответа, поэтому последние сообщения могли быть ещё не обработаны.',
+    intro: 'Вот сохранённая информация пульс-опроса, связанная с твоими предыдущими сообщениями в этом разговоре:',
+    temporary: 'временная рабочая интерпретация; не подлежит отчётности',
+    confirmed: 'подтверждено; только это точное обезличенное резюме может участвовать в агрегированной командной отчётности, но это не означает, что оно уже вошло в отчёт',
+    withdrawn: 'отозвано из будущей отчётности; это не означает удаление исходного сообщения или изменение уже доставленного отчёта',
+  },
+  uk: {
+    absent: 'Я не бачу збережених даних пульс-опитування, пов’язаних із твоїми попередніми повідомленнями в цій розмові. Вилучення може завершитися вже після відповіді, тому останні повідомлення могли бути ще не опрацьовані.',
+    intro: 'Ось збережена інформація пульс-опитування, пов’язана з твоїми попередніми повідомленнями в цій розмові:',
+    temporary: 'тимчасова робоча інтерпретація; не підлягає звітності',
+    confirmed: 'підтверджено; лише це точне знеособлене резюме може брати участь в агрегованій командній звітності, але це не означає, що воно вже ввійшло до звіту',
+    withdrawn: 'відкликано з майбутньої звітності; це не означає видалення початкового повідомлення або зміну вже доставленого звіту',
+  },
+} as const;
+
 export function getReportingDisclosureText(language?: string): string {
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof REPORTING_DISCLOSURE_TEXT;
   return REPORTING_DISCLOSURE_TEXT[baseLanguage] ?? REPORTING_DISCLOSURE_TEXT.en;
@@ -33,6 +59,16 @@ export function getReportingExplanationText(language?: string): string {
 export function getDataUseExplanationText(language?: string): string {
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof DATA_USE_EXPLANATION_TEXT;
   return DATA_USE_EXPLANATION_TEXT[baseLanguage] ?? DATA_USE_EXPLANATION_TEXT.en;
+}
+
+export function getPulseCaptureExplanationText(
+  captures: PulseCaptureRecord[],
+  language?: string,
+): string {
+  const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof PULSE_CAPTURE_TEXT;
+  const copy = PULSE_CAPTURE_TEXT[baseLanguage] ?? PULSE_CAPTURE_TEXT.en;
+  if (captures.length === 0) return copy.absent;
+  return `${copy.intro}\n${captures.map((capture) => `- ${capture.evidenceSummary} — ${copy[capture.status]}.`).join('\n')}`;
 }
 
 export function appendReportingDisclosure(responseText: string, language?: string): string {

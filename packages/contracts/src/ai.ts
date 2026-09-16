@@ -20,6 +20,7 @@ export const SituationIntentSchema = z.enum([
   'feedback_request',
   'reporting_explanation',
   'data_use_explanation',
+  'pulse_capture_explanation',
 ]);
 export type SituationIntent = z.infer<typeof SituationIntentSchema>;
 

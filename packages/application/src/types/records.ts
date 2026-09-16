@@ -26,6 +26,7 @@ export interface MessageMetadata {
   surveyProbeQuestionId?: string;
   reportingDisclosureVersion?: string;
   deidentificationDecision?: DeidentificationDecision;
+  confirmationSourceMessageIds?: string[];
   replyShape?: {
     askedQuestion?: boolean;
     maxQuestions?: 0 | 1;
@@ -204,6 +205,15 @@ export interface SurveyEvidenceRecord {
   evaluatorVersion: string;
   promptVersion: string;
   createdAt: Date;
+}
+
+export type PulseCaptureStatus = 'temporary' | 'confirmed' | 'withdrawn';
+
+export interface PulseCaptureRecord {
+  evidenceSummary: string;
+  questionGroup: string;
+  sourceMessageIds: string[];
+  status: PulseCaptureStatus;
 }
 
 export interface UserGoalRecord {

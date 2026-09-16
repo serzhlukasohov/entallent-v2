@@ -4,6 +4,7 @@ import type {
   SurveyEvidenceRecord,
   SurveyGroupStateRecord,
   SurveyReportingCohortRecord,
+  PulseCaptureRecord,
 } from '../types/records';
 import type { DeidentificationDecision } from '../utils/deidentification-policy';
 
@@ -118,6 +119,13 @@ export interface FindConfirmedGroupStatesParams {
   questionGroup: string;
 }
 
+export interface FindPulseCaptureForConversationParams {
+  tenantId: string;
+  userId: string;
+  conversationId: string;
+  beforeOccurredAt: Date;
+}
+
 export interface ConfirmedGroupReportStateRecord extends SurveyGroupStateRecord {
   reportingCohortId: string;
   surveyDefinitionId: string;
@@ -175,6 +183,9 @@ export interface SurveyRepositoryPort {
   markEvidenceSuperseded(evidenceIds: string[]): Promise<void>;
   upsertAssessment(params: UpsertAssessmentParams): Promise<void>;
   findEvidenceForQuestion(userId: string, questionId: string, windowId: string): Promise<SurveyEvidenceRecord[]>;
+  findPulseCaptureForConversation(
+    params: FindPulseCaptureForConversationParams,
+  ): Promise<PulseCaptureRecord[]>;
   // Assessment methods
   findAssessmentsForWindow(
     windowId: string,

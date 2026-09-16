@@ -408,6 +408,134 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.reminderRequest).toBeNull();
   });
 
+  it('recognizes the exact D05-03 pulse capture explanation question', async () => {
+    const content = 'but i don’t understand what exact information you already picked from our discussion?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'clarification',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'The employee asks what pulse information was captured.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.surveyAllowed).toBe(false);
+  });
+
+  it('keeps safety primary with CAP-8 as a secondary intent', async () => {
+    const content = 'I might hurt myself. But I don’t understand what exact information you already picked from our discussion?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'potential_crisis',
+            secondaryIntents: ['pulse_capture_explanation'],
+            emotionalState: ['unsafe'],
+            urgency: 'critical',
+            confidence: 0.95,
+            requiresSafetyCheck: true,
+            surveyAllowed: false,
+            reasoningSummary: 'Safety is primary; the employee also asks what pulse data was captured.',
+            reminderRequest: null,
+            dialogueAct: 'emotional_disclosure',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('potential_crisis');
+    expect(result.secondaryIntents).toContain('pulse_capture_explanation');
+    expect(result.surveyAllowed).toBe(false);
+  });
+
+  it.each([
+    {
+      content: 'Help me understand what exact pulse information you captured from this conversation?',
+      modelIntent: 'clarification',
+      expectedIntent: 'pulse_capture_explanation',
+    },
+    {
+      content: 'Translate: "What exact pulse information did you pick up from this discussion?"',
+      modelIntent: 'pulse_capture_explanation',
+      expectedIntent: 'clarification',
+    },
+    {
+      content: 'The employee wrote "What exact pulse information did you capture from this conversation?"',
+      modelIntent: 'pulse_capture_explanation',
+      expectedIntent: 'clarification',
+    },
+    {
+      content: 'What exact pulse information did you pick up from this discussion? Also remind me to send the report.',
+      modelIntent: 'pulse_capture_explanation',
+      expectedIntent: 'clarification',
+    },
+    {
+      content: 'What do you use my messages for?',
+      modelIntent: 'data_use_explanation',
+      expectedIntent: 'data_use_explanation',
+    },
+    {
+      content: 'Where does confirmed pulse information go?',
+      modelIntent: 'reporting_explanation',
+      expectedIntent: 'reporting_explanation',
+    },
+  ])('keeps CAP-8 controls on their own route: $content', async ({ content, modelIntent, expectedIntent }) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: modelIntent,
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'Control case.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date() }],
+      { userName: 'Annna' },
+    );
+    expect(result.primaryIntent).toBe(expectedIntent);
+  });
+
   it('keeps a reporting-specific message-use question on the reporting route', async () => {
     const content = 'How do you use my messages in team reports?';
     createMock.mockResolvedValue({

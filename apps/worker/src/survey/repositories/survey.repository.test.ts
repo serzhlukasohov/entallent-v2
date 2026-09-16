@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SaveSurveyEvidenceParams, UpsertAssessmentParams } from '@entalent/application';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { SurveyRepository } from './survey.repository';
+import { buildFindPulseCaptureForConversationSql, SurveyRepository } from './survey.repository';
 
 function compileSql(value: unknown) {
   return new PgDialect().sqlToQuery(value as SQL);
@@ -60,6 +60,93 @@ const validEvidenceParams: SaveSurveyEvidenceParams = {
 };
 
 describe('SurveyRepository', () => {
+  it('scopes all pulse capture provenance to owned earlier inbound messages in one conversation', () => {
+    const beforeOccurredAt = new Date('2026-09-03T10:00:00.000Z');
+    const query = compileSql(buildFindPulseCaptureForConversationSql({
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      conversationId: 'conversation-1',
+      beforeOccurredAt,
+    }));
+
+    expect(query.sql).toContain('"survey_windows"."tenant_id"');
+    expect(query.sql).toContain('"survey_windows"."user_id"');
+    expect(query.sql).toContain('select count(*)::integer');
+    expect(query.sql).toContain('evidence_source.id = any');
+    expect(query.sql).toContain('evidence_source.tenant_id');
+    expect(query.sql).toContain('evidence_source.user_id');
+    expect(query.sql).toContain('evidence_source.conversation_id');
+    expect(query.sql).toContain("evidence_source.direction = 'inbound'");
+    expect(query.sql).toContain('evidence_source.deleted_at is null');
+    expect(query.sql).toContain('evidence_source.occurred_at <');
+    expect(query.sql).toContain('= cardinality("survey_evidence"."source_message_ids")');
+    expect(query.sql).toContain('coalesce(cardinality("survey_evidence"."source_message_ids"), 0) > 0');
+    expect(query.sql).toContain('provenance_message.id = any');
+    expect(query.sql).toContain("confirmation_prompt.metadata->'confirmationSourceMessageIds' ? provenance_message.id::text");
+    expect(query.sql).toContain('confirmation_prompt.tenant_id');
+    expect(query.sql).toContain('confirmation_prompt.user_id');
+    expect(query.sql).toContain('confirmation_prompt.conversation_id');
+    expect(query.sql).toContain("confirmation_prompt.direction = 'outbound'");
+    expect(query.sql).toContain('confirmation_prompt.deleted_at is null');
+    expect(query.sql).toContain('"survey_evidence"."superseded_at" is null');
+    expect(query.params).toEqual(expect.arrayContaining([
+      'tenant-1', 'user-1', 'conversation-1', beforeOccurredAt,
+    ]));
+  });
+
+  it('maps final lifecycle only with exact prompt provenance and otherwise fails closed', async () => {
+    const execute = vi.fn().mockResolvedValue([
+      {
+        evidenceId: 'e-1', evidenceSummary: 'Working summary', questionGroup: 'growth',
+        sourceMessageIds: ['m-1'], groupStatus: 'confirmed', hasFinalProvenance: false,
+        confirmationSummary: 'Legacy final summary',
+      },
+      {
+        evidenceId: 'e-2', evidenceSummary: 'Working two', questionGroup: 'belonging',
+        sourceMessageIds: ['m-2'], groupStatus: 'confirmed', hasFinalProvenance: true,
+        confirmationSummary: 'Exact confirmed summary',
+      },
+      {
+        evidenceId: 'e-2b', evidenceSummary: 'Another working row', questionGroup: 'belonging',
+        sourceMessageIds: ['m-2b'], groupStatus: 'confirmed', hasFinalProvenance: true,
+        confirmationSummary: 'Exact confirmed summary',
+      },
+      {
+        evidenceId: 'e-3', evidenceSummary: 'Working three', questionGroup: 'purpose',
+        sourceMessageIds: ['m-3'], groupStatus: 'withdrawn', hasFinalProvenance: true,
+        confirmationSummary: 'Exact withdrawn summary',
+      },
+      {
+        evidenceId: 'e-4', evidenceSummary: 'Working four', questionGroup: 'autonomy',
+        sourceMessageIds: ['m-4'], groupStatus: 'report_sent', hasFinalProvenance: true,
+        confirmationSummary: 'Exact reported summary',
+      },
+    ]);
+    const repository = new SurveyRepository({ client: { execute } } as never, {} as never, {} as never);
+
+    await expect(repository.findPulseCaptureForConversation({
+      tenantId: 'tenant-1', userId: 'user-1', conversationId: 'conversation-1',
+      beforeOccurredAt: new Date('2026-09-03T10:00:00.000Z'),
+    })).resolves.toEqual([
+      {
+        evidenceSummary: 'Working summary', questionGroup: 'growth',
+        sourceMessageIds: ['m-1'], status: 'temporary',
+      },
+      {
+        evidenceSummary: 'Exact confirmed summary', questionGroup: 'belonging',
+        sourceMessageIds: ['m-2', 'm-2b'], status: 'confirmed',
+      },
+      {
+        evidenceSummary: 'Exact withdrawn summary', questionGroup: 'purpose',
+        sourceMessageIds: ['m-3'], status: 'withdrawn',
+      },
+      {
+        evidenceSummary: 'Exact reported summary', questionGroup: 'autonomy',
+        sourceMessageIds: ['m-4'], status: 'confirmed',
+      },
+    ]);
+  });
+
   it('freezes sorted distinct rosters in one cycle-opening transaction', async () => {
     const periodStart = new Date('2026-07-01T00:00:00.000Z');
     const periodEnd = new Date('2026-10-01T00:00:00.000Z');
