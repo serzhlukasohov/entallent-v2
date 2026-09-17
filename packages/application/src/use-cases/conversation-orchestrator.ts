@@ -200,13 +200,32 @@ export class ConversationOrchestrator {
     const pauseTurn = closingTurn || classification.dialogueAct === 'acknowledgement';
 
     const memoryItems = memoryEnabled ? speculativeMemory : [];
-    const recentOutbound = dbMessages.filter((m) => m.direction === 'outbound').slice(-2);
+    const outboundMessages = dbMessages.filter((message) => message.direction === 'outbound');
+    const recentOutbound = outboundMessages.slice(-2);
     const latestReplyShape = recentOutbound.at(-1)?.metadata?.['replyShape'];
     const previousReplyAskedQuestion = typeof latestReplyShape === 'object'
       && latestReplyShape !== null
       && 'askedQuestion' in latestReplyShape
         ? latestReplyShape.askedQuestion === true
         : undefined;
+    const priorMessages = dbMessages.filter((message) => message.id !== input.messageId);
+    const lastPriorAt = priorMessages.at(-1)?.occurredAt;
+    const sessionStart = isSessionStart(lastPriorAt, inboundMessage.occurredAt);
+    const conciseReceipt = [...outboundMessages].reverse().find((message) => {
+      const replyShape = message.metadata?.['replyShape'];
+      return typeof replyShape === 'object'
+        && replyShape !== null
+        && 'conciseSession' in replyShape
+        && typeof replyShape.conciseSession === 'boolean';
+    });
+    const conciseReceiptShape = conciseReceipt?.metadata?.['replyShape'];
+    const conciseSession = isDirectConciseRequest(inboundMessage.text)
+      || (conciseReceipt !== undefined
+        && !isSessionStart(conciseReceipt.occurredAt, inboundMessage.occurredAt)
+        && typeof conciseReceiptShape === 'object'
+        && conciseReceiptShape !== null
+        && 'conciseSession' in conciseReceiptShape
+        && conciseReceiptShape.conciseSession === true);
     const correctionCarryover = classification.dialogueAct !== 'correction' && recentOutbound.some(
       (message) => message.metadata?.['dialogueAct'] === 'correction',
     );
@@ -420,15 +439,15 @@ export class ConversationOrchestrator {
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
-    const strategyWithStyle = applyTerseStyle(
-      confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
-      memoryEnabled ? profile : null,
-      previousReplyAskedQuestion,
+    const strategyWithStyle = applySessionConciseStyle(
+      applyTerseStyle(
+        confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
+        memoryEnabled ? profile : null,
+        previousReplyAskedQuestion,
+      ),
+      conciseSession,
     );
 
-    const priorMessages = dbMessages.filter((mm) => mm.id !== input.messageId);
-    const lastPriorAt = priorMessages.length ? priorMessages[priorMessages.length - 1].occurredAt : undefined;
-    const sessionStart = isSessionStart(lastPriorAt, new Date());
     let replyPlan = confirmationRequest
       ? undefined
       : buildReplyPlan({
@@ -483,19 +502,19 @@ export class ConversationOrchestrator {
       : [];
     let generated = canAnswerPulseCaptureExplanation
       ? {
-          text: getPulseCaptureExplanationText(pulseCapture, languagePolicy.responseLanguage),
+          text: getPulseCaptureExplanationText(pulseCapture, languagePolicy.responseLanguage, conciseSession),
           confidence: 1,
           containsSurveyProbe: false,
         }
       : canAnswerDataUseExplanation
       ? {
-          text: getDataUseExplanationText(languagePolicy.responseLanguage),
+          text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession),
           confidence: 1,
           containsSurveyProbe: false,
         }
       : canAnswerReportingExplanation
       ? {
-          text: getReportingExplanationText(languagePolicy.responseLanguage),
+          text: getReportingExplanationText(languagePolicy.responseLanguage, conciseSession),
           confidence: 1,
           containsSurveyProbe: false,
         }
@@ -578,19 +597,25 @@ export class ConversationOrchestrator {
         replyPlan = buildReplyPlan({
           classification,
           memoryItems,
-          includeFollowUpQuestion: applyTerseStyle(
-            buildReplyStrategy(classification, risk, undefined),
-            memoryEnabled ? profile : null,
-            previousReplyAskedQuestion,
+          includeFollowUpQuestion: applySessionConciseStyle(
+            applyTerseStyle(
+              buildReplyStrategy(classification, risk, undefined),
+              memoryEnabled ? profile : null,
+              previousReplyAskedQuestion,
+            ),
+            conciseSession,
           ).includeFollowUpQuestion,
           surveyProbeQuestionId: undefined,
           sensitiveMode: false,
         });
         strategy = applyReplyPlanToStrategy(
-          applyTerseStyle(
-            buildReplyStrategy(classification, risk, undefined),
-            memoryEnabled ? profile : null,
-            previousReplyAskedQuestion,
+          applySessionConciseStyle(
+            applyTerseStyle(
+              buildReplyStrategy(classification, risk, undefined),
+              memoryEnabled ? profile : null,
+              previousReplyAskedQuestion,
+            ),
+            conciseSession,
           ),
           replyPlan,
         );
@@ -641,6 +666,7 @@ export class ConversationOrchestrator {
           replyPlan,
           responseText,
           confirmationRequest: confirmationRequest !== undefined,
+          conciseSession,
           languagePolicy,
           isSessionStart: sessionStart,
           containsSurveyProbe,
@@ -1164,6 +1190,24 @@ function applyTerseStyle(
   };
 }
 
+function isDirectConciseRequest(text: string): boolean {
+  const normalized = text.trim().replace(/\s+\*Sent using\*\s+<@[A-Z0-9]+(?:\|ChatGPT)?>\s*$/iu, '').trim();
+  const [firstLine, secondLine] = normalized.split(/\r?\n/, 2);
+  const transformContext = /(?:^|\s)(?:translate|quote|evaluate|переведи|перевести|процитируй|процитировать|оцени|оценить|переклади|перекласти|процитуй|процитувати|оціни|оцінити)(?=\s|:|$)/iu;
+  const quotedContext = /(?:^|\s)(?:(?:he|she|they|user)\s+(?:wrote|said|asked)|(?:он|она|они|він|вона|вони)\s+(?:написала?|сказала?|попросила?|написав|сказав|попросив))(?=\s|:|$)/iu;
+  if (secondLine !== undefined && (transformContext.test(firstLine ?? '') || quotedContext.test(firstLine ?? ''))) {
+    return false;
+  }
+  return /(?:^|[.!?]\s+|\n+)(?:(?:please\s+)?keep\s+it\s+(?:brief|concise|short)(?:\s+(?:today|for now|this time))?|(?:please\s+)?(?:answer|reply|respond|write|be)\s+(?:brief|concise|short)|(?:please\s+)?(?:answer|reply|respond|write)\s+(?:briefly|concisely)|(?:отвечай|ответь|пиши|напиши|говори|скажи)\s+(?:кратко|коротко|лаконично)|(?:відповідай|відповідь|пиши|напиши|скажи)\s+(?:коротко|стисло|лаконічно))(?=[.!?]|$)/iu.test(normalized);
+}
+
+function applySessionConciseStyle(strategy: ReplyStrategy, conciseSession: boolean): ReplyStrategy {
+  if (!conciseSession || strategy.mode === 'crisis' || strategy.mode === 'sensitive' || strategy.mode === 'confirmation') {
+    return strategy;
+  }
+  return { ...strategy, maxResponseLength: 'short' };
+}
+
 function applyReplyPlanToStrategy(strategy: ReplyStrategy, plan: ResponseContext['replyPlan']): ReplyStrategy {
   if (!plan || plan.questionPolicy.maxQuestions > 0) return strategy;
   return { ...strategy, includeFollowUpQuestion: false };
@@ -1173,6 +1217,7 @@ function replyShapeMetadata(
   plan: ResponseContext['replyPlan'],
   responseText: string,
   confirmationRequest: boolean,
+  conciseSession: boolean,
 ): Record<string, unknown> | undefined {
   if (!plan && !confirmationRequest) return undefined;
   return {
@@ -1180,6 +1225,7 @@ function replyShapeMetadata(
       askedQuestion: /[?;՞؟፧᥅⁇⁈⁉⸮﹖？❓❔]/u.test(responseText),
       maxQuestions: plan?.questionPolicy.maxQuestions ?? 1,
       questionPolicyReason: plan?.questionPolicy.reason ?? 'confirmation_requires_question',
+      conciseSession,
     },
   };
 }
@@ -1188,6 +1234,7 @@ function conversationDecisionMetadata(input: {
   replyPlan: ResponseContext['replyPlan'];
   responseText: string;
   confirmationRequest: boolean;
+  conciseSession: boolean;
   languagePolicy: ResponseContext['languagePolicy'];
   isSessionStart: boolean;
   containsSurveyProbe: boolean;
@@ -1209,7 +1256,7 @@ function conversationDecisionMetadata(input: {
           responseMove: input.replyPlan.responseMove,
         }
       : {}),
-    ...replyShapeMetadata(input.replyPlan, input.responseText, input.confirmationRequest),
+    ...replyShapeMetadata(input.replyPlan, input.responseText, input.confirmationRequest, input.conciseSession),
     languagePolicy: {
       responseLanguage: input.languagePolicy.responseLanguage,
       source: input.languagePolicy.source,

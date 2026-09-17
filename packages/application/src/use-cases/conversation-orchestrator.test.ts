@@ -2,11 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import {
   REPORTING_DISCLOSURE_VERSION,
+  getDataUseExplanationText,
   getPulseCaptureExplanationText,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
+import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
 import type { UserGoalRecord } from '../types/records';
 
 const INBOUND_OCCURRED_AT = new Date('2026-09-03T10:00:00.000Z');
@@ -2897,6 +2899,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
           askedQuestion: false,
           maxQuestions: 1,
           questionPolicyReason: 'new_substance_allows_question',
+          conciseSession: false,
         },
         languagePolicy: {
           responseLanguage: 'en',
@@ -3016,6 +3019,345 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     await orch.orchestrate(INPUT);
     const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
     expect(strategyArg.maxResponseLength).not.toBe('short');
+  });
+});
+
+describe('ConversationOrchestrator session concise mode', () => {
+  const directRequests = [
+    'Hey, busy day. Keep it short today.',
+    'Reply briefly.',
+    'Respond concisely.',
+    'Write briefly.',
+    'Busy day\nKeep it short.',
+    'Тяжёлый день. Отвечай коротко.',
+    'Важкий день. Відповідай стисло.\n*Sent using* <@U0BPHHA21GC>',
+    'Keep it short\n*Sent using* <@U0BPHHA21GC|ChatGPT>',
+  ];
+
+  it.each(directRequests)('shortens direct concise request without changing question pacing: %s', async (text) => {
+    const m = baseMocks();
+    const styleProfileRepo: StyleProfileRepositoryPort = {
+      findByUser: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn(),
+    };
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text, occurredAt: new Date(), metadata: undefined },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'mixed request',
+      reminderRequest: null, dialogueAct: 'new_substance',
+      latestUserSubstance: 'Help me prioritize the release work.', topicAnchor: 'release priorities',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined, styleProfileRepo,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1]).toMatchObject({
+      maxResponseLength: 'short',
+      includeFollowUpQuestion: true,
+    });
+    expect(result.classification.latestUserSubstance).toBe('Help me prioritize the release work.');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape)
+      .toMatchObject({ conciseSession: true, maxQuestions: 1 });
+    expect(styleProfileRepo.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'Translate "keep it short" into Russian.',
+    'She said, "Keep it short."',
+    'Does keep it short sound too abrupt?',
+    'I like it when replies are short.',
+    "Don't keep it short today.",
+    "Don't reply briefly.",
+    'Write shortly.',
+    'Translate this:\nKeep it short.',
+    'Quote this:\nReply briefly.',
+    'Evaluate this:\nRespond concisely.',
+    'Could you translate this:\nRespond concisely.',
+    'She wrote:\nKeep it short.',
+    'Она написала:\nОтвечай коротко.',
+    'Чи можеш перекласти це:\nВідповідай стисло.',
+    'Переведи это:\nОтвечай коротко.',
+    'Процитируй это:\nПиши кратко.',
+    'Оцени это:\nОтветь лаконично.',
+    'Переклади це:\nВідповідай стисло.',
+    'Процитуй це:\nПиши коротко.',
+    'Оціни це:\nВідповідай лаконічно.',
+  ])('does not activate concise mode for control text: %s', async (text) => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text, occurredAt: new Date(), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].maxResponseLength).toBe('medium');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.conciseSession).toBe(false);
+  });
+
+  it('carries concise mode from the latest outbound receipt after the original directive leaves the window', async () => {
+    const m = baseMocks();
+    const now = Date.now();
+    const history = Array.from({ length: 18 }, (_, index) => ({
+      id: `m-prior-${index}`, ...OWNERSHIP,
+      direction: index % 2 === 0 ? 'inbound' : 'outbound',
+      text: 'ordinary turn', occurredAt: new Date(now - (20 - index) * 1_000), metadata: undefined,
+    }));
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      ...history,
+      {
+        id: 'o-latest', ...OWNERSHIP, direction: 'outbound', text: 'brief reply',
+        occurredAt: new Date(now - 1_000),
+        metadata: { replyShape: { askedQuestion: false, conciseSession: true } },
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'What should I do next?', occurredAt: new Date(now), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].maxResponseLength).toBe('short');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.conciseSession).toBe(true);
+  });
+
+  it('uses the inbound timestamp for session carryover when queue processing is delayed', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'o-latest', ...OWNERSHIP, direction: 'outbound', text: 'brief reply',
+        occurredAt: new Date('2026-09-03T09:59:00.000Z'),
+        metadata: { replyShape: { askedQuestion: false, conciseSession: true } },
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'What should I do next?', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].maxResponseLength).toBe('short');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.conciseSession).toBe(true);
+  });
+
+  it('keeps concise carryover across a later outbound without session metadata', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'o-receipt', ...OWNERSHIP, direction: 'outbound', text: 'brief reply',
+        occurredAt: new Date('2026-09-03T09:57:00.000Z'),
+        metadata: { replyShape: { askedQuestion: false, conciseSession: true } },
+      },
+      {
+        id: 'o-proactive', ...OWNERSHIP, direction: 'outbound', text: 'scheduled follow-up',
+        occurredAt: new Date('2026-09-03T09:59:00.000Z'), metadata: {},
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'What should I do next?', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].maxResponseLength).toBe('short');
+  });
+
+  it('does not revive an expired concise receipt through newer fieldless activity', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'o-receipt', ...OWNERSHIP, direction: 'outbound', text: 'brief reply',
+        occurredAt: new Date('2026-09-03T03:59:00.000Z'),
+        metadata: { replyShape: { askedQuestion: false, conciseSession: true } },
+      },
+      {
+        id: 'm-later', ...OWNERSHIP, direction: 'inbound', text: 'Later session',
+        occurredAt: new Date('2026-09-03T09:58:00.000Z'), metadata: undefined,
+      },
+      {
+        id: 'o-proactive', ...OWNERSHIP, direction: 'outbound', text: 'scheduled follow-up',
+        occurredAt: new Date('2026-09-03T09:59:00.000Z'), metadata: {},
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'What should I do next?', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].maxResponseLength).toBe('medium');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.conciseSession).toBe(false);
+  });
+
+  it('clears concise carryover after the five-hour session gap', async () => {
+    const m = baseMocks();
+    const now = Date.now();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      {
+        id: 'o-latest', ...OWNERSHIP, direction: 'outbound', text: 'brief reply',
+        occurredAt: new Date(now - 5 * 3_600_000 - 1),
+        metadata: { replyShape: { askedQuestion: false, conciseSession: true } },
+      },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'What should I do next?', occurredAt: new Date(now), metadata: undefined },
+    ]);
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].maxResponseLength).toBe('medium');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.conciseSession).toBe(false);
+  });
+
+  it('keeps sensitive strategy authoritative while carrying the concise decision', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'I am burned out. Keep it short.', occurredAt: new Date(), metadata: undefined },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'burnout_signal', secondaryIntents: [], emotionalState: ['overwhelmed'], urgency: 'high',
+      confidence: 0.95, surveyAllowed: false, requiresSafetyCheck: true, reasoningSummary: 'burnout',
+      reminderRequest: null, dialogueAct: 'emotional_disclosure', latestUserSubstance: 'I am burned out.', topicAnchor: 'burnout',
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'burnout', severity: 'high', confidence: 0.9, evidence: ['burned out'],
+      immediateResponseRequired: false, escalationRecommended: false,
+      surveyMustBeBlocked: true, proactiveMessagesMustBePaused: true, reasoningSummary: 'high burnout risk',
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1]).toMatchObject({ mode: 'sensitive', maxResponseLength: 'medium' });
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.conciseSession).toBe(true);
+  });
+
+  it('keeps confirmation strategy authoritative while carrying the concise decision', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'Keep it short.', occurredAt: new Date(), metadata: undefined },
+    ]);
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([{
+      surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy', updatedAt: new Date(),
+    }]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'You value ownership. Did I get that right?', confirmationSummary: 'You value ownership.',
+      confidence: 0.9, containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][1]).toMatchObject({ mode: 'confirmation', maxResponseLength: 'medium' });
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.conciseSession).toBe(true);
+  });
+
+  it.each([
+    {
+      intent: 'reporting_explanation',
+      text: 'Can HR read my answers after confirmation? Keep it short.',
+      concise: () => getReportingExplanationText('en', true),
+      full: () => getReportingExplanationText('en'),
+    },
+    {
+      intent: 'data_use_explanation',
+      text: 'How do you use my data? Keep it short.',
+      concise: () => getDataUseExplanationText('en', true),
+      full: () => getDataUseExplanationText('en'),
+    },
+    {
+      intent: 'pulse_capture_explanation',
+      text: 'What exact pulse information did you capture from this conversation? Keep it short.',
+      concise: () => getPulseCaptureExplanationText([], 'en', true),
+      full: () => getPulseCaptureExplanationText([], 'en'),
+    },
+  ])('uses deterministic concise $intent copy without model generation', async ({ intent, text, concise, full }) => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text, occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: intent, secondaryIntents: [], emotionalState: [], urgency: 'low', confidence: 0.95,
+      surveyAllowed: false, requiresSafetyCheck: false, reasoningSummary: 'explicit trust question',
+      reminderRequest: null, dialogueAct: 'request', latestUserSubstance: text, topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(concise().length).toBeLessThan(full().length);
+    expect(result.responseText).toBe(concise());
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+  });
+});
+
+describe('concise deterministic trust copy', () => {
+  it.each([
+    {
+      locale: 'en-US',
+      reporting: [/shown de-identified summary/i, /grants no access/i, /managers\/hr/i, /messages\/answers\/summary\/tasks\/goals\/identity/i, /audited internal access/i, /conversation\/temp.*(?:isn’t|not) reportable/i, /unconfirmed pulse data.*scores\/aggregation\/themes\/recommendations\/reports/i, /confirmed, non-withdrawn summary.*team report/i],
+      dataUse: [/ai, not human/i, /replies, private memory, goals\/tasks\/reminders, pulse measurement, and safety checks/i, /private memory\/unconfirmed data.*not reportable/i, /confirmed, de-identified, non-withdrawn summary.*team reports/i, /retention rules/i, /audited admin\/debug access.*authorized staff/i],
+      pulse: [/no persisted pulse evidence/i, /earlier messages/i, /recent messages may not be evaluated/i, /temporary.*not reportable/i, /confirmed.*de-identified.*team reporting.*not proof of inclusion/i, /withdrawn.*source message not deleted.*past reports unchanged/i],
+    },
+    {
+      locale: 'ru-RU',
+      reporting: [/показанн.*обезличенн/i, /доступа не даёт/i, /менеджер.*hr/i, /сообщени.*ответ.*резюме.*задач.*цел.*личност/i, /аудируем.*внутренн.*доступ/i, /разговор\/временные данные не отчётны/i, /неподтверждённ.*оцен.*агрегац.*тем.*рекомендац.*отчёт/i, /подтверждённ.*неотозванн.*командн/i],
+      dataUse: [/ии, не человек/i, /ответ.*приватн.*памят.*цел.*задач.*напоминан.*пульс.*безопасн/i, /память\/неподтверждённ.*не отчётны/i, /подтверждённ.*обезличенн.*неотозванн.*командн/i, /сроки хранения/i, /аудируем.*админ.*отладочн.*доступ.*уполномоченн/i],
+      pulse: [/нет сохранённ.*пульс/i, /предыдущ.*сообщен/i, /последние сообщения могли ещё не быть обработаны/i, /временн.*не подлежит отчётности/i, /подтверждено.*обезличенн.*командн.*не доказывает включение/i, /отозвано.*исходное сообщение не удалено.*прошлые отчёты не меняются/i],
+    },
+    {
+      locale: 'uk-UA',
+      reporting: [/показан.*знеособлен/i, /доступу.*не надає/i, /менеджер.*hr/i, /повідомлен.*відповід.*резюме.*завдан.*ціл.*особ/i, /аудитован.*внутрішн.*доступ/i, /розмова\/тимчасові дані не звітні/i, /непідтверджен.*оцін.*агрегац.*тем.*рекомендац.*звіт/i, /підтверджен.*невідкликан.*командн/i],
+      dataUse: [/ші, не людина/i, /відповід.*приватн.*пам’ят.*ціл.*завдан.*нагадуван.*пульс.*безпек/i, /пам’ять\/непідтверджен.*не звітні/i, /підтверджен.*знеособлен.*невідкликан.*командн/i, /строки зберігання/i, /аудитован.*адмін.*налагоджувальн.*доступ.*уповноважен/i],
+      pulse: [/немає збережен.*пульс/i, /попередн.*повідомл/i, /останні повідомлення могли ще не бути оброблені/i, /тимчасов.*не придатне для звітності/i, /підтверджено.*знеособлен.*командн.*не доводить включення/i, /відкликано.*вихідне повідомлення не видалено.*минулі звіти не змінюються/i],
+    },
+  ])('keeps complete concise trust boundaries for $locale', ({ locale, reporting, dataUse, pulse }) => {
+    const reportingText = getReportingExplanationText(locale, true);
+    const dataUseText = getDataUseExplanationText(locale, true);
+    const absentPulseText = getPulseCaptureExplanationText([], locale, true);
+    const capturedPulseText = getPulseCaptureExplanationText([
+      { evidenceSummary: 'Temporary item', questionGroup: 'growth', sourceMessageIds: ['m-1'], status: 'temporary' },
+      { evidenceSummary: 'Confirmed item', questionGroup: 'growth', sourceMessageIds: ['m-2'], status: 'confirmed' },
+      { evidenceSummary: 'Withdrawn item', questionGroup: 'growth', sourceMessageIds: ['m-3'], status: 'withdrawn' },
+    ], locale, true);
+
+    expect(reportingText.length).toBeLessThanOrEqual(360);
+    expect(dataUseText.length).toBeLessThanOrEqual(360);
+    expect(absentPulseText.length).toBeLessThanOrEqual(360);
+    for (const pattern of reporting) expect(reportingText).toMatch(pattern);
+    for (const pattern of dataUse) expect(dataUseText).toMatch(pattern);
+    for (const pattern of pulse.slice(0, 3)) expect(absentPulseText).toMatch(pattern);
+    for (const pattern of pulse.slice(3)) expect(capturedPulseText).toMatch(pattern);
+    expect(capturedPulseText).toContain('Temporary item');
+    expect(capturedPulseText).toContain('Confirmed item');
+    expect(capturedPulseText).toContain('Withdrawn item');
   });
 });
 
