@@ -513,6 +513,57 @@ describe('SurveyRepository', () => {
     }));
   });
 
+  it('starts a team-scoped working window when no reporting cohort is open', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-17T09:30:00.000Z'));
+    try {
+      const selectedRows = [[], [{ id: 'definition-1' }], []];
+      const limit = vi.fn(() => Promise.resolve(selectedRows.shift() ?? []));
+      const where = vi.fn(() => ({ limit }));
+      const from = vi.fn(() => ({ where }));
+      const select = vi.fn(() => ({ from }));
+      const created = {
+        id: 'window-new', tenantId: 'tenant-1', userId: 'user-1', surveyDefinitionId: 'definition-1',
+        periodType: 'quarter', periodStart: new Date('2026-07-01T00:00:00.000Z'),
+        periodEnd: new Date('2026-09-30T23:59:59.999Z'), reportingCohortId: null,
+        reportingTeamId: 'team-1', reportingRosterUserIds: [], status: 'active',
+      };
+      const returning = vi.fn().mockResolvedValue([created]);
+      const values = vi.fn(() => ({ returning }));
+      const insert = vi.fn(() => ({ values }));
+      const transaction = vi.fn(async (run: (tx: { insert: typeof insert }) => Promise<unknown>) => run({ insert }));
+      const teamRepo = {
+        findTeamByMemberId: vi.fn().mockResolvedValue({
+          teamId: 'team-1', tenantId: 'tenant-1', teamName: 'Platform', managerSlackUserId: null,
+          activeTeamSize: 1, memberUserIds: ['user-1'], reportingCohortId: null,
+          reportingSurveyDefinitionId: null, reportingPeriodStart: null, reportingPeriodEnd: null,
+        }),
+      };
+      const repository = new SurveyRepository(
+        { client: { select, transaction } } as never,
+        {} as never,
+        teamRepo as never,
+      );
+
+      await expect(repository.findOrCreateActiveWindow('user-1', 'tenant-1'))
+        .resolves.toMatchObject({
+          id: 'window-new',
+          reportingCohortId: null,
+          reportingTeamId: 'team-1',
+          reportingRosterUserIds: [],
+        });
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({
+        periodStart: new Date('2026-07-01T00:00:00.000Z'),
+        periodEnd: new Date('2026-09-30T23:59:59.999Z'),
+        reportingCohortId: null,
+        reportingTeamId: 'team-1',
+        reportingRosterUserIds: [],
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('persists evidence with an allowed polarity', async () => {
     const db = createDbMock();
     const repository = makeRepository(db);

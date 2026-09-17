@@ -260,6 +260,27 @@ export class SurveyRepository implements SurveyRepositoryPort {
       ? cohorts[0]
       : null;
     if (!cohort) {
+      if (!existing && currentTeam) {
+        const quarterStartMonth = Math.floor(now.getUTCMonth() / 3) * 3;
+        const periodStart = new Date(Date.UTC(now.getUTCFullYear(), quarterStartMonth, 1));
+        const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), quarterStartMonth + 3, 1) - 1);
+        const created = await this.db.client.transaction(async (tx) => {
+          const [row] = await tx.insert(surveyWindows).values({
+            tenantId,
+            userId,
+            surveyDefinitionId: globalDef.id,
+            periodType: 'quarter',
+            periodStart,
+            periodEnd,
+            reportingCohortId: null,
+            reportingTeamId: currentTeam.teamId,
+            reportingRosterUserIds: [],
+            status: 'active',
+          }).returning();
+          return row;
+        });
+        return mapWindow(created);
+      }
       if (existing && currentTeam && (existing.reportingCohortId || existing.reportingTeamId !== currentTeam.teamId)) {
         const created = await this.db.client.transaction(async (tx) => {
           await tx
