@@ -582,6 +582,7 @@ interface PulseCaptureQueryRow {
 export function buildFindPulseCaptureForConversationSql(
   params: FindPulseCaptureForConversationParams,
 ): SQL {
+  const beforeOccurredAtIso = params.beforeOccurredAt.toISOString();
   return sql`
     select
       ${surveyEvidence.id} as "evidenceId",
@@ -600,7 +601,7 @@ export function buildFindPulseCaptureForConversationSql(
             and provenance_message.conversation_id = ${params.conversationId}
             and provenance_message.direction = 'inbound'
             and provenance_message.deleted_at is null
-            and provenance_message.occurred_at < ${params.beforeOccurredAt}
+            and provenance_message.occurred_at < ${beforeOccurredAtIso}::timestamptz
             and confirmation_prompt.metadata->'confirmationSourceMessageIds' ? provenance_message.id::text
         ),
         false
@@ -637,7 +638,7 @@ export function buildFindPulseCaptureForConversationSql(
           and evidence_source.conversation_id = ${params.conversationId}
           and evidence_source.direction = 'inbound'
           and evidence_source.deleted_at is null
-          and evidence_source.occurred_at < ${params.beforeOccurredAt}
+          and evidence_source.occurred_at < ${beforeOccurredAtIso}::timestamptz
       ) = cardinality(${surveyEvidence.sourceMessageIds})
     order by ${surveyEvidence.createdAt} desc, ${surveyEvidence.id}
   `;

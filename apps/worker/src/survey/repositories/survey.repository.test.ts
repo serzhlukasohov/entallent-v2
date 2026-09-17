@@ -90,8 +90,9 @@ describe('SurveyRepository', () => {
     expect(query.sql).toContain('confirmation_prompt.deleted_at is null');
     expect(query.sql).toContain('"survey_evidence"."superseded_at" is null');
     expect(query.params).toEqual(expect.arrayContaining([
-      'tenant-1', 'user-1', 'conversation-1', beforeOccurredAt,
+      'tenant-1', 'user-1', 'conversation-1', beforeOccurredAt.toISOString(),
     ]));
+    expect(query.params.filter((value) => value instanceof Date)).toEqual([]);
   });
 
   it('maps final lifecycle only with exact prompt provenance and otherwise fails closed', async () => {
