@@ -735,6 +735,7 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: environment
 - Harness fix: Run this local reflection command with the narrowly scoped managed-sandbox escalation.
 - Regression check: The same focused reflection command exits `2` with `eligible=false`, not an IPC error.
+- Recurrence: On 2026-09-17, CAP-6 closeout reflection for four Markdown paths hit the same `listen EPERM`; all four narrowly escalated read-only reruns completed successfully with `eligible=true`.
 - Status: fixed
 
 ## 2026-08-30: Broad formatting check mixed harness code with inherited docs
