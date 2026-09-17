@@ -75,7 +75,8 @@ export function getPulseCaptureExplanationText(
 }
 
 export function isExplicitPulseCaptureRequest(text: string): boolean {
-  return EXPLICIT_PULSE_CAPTURE_REQUEST.test(text.trim());
+  const normalizedText = text.trim().replace(/\s+\*Sent using\*\s+<@[A-Z0-9]+>\s*$/iu, '').trim();
+  return EXPLICIT_PULSE_CAPTURE_REQUEST.test(normalizedText);
 }
 
 export function appendReportingDisclosure(responseText: string, language?: string): string {

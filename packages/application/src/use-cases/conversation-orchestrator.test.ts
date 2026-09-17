@@ -664,7 +664,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
   it('keeps a natural CAP-8 request deterministic when the model calls it clarification', async () => {
     const m = baseMocks();
-    const question = 'Help me understand what exact pulse information you captured from this conversation?';
+    const question = 'Help me understand what exact pulse information you captured from this conversation? *Sent using* <@U0BPHHA21GC>';
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
     ]);
