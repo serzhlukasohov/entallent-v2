@@ -323,6 +323,7 @@ export class ConversationOrchestrator {
       }
     }
 
+    const currentTurnHasTopicAnchor = !!classification.topicAnchor?.trim();
     const continuity = resolveContinuity({
       classification,
       activeTopic: conversation.activeTopic,
@@ -454,6 +455,7 @@ export class ConversationOrchestrator {
           classification,
           memoryItems: responseMemoryItems,
           includeFollowUpQuestion: strategyWithStyle.includeFollowUpQuestion,
+          currentTurnHasTopicAnchor,
           correctionCarryover,
           surveyProbeQuestionId: probeQuestion?.id,
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
@@ -605,6 +607,7 @@ export class ConversationOrchestrator {
             ),
             conciseSession,
           ).includeFollowUpQuestion,
+          currentTurnHasTopicAnchor,
           surveyProbeQuestionId: undefined,
           sensitiveMode: false,
         });

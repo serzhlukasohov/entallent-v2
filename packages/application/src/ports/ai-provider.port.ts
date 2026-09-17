@@ -81,7 +81,7 @@ export interface ReplyPlan {
     content: string;
     requirement: 'mention_explicitly';
   }>;
-  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan'>;
+  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan' | 'unsupported_interpretation'>;
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */

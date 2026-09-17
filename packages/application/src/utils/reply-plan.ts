@@ -9,6 +9,7 @@ export interface ReplyPlanInput {
   classification: SituationClassification;
   memoryItems?: Pick<MemoryItemRecord, 'category' | 'content' | 'importance'>[];
   includeFollowUpQuestion: boolean;
+  currentTurnHasTopicAnchor?: boolean;
   correctionCarryover?: boolean;
   surveyProbeQuestionId?: string;
   sensitiveMode?: boolean;
@@ -41,7 +42,11 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
     responseMove,
     mayInferFromBrevity,
     questionPolicy,
-    requiredGrounding: safetyOverridesPause ? [] : buildRequiredGrounding(responseMove, memoryAnchors),
+    requiredGrounding: safetyOverridesPause ? [] : buildRequiredGrounding(
+      responseMove,
+      input.currentTurnHasTopicAnchor ?? topicAnchor !== null,
+      memoryAnchors,
+    ),
     forbiddenMoves: buildForbiddenMoves({
       responseMove,
       mayInferFromBrevity,
@@ -116,9 +121,10 @@ function buildQuestionPolicy(input: {
 
 function buildRequiredGrounding(
   responseMove: ReplyPlan['responseMove'],
+  currentTurnHasTopicAnchor: boolean,
   memoryAnchors: ReplyPlan['memoryAnchors'],
 ): ReplyPlan['requiredGrounding'] {
-  if (responseMove !== 'support_emotion') return [];
+  if (responseMove !== 'support_emotion' || currentTurnHasTopicAnchor) return [];
   const anchor = selectGroundingAnchor(memoryAnchors);
   if (!anchor) return [];
   return [{
@@ -148,6 +154,7 @@ function buildForbiddenMoves(input: {
   surveyProbeQuestionId?: string;
 }): ReplyPlan['forbiddenMoves'] {
   const forbidden = new Set<ReplyPlan['forbiddenMoves'][number]>();
+  forbidden.add('unsupported_interpretation');
   if (!input.mayInferFromBrevity) forbidden.add('comment_on_brevity');
   if (input.responseMove === 'social_reply') forbidden.add('operational_status');
   if (input.responseMove === 'support_emotion') forbidden.add('action_plan');

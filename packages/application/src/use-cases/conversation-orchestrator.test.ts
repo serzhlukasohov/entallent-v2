@@ -2971,7 +2971,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
       reminderRequest: null,
       dialogueAct: 'emotional_disclosure',
       latestUserSubstance: 'I am worried',
-      topicAnchor: 'Private topic anchor',
+      topicAnchor: null,
     });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, memoryRepo, m.surveyRepo,
@@ -2995,7 +2995,6 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
       'responseMove',
     ]);
     expect(JSON.stringify(metadata)).not.toContain('Private Project Atlas concern');
-    expect(JSON.stringify(metadata)).not.toContain('Private topic anchor');
     expect(JSON.stringify(metadata)).not.toContain('test-only classifier output');
   });
 

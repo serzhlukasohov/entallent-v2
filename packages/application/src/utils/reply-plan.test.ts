@@ -103,6 +103,7 @@ describe('buildReplyPlan', () => {
     expect(brief.latestUserSubstance).toBe('I am barely sleeping');
     expect(brief.mayInferFromBrevity).toBe(true);
     expect(brief.forbiddenMoves).toContain('action_plan');
+    expect(brief.forbiddenMoves).toContain('unsupported_interpretation');
   });
 
   it('resets prior memory and questions when the employee corrects the frame', () => {
@@ -122,6 +123,7 @@ describe('buildReplyPlan', () => {
     expect(brief.responseMove).toBe('address_new_substance');
     expect(brief.memoryAnchors).toEqual([]);
     expect(brief.requiredGrounding).toEqual([]);
+    expect(brief.forbiddenMoves).toContain('unsupported_interpretation');
     expect(brief.questionPolicy).toEqual({
       maxQuestions: 0,
       reason: 'strategy_disallows_questions',
@@ -179,7 +181,7 @@ describe('buildReplyPlan', () => {
     ]);
   });
 
-  it('selects concrete grounding anchors for anchored emotional support', () => {
+  it('does not require unrelated memory when the current emotional turn has a topic anchor', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'emotional_disclosure',
@@ -194,17 +196,10 @@ describe('buildReplyPlan', () => {
       includeFollowUpQuestion: false,
     });
 
-    expect(brief.requiredGrounding).toEqual([
-      {
-        source: 'memory',
-        category: 'milestone',
-        content: 'defending the payments architecture on Friday',
-        requirement: 'mention_explicitly',
-      },
-    ]);
+    expect(brief.requiredGrounding).toEqual([]);
   });
 
-  it('grounds vague emotional turns in commitments or milestones before generic project context', () => {
+  it('keeps anchored emotional memory optional even when a commitment outranks project context', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'emotional_disclosure',
@@ -218,14 +213,7 @@ describe('buildReplyPlan', () => {
       includeFollowUpQuestion: false,
     });
 
-    expect(brief.requiredGrounding).toEqual([
-      {
-        source: 'memory',
-        category: 'commitment',
-        content: 'defending the payments architecture on Friday',
-        requirement: 'mention_explicitly',
-      },
-    ]);
+    expect(brief.requiredGrounding).toEqual([]);
   });
 
   it('closes without reopening the conversation', () => {
