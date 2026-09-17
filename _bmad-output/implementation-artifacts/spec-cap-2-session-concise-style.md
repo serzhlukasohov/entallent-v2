@@ -2,7 +2,7 @@
 title: 'CAP-2: Session-scoped concise replies'
 type: 'bugfix'
 created: '2026-09-17'
-status: 'in-progress'
+status: 'done'
 review_loop_iteration: 1
 baseline_commit: '994f179'
 context:
@@ -52,7 +52,7 @@ context:
 **Execution:**
 - [x] `packages/application/src/use-cases/conversation-orchestrator.test.ts` -- add failing D01-02 tests for immediate short selection, same-session carry, >20-turn carry, five-hour expiry, controls, safety precedence, and unchanged learned profile/question pacing.
 - [x] `packages/application/src/use-cases/conversation-orchestrator.ts` -- add the narrow directive matcher, derive active session state from the latest outbound metadata plus the current inbound, apply only the short length override to ordinary modes, and persist the boolean in `replyShape`.
-- [ ] `_bmad-output/specs/spec-generic-conversation-bug-backlog/bug-catalog.md` -- update CAP-2 evidence only after local and production verification.
+- [x] `_bmad-output/specs/spec-generic-conversation-bug-backlog/bug-catalog.md` -- update CAP-2 evidence only after local and production verification.
 
 **Acceptance Criteria:**
 - Given an ordinary low-urgency turn with a direct concise request, when the reply strategy is built, then `maxResponseLength` is `short` without changing the stored style profile or question allowance.
@@ -82,4 +82,9 @@ Reuse `replyShape` because it is already the privacy-safe durable decision recei
 - `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts` -- exact CAP-2 RED→GREEN and full orchestrator regression pass.
 - `pnpm --filter @entalent/application typecheck && pnpm --filter @entalent/application lint` -- affected package compiles and lints.
 - `pnpm harness:check -- --base 994f179` -- passed with `runs/harness/receipt-1789642310583-6becbffd.json`.
-- Production acceptance after approval: preflight, then sequential Slack control → direct concise request → same-session substantive follow-up; verify one reply per inbound, short strategy metadata on the last two jobs, no late duplicate, and unchanged learned style profile.
+- Pre-push harness `runs/harness/receipt-1789642438781-681e72e7.json` and connector preflight `runs/harness/receipt-1789642558801-3b8f8ac7.json` passed.
+- Commit `d355935` was pushed to `origin/codex/grill-session-docs`; production worker deployment `76816045-4cf9-47a5-8219-e3d3083c9a0c` reached `SUCCESS`.
+- Sequential Slack control/direct/follow-up in `D0BJDC2MPE2` produced exactly one reply per inbound at `1789642621.820509`, `1789642644.148429`, and `1789642689.333759`; the direct and follow-up replies were 14 and 27 words, and a delayed read found no duplicate.
+- Production readback persisted `replyShape.conciseSession=false,true,true`, one outbound per inbound, and `success` conversation runs. All three conversation jobs and all three message-send jobs were retained as `completed` with one attempt.
+- The independent style-analysis queue advanced `user_style_profiles.updated_at` after the smoke, so production timestamp comparison is not an immutability proof; the focused regression instead proves the CAP-2 orchestrator never calls `styleProfileRepo.upsert`.
+- Documentation closeout harness passed with `runs/harness/receipt-1789643279454-e434a584.json`.
