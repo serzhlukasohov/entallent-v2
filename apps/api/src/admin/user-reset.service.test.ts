@@ -1,4 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
 import { UserResetService } from './user-reset.service';
 
@@ -52,5 +54,16 @@ describe('UserResetService', () => {
     await expect(service.resetUser({ tenantId: TENANT_ID, userId: USER_ID })).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  it('preserves the active survey window while clearing resettable pulse data', async () => {
+    const execute = vi.fn().mockResolvedValue([resultRow]);
+    const service = new UserResetService({ client: { execute } } as never);
+
+    await service.resetUser({ tenantId: TENANT_ID, userId: USER_ID });
+
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0]![0] as SQL);
+    expect(query.sql).toMatch(/delete from "survey_windows"[\s\S]*w\.status <> \$\d+/i);
+    expect(query.params).toContain('active');
   });
 });

@@ -109,6 +109,7 @@ export class UserResetService {
         WHERE ${deleteConversationHistory}
           AND w.user_id = u.id
           AND w.tenant_id = u.tenant_id
+          AND w.status <> ${'active'}
         RETURNING 1
       ), deleted_messages AS (
         DELETE FROM ${messages} m USING target_user u
