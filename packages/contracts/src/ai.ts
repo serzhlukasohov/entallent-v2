@@ -76,6 +76,13 @@ export const SituationClassificationSchema = z.object({
    * Existing topic to continue when the latest turn has no new substance.
    */
   topicAnchor: z.string().nullable().default(null),
+  /**
+   * Explicit employee-stated details in the active thread that already close a
+   * potential clarification branch. Turn-local and bounded; never inferred.
+   */
+  resolvedDetails: z.array(z.string()).transform((details) => [...new Set(
+    details.map((detail) => detail.trim()).filter(Boolean),
+  )].slice(0, 5)).optional(),
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 

@@ -768,3 +768,14 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Build each changed workspace dependency consumed through its package entry point before running conversation simulations.
 - Regression check: `pnpm --filter @entalent/ai-openai build` succeeds before the focused Annna command.
 - Status: fixed
+
+## 2026-09-17: CAP-6 resolved-detail re-extraction was nondeterministic
+
+- Symptom: Three model-backed D04-03 replays alternated between carrying the earlier “reconstruct the whole flow” detail and returning only facts from the latest turn; when carried, conflicting generic question directives still reopened the resolved branch until they were made optional.
+- Expected: A detail explicitly resolved in the active thread remains available to the next reply plan and cannot be reopened as a clarification.
+- Root cause layer: architecture
+- Harness fix: Stop relying on prompt-only re-extraction on every turn; carry the bounded resolved-detail receipt through existing outbound message metadata for eligible same-session dialogue acts, while clearing it on topic replacement, correction, closing, any safety turn, confirmation, or a new session and prioritizing all current details within the cap.
+- Regression check: Contracts 89/89, application reply-plan/orchestrator 187/187, AI 145/145, worker 175/175, repeated model-backed D04-03 plus unresolved-detail control runs, and final harness `runs/harness/receipt-1789670481321-c35ba0e7.json` pass; final blind review reported no findings.
+- Recurrence: The first post-review model replay hit sandbox DNS `ENOTFOUND`; the explicitly approved Azure OpenAI rerun passed, so no product change was made for the transport failure.
+- Recurrence: Pre-push model replays returned `resolvedDetails=[]` for the explicit whole-flow statement, varied its dialogue act, and once evicted the newer prior detail when four current details filled the cap, correctly blocking the push. The shared orchestrator now falls back to typed `latestUserSubstance` only for same-session/same-topic substantive turns and retains the most recent prior details in remaining cap slots; focused application tests pass 187/187 without phrase matching or another model call.
+- Status: fixed

@@ -203,11 +203,12 @@ export class ConversationOrchestrator {
     const outboundMessages = dbMessages.filter((message) => message.direction === 'outbound');
     const recentOutbound = outboundMessages.slice(-2);
     const latestReplyShape = recentOutbound.at(-1)?.metadata?.['replyShape'];
+    const priorResolvedDetails = readResolvedDetails(latestReplyShape);
     const previousReplyAskedQuestion = typeof latestReplyShape === 'object'
       && latestReplyShape !== null
       && 'askedQuestion' in latestReplyShape
-        ? latestReplyShape.askedQuestion === true
-        : undefined;
+      ? latestReplyShape.askedQuestion === true
+      : undefined;
     const priorMessages = dbMessages.filter((message) => message.id !== input.messageId);
     const lastPriorAt = priorMessages.at(-1)?.occurredAt;
     const sessionStart = isSessionStart(lastPriorAt, inboundMessage.occurredAt);
@@ -324,10 +325,11 @@ export class ConversationOrchestrator {
     }
 
     const currentTurnHasTopicAnchor = !!classification.topicAnchor?.trim();
+    const safetyTurn = classification.requiresSafetyCheck || risk.severity !== 'none';
     const continuity = resolveContinuity({
       classification,
       activeTopic: conversation.activeTopic,
-      safetyTurn: classification.requiresSafetyCheck || risk.severity !== 'none',
+      safetyTurn,
       confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined,
       now: currentTurnAt,
     });
@@ -448,11 +450,46 @@ export class ConversationOrchestrator {
       ),
       conciseSession,
     );
+    const sameThreadDetail = classification.latestUserSubstance?.trim();
+    const canRetainExplicitDetail = !sessionStart
+      && continuityDecision.action !== 'replace'
+      && (
+        classification.dialogueAct === 'continuation'
+        || classification.dialogueAct === 'emotional_disclosure'
+        || classification.dialogueAct === 'new_substance'
+      )
+      && !!sameThreadDetail;
+    const continuesResolvedThread = !sessionStart && (
+      classification.dialogueAct === 'continuation'
+      || classification.dialogueAct === 'acknowledgement'
+      || classification.dialogueAct === 'emotional_disclosure'
+      || canRetainExplicitDetail
+    );
+    const carryResolvedDetails = continuesResolvedThread
+      && !safetyTurn
+      && !phaseB.awaitingPresent
+      && confirmationRequest === undefined;
+    const replacedResolvedThread = classification.dialogueAct !== 'acknowledgement'
+      && continuityDecision.action === 'replace';
+    const classifiedResolvedDetails = normalizeResolvedDetails(classification.resolvedDetails);
+    const currentResolvedDetails = classifiedResolvedDetails.length === 0
+      && canRetainExplicitDetail
+      && sameThreadDetail
+      ? [sameThreadDetail]
+      : classifiedResolvedDetails;
+    const replyPlanClassification = {
+      ...classification,
+      resolvedDetails: carryResolvedDetails
+        ? replacedResolvedThread
+          ? currentResolvedDetails
+          : mergeResolvedDetails(currentResolvedDetails, priorResolvedDetails)
+        : [],
+    };
 
     let replyPlan = confirmationRequest
       ? undefined
       : buildReplyPlan({
-          classification,
+          classification: replyPlanClassification,
           memoryItems: responseMemoryItems,
           includeFollowUpQuestion: strategyWithStyle.includeFollowUpQuestion,
           currentTurnHasTopicAnchor,
@@ -597,7 +634,7 @@ export class ConversationOrchestrator {
         surfacedGroup = undefined;
         confirmationSummary = undefined;
         replyPlan = buildReplyPlan({
-          classification,
+          classification: replyPlanClassification,
           memoryItems,
           includeFollowUpQuestion: applySessionConciseStyle(
             applyTerseStyle(
@@ -1229,8 +1266,34 @@ function replyShapeMetadata(
       maxQuestions: plan?.questionPolicy.maxQuestions ?? 1,
       questionPolicyReason: plan?.questionPolicy.reason ?? 'confirmation_requires_question',
       conciseSession,
+      ...(plan?.resolvedDetails?.length ? { resolvedDetails: plan.resolvedDetails } : {}),
     },
   };
+}
+
+function readResolvedDetails(replyShape: unknown): string[] {
+  if (!replyShape || typeof replyShape !== 'object' || Array.isArray(replyShape)) return [];
+  return normalizeResolvedDetails((replyShape as Record<string, unknown>)['resolvedDetails']);
+}
+
+function mergeResolvedDetails(current: unknown, prior: unknown): string[] {
+  const priorDetails = normalizeResolvedDetails(prior);
+  const currentDetails = normalizeResolvedDetails(current);
+  if (currentDetails.length === 0) return priorDetails;
+  const currentSet = new Set(currentDetails);
+  const remainingPrior = priorDetails.filter((detail) => !currentSet.has(detail));
+  const priorStart = Math.max(0, remainingPrior.length + currentDetails.length - 5);
+  return [...remainingPrior.slice(priorStart), ...currentDetails];
+}
+
+function normalizeResolvedDetails(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value
+      .filter((detail): detail is string => typeof detail === 'string')
+      .map((detail) => detail.trim())
+      .filter(Boolean),
+  )].slice(0, 5);
 }
 
 function conversationDecisionMetadata(input: {

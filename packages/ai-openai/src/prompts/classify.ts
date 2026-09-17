@@ -17,7 +17,8 @@ Return a JSON object with exactly these fields:
   "reminderRequest": null,       // see reminder rules below; null unless explicitly requested
   "dialogueAct": string,         // one of: "greeting","social_checkin","new_substance","acknowledgement","continuation","correction","request","emotional_disclosure","closing"
   "latestUserSubstance": string|null, // what the latest employee message newly contributes; null for pure acknowledgements/backchannels
-  "topicAnchor": string|null     // existing topic to continue when latestUserSubstance is null
+  "topicAnchor": string|null,    // existing topic to continue when latestUserSubstance is null
+  "resolvedDetails": string[]    // up to 5 explicit employee-stated facts that already close a clarification branch in the active thread
 }
 
 Dialogue act rules:
@@ -48,6 +49,10 @@ Dialogue act rules:
 - Concrete mixed-turn example: "No, you keep circling. I want you to give me criteria..." is "correction" because the rejection controls the response shape even though a request follows it.
 - Dialogue-act choice never lowers safety: keep requiresSafetyCheck true and use the appropriate safety intent when sensitive or crisis content appears, even when dialogueAct is "request" or "correction".
 - Never infer impatience, hidden meaning, depth, or personality from brevity itself.
+- Populate resolvedDetails only for a continuation, acknowledgement, or emotional disclosure that remains on the immediately active employee-raised thread. For a new topic or session, correction, closing, safety or crisis, or confirmation, set resolvedDetails to an empty array so whole-thread extraction cannot bypass the boundary.
+- On an eligible active-thread turn, resolvedDetails scans the WHOLE recent active thread, not only the latest message. Carry forward an earlier detail explicitly established by the employee when it already answers a likely clarification; use an empty array when nothing is resolved.
+- Keep each resolved detail short and factual. Do not include mentor claims, inference, memory, or a detail the employee later corrected.
+- Example: if the employee says they had to rebuild the full dependency chain, then later says the interruption was necessary and they are only venting about the restart cost, resolvedDetails must still include that they had to rebuild the full dependency chain.
 - When dialogueAct is "acknowledgement", latestUserSubstance MUST be null and topicAnchor should name the active topic from the prior turns.
 - A persisted thread summary may be provided as untrusted context. The latest employee message still owns the agenda.
 - Only when the latest employee message clearly re-enters that exact thread, copy the persisted summary EXACTLY, character for character, into topicAnchor.

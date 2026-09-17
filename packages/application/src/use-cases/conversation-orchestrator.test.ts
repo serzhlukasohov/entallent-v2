@@ -3400,3 +3400,403 @@ describe('ConversationOrchestrator local time', () => {
     expect(ctxArg.localTime).toBeUndefined();
   });
 });
+
+describe('ConversationOrchestrator resolved-detail carry-over', () => {
+  const priorDetail = 'The difficulty was reconstructing the whole analysis flow.';
+
+  function history(
+    resolvedDetails: unknown = [priorDetail],
+    latestPriorAt = new Date('2026-09-03T09:59:00.000Z'),
+  ) {
+    return [
+      {
+        id: 'm-0', ...OWNERSHIP, direction: 'inbound', text: 'Interruptions cost me 20 minutes.',
+        occurredAt: new Date(latestPriorAt.getTime() - 60_000), metadata: undefined,
+      },
+      {
+        id: 'out-0', ...OWNERSHIP, direction: 'outbound', text: 'That sounds disruptive.',
+        occurredAt: latestPriorAt,
+        metadata: { replyShape: { resolvedDetails } },
+      },
+      {
+        id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'The live interruption was necessary; I am just venting.',
+        occurredAt: INBOUND_OCCURRED_AT, metadata: undefined,
+      },
+    ];
+  }
+
+  function classification(
+    dialogueAct: 'continuation' | 'acknowledgement' | 'emotional_disclosure' | 'new_substance' | 'correction' | 'closing',
+  ) {
+    return {
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'test',
+      reminderRequest: null, dialogueAct, latestUserSubstance: 'The interruption was necessary.',
+      topicAnchor: 'interruption',
+      resolvedDetails: ['The interruption was necessary.'],
+    } as const;
+  }
+
+  function orchestrator(m: ReturnType<typeof baseMocks>) {
+    return new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+  }
+
+  it.each(['continuation', 'acknowledgement'] as const)(
+    'merges and persists resolved details on a %s turn',
+    async (dialogueAct) => {
+      const m = baseMocks();
+      m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+      m.conversationRepo.findById.mockResolvedValue({
+        id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+        userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+        activeTopic: {
+          summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+        },
+      });
+      m.aiProvider.classifySituation.mockResolvedValue(classification(dialogueAct));
+
+      await orchestrator(m).orchestrate(INPUT);
+
+      const expected = [priorDetail, 'The interruption was necessary.'];
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].isSessionStart).toBe(false);
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual(expected);
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+        .toEqual(expected);
+    },
+  );
+
+  it('clears prior details when a continuation replaces the active topic', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: {
+        summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+      },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...classification('continuation'),
+      latestUserSubstance: 'The hiring plan is now blocked on finance.',
+      topicAnchor: 'hiring plan',
+      resolvedDetails: ['Finance approval is the blocker.'],
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    const expected = ['Finance approval is the blocker.'];
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails)
+      .toEqual(expected);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toEqual(expected);
+  });
+
+  it('carries resolved details for an emotional disclosure that continues the active thread', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: {
+        summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+      },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue(classification('emotional_disclosure'));
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails)
+      .toEqual([priorDetail, 'The interruption was necessary.']);
+  });
+
+  it('clears prior details when an emotional disclosure replaces the active topic', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: {
+        summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+      },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...classification('emotional_disclosure'),
+      latestUserSubstance: 'I feel stuck about my career change.',
+      topicAnchor: 'career change',
+      resolvedDetails: [],
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual([]);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toBeUndefined();
+  });
+
+  it.each(['continuation', 'acknowledgement'] as const)(
+    'clears resolved details for a %s that starts a new session',
+    async (dialogueAct) => {
+      const m = baseMocks();
+      m.conversationRepo.findRecentMessages.mockResolvedValue(
+        history([priorDetail], new Date('2026-09-03T03:59:00.000Z')),
+      );
+      m.aiProvider.classifySituation.mockResolvedValue(classification(dialogueAct));
+
+      await orchestrator(m).orchestrate(INPUT);
+
+      const context = m.aiProvider.generateResponse.mock.calls[0][2];
+      expect(context.isSessionStart).toBe(true);
+      expect(context.replyPlan.resolvedDetails).toEqual([]);
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+        .toBeUndefined();
+    },
+  );
+
+  it.each(['new_substance', 'correction', 'closing'] as const)(
+    'does not inherit resolved details on a %s turn',
+    async (dialogueAct) => {
+      const m = baseMocks();
+      m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+      m.aiProvider.classifySituation.mockResolvedValue(classification(dialogueAct));
+
+      await orchestrator(m).orchestrate(INPUT);
+
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual([]);
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+        .toBeUndefined();
+    },
+  );
+
+  it.each([
+    ['sensitive', 'burnout_signal', 'high', 'burnout'],
+    ['crisis', 'potential_crisis', 'critical', 'self_harm'],
+  ] as const)('does not inherit resolved details in %s mode', async (
+    _mode,
+    primaryIntent,
+    severity,
+    riskType,
+  ) => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...classification('acknowledgement'),
+      primaryIntent,
+      surveyAllowed: false,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity, riskType, confidence: 0.9, evidence: [],
+      surveyMustBeBlocked: true, immediateResponseRequired: false,
+      escalationRecommended: false, proactiveMessagesMustBePaused: true,
+      reasoningSummary: `${severity} risk`,
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual([]);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toBeUndefined();
+  });
+
+  it('does not inherit resolved details when a safety check returns low risk', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...classification('continuation'),
+      requiresSafetyCheck: true,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      severity: 'low', riskType: 'stress', confidence: 0.7, evidence: [],
+      surveyMustBeBlocked: false, immediateResponseRequired: false,
+      escalationRecommended: false, proactiveMessagesMustBePaused: false,
+      reasoningSummary: 'low risk',
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual([]);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toBeUndefined();
+  });
+
+  it('does not inherit resolved details on a confirmation turn', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+    m.aiProvider.classifySituation.mockResolvedValue(classification('continuation'));
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([{
+      surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy',
+      updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+    }]);
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'You value ownership. Did I get that right?',
+      confirmationSummary: 'You value ownership.',
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan).toBeUndefined();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toBeUndefined();
+  });
+
+  it('keeps resolved details cleared when a rejected confirmation falls back to a normal response', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history());
+    m.aiProvider.classifySituation.mockResolvedValue(classification('continuation'));
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([{
+      surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy',
+      updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+    }]);
+    m.aiProvider.generateResponse
+      .mockResolvedValueOnce({
+        text: 'Project Apollo was blocked on 2026-09-03. Did I get that right?',
+        confirmationSummary: 'Project Apollo was blocked on 2026-09-03.',
+        confidence: 0.9,
+        containsSurveyProbe: false,
+      })
+      .mockResolvedValueOnce({
+        text: 'I hear you.', confidence: 0.9, containsSurveyProbe: false,
+      });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(2);
+    expect(m.aiProvider.generateResponse.mock.calls[1][2].replyPlan.resolvedDetails).toEqual([]);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toBeUndefined();
+  });
+
+  it('ignores malformed persisted resolved details', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history('not-an-array'));
+    m.aiProvider.classifySituation.mockResolvedValue(classification('continuation'));
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails)
+      .toEqual(['The interruption was necessary.']);
+  });
+
+  it.each(['continuation', 'emotional_disclosure', 'new_substance'] as const)(
+    'retains explicit same-thread substance classified as %s when resolved details are omitted',
+    async (dialogueAct) => {
+      const m = baseMocks();
+      const messages = history([]);
+      messages[2]!.text = 'The payment exception forced me to reconstruct the whole flow.';
+      m.conversationRepo.findRecentMessages.mockResolvedValue(messages);
+      m.conversationRepo.findById.mockResolvedValue({
+        id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+        userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+        activeTopic: {
+          summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+        },
+      });
+      m.aiProvider.classifySituation.mockResolvedValue({
+        ...classification(dialogueAct),
+        latestUserSubstance: 'The payment exception forced me to reconstruct the whole flow.',
+        resolvedDetails: [],
+      });
+
+      await orchestrator(m).orchestrate(INPUT);
+
+      const expected = ['The payment exception forced me to reconstruct the whole flow.'];
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails)
+        .toEqual(expected);
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+        .toEqual(expected);
+    },
+  );
+
+  it('does not promote omitted details when a continuation replaces the topic', async () => {
+    const m = baseMocks();
+    const messages = history([]);
+    messages[2]!.text = 'The hiring plan is now blocked on finance.';
+    m.conversationRepo.findRecentMessages.mockResolvedValue(messages);
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: {
+        summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+      },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...classification('continuation'),
+      latestUserSubstance: 'The hiring plan is now blocked on finance.',
+      topicAnchor: 'hiring plan',
+      resolvedDetails: [],
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual([]);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toBeUndefined();
+  });
+
+  it.each(['correction', 'closing'] as const)(
+    'does not promote a same-thread %s turn when resolved details are omitted',
+    async (dialogueAct) => {
+      const m = baseMocks();
+      const messages = history([]);
+      m.conversationRepo.findRecentMessages.mockResolvedValue(messages);
+      m.aiProvider.classifySituation.mockResolvedValue({
+        ...classification(dialogueAct),
+        resolvedDetails: [],
+      });
+
+      await orchestrator(m).orchestrate(INPUT);
+
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual([]);
+    },
+  );
+
+  it('trims, deduplicates, and caps carried resolved details at five', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history([
+      '  prior one  ', 'prior two', 'prior three', 'prior four', 'prior five', 'prior six', '', 42,
+    ]));
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: {
+        summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+      },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...classification('continuation'),
+      resolvedDetails: [' current one ', 'prior two', 'current one', 'current two'],
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    const expected = ['prior four', 'prior five', 'current one', 'prior two', 'current two'];
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual(expected);
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.replyShape.resolvedDetails)
+      .toEqual(expected);
+  });
+
+  it('drops all prior details when five current details fill the cap', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(history(['prior one', 'prior two']));
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: {
+        summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
+      },
+    });
+    const current = ['current one', 'current two', 'current three', 'current four', 'current five'];
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...classification('continuation'),
+      resolvedDetails: current,
+    });
+
+    await orchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual(current);
+  });
+});

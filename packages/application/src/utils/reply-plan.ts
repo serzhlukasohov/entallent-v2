@@ -20,6 +20,11 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
   const dialogueAct = classification.dialogueAct;
   const latestUserSubstance = classification.latestUserSubstance?.trim() || null;
   const topicAnchor = classification.topicAnchor?.trim() || null;
+  const resolvedDetails = [...new Set(
+    (classification.resolvedDetails ?? [])
+      .map((detail) => detail.trim())
+      .filter(Boolean),
+  )].slice(0, 5);
   const safetyOverridesPause = (input.sensitiveMode ?? false) &&
     (dialogueAct === 'closing' || dialogueAct === 'acknowledgement');
   const correctionCarryover = input.correctionCarryover ?? false;
@@ -38,6 +43,7 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
     correctionCarryover,
     latestUserSubstance,
     topicAnchor,
+    resolvedDetails,
     memoryAnchors,
     responseMove,
     mayInferFromBrevity,

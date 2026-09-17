@@ -106,6 +106,38 @@ describe('buildReplyPlan', () => {
     expect(brief.forbiddenMoves).toContain('unsupported_interpretation');
   });
 
+  it('carries resolved thread details without blocking a materially new question', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'continuation',
+        latestUserSubstance: 'The live issue needed me; I am just venting about losing my place.',
+        topicAnchor: 'interruptions while mapping a payment exception',
+        resolvedDetails: [
+          '  The difficulty was reconstructing the whole analysis flow.  ',
+          '',
+        ],
+      } as Partial<SituationClassification> & { resolvedDetails: string[] }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief).toMatchObject({
+      resolvedDetails: ['The difficulty was reconstructing the whole analysis flow.'],
+      questionPolicy: { maxQuestions: 1 },
+    });
+  });
+
+  it('deduplicates resolved details before applying the five-item cap', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'continuation',
+        resolvedDetails: [' one ', 'one', 'two', 'three', 'four', 'five'],
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief.resolvedDetails).toEqual(['one', 'two', 'three', 'four', 'five']);
+  });
+
   it('resets prior memory and questions when the employee corrects the frame', () => {
     const brief = buildReplyPlan({
       classification: base({

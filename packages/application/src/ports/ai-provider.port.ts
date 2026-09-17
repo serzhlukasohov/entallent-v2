@@ -54,6 +54,8 @@ export interface ReplyPlan {
   correctionCarryover?: boolean;
   latestUserSubstance: string | null;
   topicAnchor: string | null;
+  /** Explicit employee-stated facts that must not be reopened as clarifications. */
+  resolvedDetails?: string[];
   memoryAnchors: Array<{ category: string; content: string }>;
   responseMove:
     | 'social_greeting'

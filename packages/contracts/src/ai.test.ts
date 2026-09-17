@@ -26,10 +26,14 @@ describe('Contract: SituationClassificationSchema', () => {
       dialogueAct: 'emotional_disclosure',
       latestUserSubstance: 'barely sleeping after carrying the release',
       topicAnchor: 'release strain',
+      resolvedDetails: ['The employee is barely sleeping after carrying the release.'],
     });
     expect(parsed.dialogueAct).toBe('emotional_disclosure');
     expect(parsed.latestUserSubstance).toContain('barely sleeping');
     expect(parsed.topicAnchor).toBe('release strain');
+    expect(parsed).toMatchObject({
+      resolvedDetails: ['The employee is barely sleeping after carrying the release.'],
+    });
   });
 
   it('defaults dialogue-state fields for older classifier payloads', () => {
@@ -46,6 +50,23 @@ describe('Contract: SituationClassificationSchema', () => {
     expect(parsed.dialogueAct).toBe('new_substance');
     expect(parsed.latestUserSubstance).toBeNull();
     expect(parsed.topicAnchor).toBeNull();
+    expect(parsed.resolvedDetails).toBeUndefined();
+  });
+
+  it('normalizes duplicate and blank resolved details before applying the cap', () => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: true,
+      reasoningSummary: 'The employee continues the same thread.',
+      resolvedDetails: [' one ', 'one', '', 'two', 'three', 'four', 'five'],
+    });
+
+    expect(parsed.resolvedDetails).toEqual(['one', 'two', 'three', 'four', 'five']);
   });
 
   it('accepts social check-in as a typed intent and dialogue act', () => {

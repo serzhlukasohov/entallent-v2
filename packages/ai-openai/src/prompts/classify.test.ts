@@ -26,6 +26,19 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain('Short explicit endings such as "No, forget"');
     expect(prompt).toContain('Do not preserve that premise in latestUserSubstance or topicAnchor');
     expect(prompt).toContain('Dialogue-act choice never lowers safety');
+    expect(prompt).toContain('"resolvedDetails": string[]');
+    expect(prompt).toContain('explicitly established by the employee');
+    expect(prompt).toContain('Do not include mentor claims, inference, memory, or a detail the employee later corrected');
+    expect(prompt).toContain('WHOLE recent active thread, not only the latest message');
+    expect(prompt).toContain('rebuild the full dependency chain');
+  });
+
+  it('limits resolved details to eligible active-thread turns and clears boundaries', () => {
+    const prompt = buildClassifySystemPrompt();
+
+    expect(prompt).toContain('continuation, acknowledgement, or emotional disclosure');
+    expect(prompt).toContain('new topic or session, correction, closing, safety or crisis, or confirmation');
+    expect(prompt).toContain('set resolvedDetails to an empty array');
   });
 });
 

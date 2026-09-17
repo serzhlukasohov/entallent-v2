@@ -31,6 +31,7 @@ export interface MessageMetadata {
     askedQuestion?: boolean;
     maxQuestions?: 0 | 1;
     questionPolicyReason?: string;
+    resolvedDetails?: string[];
   };
 }
 
