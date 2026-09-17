@@ -35,6 +35,7 @@ import type {
   ResponseContext,
   SurveyQuestionForEvaluation,
 } from '@entalent/application';
+import { isExplicitPulseCaptureRequest } from '@entalent/application';
 import { buildClassifySystemPrompt, buildClassifyUserPrompt } from './prompts/classify';
 import { buildStyleAnalyzeSystemPrompt, buildStyleAnalyzeUserPrompt } from './prompts/style-analyze';
 import { buildMemorySystemPrompt, buildMemoryUserPrompt } from './prompts/memory';
@@ -451,8 +452,6 @@ const DATA_USE_QUESTION_FRAGMENT =
   /(?:what|how)\s+do\s+you\s+use\s+(?:my\s+messages?|what\s+i\s+(?:say|send)|my\s+(?:data|information))|do\s+you\s+(?:also\s+)?use\s+(?:my\s+messages?|what\s+i\s+(?:say|send))\s+for\b|(?:для чего|как)\s+ты\s+используешь\s+мои\s+сообщения|(?:для чого|як)\s+ти\s+використовуєш\s+мої\s+повідомлення/iu;
 const MIXED_ACTION_REQUEST =
   /\b(?:help\s+me|remind\s+me|(?:draft|write|create|set|schedule|add|update|delete|send)\s+(?:me\s+)?(?:a|an|the|this|that|my)\b|помоги|напомни|создай|отправь|допоможи|нагадай|створи|надішли)\b/iu;
-const EXPLICIT_PULSE_CAPTURE_REQUEST =
-  /^(?:(?:(?:can|could)\s+you\s+)?help\s+me\s+understand\s+|(?:(?:but\s+)?i\s+(?:don['’]?t|do not)\s+understand\s+)?)what\s+exact\s+(?:pulse\s+)?information\s+(?:did\s+you|you\s+(?:already\s+)?)\s*(?:pick(?:ed)?(?:\s+up)?|captur(?:e|ed)|record(?:ed)?|sav(?:e|ed))\s+from\s+(?:our|this)\s+(?:discussion|conversation|chat)\s*\?$|^(?:what|which)\s+(?:exact\s+)?(?:pulse\s+)?(?:information|data|details?)\s+(?:did|have)\s+you\s+(?:already\s+)?(?:pick(?:ed)?(?:\s+up)?|captur(?:e|ed)|record(?:ed)?|sav(?:e|ed))\s+from\s+(?:our|this)\s+(?:discussion|conversation|chat)\s*\?$|^(?:какую|что)\s+именно.{0,40}(?:пульс|информац|данн).{0,50}(?:сохранил|зафиксировал|извл[её]к).{0,50}(?:разговор|обсужден)\s*\??\s*$|^(?:яку|що)\s+саме.{0,40}(?:пульс|інформац|дан).{0,50}(?:зберіг|зафіксував|витяг).{0,50}(?:розмов|обговорен)\s*\??\s*$/iu;
 const PULSE_CAPTURE_QUESTION_FRAGMENT =
   /what\s+exact\s+(?:pulse\s+)?information.{0,40}(?:pick(?:ed)?(?:\s+up)?|captur(?:e|ed)|record(?:ed)?|sav(?:e|ed)).{0,30}(?:discussion|conversation|chat)|(?:какую|что)\s+именно.{0,40}(?:пульс|информац|данн).{0,50}(?:сохранил|зафиксировал|извл[её]к)|(?:яку|що)\s+саме.{0,40}(?:пульс|інформац|дан).{0,50}(?:зберіг|зафіксував|витяг)/iu;
 
@@ -474,7 +473,7 @@ function normalizePulseCaptureExplanation(
     || EXPLICIT_CHATBOT_EVALUATION_REQUEST.test(latestEmployeeText)
     || (/[“”«»"]/u.test(latestEmployeeText)
       && /(?:pulse|пульс).{0,40}(?:information|data|информац|дан)/iu.test(latestEmployeeText));
-  const explicitRequest = EXPLICIT_PULSE_CAPTURE_REQUEST.test(latestEmployeeText);
+  const explicitRequest = isExplicitPulseCaptureRequest(latestEmployeeText);
   const safetyRequest = safetyIntent !== undefined
     && PULSE_CAPTURE_QUESTION_FRAGMENT.test(latestEmployeeText);
   const typedRequest = classification.primaryIntent === 'pulse_capture_explanation'

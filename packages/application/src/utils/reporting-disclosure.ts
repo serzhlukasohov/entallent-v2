@@ -44,6 +44,9 @@ const PULSE_CAPTURE_TEXT = {
   },
 } as const;
 
+const EXPLICIT_PULSE_CAPTURE_REQUEST =
+  /^(?:(?:(?:can|could)\s+you\s+)?help\s+me\s+understand\s+|(?:(?:but\s+)?i\s+(?:don['’]?t|do not)\s+understand\s+)?)what\s+exact\s+(?:pulse\s+)?information\s+(?:did\s+you|you\s+(?:already\s+)?)\s*(?:pick(?:ed)?(?:\s+up)?|captur(?:e|ed)|record(?:ed)?|sav(?:e|ed))\s+from\s+(?:our|this)\s+(?:discussion|conversation|chat)\s*\?$|^(?:what|which)\s+(?:exact\s+)?(?:pulse\s+)?(?:information|data|details?)\s+(?:did|have)\s+you\s+(?:already\s+)?(?:pick(?:ed)?(?:\s+up)?|captur(?:e|ed)|record(?:ed)?|sav(?:e|ed))\s+from\s+(?:our|this)\s+(?:discussion|conversation|chat)\s*\?$|^(?:какую|что)\s+именно.{0,40}(?:пульс|информац|данн).{0,50}(?:сохранил|зафиксировал|извл[её]к).{0,50}(?:разговор|обсужден)\s*\??\s*$|^(?:яку|що)\s+саме.{0,40}(?:пульс|інформац|дан).{0,50}(?:зберіг|зафіксував|витяг).{0,50}(?:розмов|обговорен)\s*\??\s*$/iu;
+
 export function getReportingDisclosureText(language?: string): string {
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof REPORTING_DISCLOSURE_TEXT;
   return REPORTING_DISCLOSURE_TEXT[baseLanguage] ?? REPORTING_DISCLOSURE_TEXT.en;
@@ -69,6 +72,10 @@ export function getPulseCaptureExplanationText(
   const copy = PULSE_CAPTURE_TEXT[baseLanguage] ?? PULSE_CAPTURE_TEXT.en;
   if (captures.length === 0) return copy.absent;
   return `${copy.intro}\n${captures.map((capture) => `- ${capture.evidenceSummary} — ${copy[capture.status]}.`).join('\n')}`;
+}
+
+export function isExplicitPulseCaptureRequest(text: string): boolean {
+  return EXPLICIT_PULSE_CAPTURE_REQUEST.test(text.trim());
 }
 
 export function appendReportingDisclosure(responseText: string, language?: string): string {

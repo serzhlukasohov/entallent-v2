@@ -37,6 +37,7 @@ import {
   appendReportingDisclosure,
   getDataUseExplanationText,
   getPulseCaptureExplanationText,
+  isExplicitPulseCaptureRequest,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
@@ -171,6 +172,20 @@ export class ConversationOrchestrator {
     let classification: SituationClassification = hasSafetyIntent
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
+    const explicitPulseCaptureRequest = isExplicitPulseCaptureRequest(inboundMessage.text);
+    if (explicitPulseCaptureRequest && !hasSafetyIntent) {
+      classification = {
+        ...classification,
+        primaryIntent: 'pulse_capture_explanation',
+        secondaryIntents: classification.secondaryIntents.filter(
+          (intent) => intent !== 'pulse_capture_explanation'
+            && intent !== 'reporting_explanation'
+            && intent !== 'data_use_explanation',
+        ),
+        surveyAllowed: false,
+        reminderRequest: null,
+      };
+    }
     const reportingExplanationRequested =
       !(reportingDisclosureReceipt
         && classification.dialogueAct === 'acknowledgement'

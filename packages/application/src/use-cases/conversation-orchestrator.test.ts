@@ -662,6 +662,34 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
+  it('keeps a natural CAP-8 request deterministic when the model calls it clarification', async () => {
+    const m = baseMocks();
+    const question = 'Help me understand what exact pulse information you captured from this conversation?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.9, reasoningSummary: 'production classifier result',
+      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.classification.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.classification.surveyAllowed).toBe(false);
+    expect(result.classification.reminderRequest).toBeNull();
+    expect(result.responseText).toContain('There is no current persisted pulse evidence');
+    expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledOnce();
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
   it('fails closed when CAP-8 provenance storage is unavailable', async () => {
     const m = baseMocks();
     const question = 'What exact pulse information did you pick up from this discussion?';
@@ -829,11 +857,46 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     const result = await orch.orchestrate(INPUT);
 
+    expect(result.classification.primaryIntent).toBe('potential_crisis');
     expect(result.responseText).toBe('Please contact emergency support now.');
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
     expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
     expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('does not promote a direct CAP-8 request over a secondary safety intent', async () => {
+    const m = baseMocks();
+    const question = 'Help me understand what exact pulse information you captured from this conversation?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: ['potential_crisis'], urgency: 'critical',
+      emotionalState: ['unsafe'], confidence: 0.95, reasoningSummary: 'secondary safety intent',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'potential_self_harm', severity: 'critical', confidence: 0.95,
+      evidence: ['safety classifier signal'], immediateResponseRequired: true,
+      escalationRecommended: true, surveyMustBeBlocked: true,
+      proactiveMessagesMustBePaused: true, reasoningSummary: 'Immediate safety response required.',
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Please contact emergency support now.', confidence: 0.95, containsSurveyProbe: false,
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.classification.primaryIntent).toBe('clarification');
+    expect(result.responseText).toBe('Please contact emergency support now.');
+    expect(m.aiProvider.detectRisk).toHaveBeenCalledOnce();
+    expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
   });
 
   it.each([

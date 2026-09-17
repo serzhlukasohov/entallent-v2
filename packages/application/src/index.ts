@@ -56,6 +56,7 @@ export type { ProactiveScanConfig, ProactiveScanResult } from './use-cases/proac
 export { isInQuietHours, getLocalHour } from './utils/quiet-hours';
 export { BASE_STYLE } from './utils/style-adaptation';
 export { buildReplyPlan } from './utils/reply-plan';
+export { isExplicitPulseCaptureRequest } from './utils/reporting-disclosure';
 export type { ReplyPlanInput } from './utils/reply-plan';
 export type { QuietHours } from './utils/quiet-hours';
 export { MemoryExtractionUseCase } from './use-cases/memory-extraction.use-case';
