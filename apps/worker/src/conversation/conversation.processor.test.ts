@@ -47,6 +47,7 @@ const conversationJob: ConversationJob = {
   externalWorkspaceId: 'workspace-1',
   externalConversationId: 'channel-1',
   traceId: 'trace-1',
+  rapidMessageCoalescing: true,
 };
 
 const checkInJob: CheckInJob = {
@@ -70,6 +71,7 @@ function createProcessor(options: {
   orchestrator?: { orchestrate: ReturnType<typeof vi.fn> };
   checkInUseCase?: { execute: ReturnType<typeof vi.fn> };
   llmRunRepo?: { record: ReturnType<typeof vi.fn> };
+  conversationRepo?: { shouldSkipInboundMessage: ReturnType<typeof vi.fn> };
   db?: unknown;
 } = {}) {
   const orchestrator = options.orchestrator ?? {
@@ -85,6 +87,9 @@ function createProcessor(options: {
   const llmRunRepo = options.llmRunRepo ?? {
     record: vi.fn(async () => undefined),
   };
+  const conversationRepo = options.conversationRepo ?? {
+    shouldSkipInboundMessage: vi.fn(async () => false),
+  };
   const select = vi.fn(() => tenantQuery());
   const db = options.db ?? { client: { select } };
 
@@ -94,27 +99,37 @@ function createProcessor(options: {
       checkInUseCase as never,
       llmRunRepo as never,
       db as never,
+      conversationRepo as never,
     ),
     orchestrator,
     checkInUseCase,
     llmRunRepo,
+    conversationRepo,
     select,
   };
 }
 
 describe('ConversationProcessor TypeScript-only routing', () => {
   it('routes inbound jobs directly through the TypeScript orchestrator', async () => {
-    const { processor, orchestrator, llmRunRepo, select } = createProcessor();
+    const { processor, orchestrator, llmRunRepo, conversationRepo, select } = createProcessor();
 
     await processor.process({
       id: 'job-1',
       name: 'process',
       attemptsMade: 0,
+      opts: { delay: 2_000 },
       data: conversationJob,
     } as Job<ConversationJob>);
 
     expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
     expect(orchestrator.orchestrate).toHaveBeenCalledWith(conversationJob);
+    expect(conversationRepo.shouldSkipInboundMessage).toHaveBeenCalledWith({
+      messageId: 'message-1',
+      conversationId: 'conversation-1',
+      userId: 'user-1',
+      tenantId: 'tenant-1',
+      windowMs: 2_000,
+    });
     expect(select).not.toHaveBeenCalled();
     expect(llmRunRepo.record).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
@@ -125,6 +140,62 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       status: 'success',
       traceId: 'trace-1',
     });
+  });
+
+  it('no-ops stale original and retry jobs before orchestration and LLM accounting', async () => {
+    const conversationRepo = {
+      shouldSkipInboundMessage: vi.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+    };
+    const { processor, orchestrator, llmRunRepo } = createProcessor({ conversationRepo });
+    const stale = {
+      id: 'job-1',
+      name: 'process',
+      opts: { delay: 2_000 },
+      data: conversationJob,
+    } as Job<ConversationJob>;
+    const tailJob = {
+      id: 'job-2',
+      name: 'process',
+      attemptsMade: 0,
+      opts: { delay: 2_000 },
+      data: {
+        ...conversationJob,
+        eventId: 'event-2',
+        messageId: 'message-2',
+        traceId: 'trace-2',
+      },
+    } as Job<ConversationJob>;
+
+    await processor.process({ ...stale, attemptsMade: 0 } as Job<ConversationJob>);
+    await processor.process({ ...stale, attemptsMade: 1 } as Job<ConversationJob>);
+    await processor.process({ ...stale, attemptsMade: 0, opts: {} } as Job<ConversationJob>);
+    await processor.process(tailJob);
+
+    expect(conversationRepo.shouldSkipInboundMessage).toHaveBeenCalledTimes(4);
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(orchestrator.orchestrate).toHaveBeenCalledWith(tailJob.data);
+    expect(llmRunRepo.record).toHaveBeenCalledOnce();
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'trace-2' }));
+  });
+
+  it('does not coalesce unmarked non-Slack conversation jobs', async () => {
+    const { processor, orchestrator, conversationRepo } = createProcessor();
+    const data = { ...conversationJob, rapidMessageCoalescing: undefined };
+
+    await processor.process({
+      id: 'job-dev-1',
+      name: 'process',
+      attemptsMade: 0,
+      opts: { delay: 2_000 },
+      data,
+    } as Job<ConversationJob>);
+
+    expect(conversationRepo.shouldSkipInboundMessage).not.toHaveBeenCalled();
+    expect(orchestrator.orchestrate).toHaveBeenCalledWith(data);
   });
 
   it('routes every proactive check-in through ProactiveCheckInUseCase', async () => {
@@ -170,6 +241,7 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       id: 'job-1',
       name: 'process',
       attemptsMade: 0,
+      opts: { delay: 2_000 },
       data: conversationJob,
     } as Job<ConversationJob>)).rejects.toThrow('orchestrator failed');
 

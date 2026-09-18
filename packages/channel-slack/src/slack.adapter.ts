@@ -74,10 +74,15 @@ export class SlackAdapter implements ChannelAdapterPort {
       throw new Error(`Slack sendMessage failed: ${result.error ?? 'unknown error'}`);
     }
 
+    const sentAt = new Date(Number(result.ts) * 1000);
+    if (!/^\d+\.\d+$/.test(result.ts) || Number.isNaN(sentAt.getTime())) {
+      throw new Error('Slack sendMessage returned an invalid timestamp');
+    }
+
     return {
       externalMessageId: result.ts,
       externalThreadId: result.ts,
-      sentAt: new Date(),
+      sentAt,
     };
   }
 

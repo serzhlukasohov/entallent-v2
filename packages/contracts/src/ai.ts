@@ -18,6 +18,9 @@ export const SituationIntentSchema = z.enum([
   'celebration',
   'onboarding',
   'feedback_request',
+  'reporting_explanation',
+  'data_use_explanation',
+  'pulse_capture_explanation',
 ]);
 export type SituationIntent = z.infer<typeof SituationIntentSchema>;
 
@@ -73,6 +76,13 @@ export const SituationClassificationSchema = z.object({
    * Existing topic to continue when the latest turn has no new substance.
    */
   topicAnchor: z.string().nullable().default(null),
+  /**
+   * Explicit employee-stated details in the active thread that already close a
+   * potential clarification branch. Turn-local and bounded; never inferred.
+   */
+  resolvedDetails: z.array(z.string()).transform((details) => [...new Set(
+    details.map((detail) => detail.trim()).filter(Boolean),
+  )].slice(0, 5)).optional(),
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 
@@ -200,7 +210,7 @@ export type SurveyEvidenceEvaluation = z.infer<typeof SurveyEvidenceEvaluationSc
 // ── Group Confirmation Response Interpreter ─────────────────────────────────
 
 export const ConfirmationResponseSchema = z.object({
-  verdict: z.enum(['agree', 'correct', 'unclear']),
+  verdict: z.enum(['agree', 'correct', 'exclude', 'unclear']),
   correctionNote: z.string().optional(),
 });
 export type ConfirmationResponse = z.infer<typeof ConfirmationResponseSchema>;
@@ -233,6 +243,7 @@ export type ReplyStrategy = z.infer<typeof ReplyStrategySchema>;
 
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
+  confirmationSummary: z.string().optional(),
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
   surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),

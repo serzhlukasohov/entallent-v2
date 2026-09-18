@@ -9,6 +9,9 @@ function baseInput(overrides: Partial<BuildEmployeeRowsInput> = {}): BuildEmploy
     activeRiskUserIds: [],
     assessments: [],
     evidence: [],
+    previousWindows: [],
+    previousAssessments: [],
+    previousEvidence: [],
     ...overrides,
   };
 }
@@ -96,6 +99,9 @@ describe('buildEmployeeRows', () => {
         a('risk', 'q1', 'unknown'),
       ],
       evidence: [],
+      previousWindows: [],
+      previousAssessments: [],
+      previousEvidence: [],
     });
     // AtRisk first despite 0% coverage; then HighCoverage (100%) before LowCoverage (50%)
     expect(rows.map((r) => r.userId)).toEqual(['risk', 'high', 'low']);
@@ -124,12 +130,35 @@ describe('buildEmployeeRows', () => {
       signals: [],
     });
   });
+
+  it('keeps the latest closed-window insights separate from an empty active window', () => {
+    const completedAt = new Date('2026-09-10T14:00:00Z');
+    const rows = buildEmployeeRows(baseInput({
+      previousWindows: [{ userId: 'u1', windowId: 'closed-w1', completedAt }],
+      previousAssessments: [a('u1', 'q1', 'scored', 'closed-w1')],
+      previousEvidence: [e('u1', 'q1', 'negative', 0.9, 0.8, 'historical read')],
+    }));
+
+    expect(rows[0]).toMatchObject({
+      scoredCount: 0,
+      totalQuestions: 0,
+      signals: [],
+      previousWindow: {
+        surveyWindowId: 'closed-w1',
+        completedAt: completedAt.toISOString(),
+        scoredCount: 1,
+        totalQuestions: 1,
+        coveragePct: 100,
+        signals: [expect.objectContaining({ evidenceSummary: 'historical read' })],
+      },
+    });
+  });
 });
 
-function a(userId: string, questionId: string, status: string) {
+function a(userId: string, questionId: string, status: string, windowId = 'w1') {
   return {
     userId,
-    windowId: 'w1',
+    windowId,
     questionId,
     stableKey: questionId,
     title: `Title ${questionId}`,

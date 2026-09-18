@@ -1,0 +1,18 @@
+{
+  "name": "codex-context-guardian",
+  "version": "0.1.0",
+  "description": "Stops near-full Codex sessions and persists compact semantic handoffs for clean-session continuation.",
+  "author": {
+    "name": "local"
+  },
+  "license": "MIT",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Context Guardian",
+    "shortDescription": "Automatic context pressure warning and handoff",
+    "longDescription": "Monitors Codex rollout token-count events, freezes sessions at the configured context threshold, and saves handoffs outside repositories.",
+    "developerName": "local",
+    "category": "Productivity",
+    "capabilities": ["Lifecycle hooks"]
+  }
+}

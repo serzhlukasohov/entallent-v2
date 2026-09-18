@@ -9,9 +9,29 @@ import type {
 const API_BASE = process.env.API_INTERNAL_URL ?? 'http://localhost:3000/api/v1';
 const API_KEY = process.env.ADMIN_API_KEY ?? '';
 export const TENANT_ID = process.env.TENANT_ID ?? '';
+const INTERNAL_DASHBOARD_ENABLED =
+  process.env.INTERNAL_DASHBOARD_ENABLED === 'true' || process.env.INTERNAL_DASHBOARD_ENABLED === '1';
+
+export interface UserResetResult {
+  conversations: number;
+  messages: number;
+  memoryItems: number;
+  userGoals: number;
+  scheduledActions: number;
+  riskSignals: number;
+  surveyWindows: number;
+  surveyAssessments: number;
+  surveyEvidence: number;
+  surveyGroupStates: number;
+  pulseBacklog: number;
+  userStyleProfiles: number;
+  llmRuns: number;
+}
 
 /** Server-side fetch to an admin API endpoint; returns null on any failure. */
 export async function fetchApi<T>(path: string, revalidate = 30): Promise<T | null> {
+  if (!INTERNAL_DASHBOARD_ENABLED) return null;
+
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       headers: { 'x-api-key': API_KEY },
@@ -22,6 +42,19 @@ export async function fetchApi<T>(path: string, revalidate = 30): Promise<T | nu
   } catch {
     return null;
   }
+}
+
+
+export async function postApi<T>(path: string, body: unknown): Promise<T> {
+  if (!INTERNAL_DASHBOARD_ENABLED) throw new Error('Internal dashboard is disabled');
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return (await res.json()) as T;
 }
 
 export function fetchAdminQueues(revalidate = 30): Promise<AdminQueuesResponse | null> {
@@ -46,6 +79,10 @@ export function fetchAdminUserInsights(
     `/admin/users/${encodeURIComponent(userId)}/insights`,
     revalidate,
   );
+}
+
+export function postAdminUserReset(userId: string): Promise<UserResetResult> {
+  return postApi<UserResetResult>(withTenant(`/admin/users/${encodeURIComponent(userId)}/reset`), {});
 }
 
 export function fetchAdminManagerTrends(

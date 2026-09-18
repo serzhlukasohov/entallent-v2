@@ -19,6 +19,7 @@ import {
 } from '@entalent/database';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
+import { assertInternalDashboardEnabled } from './internal-dashboard-gate';
 import { attachTeamDisplayNames } from './team-users';
 
 const GROUP_ORDER = ['autonomy', 'belonging', 'engagement', 'growth', 'purpose'];
@@ -37,6 +38,8 @@ export class PulseOverviewController {
 
   @Get()
   async getOverview(@Query('tenantId') tenantId?: string): Promise<PulseOverviewResponse> {
+    assertInternalDashboardEnabled(this.config);
+
     const resolvedTenantId = tenantId ?? this.config.get('DEFAULT_TENANT_ID', { infer: true });
     if (!resolvedTenantId) {
       throw new BadRequestException('tenantId query param is required');

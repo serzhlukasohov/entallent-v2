@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "team_memberships_one_active_member_team_idx" ON "team_memberships" USING btree ("user_id") WHERE "team_memberships"."role" = 'member' AND "team_memberships"."left_at" IS NULL;

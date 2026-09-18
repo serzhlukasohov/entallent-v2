@@ -11,7 +11,7 @@ export function DevControls({ userId, tenantId }: { userId: string; tenantId: st
     setStatus('loading');
     setMsg('');
     try {
-      const result = await resetUser(userId, deep);
+      const result = await resetUser(userId, tenantId, deep);
       setMsg(`Reset: backlog ${result.pulseBacklog}, evidence ${result.surveyEvidence}, memory ${result.memoryItems}${deep ? `, messages ${result.messages}` : ''}`);
       setStatus('done');
     } catch (e) {

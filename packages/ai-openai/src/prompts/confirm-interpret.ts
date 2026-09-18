@@ -8,13 +8,14 @@ The mentor paraphrased its understanding of one topic and asked "did I get that 
 Read the employee's latest reply and decide:
 - "agree": they confirm it is accurate (even loosely — "yes", "more or less", "correct", "yeah that's right").
 - "correct": they push back, disagree, or add a correction that changes the picture.
+- "exclude": they ask not to include, use, report, share, or keep this summary.
 - "unclear": they neither confirm nor correct (changed subject, asked something, ambiguous).
 
 If "correct", put a one-sentence description of what they corrected in correctionNote.
 Judge by meaning, in any language. Do not require specific keywords.
 
 Return JSON only:
-{ "verdict": "agree" | "correct" | "unclear", "correctionNote": "..." }${INJECTION_GUARD}`;
+{ "verdict": "agree" | "correct" | "exclude" | "unclear", "correctionNote": "..." }${INJECTION_GUARD}`;
 }
 
 export function buildConfirmInterpretUserPrompt(

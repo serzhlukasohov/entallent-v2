@@ -18,6 +18,15 @@ export function isEngagementWindowEligible(
   return current >= start && current <= end;
 }
 
+export function isWithinEngagementWindow(
+  periodEnd: Date,
+  engagementUnlockDays: number = DEFAULT_PULSE_CONFIG.engagementUnlockDays ?? ENGAGEMENT_WINDOW_DAYS,
+): boolean {
+  const now = Date.now();
+  const engagementUnlockAt = periodEnd.getTime() - engagementUnlockDays * 86_400_000;
+  return now >= engagementUnlockAt && now < periodEnd.getTime();
+}
+
 export class PulseBacklogService {
   constructor(
     private readonly backlogRepo: PulseBacklogRepositoryPort,
@@ -73,9 +82,17 @@ export class PulseBacklogService {
       coverageSnapshotAt,
     );
 
-    await this.backlogRepo.resolveIgnoredEntries(userId, window.id, config.ignoreWindowHours);
+    const resolvedIgnores = await this.backlogRepo.resolveIgnoredEntries(userId, window.id, config.ignoreWindowHours);
+    const skippedGroups = new Set(
+      resolvedIgnores
+        .map((ignore) => allQuestions.find((question) => question.id === ignore.questionId)?.questionGroup)
+        .filter((group): group is string => Boolean(group)),
+    );
+    for (const group of skippedGroups) {
+      await this.backlogRepo.deprioritizeQuestionGroup(userId, window.id, group);
+    }
 
-    const isEndOfQuarter = isEngagementWindowEligible(window);
+    const isEndOfQuarter = isWithinEngagementWindow(window.periodEnd, config.engagementUnlockDays);
 
     if (isEndOfQuarter && !questionGroup) {
       const engagementQuestions = allQuestions
@@ -126,6 +143,10 @@ export class PulseBacklogService {
     evidenceCount: number,
   ): Promise<void> {
     await this.backlogRepo.markDone(userId, windowId, questionId, evidenceCount);
+    const questions = await this.surveyRepo.findQuestionsForWindow(windowId);
+    const question = questions.find((q) => q.id === questionId);
+    if (!question?.questionGroup) return;
+    await this.backlogRepo.prioritizeQuestionGroup(userId, windowId, question.questionGroup);
   }
 }
 

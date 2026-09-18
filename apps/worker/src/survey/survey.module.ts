@@ -1,12 +1,18 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { SurveyEvidenceExtractionUseCase, GroupReportUseCase, PulseBacklogService } from '@entalent/application';
+import {
+  GroupReportUseCase,
+  OpenSurveyReportingCycleUseCase,
+  PulseBacklogService,
+  SurveyEvidenceExtractionUseCase,
+} from '@entalent/application';
 import { SurveyEvidenceProcessor } from './survey-evidence.processor';
 import { GroupReportProcessor } from './group-report.processor';
 import { SurveyRepository } from './repositories/survey.repository';
 import { GroupStateRepository } from './repositories/group-state.repository';
 import { TeamRepository } from './repositories/team.repository';
 import { PulseBacklogRepository } from './repositories/pulse-backlog.repository';
+import { GroupReportSnapshotRepository } from './repositories/group-report-snapshot.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { AiService } from '../conversation/ai.service';
@@ -29,6 +35,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     TeamRepository,
     SurveyRepository,
     PulseBacklogRepository,
+    GroupReportSnapshotRepository,
     {
       provide: PulseBacklogService,
       useFactory: (backlogRepo: PulseBacklogRepository, surveyRepo: SurveyRepository) =>
@@ -51,9 +58,20 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         new GroupReportUseCase(surveyRepo, ai),
       inject: [SurveyRepository, AiService],
     },
+    {
+      provide: OpenSurveyReportingCycleUseCase,
+      useFactory: (surveyRepo: SurveyRepository) =>
+        new OpenSurveyReportingCycleUseCase(surveyRepo),
+      inject: [SurveyRepository],
+    },
     SurveyEvidenceProcessor,
     GroupReportProcessor,
   ],
-  exports: [SurveyRepository, PulseBacklogService],
+  exports: [
+    SurveyRepository,
+    GroupStateRepository,
+    OpenSurveyReportingCycleUseCase,
+    PulseBacklogService,
+  ],
 })
 export class SurveyModule {}
