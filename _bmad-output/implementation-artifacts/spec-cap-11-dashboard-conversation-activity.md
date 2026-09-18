@@ -80,8 +80,8 @@ context:
 **Results:**
 - RED: the focused component regression failed `2/3` cases against the old activity/no-activity copy.
 - GREEN: component regression `4/4`, API aggregate regression `9/9`, dashboard typecheck/lint/build, `git diff --check`, and pre-commit harness receipt `runs/harness/receipt-1789739490322-dba03389.json` passed.
-- PRODUCTION PARTIAL: commit `96a6eb8`, dashboard deployment `abfd6333-528e-4362-a502-c8e8b9d48df4` `SUCCESS`, preflight `runs/harness/receipt-1789739936361-066a2bb1.json`, Slack inbound `1789740093.694209`, and single reply `1789740104.821979`; API advanced `lastActiveAt` to `2026-09-18T14:01:33.694Z` and exposed no raw inbound text.
-- REMAINING: no production employee currently has both zero current evidence and `previousWindow=null`, so the exact activity-without-insights rendering branch cannot be exercised without a separately authorized destructive Reset.
+- PRODUCTION: scoped Reset for `Serhii Lukashov` removed prior conversation/Pulse state while preserving the active window; preflight `runs/harness/receipt-1789740580221-03ffbf6c.json` passed; Slack inbound `1789740591.309129` received exactly one reply `1789740602.219129`.
+- FINAL READ-BACK: API reported `lastActiveAt=2026-09-18T14:09:51.309Z`, zero current evidence/signals, `previousWindow=null`, and no raw inbound exposure; the expanded production dashboard row rendered `Conversation activity recorded; no pulse insights yet.` with no transcript content.
 
 ## Suggested Review Order
 
