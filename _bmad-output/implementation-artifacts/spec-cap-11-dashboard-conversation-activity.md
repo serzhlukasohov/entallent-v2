@@ -80,6 +80,8 @@ context:
 **Results:**
 - RED: the focused component regression failed `2/3` cases against the old activity/no-activity copy.
 - GREEN: component regression `4/4`, API aggregate regression `9/9`, dashboard typecheck/lint/build, `git diff --check`, and pre-commit harness receipt `runs/harness/receipt-1789739490322-dba03389.json` passed.
+- PRODUCTION PARTIAL: commit `96a6eb8`, dashboard deployment `abfd6333-528e-4362-a502-c8e8b9d48df4` `SUCCESS`, preflight `runs/harness/receipt-1789739936361-066a2bb1.json`, Slack inbound `1789740093.694209`, and single reply `1789740104.821979`; API advanced `lastActiveAt` to `2026-09-18T14:01:33.694Z` and exposed no raw inbound text.
+- REMAINING: no production employee currently has both zero current evidence and `previousWindow=null`, so the exact activity-without-insights rendering branch cannot be exercised without a separately authorized destructive Reset.
 
 ## Suggested Review Order
 
