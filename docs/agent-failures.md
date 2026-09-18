@@ -16,6 +16,15 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-09-18: local dashboard production verifier lacked the admin key
+
+- Symptom: `pnpm dashboard:prod:verify` stopped before network access with `ADMIN_API_KEY is required` because the local `.env` does not contain the production dashboard credential.
+- Expected: Production dashboard verification should use the target service environment without printing or copying secrets into the local shell.
+- Root cause layer: environment
+- Harness fix: When the local key is absent, run the existing read-only verifier through `railway run --service dashboard --environment production --`.
+- Regression check: The Railway-backed rerun passes API health, manager team/trends, and all dashboard routes.
+- Status: fixed
+
 ## 2026-09-08: production survey cycle open script rejects Date values
 
 - Symptom: `railway run --service api -- ... pnpm exec tsx scripts/open-survey-reporting-cycle.ts` failed with `The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date`.
