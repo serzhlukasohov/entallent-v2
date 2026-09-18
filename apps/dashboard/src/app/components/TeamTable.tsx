@@ -25,6 +25,12 @@ const STATUS_ORDER: Record<string, number> = {
   unknown: 3,
 };
 
+const EMPTY_STATE_LABEL = {
+  previousWindow: 'No insights in the current window.',
+  activity: 'Conversation activity recorded; no pulse insights yet.',
+  noActivity: 'No pulse insights or recorded conversation activity.',
+} as const;
+
 function SignalDot({ signal }: { signal: AdminManagerTeamQuestionSignal }) {
   const color = signal.polarity ? POLARITY_COLOR[signal.polarity] : 'var(--border)';
   const hasData = signal.assessmentStatus !== 'unknown';
@@ -93,7 +99,7 @@ function EvidenceCard({ signal }: { signal: AdminManagerTeamQuestionSignal }) {
   );
 }
 
-function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
+export function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
   const withEvidence = employee.signals
     .filter((s) => s.evidenceSummary)
     .sort(
@@ -102,6 +108,11 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
 
   const empty = employee.signals.filter((s) => !s.evidenceSummary);
   const previousWithEvidence = employee.previousWindow?.signals.filter((s) => s.evidenceSummary) ?? [];
+  const emptyStateLabel = employee.previousWindow
+    ? EMPTY_STATE_LABEL.previousWindow
+    : employee.lastActiveAt
+      ? EMPTY_STATE_LABEL.activity
+      : EMPTY_STATE_LABEL.noActivity;
 
   return (
     <div style={{ padding: '0 20px 20px 20px' }}>
@@ -118,9 +129,7 @@ function EmployeeDetail({ employee }: { employee: AdminManagerTeamEmployee }) {
           ))}
         </div>
       ) : (
-        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-          {employee.previousWindow ? 'No insights in the current window.' : 'No insights — no conversations yet.'}
-        </p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{emptyStateLabel}</p>
       )}
       {empty.length > 0 && (
         <div style={{ marginTop: 12 }}>

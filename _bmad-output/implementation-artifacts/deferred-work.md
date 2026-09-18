@@ -181,3 +181,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-cap-9-rapid-message-coalescing.md`
   summary: Make Slack event idempotency, inbound persistence, and conversation-job admission atomic or durably recoverable.
   evidence: The pre-existing flow records the event before message persistence and BullMQ admission; a queue failure can orphan a durable inbound, and CAP-9 stale admission can then suppress an older queued turn behind that orphan.
+
+## Deferred from: code review of spec-cap-11-dashboard-conversation-activity (2026-09-18)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-cap-11-dashboard-conversation-activity.md`
+  summary: Align manager-team activity semantics for synthetic `__init__` inbound rows.
+  evidence: `lastActiveAt` currently includes every non-deleted inbound while the trends query excludes `text = '__init__'`; changing the read-model query is a pre-existing API semantic decision outside this UI-only story.
