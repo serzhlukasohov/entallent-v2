@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { eq, and, desc, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import { eq, and, desc, gte, isNotNull, isNull, lt, lte, ne, sql } from 'drizzle-orm';
 import { conversations, messages, users } from '@entalent/database';
 import type {
   ConversationRepositoryPort,
@@ -70,11 +70,12 @@ export class ConversationRepository implements ConversationRepositoryPort {
   }
 
   async findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
+    const messageOrderKey = sql<string>`coalesce(${messages.externalMessageId}, ${messages.id}::text)`;
     const rows = await this.db.client
       .select()
       .from(messages)
       .where(eq(messages.conversationId, conversationId))
-      .orderBy(desc(messages.occurredAt))
+      .orderBy(desc(messages.occurredAt), desc(messageOrderKey), desc(messages.id))
       .limit(limit);
 
     return rows
@@ -92,6 +93,48 @@ export class ConversationRepository implements ConversationRepositoryPort {
         createdAt: m.occurredAt,
         metadata: (m.metadata as Record<string, unknown>) ?? undefined,
       }));
+  }
+
+  async shouldSkipInboundMessage(params: {
+    messageId: string;
+    tenantId: string;
+    userId: string;
+    conversationId: string;
+    windowMs: number;
+  }): Promise<boolean> {
+    const selection = {
+      id: messages.id,
+      occurredAt: messages.occurredAt,
+      receivedAt: messages.receivedAt,
+      externalMessageId: messages.externalMessageId,
+    };
+    const scope = and(
+      eq(messages.tenantId, params.tenantId),
+      eq(messages.userId, params.userId),
+      eq(messages.conversationId, params.conversationId),
+      eq(messages.direction, 'inbound'),
+      isNull(messages.deletedAt),
+    );
+    const [anchor] = await this.db.client
+      .select(selection)
+      .from(messages)
+      .where(and(scope, eq(messages.id, params.messageId)))
+      .limit(1);
+    if (!anchor) return true;
+
+    const windowEnd = new Date(anchor.occurredAt.getTime() + params.windowMs);
+    const candidates = await this.db.client
+      .select(selection)
+      .from(messages)
+      .where(and(
+        scope,
+        ne(messages.id, params.messageId),
+        gte(messages.occurredAt, anchor.occurredAt),
+        lte(messages.occurredAt, windowEnd),
+      ));
+
+    return candidates.some((candidate) =>
+      isNewerInboundWithinWindow(anchor, candidate, params.windowMs));
   }
 
   async saveMessage(params: SaveMessageParams): Promise<MessageRecord> {
@@ -244,6 +287,48 @@ export class ConversationRepository implements ConversationRepositoryPort {
 
     throw new Error(`Delivery update scope mismatch: ${messageId}`);
   }
+}
+
+type InboundOrderRecord = {
+  id: string;
+  occurredAt: Date;
+  receivedAt?: Date | null;
+  externalMessageId: string | null | undefined;
+};
+
+export function isNewerInboundWithinWindow(
+  anchor: InboundOrderRecord,
+  candidate: InboundOrderRecord,
+  windowMs: number,
+): boolean {
+  if (
+    anchor.receivedAt
+    && candidate.receivedAt
+    && anchor.receivedAt.getTime() - candidate.receivedAt.getTime() >= windowMs
+  ) return false;
+
+  const anchorSlackMicros = parseSlackTimestampMicros(anchor.externalMessageId);
+  const candidateSlackMicros = parseSlackTimestampMicros(candidate.externalMessageId);
+  if (anchorSlackMicros !== undefined && candidateSlackMicros !== undefined) {
+    const elapsedMicros = candidateSlackMicros - anchorSlackMicros;
+    if (elapsedMicros < 0n || elapsedMicros >= BigInt(windowMs) * 1_000n) return false;
+    if (elapsedMicros > 0n) return true;
+  } else {
+    const elapsedMs = candidate.occurredAt.getTime() - anchor.occurredAt.getTime();
+    if (elapsedMs < 0 || elapsedMs >= windowMs) return false;
+    if (elapsedMs > 0) return true;
+  }
+
+  const anchorKey = anchor.externalMessageId ?? anchor.id;
+  const candidateKey = candidate.externalMessageId ?? candidate.id;
+  if (candidateKey !== anchorKey) return candidateKey > anchorKey;
+  return candidate.id > anchor.id;
+}
+
+function parseSlackTimestampMicros(value: string | null | undefined): bigint | undefined {
+  const match = /^(\d+)\.(\d{1,6})$/.exec(value ?? '');
+  if (!match) return undefined;
+  return BigInt(match[1]!) * 1_000_000n + BigInt(match[2]!.padEnd(6, '0'));
 }
 
 export function toConversationActiveTopic(

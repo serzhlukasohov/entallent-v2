@@ -8,6 +8,7 @@ export type ConversationJob = {
   externalWorkspaceId: string;
   externalConversationId: string;
   traceId: string;
+  rapidMessageCoalescing?: true;
 };
 
 export type MessageSendJob = {

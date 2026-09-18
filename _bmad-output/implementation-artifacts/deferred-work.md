@@ -177,3 +177,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-reconcile-pulse-backlog-assessment-coverage.md`
   summary: Reconcile the opposite drift where a pending qualitative backlog row already has a completed assessment.
   evidence: Review confirmed assessment persistence and backlog closure are separate awaits, so a pre-existing or interrupted write can leave `pending + covered`; this story repairs the observed `done + insufficient_evidence` state, while symmetric healing needs separate attribution and active-probe policy decisions.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-cap-9-rapid-message-coalescing.md`
+  summary: Make Slack event idempotency, inbound persistence, and conversation-job admission atomic or durably recoverable.
+  evidence: The pre-existing flow records the event before message persistence and BullMQ admission; a queue failure can orphan a durable inbound, and CAP-9 stale admission can then suppress an older queued turn behind that orphan.

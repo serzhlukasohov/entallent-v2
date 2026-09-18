@@ -780,3 +780,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Recurrence: The first post-review model replay hit sandbox DNS `ENOTFOUND`; the explicitly approved Azure OpenAI rerun passed, so no product change was made for the transport failure.
 - Recurrence: Pre-push model replays returned `resolvedDetails=[]` for the explicit whole-flow statement, varied its dialogue act, and once evicted the newer prior detail when four current details filled the cap, correctly blocking the push. The shared orchestrator now falls back to typed `latestUserSubstance` only for same-session/same-topic substantive turns and retains the most recent prior details in remaining cap slots; focused application tests pass 187/187 without phrase matching or another model call.
 - Status: fixed
+
+## 2026-09-18: CAP-9 review tests initially encoded two invalid assumptions
+
+- Symptom: The hardened API test expected a hand-converted Slack timestamp two hours late, and worker typecheck rejected a one-argument `orderBy` mock after the query began asserting three sort keys.
+- Expected: Review coverage should preserve the real Unix event time and model the called variadic query-builder method.
+- Root cause layer: verification
+- Harness fix: Derive the expected `Date` from Unix milliseconds and make the `orderBy` mock variadic.
+- Regression check: Focused API/worker tests plus API/worker typecheck pass.
+- Status: fixed

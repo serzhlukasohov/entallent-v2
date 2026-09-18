@@ -8,6 +8,8 @@ import { EventIdempotencyService } from './event-idempotency.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import type { ConversationJob } from '../queue/queue.types';
 
+const CONVERSATION_DELAY_MS = 2_000;
+
 /**
  * Shared pipeline consumed by both the HTTP webhook controller and the
  * Socket Mode service. Handles idempotency, user/conversation bootstrap,
@@ -74,17 +76,22 @@ export class SlackIngestService {
         traceId,
       });
 
-      await this.conversationQueue.add('process', {
-        requestId,
-        eventId: eventId ?? String(rawEvent?.['ts'] ?? requestId),
-        messageId,
-        conversationId,
-        userId,
-        tenantId: workspaceIdentity.tenantId,
-        externalWorkspaceId: payload.externalWorkspaceId,
-        externalConversationId: payload.externalConversationId,
-        traceId,
-      });
+      await this.conversationQueue.add(
+        'process',
+        {
+          requestId,
+          eventId: eventId ?? String(rawEvent?.['ts'] ?? requestId),
+          messageId,
+          conversationId,
+          userId,
+          tenantId: workspaceIdentity.tenantId,
+          externalWorkspaceId: payload.externalWorkspaceId,
+          externalConversationId: payload.externalConversationId,
+          traceId,
+          rapidMessageCoalescing: true,
+        },
+        { delay: CONVERSATION_DELAY_MS },
+      );
 
       this.logger.log(`Enqueued conversation job traceId=${traceId} messageId=${messageId}`);
     }
