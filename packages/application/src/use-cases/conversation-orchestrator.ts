@@ -1,8 +1,10 @@
-import type {
-  SituationClassification,
-  RiskDetection,
-  ReplyStrategy,
-  ConversationMode,
+import {
+  CLASSIFIER_TRANSCRIPT_TURN_LIMIT,
+  PulseCaptureSourceMessageIdSchema,
+  type SituationClassification,
+  type RiskDetection,
+  type ReplyStrategy,
+  type ConversationMode,
 } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
@@ -14,6 +16,7 @@ import type { StyleProfileRepositoryPort } from '../ports/style-profile.reposito
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
 import type {
   ConversationActiveTopicRecord,
+  MessageRecord,
   StyleProfileRecord,
   UserGoalRecord,
 } from '../types/records';
@@ -176,6 +179,7 @@ export class ConversationOrchestrator {
     if (explicitPulseCaptureRequest && !hasSafetyIntent) {
       classification = {
         ...classification,
+        pulseCaptureScope: { type: 'conversation' },
         primaryIntent: 'pulse_capture_explanation',
         secondaryIntents: classification.secondaryIntents.filter(
           (intent) => intent !== 'pulse_capture_explanation'
@@ -428,8 +432,8 @@ export class ConversationOrchestrator {
             traceId: `reminder-${action.id}`,
             dueAt,
           });
-          reminderConfirmation = { intent: reminder.intent, dueAt: dueAt.toISOString() };
         }
+        reminderConfirmation = { intent: reminder.intent, dueAt: dueAt.toISOString() };
       }
     }
 
@@ -528,20 +532,54 @@ export class ConversationOrchestrator {
       && !risk.surveyMustBeBlocked
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
-    if (canAnswerPulseCaptureExplanation && !this.surveyRepo) {
+    const pulseCaptureResolution = canAnswerPulseCaptureExplanation
+      ? resolvePulseCaptureScope({
+          classification,
+          messages: dbMessages,
+          currentMessageIndex: inboundMessageIndex,
+          conversationId,
+          tenantId,
+          userId,
+        })
+      : { type: 'unresolved' as const };
+    if (
+      canAnswerPulseCaptureExplanation
+      && pulseCaptureResolution.type !== 'unresolved'
+      && !this.surveyRepo
+    ) {
       throw new Error('pulse_capture_repository_unavailable');
     }
     const pulseCapture = canAnswerPulseCaptureExplanation
+      && pulseCaptureResolution.type !== 'unresolved'
       ? await this.surveyRepo!.findPulseCaptureForConversation({
           tenantId,
           userId,
           conversationId,
           beforeOccurredAt: inboundMessage.occurredAt,
+          ...(pulseCaptureResolution.type === 'exact'
+            ? { sourceMessageId: pulseCaptureResolution.sourceMessageId }
+            : {}),
         })
       : [];
+    const pulseReminderAcknowledgement = reminderConfirmation
+      ? languagePolicy.responseLanguage.toLowerCase().startsWith('ru')
+        ? ' Хорошо, я напомню об этом.'
+        : languagePolicy.responseLanguage.toLowerCase().startsWith('uk')
+          ? ' Добре, я нагадаю про це.'
+          : " I'll remind you as requested."
+      : '';
     let generated = canAnswerPulseCaptureExplanation
       ? {
-          text: getPulseCaptureExplanationText(pulseCapture, languagePolicy.responseLanguage, conciseSession),
+          text: `${getPulseCaptureExplanationText(
+            pulseCapture,
+            languagePolicy.responseLanguage,
+            conciseSession,
+            pulseCaptureResolution.type === 'exact'
+              ? 'exact'
+              : pulseCaptureResolution.type === 'unresolved'
+                ? 'unresolved'
+                : 'conversation',
+          )}${pulseReminderAcknowledgement}`,
           confidence: 1,
           containsSurveyProbe: false,
         }
@@ -724,6 +762,9 @@ export class ConversationOrchestrator {
                 confirmationRequest?.evidence.flatMap((item) => item.sourceMessageIds ?? []) ?? [],
               )],
             }
+          : {}),
+        ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
+          ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
           : {}),
         ...(deidentificationDecision ? { deidentificationDecision } : {}),
       },
@@ -1004,6 +1045,87 @@ export class ConversationOrchestrator {
     const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
     return result?.question ?? null;
   }
+}
+
+type PulseCaptureResolution =
+  | { type: 'conversation' }
+  | { type: 'exact'; sourceMessageId: string }
+  | { type: 'unresolved' };
+
+function resolvePulseCaptureScope(input: {
+  classification: SituationClassification;
+  messages: MessageRecord[];
+  currentMessageIndex: number;
+  conversationId: string;
+  tenantId: string;
+  userId: string;
+}): PulseCaptureResolution {
+  const scope = input.classification.pulseCaptureScope;
+  if (scope?.type === 'conversation') return { type: 'conversation' };
+
+  const currentMessage = input.messages[input.currentMessageIndex];
+  if (!currentMessage) return { type: 'unresolved' };
+
+  const isOwnedPriorInbound = (message: MessageRecord | undefined, index: number): message is MessageRecord =>
+    message !== undefined
+    && index >= 0
+    && index < input.currentMessageIndex
+    && message.direction === 'inbound'
+    && message.conversationId === input.conversationId
+    && message.tenantId === input.tenantId
+    && message.userId === input.userId;
+
+  if (scope?.type === 'message') {
+    const firstVisibleIndex = Math.max(
+      0,
+      input.currentMessageIndex + 1 - CLASSIFIER_TRANSCRIPT_TURN_LIMIT,
+    );
+    if (scope.messageIndex < firstVisibleIndex) return { type: 'unresolved' };
+    const target = input.messages[scope.messageIndex];
+    if (!isOwnedPriorInbound(target, scope.messageIndex)) return { type: 'unresolved' };
+    const parsedTargetId = PulseCaptureSourceMessageIdSchema.safeParse(target.id);
+    return parsedTargetId.success
+      ? { type: 'exact', sourceMessageId: parsedTargetId.data }
+      : { type: 'unresolved' };
+  }
+
+  if (scope?.type !== 'previous_exact') return { type: 'unresolved' };
+
+  const precedingMessage = input.messages[input.currentMessageIndex - 1];
+  if (
+    !precedingMessage
+    || precedingMessage.direction !== 'outbound'
+    || precedingMessage.conversationId !== input.conversationId
+    || precedingMessage.tenantId !== input.tenantId
+    || precedingMessage.userId !== input.userId
+    || !(precedingMessage.sentAt instanceof Date)
+    || precedingMessage.sentAt.getTime() >= currentMessage.occurredAt.getTime()
+  ) {
+    return { type: 'unresolved' };
+  }
+  if (isSessionStart(precedingMessage.sentAt, currentMessage.occurredAt)) {
+    return { type: 'unresolved' };
+  }
+  const receipt = precedingMessage.metadata?.['pulseCaptureSourceMessageId'];
+  if (typeof receipt !== 'string' || !receipt.trim()) return { type: 'unresolved' };
+
+  const parsedReceipt = PulseCaptureSourceMessageIdSchema.safeParse(receipt.trim());
+  if (!parsedReceipt.success) return { type: 'unresolved' };
+
+  const sourceMessageIndex = input.messages
+    .slice(0, input.currentMessageIndex)
+    .findIndex((message) => message.id === parsedReceipt.data);
+  const sourceMessage = sourceMessageIndex >= 0
+    ? input.messages[sourceMessageIndex]
+    : undefined;
+  if (!isOwnedPriorInbound(sourceMessage, sourceMessageIndex)) {
+    return { type: 'unresolved' };
+  }
+  if (precedingMessage.sentAt.getTime() <= sourceMessage.occurredAt.getTime()) {
+    return { type: 'unresolved' };
+  }
+
+  return { type: 'exact', sourceMessageId: parsedReceipt.data };
 }
 
 const ACTIVE_TOPIC_SUMMARY_MAX_LENGTH = 500;

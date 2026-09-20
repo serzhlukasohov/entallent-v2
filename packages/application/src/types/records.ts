@@ -46,6 +46,7 @@ export interface MessageRecord {
   externalThreadId?: string;
   occurredAt: Date;
   createdAt: Date;
+  sentAt?: Date;
   metadata?: MessageMetadata & Record<string, unknown>;
 }
 

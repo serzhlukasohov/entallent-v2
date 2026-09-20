@@ -170,6 +170,7 @@ describe('ConversationRepository', () => {
       externalMessageId,
       externalThreadId: null,
       occurredAt,
+      sentAt: id === 'message-b' ? new Date('2026-09-11T00:16:30.000Z') : null,
       metadata: {},
     });
     const db = createDbMock([
@@ -182,12 +183,16 @@ describe('ConversationRepository', () => {
     const result = await repository.findRecentMessages('conversation-1', 10);
 
     expect(result.map(({ id }) => id)).toEqual(['message-a', 'message-c', 'message-b']);
+    expect(result.at(-1)?.sentAt).toEqual(new Date('2026-09-11T00:16:30.000Z'));
     expect(compileSql(db.calls.orderBy.mock.calls[0]?.[0]).sql)
       .toBe('"messages"."occurred_at" desc');
     expect(compileSql(db.calls.orderBy.mock.calls[0]?.[1]).sql)
       .toContain('coalesce("messages"."external_message_id", "messages"."id"::text) desc');
     expect(compileSql(db.calls.orderBy.mock.calls[0]?.[2]).sql)
       .toBe('"messages"."id" desc');
+    const whereQuery = compileSql(db.calls.where.mock.calls[0]?.[0]);
+    expect(whereQuery.sql).toContain('"messages"."conversation_id"');
+    expect(whereQuery.sql).toContain('"messages"."deleted_at" is null');
   });
 
   it('loads only an active outbound message in the queued tenant and conversation', async () => {

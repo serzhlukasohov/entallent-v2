@@ -441,6 +441,602 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.surveyAllowed).toBe(false);
   });
 
+  it('preserves a typed exact-message CAP-8 scope from the classifier', async () => {
+    const content = 'What did you capture from my onboarding message?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee names an earlier message.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'message', messageIndex: 0 },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [
+        { role: 'user', content: 'The onboarding is great.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+        { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      { userName: 'Annna' },
+    );
+
+    expect(result.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 0 });
+  });
+
+  it('keeps a typed CAP-8 intent with a missing scope fail-closed as unresolved', async () => {
+    const content = 'What did you capture from my onboarding message?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: false,
+            reasoningSummary: 'The model omitted the required CAP-8 scope.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'unresolved' });
+  });
+
+  it('normalizes an explicit correction before CAP-8 intent gating', async () => {
+    const content = 'No, I meant the onboarding message.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: false,
+            reasoningSummary: 'The model mislabeled the correction as closing.',
+            reminderRequest: null,
+            dialogueAct: 'closing',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'message', messageIndex: 0 },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [
+        { role: 'user', content: 'The onboarding was great.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+        { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      { userName: 'Annna' },
+    );
+
+    expect(result.dialogueAct).toBe('correction');
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 0 });
+  });
+
+  it.each([
+    'Could you please help me understand what you captured from my onboarding message?',
+    'Please help me understand what you captured from my onboarding message?',
+    'Помоги мне понять, что ты сохранил из моего сообщения об онбординге?',
+    'Допоможи мені зрозуміти, що ти зберіг із мого повідомлення про онбординг?',
+  ])('does not treat a localized help-understand prefix as a second action: %s', async (content) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'Typed CAP-8 request.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'message', messageIndex: 0 },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [
+        { role: 'user', content: 'The onboarding was great.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+        { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 0 });
+  });
+
+  it('preserves a typed CAP-8 reminder outside the local action-word matcher', async () => {
+    const content = 'Please help me understand what you captured from onboarding, and ping me tomorrow about the report.';
+    const reminderRequest = { intent: 'the report', dueAt: '2026-09-04T09:00:00.000Z' };
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'CAP-8 plus a reminder.',
+            reminderRequest,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'message', messageIndex: 0 },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [
+        { role: 'user', content: 'The onboarding was great.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+        { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 0 });
+    expect(result.surveyAllowed).toBe(false);
+    expect(result.reminderRequest).toEqual(reminderRequest);
+  });
+
+  it.each([
+    [
+      'drops a hallucinated reminder from a pure CAP-8 request',
+      'Please help me understand what you captured from onboarding.',
+      'request',
+      { intent: 'hallucinated reminder', dueAt: '2026-09-04T09:00:00.000Z' },
+      true,
+      null,
+    ],
+    [
+      'keeps an explicit reminder despite a new-substance dialogue act',
+      'Please help me understand what you captured from onboarding, and ping me tomorrow about the report.',
+      'new_substance',
+      { intent: 'the report', dueAt: '2026-09-04T09:00:00.000Z' },
+      true,
+      { intent: 'the report', dueAt: '2026-09-04T09:00:00.000Z' },
+    ],
+    [
+      'demotes typed CAP-8 when a non-reminder action would be dropped',
+      'Please help me understand what you captured from onboarding, and draft a reply.',
+      'request',
+      null,
+      false,
+      null,
+    ],
+    [
+      'keeps a typed exact target quoted with guillemets',
+      'What pulse information did you save from «The onboarding was great»?',
+      'request',
+      null,
+      true,
+      null,
+    ],
+  ] as const)('%s', async (_label, content, dialogueAct, reminderRequest, keepsPulseIntent, expectedReminder) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'Typed CAP-8 classification.',
+            reminderRequest,
+            dialogueAct,
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'message', messageIndex: 0 },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [
+        { role: 'user', content: 'The onboarding was great.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+        { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent === 'pulse_capture_explanation').toBe(keepsPulseIntent);
+    expect(result.reminderRequest).toEqual(expectedReminder);
+  });
+
+  it('preserves a localized real reminder following a help-understand CAP-8 phrase', async () => {
+    const content = 'Помоги мне понять, что ты сохранил из онбординга, и напомни мне завтра отправить отчёт.';
+    const reminderRequest = { intent: 'отправить отчёт', dueAt: '2026-09-04T09:00:00.000Z' };
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'CAP-8 plus a localized reminder.',
+            reminderRequest,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'message', messageIndex: 0 },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [
+        { role: 'user', content: 'Онбординг был отличным.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+        { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 0 });
+    expect(result.surveyAllowed).toBe(false);
+    expect(result.reminderRequest).toEqual(reminderRequest);
+  });
+
+  it('keeps previous-exact scope on a typed CAP-8 correction', async () => {
+    const content = 'No, I mean that same exact message.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee corrects the scope to the prior exact target.',
+            reminderRequest: null,
+            dialogueAct: 'correction',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'previous_exact' },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'previous_exact' });
+  });
+
+  it('forces conversation scope for the deterministic conversation-wide matcher on corrections', async () => {
+    const content = 'What exact pulse information did you capture from this conversation?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: false,
+            reasoningSummary: 'The employee requests conversation-wide capture.',
+            reminderRequest: null,
+            dialogueAct: 'correction',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'previous_exact' },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.pulseCaptureScope).toEqual({ type: 'conversation' });
+  });
+
+  it('labels the bounded transcript with stable absolute turn indices', async () => {
+    const longTurns = Array.from({ length: 17 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+      content: `turn-${index}`,
+      timestamp: new Date(1_780_000_000_000 + index),
+    }));
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'casual_conversation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.9,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'Bounded transcript.',
+            reminderRequest: null,
+            dialogueAct: 'new_substance',
+            latestUserSubstance: 'turn-16',
+            topicAnchor: null,
+          }),
+        },
+      }],
+    });
+
+    await makeProvider().classifySituation(longTurns, { userName: 'Annna' });
+
+    const request = createMock.mock.calls[0][0];
+    const userPrompt = request.messages[1].content as string;
+    expect(userPrompt).toContain('{"index":2,"role":"employee","content":"turn-2"}');
+    expect(userPrompt).toContain('{"index":16,"role":"employee","content":"turn-16"}');
+    expect(userPrompt).not.toContain('{"index":0,"role":"employee","content":"turn-0"}');
+  });
+
+  it.each([
+    {
+      label: 'named correction',
+      content: 'No, I meant my onboarding message.',
+      primaryIntent: 'pulse_capture_explanation',
+      secondaryIntents: [],
+      dialogueAct: 'correction',
+      scope: { type: 'message', messageIndex: 0 },
+    },
+    {
+      label: 'secondary typed intent',
+      content: 'What did you capture from my onboarding message?',
+      primaryIntent: 'clarification',
+      secondaryIntents: ['pulse_capture_explanation'],
+      dialogueAct: 'request',
+      scope: { type: 'message', messageIndex: 0 },
+    },
+    {
+      label: 'help-me named request',
+      content: 'Help me understand what you captured from my onboarding message.',
+      primaryIntent: 'pulse_capture_explanation',
+      secondaryIntents: [],
+      dialogueAct: 'request',
+      scope: { type: 'message', messageIndex: 0 },
+    },
+    {
+      label: 'quoted exact disambiguation',
+      content: 'What did you capture from the message where I said "pulse information from onboarding is positive"?',
+      primaryIntent: 'pulse_capture_explanation',
+      secondaryIntents: [],
+      dialogueAct: 'request',
+      scope: { type: 'message', messageIndex: 0 },
+    },
+    {
+      label: 'previous-exact continuation',
+      content: 'And that exact one now?',
+      primaryIntent: 'clarification',
+      secondaryIntents: ['pulse_capture_explanation'],
+      dialogueAct: 'continuation',
+      scope: { type: 'previous_exact' },
+    },
+  ])('normalizes typed CAP-8 scope for $label', async ({
+    content, primaryIntent, secondaryIntents, dialogueAct, scope,
+  }) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent,
+            secondaryIntents,
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'Typed CAP-8 scope.',
+            reminderRequest: null,
+            dialogueAct,
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: scope,
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [
+        { role: 'user', content: 'The onboarding is great.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+        { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      { userName: 'Annna' },
+    );
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.secondaryIntents).not.toContain('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual(scope);
+    expect(result.surveyAllowed).toBe(false);
+  });
+
+  it.each(['acknowledgement', 'closing'] as const)(
+    'does not carry a hallucinated previous-exact scope on %s',
+    async (dialogueAct) => {
+      const content = dialogueAct === 'closing' ? 'Never mind.' : 'Okay.';
+      createMock.mockResolvedValue({
+        choices: [{
+          finish_reason: 'stop',
+          message: {
+            content: JSON.stringify({
+              primaryIntent: 'pulse_capture_explanation',
+              secondaryIntents: [],
+              emotionalState: [],
+              urgency: 'low',
+              confidence: 0.95,
+              requiresSafetyCheck: false,
+              surveyAllowed: true,
+              reasoningSummary: 'Hallucinated carry-over.',
+              reminderRequest: null,
+              dialogueAct,
+              latestUserSubstance: dialogueAct === 'closing' ? null : content,
+              topicAnchor: null,
+              pulseCaptureScope: { type: 'previous_exact' },
+            }),
+          },
+        }],
+      });
+
+      const result = await makeProvider().classifySituation(
+        [{ role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') }],
+        { userName: 'Annna' },
+      );
+
+      expect(result.primaryIntent).not.toBe('pulse_capture_explanation');
+      expect(result.secondaryIntents).not.toContain('pulse_capture_explanation');
+      expect(result.pulseCaptureScope).not.toEqual({ type: 'previous_exact' });
+    },
+  );
+
+  it('lets deterministic closing clear typed previous-exact even when the model labels it a request', async () => {
+    const content = 'Never mind.';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'Hallucinated request on explicit closing.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'previous_exact' },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') }],
+      { userName: 'Annna' },
+    );
+
+    expect(result.dialogueAct).toBe('closing');
+    expect(result.primaryIntent).not.toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).not.toEqual({ type: 'previous_exact' });
+  });
+
+  it.each([
+    ['transform', 'Translate: "What pulse information did you capture from my onboarding message?"'],
+    ['evaluation', 'Evaluate this chatbot reply: "What pulse information did you capture from my onboarding message?"'],
+    ['mixed action', 'What did you capture from my onboarding message? Also remind me to send the report.'],
+  ])('keeps explicit %s controls above typed exact-message scope', async (_label, content) => {
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation',
+            secondaryIntents: [],
+            emotionalState: [],
+            urgency: 'low',
+            confidence: 0.95,
+            requiresSafetyCheck: false,
+            surveyAllowed: true,
+            reasoningSummary: 'Text transform control.',
+            reminderRequest: null,
+            dialogueAct: 'request',
+            latestUserSubstance: content,
+            topicAnchor: null,
+            pulseCaptureScope: { type: 'message', messageIndex: 0 },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation(
+      [{ role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') }],
+      { userName: 'Annna' },
+    );
+
+    if (_label === 'mixed action') {
+      expect(result.primaryIntent).toBe('pulse_capture_explanation');
+      expect(result.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 0 });
+    } else {
+      expect(result.primaryIntent).not.toBe('pulse_capture_explanation');
+    }
+  });
+
   it('keeps safety primary with CAP-8 as a secondary intent', async () => {
     const content = 'I might hurt myself. But I don’t understand what exact information you already picked from our discussion?';
     createMock.mockResolvedValue({
@@ -494,7 +1090,7 @@ describe('OpenAiProvider.classifySituation', () => {
     {
       content: 'What exact pulse information did you pick up from this discussion? Also remind me to send the report.',
       modelIntent: 'pulse_capture_explanation',
-      expectedIntent: 'clarification',
+      expectedIntent: 'pulse_capture_explanation',
     },
     {
       content: 'What do you use my messages for?',

@@ -35,21 +35,30 @@ const CONCISE_DATA_USE_EXPLANATION_TEXT = {
 const PULSE_CAPTURE_TEXT = {
   en: {
     absent: 'There is no current persisted pulse evidence linked to your earlier messages in this conversation. Pulse extraction can finish after a reply, so your most recent messages may not have been evaluated yet.',
+    exactAbsent: 'There is no current persisted pulse evidence linked to this exact message. Pulse extraction can finish after a reply, so this message may not have been evaluated yet.',
+    unresolved: 'I could not identify one exact earlier message. Please identify or quote the message you mean, and I will check only that message.',
     intro: 'Here is the current persisted pulse information linked to your earlier messages in this conversation:',
+    exactIntro: 'Here is the current persisted pulse information linked to this exact message:',
     temporary: 'temporary working interpretation; not reportable',
     confirmed: 'confirmed; this exact de-identified summary is eligible for aggregated team reporting, but that does not mean it was included in a report',
     withdrawn: 'withdrawn from future reporting; this does not mean the underlying message was deleted or a previously delivered report was changed',
   },
   ru: {
     absent: 'Я не вижу сохранённых данных пульс-опроса, связанных с твоими предыдущими сообщениями в этом разговоре. Извлечение может завершиться уже после ответа, поэтому последние сообщения могли быть ещё не обработаны.',
+    exactAbsent: 'Я не вижу сохранённых данных пульс-опроса для этого конкретного сообщения. Извлечение может завершиться уже после ответа, поэтому это сообщение могло быть ещё не обработано.',
+    unresolved: 'Я не смог однозначно определить одно предыдущее сообщение. Уточни или процитируй нужное сообщение, и я проверю только его.',
     intro: 'Вот сохранённая информация пульс-опроса, связанная с твоими предыдущими сообщениями в этом разговоре:',
+    exactIntro: 'Вот сохранённая информация пульс-опроса, связанная с этим конкретным сообщением:',
     temporary: 'временная рабочая интерпретация; не подлежит отчётности',
     confirmed: 'подтверждено; только это точное обезличенное резюме может участвовать в агрегированной командной отчётности, но это не означает, что оно уже вошло в отчёт',
     withdrawn: 'отозвано из будущей отчётности; это не означает удаление исходного сообщения или изменение уже доставленного отчёта',
   },
   uk: {
     absent: 'Я не бачу збережених даних пульс-опитування, пов’язаних із твоїми попередніми повідомленнями в цій розмові. Вилучення може завершитися вже після відповіді, тому останні повідомлення могли бути ще не опрацьовані.',
+    exactAbsent: 'Я не бачу збережених даних пульс-опитування для цього конкретного повідомлення. Вилучення може завершитися вже після відповіді, тому це повідомлення могло бути ще не опрацьоване.',
+    unresolved: 'Я не зміг однозначно визначити одне попереднє повідомлення. Уточни або процитуй потрібне повідомлення, і я перевірю лише його.',
     intro: 'Ось збережена інформація пульс-опитування, пов’язана з твоїми попередніми повідомленнями в цій розмові:',
+    exactIntro: 'Ось збережена інформація пульс-опитування, пов’язана з цим конкретним повідомленням:',
     temporary: 'тимчасова робоча інтерпретація; не підлягає звітності',
     confirmed: 'підтверджено; лише це точне знеособлене резюме може брати участь в агрегованій командній звітності, але це не означає, що воно вже ввійшло до звіту',
     withdrawn: 'відкликано з майбутньої звітності; це не означає видалення початкового повідомлення або зміну вже доставленого звіту',
@@ -59,21 +68,30 @@ const PULSE_CAPTURE_TEXT = {
 const CONCISE_PULSE_CAPTURE_TEXT = {
   en: {
     absent: 'No persisted pulse evidence is linked to earlier messages here. Extraction may finish after a reply, so recent messages may not be evaluated yet.',
+    exactAbsent: 'No persisted pulse evidence is linked to this exact message. Extraction may still be pending.',
+    unresolved: 'I could not identify one exact earlier message. Please identify or quote it.',
     intro: 'Persisted pulse information linked to earlier messages:',
+    exactIntro: 'Persisted pulse information linked to this exact message:',
     temporary: 'temporary; not reportable',
     confirmed: 'confirmed; exact de-identified summary eligible for team reporting, not proof of inclusion',
     withdrawn: 'withdrawn from future reporting; source message not deleted and past reports unchanged',
   },
   ru: {
     absent: 'Нет сохранённых пульс-данных для предыдущих сообщений. Извлечение может завершиться после ответа, поэтому последние сообщения могли ещё не быть обработаны.',
+    exactAbsent: 'Нет сохранённых пульс-данных для этого конкретного сообщения. Обработка могла ещё не завершиться.',
+    unresolved: 'Я не смог определить одно предыдущее сообщение. Уточни или процитируй его.',
     intro: 'Сохранённые пульс-данные для предыдущих сообщений:',
+    exactIntro: 'Сохранённые пульс-данные для этого конкретного сообщения:',
     temporary: 'временно; не подлежит отчётности',
     confirmed: 'подтверждено; обезличенное резюме допустимо для командной отчётности, но не доказывает включение',
     withdrawn: 'отозвано; исходное сообщение не удалено, прошлые отчёты не меняются',
   },
   uk: {
     absent: 'Немає збережених пульс-даних для попередніх повідомлень. Вилучення може завершитися після відповіді, тому останні повідомлення могли ще не бути оброблені.',
+    exactAbsent: 'Немає збережених пульс-даних для цього конкретного повідомлення. Обробка могла ще не завершитися.',
+    unresolved: 'Я не зміг визначити одне попереднє повідомлення. Уточни або процитуй його.',
     intro: 'Збережені пульс-дані для попередніх повідомлень:',
+    exactIntro: 'Збережені пульс-дані для цього конкретного повідомлення:',
     temporary: 'тимчасово; не придатне для звітності',
     confirmed: 'підтверджено; знеособлене резюме допустиме для командної звітності, але не доводить включення',
     withdrawn: 'відкликано; вихідне повідомлення не видалено, минулі звіти не змінюються',
@@ -112,12 +130,18 @@ export function getPulseCaptureExplanationText(
   captures: PulseCaptureRecord[],
   language?: string,
   concise = false,
+  scope: 'conversation' | 'exact' | 'unresolved' = 'conversation',
 ): string {
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof PULSE_CAPTURE_TEXT;
   const localized = concise ? CONCISE_PULSE_CAPTURE_TEXT : PULSE_CAPTURE_TEXT;
   const copy = localized[baseLanguage] ?? localized.en;
-  if (captures.length === 0) return copy.absent;
-  return `${copy.intro}\n${captures.map((capture) => `- ${capture.evidenceSummary} — ${copy[capture.status]}.`).join('\n')}`;
+  if (captures.length === 0) {
+    if (scope === 'exact') return copy.exactAbsent;
+    if (scope === 'unresolved') return copy.unresolved;
+    return copy.absent;
+  }
+  const intro = scope === 'exact' ? copy.exactIntro : copy.intro;
+  return `${intro}\n${captures.map((capture) => `- ${capture.evidenceSummary} — ${copy[capture.status]}.`).join('\n')}`;
 }
 
 export function isExplicitPulseCaptureRequest(text: string): boolean {

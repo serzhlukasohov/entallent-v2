@@ -50,6 +50,20 @@ export const DialogueActSchema = z.enum([
 ]);
 export type DialogueAct = z.infer<typeof DialogueActSchema>;
 
+export const CLASSIFIER_TRANSCRIPT_TURN_LIMIT = 15;
+export const PulseCaptureSourceMessageIdSchema = z.string().uuid();
+
+export const PulseCaptureScopeSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('conversation') }).strict(),
+  z.object({
+    type: z.literal('message'),
+    messageIndex: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({ type: z.literal('previous_exact') }).strict(),
+  z.object({ type: z.literal('unresolved') }).strict(),
+]);
+export type PulseCaptureScope = z.infer<typeof PulseCaptureScopeSchema>;
+
 export const SituationClassificationSchema = z.object({
   primaryIntent: SituationIntentSchema,
   secondaryIntents: z.array(z.string()),
@@ -83,6 +97,24 @@ export const SituationClassificationSchema = z.object({
   resolvedDetails: z.array(z.string()).transform((details) => [...new Set(
     details.map((detail) => detail.trim()).filter(Boolean),
   )].slice(0, 5)).optional(),
+  /**
+   * Which prior employee content a CAP-8 pulse-capture explanation targets.
+   * Invalid model output fails closed; absence remains distinguishable so the
+   * application never treats a missing CAP-8 scope as conversation-wide.
+   */
+  pulseCaptureScope: z.preprocess(
+    (value) => value === null ? undefined : value,
+    PulseCaptureScopeSchema
+      .catch({ type: 'unresolved' })
+      .optional(),
+  ),
+}).transform((classification) => {
+  const hasPulseCaptureIntent = classification.primaryIntent === 'pulse_capture_explanation'
+    || classification.secondaryIntents.includes('pulse_capture_explanation');
+  if (!hasPulseCaptureIntent || classification.pulseCaptureScope !== undefined) {
+    return classification;
+  }
+  return { ...classification, pulseCaptureScope: { type: 'unresolved' as const } };
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 

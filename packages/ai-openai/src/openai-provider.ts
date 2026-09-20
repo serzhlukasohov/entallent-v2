@@ -216,8 +216,8 @@ export class OpenAiProvider implements AiProviderPort {
       }
     }
     return normalizeExplicitClosing(
-      normalizeExplicitCorrectionRequest(
-        normalizePulseCaptureExplanation(
+      normalizePulseCaptureExplanation(
+        normalizeExplicitCorrectionRequest(
           normalizeDataUseExplanation(
             normalizeReportingExplanation(SituationClassificationSchema.parse(parsed), turns),
             turns,
@@ -451,7 +451,10 @@ const EXPLICIT_DATA_USE_FOLLOW_UP =
 const DATA_USE_QUESTION_FRAGMENT =
   /(?:what|how)\s+do\s+you\s+use\s+(?:my\s+messages?|what\s+i\s+(?:say|send)|my\s+(?:data|information))|do\s+you\s+(?:also\s+)?use\s+(?:my\s+messages?|what\s+i\s+(?:say|send))\s+for\b|(?:для чего|как)\s+ты\s+используешь\s+мои\s+сообщения|(?:для чого|як)\s+ти\s+використовуєш\s+мої\s+повідомлення/iu;
 const MIXED_ACTION_REQUEST =
-  /\b(?:help\s+me|remind\s+me|(?:draft|write|create|set|schedule|add|update|delete|send)\s+(?:me\s+)?(?:a|an|the|this|that|my)\b|помоги|напомни|создай|отправь|допоможи|нагадай|створи|надішли)\b/iu;
+  /(?:\b(?:help\s+me|remind\s+me|(?:draft|write|create|set|schedule|add|update|delete|send)\s+(?:me\s+)?(?:a|an|the|this|that|my))\b|(?:^|[\s,;])(?:помоги|напомни|создай|отправь|допоможи|нагадай|створи|надішли)(?=$|[\s,;.!?]))/iu;
+const EXPLICIT_REMINDER_REQUEST =
+  /\b(?:remind|ping)\s+me\b|\bdon['’]?t\s+let\s+me\s+forget\b|(?:^|[\s,;])(?:напомни(?:\s+мне)?|не\s+дай\s+мне\s+забыть|нагадай(?:\s+мені)?|не\s+дай\s+мені\s+забути)(?=$|[\s,;.!?])/iu;
+const HELP_UNDERSTAND_PREFIX = /^(?:(?:could|can|would)\s+you\s+)?(?:please\s+)?help\s+me\s+understand\b|^(?:пожалуйста[,\s]+)?помоги\s+мне\s+понять(?=$|[\s,;.!?])|^(?:будь\s+ласка[,\s]+)?допоможи\s+мені\s+зрозуміти(?=$|[\s,;.!?])/iu;
 const PULSE_CAPTURE_QUESTION_FRAGMENT =
   /what\s+exact\s+(?:pulse\s+)?information.{0,40}(?:pick(?:ed)?(?:\s+up)?|captur(?:e|ed)|record(?:ed)?|sav(?:e|ed)).{0,30}(?:discussion|conversation|chat)|(?:какую|что)\s+именно.{0,40}(?:пульс|информац|данн).{0,50}(?:сохранил|зафиксировал|извл[её]к)|(?:яку|що)\s+саме.{0,40}(?:пульс|інформац|дан).{0,50}(?:зберіг|зафіксував|витяг)/iu;
 
@@ -471,22 +474,39 @@ function normalizePulseCaptureExplanation(
       || intent === 'potential_crisis');
   const isControlRequest = EXPLICIT_TEXT_TRANSFORM_REQUEST.test(latestEmployeeText)
     || EXPLICIT_CHATBOT_EVALUATION_REQUEST.test(latestEmployeeText)
-    || (/[“”«»"]/u.test(latestEmployeeText)
-      && /(?:pulse|пульс).{0,40}(?:information|data|информац|дан)/iu.test(latestEmployeeText));
+    || (classification.pulseCaptureScope?.type !== 'message'
+      && /[“”«»]/u.test(latestEmployeeText)
+      && /(?:pulse|пульс).{0,40}(?:information|data|информац|дан)/iu.test(latestEmployeeText))
+    || /^the\s+employee\s+(?:wrote|said|asked)\b/iu.test(latestEmployeeText);
   const explicitRequest = isExplicitPulseCaptureRequest(latestEmployeeText);
   const safetyRequest = safetyIntent !== undefined
     && PULSE_CAPTURE_QUESTION_FRAGMENT.test(latestEmployeeText);
-  const typedRequest = classification.primaryIntent === 'pulse_capture_explanation'
-    && classification.dialogueAct === 'request';
-  const mixedActionRequest = MIXED_ACTION_REQUEST.test(latestEmployeeText) && !explicitRequest;
+  const explicitReminderRequest = EXPLICIT_REMINDER_REQUEST.test(latestEmployeeText);
+  const typedReminderRequest = hasIntent
+    && classification.pulseCaptureScope !== undefined
+    && classification.reminderRequest !== null
+    && explicitReminderRequest;
+  const typedRequest = hasIntent
+    && classification.pulseCaptureScope !== undefined
+    && (
+      ['request', 'correction', 'continuation'].includes(classification.dialogueAct)
+      || explicitReminderRequest
+    );
+  const helpUnderstandRemainder = latestEmployeeText.replace(HELP_UNDERSTAND_PREFIX, '');
+  const mixedActionRequest = MIXED_ACTION_REQUEST.test(
+    helpUnderstandRemainder === latestEmployeeText ? latestEmployeeText : helpUnderstandRemainder,
+  ) && !explicitRequest;
   if (
     !isControlRequest
-    && !mixedActionRequest
+    && (!mixedActionRequest || explicitReminderRequest)
     && (explicitRequest || safetyRequest || typedRequest)
   ) {
     if (safetyIntent) {
       return {
         ...classification,
+        pulseCaptureScope: explicitRequest
+          ? { type: 'conversation' }
+          : classification.pulseCaptureScope,
         surveyAllowed: false,
         primaryIntent: safetyIntent,
         secondaryIntents: [
@@ -499,8 +519,11 @@ function normalizePulseCaptureExplanation(
     }
     return {
       ...classification,
+      pulseCaptureScope: explicitRequest
+        ? { type: 'conversation' }
+        : classification.pulseCaptureScope,
       surveyAllowed: false,
-      reminderRequest: null,
+      reminderRequest: typedReminderRequest ? classification.reminderRequest : null,
       primaryIntent: 'pulse_capture_explanation',
       secondaryIntents: classification.secondaryIntents.filter(
         (intent) => intent !== 'pulse_capture_explanation'
@@ -520,6 +543,9 @@ function normalizePulseCaptureExplanation(
           : classification.primaryIntent);
   return {
     ...classification,
+    pulseCaptureScope: classification.pulseCaptureScope?.type === 'previous_exact'
+      ? { type: 'unresolved' }
+      : classification.pulseCaptureScope,
     primaryIntent: fallbackPrimary,
     secondaryIntents: classification.secondaryIntents.filter(
       (intent) => intent !== 'pulse_capture_explanation' && intent !== fallbackPrimary,
@@ -681,8 +707,19 @@ function normalizeExplicitClosing(
   if (!latestEmployeeText || !EXPLICIT_CLOSING.test(latestEmployeeText)) {
     return classification;
   }
+  const hasPulseCaptureIntent = classification.primaryIntent === 'pulse_capture_explanation'
+    || classification.secondaryIntents.includes('pulse_capture_explanation');
   return {
     ...classification,
+    primaryIntent: classification.primaryIntent === 'pulse_capture_explanation'
+      ? 'casual_conversation'
+      : classification.primaryIntent,
+    secondaryIntents: classification.secondaryIntents.filter(
+      (intent) => intent !== 'pulse_capture_explanation',
+    ),
+    pulseCaptureScope: hasPulseCaptureIntent
+      ? { type: 'unresolved' }
+      : classification.pulseCaptureScope,
     dialogueAct: 'closing',
     latestUserSubstance: null,
     topicAnchor: null,

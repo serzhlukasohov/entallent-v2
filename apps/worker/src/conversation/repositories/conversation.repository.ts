@@ -74,7 +74,10 @@ export class ConversationRepository implements ConversationRepositoryPort {
     const rows = await this.db.client
       .select()
       .from(messages)
-      .where(eq(messages.conversationId, conversationId))
+      .where(and(
+        eq(messages.conversationId, conversationId),
+        isNull(messages.deletedAt),
+      ))
       .orderBy(desc(messages.occurredAt), desc(messageOrderKey), desc(messages.id))
       .limit(limit);
 
@@ -91,6 +94,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         externalThreadId: m.externalThreadId ?? undefined,
         occurredAt: m.occurredAt,
         createdAt: m.occurredAt,
+        sentAt: m.sentAt ?? undefined,
         metadata: (m.metadata as Record<string, unknown>) ?? undefined,
       }));
   }
@@ -167,6 +171,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
       externalThreadId: msg.externalThreadId ?? undefined,
       occurredAt: msg.occurredAt,
       createdAt: msg.occurredAt,
+      sentAt: msg.sentAt ?? undefined,
     };
   }
 

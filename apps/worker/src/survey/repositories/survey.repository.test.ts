@@ -79,6 +79,7 @@ describe('SurveyRepository', () => {
     expect(query.sql).toContain("evidence_source.direction = 'inbound'");
     expect(query.sql).toContain('evidence_source.deleted_at is null');
     expect(query.sql).toContain('evidence_source.occurred_at <');
+    expect(query.sql).toContain('provenance_message.occurred_at <');
     expect(query.sql).toContain('= cardinality("survey_evidence"."source_message_ids")');
     expect(query.sql).toContain('coalesce(cardinality("survey_evidence"."source_message_ids"), 0) > 0');
     expect(query.sql).toContain('provenance_message.id = any');
@@ -93,6 +94,38 @@ describe('SurveyRepository', () => {
       'tenant-1', 'user-1', 'conversation-1', beforeOccurredAt.toISOString(),
     ]));
     expect(query.params.filter((value) => value instanceof Date)).toEqual([]);
+  });
+
+  it('constrains exact pulse capture evidence and final provenance to the requested source message', () => {
+    const query = compileSql(buildFindPulseCaptureForConversationSql({
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      conversationId: 'conversation-1',
+      beforeOccurredAt: new Date('2026-09-03T10:00:00.000Z'),
+      sourceMessageId: 'message-a',
+    }));
+
+    expect(query.sql).toContain('"survey_evidence"."source_message_ids"');
+    expect(query.sql).toContain('confirmationSourceMessageIds');
+    expect(query.sql).toContain("confirmation_prompt.metadata->'confirmationSourceMessageIds' = jsonb_build_array");
+    expect(query.sql).toContain('evidence_source.occurred_at <=');
+    expect(query.sql).toContain('provenance_message.occurred_at <=');
+    expect(query.sql).not.toContain('evidence_source.occurred_at < $');
+    expect(query.params.filter((value) => value === 'message-a').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each(['', '   '])('rejects an empty exact pulse capture source id without widening: %j', async (sourceMessageId) => {
+    const execute = vi.fn();
+    const repository = new SurveyRepository({ client: { execute } } as never, {} as never, {} as never);
+
+    await expect(repository.findPulseCaptureForConversation({
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      conversationId: 'conversation-1',
+      beforeOccurredAt: new Date('2026-09-03T10:00:00.000Z'),
+      sourceMessageId,
+    })).rejects.toThrow('sourceMessageId');
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('maps final lifecycle only with exact prompt provenance and otherwise fails closed', async () => {
@@ -146,6 +179,32 @@ describe('SurveyRepository', () => {
         sourceMessageIds: ['m-4'], status: 'confirmed',
       },
     ]);
+  });
+
+  it('keeps a multi-source exact target temporary when final provenance names only another source', async () => {
+    const execute = vi.fn().mockResolvedValue([{
+      evidenceId: 'e-1',
+      evidenceSummary: 'Working summary for A and B',
+      questionGroup: 'growth',
+      sourceMessageIds: ['message-a', 'message-b'],
+      groupStatus: 'confirmed',
+      hasFinalProvenance: false,
+      confirmationSummary: 'Final summary sourced only from B',
+    }]);
+    const repository = new SurveyRepository({ client: { execute } } as never, {} as never, {} as never);
+
+    await expect(repository.findPulseCaptureForConversation({
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      conversationId: 'conversation-1',
+      beforeOccurredAt: new Date('2026-09-03T10:00:00.000Z'),
+      sourceMessageId: 'message-a',
+    })).resolves.toEqual([{
+      evidenceSummary: 'Working summary for A and B',
+      questionGroup: 'growth',
+      sourceMessageIds: ['message-a', 'message-b'],
+      status: 'temporary',
+    }]);
   });
 
   it('freezes sorted distinct rosters in one cycle-opening transaction', async () => {

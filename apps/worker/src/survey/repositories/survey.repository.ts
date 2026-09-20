@@ -472,6 +472,9 @@ export class SurveyRepository implements SurveyRepositoryPort {
   async findPulseCaptureForConversation(
     params: FindPulseCaptureForConversationParams,
   ): Promise<PulseCaptureRecord[]> {
+    if (params.sourceMessageId !== undefined && !params.sourceMessageId.trim()) {
+      throw new Error('sourceMessageId must be non-empty when provided');
+    }
     const rows = await this.db.client.execute(
       buildFindPulseCaptureForConversationSql(params),
     ) as unknown as PulseCaptureQueryRow[];
@@ -604,6 +607,13 @@ export function buildFindPulseCaptureForConversationSql(
   params: FindPulseCaptureForConversationParams,
 ): SQL {
   const beforeOccurredAtIso = params.beforeOccurredAt.toISOString();
+  const sourceMessageId = params.sourceMessageId?.trim();
+  if (params.sourceMessageId !== undefined && !sourceMessageId) {
+    throw new Error('sourceMessageId must be non-empty when provided');
+  }
+  const sourceOccurredAtPredicate = (column: SQL) => sourceMessageId === undefined
+    ? sql`${column} < ${beforeOccurredAtIso}::timestamptz`
+    : sql`${column} <= ${beforeOccurredAtIso}::timestamptz`;
   return sql`
     select
       ${surveyEvidence.id} as "evidenceId",
@@ -622,8 +632,11 @@ export function buildFindPulseCaptureForConversationSql(
             and provenance_message.conversation_id = ${params.conversationId}
             and provenance_message.direction = 'inbound'
             and provenance_message.deleted_at is null
-            and provenance_message.occurred_at < ${beforeOccurredAtIso}::timestamptz
-            and confirmation_prompt.metadata->'confirmationSourceMessageIds' ? provenance_message.id::text
+            and ${sourceOccurredAtPredicate(sql`provenance_message.occurred_at`)}
+            and ${sourceMessageId === undefined
+              ? sql`confirmation_prompt.metadata->'confirmationSourceMessageIds' ? provenance_message.id::text`
+              : sql`provenance_message.id = ${sourceMessageId}
+                and confirmation_prompt.metadata->'confirmationSourceMessageIds' = jsonb_build_array(${sourceMessageId})`}
         ),
         false
       ) as "hasFinalProvenance",
@@ -650,6 +663,9 @@ export function buildFindPulseCaptureForConversationSql(
       and ${surveyEvidence.userId} = ${params.userId}
       and ${surveyEvidence.supersededAt} is null
       and coalesce(cardinality(${surveyEvidence.sourceMessageIds}), 0) > 0
+      and ${sourceMessageId === undefined
+        ? sql`true`
+        : sql`${sourceMessageId} = any(${surveyEvidence.sourceMessageIds})`}
       and (
         select count(*)::integer
         from ${messages} evidence_source
@@ -659,7 +675,7 @@ export function buildFindPulseCaptureForConversationSql(
           and evidence_source.conversation_id = ${params.conversationId}
           and evidence_source.direction = 'inbound'
           and evidence_source.deleted_at is null
-          and evidence_source.occurred_at < ${beforeOccurredAtIso}::timestamptz
+          and ${sourceOccurredAtPredicate(sql`evidence_source.occurred_at`)}
       ) = cardinality(${surveyEvidence.sourceMessageIds})
     order by ${surveyEvidence.createdAt} desc, ${surveyEvidence.id}
   `;

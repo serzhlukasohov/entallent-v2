@@ -124,6 +124,7 @@ export interface FindPulseCaptureForConversationParams {
   userId: string;
   conversationId: string;
   beforeOccurredAt: Date;
+  sourceMessageId?: string;
 }
 
 export interface ConfirmedGroupReportStateRecord extends SurveyGroupStateRecord {
