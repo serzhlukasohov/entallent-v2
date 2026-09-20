@@ -496,9 +496,12 @@ function normalizePulseCaptureExplanation(
   const mixedActionRequest = MIXED_ACTION_REQUEST.test(
     helpUnderstandRemainder === latestEmployeeText ? latestEmployeeText : helpUnderstandRemainder,
   ) && !explicitRequest;
+  const additionalActionRequest = helpUnderstandRemainder
+    .split(/[,.!?;\n]+|\b(?:and|also|plus|then|afterwards|и|та|і|затем|потом|тоді)\b/iu)
+    .some((part) => MIXED_ACTION_REQUEST.test(part) && !EXPLICIT_REMINDER_REQUEST.test(part));
   if (
     !isControlRequest
-    && (!mixedActionRequest || explicitReminderRequest)
+    && (!mixedActionRequest || (typedReminderRequest && !additionalActionRequest))
     && (explicitRequest || safetyRequest || typedRequest)
   ) {
     if (safetyIntent) {

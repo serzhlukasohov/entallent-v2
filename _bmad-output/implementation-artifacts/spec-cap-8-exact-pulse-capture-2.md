@@ -2,7 +2,7 @@
 title: 'CAP-8: Resolve exact message pulse capture'
 type: 'bugfix'
 created: '2026-09-19'
-status: 'in-review'
+status: 'done'
 review_loop_iteration: 2
 baseline_commit: '64e5f55'
 context:
@@ -73,6 +73,8 @@ context:
 - Iteration 1 — Blind/edge review found that nullable copied text conflated conversation-wide and unresolved named requests, broke on sanitized/duplicate text, allowed missing receipts to widen scope, and exposed soft-deleted history to target resolution. Replaced the non-frozen implementation plan with a discriminated scope and stable labeled turn index; required explicit previous-receipt scope, fail-closed missing/stale receipts, safety receipt suppression, and deleted-message filtering. This avoids unrelated evidence disclosure and stale-target carry-over. KEEP: target-specific PostgreSQL status re-read, exact-absent/unresolved localized copy, safety precedence, no phrase-specific regex, no extra model call, no schema migration, and unchanged conversation-wide CAP-8 behavior.
 - Iteration 2 — Fresh blind/edge review tightened mixed CAP-8 reminders: preserve only a model reminder backed by explicit EN/RU/UK reminder language, keep typed quoted-message scope, demote non-reminder mixed actions, acknowledge newly created and sequentially deduplicated reminders without generation, and reject a previous-exact receipt delivered before its source. The broader scheduled-action insert/queue atomicity boundary is recorded separately in `deferred-work.md`.
 
+- Iteration 3 — Final blind review found that the reminder exemption could still swallow a second action. The normalization now keeps deterministic CAP-8 only for a typed explicit reminder with no additional comma, sentence, newline, conjunction, or sequencer-delimited action; untyped reminders demote instead of disappearing. RED→GREEN controls cover reminder-plus-draft, same-clause `then`, and newline-separated actions. Final reviewer verdict: VERIFIED.
+
 ## Design Notes
 
 The classifier receives JSON-serialized turns with one shared 15-turn limit and emits one explicit scope: `conversation`, `message` with a prior turn index, `previous_exact`, or `unresolved`. Application code maps a message index only to a UUID-valued owned, non-deleted, prior inbound row. A surviving CAP-8 intent always stays on the deterministic database-backed path; a typed reminder backed by explicit reminder language remains available to reminder scheduling instead of forcing free-form pulse status generation.
@@ -90,5 +92,36 @@ Exact SQL uses `<= beforeOccurredAt` only after application code has resolved a 
 - `pnpm --filter @entalent/worker exec vitest run src/survey/repositories/survey.repository.test.ts src/conversation/repositories/conversation.repository.test.ts` -- 30/30 passed after observed RED.
 - Full package suites: contracts 99/99, AI provider 173/173, application 577/577, worker 185/185.
 - Package-scoped typecheck and lint for `@entalent/contracts`, `@entalent/application`, `@entalent/ai-openai`, and `@entalent/worker` -- passed.
+- Post-review CAP-8 normalization: AI provider 107/107 and application orchestrator 208/208; `@entalent/ai-openai` typecheck/lint and `@entalent/application` typecheck passed.
 - Harness: `pnpm harness:check -- --base 64e5f55` -- passed; receipt `runs/harness/receipt-1789854730527-25d2cc9b.json`.
+- Final post-review harness: `pnpm harness:check -- --base 64e5f55` -- passed; receipt `runs/harness/receipt-1789903668260-5865b404.json`.
 - After separately approved commit/push/deploy: `pnpm harness:preflight`, then sequential real Slack exact-message and follow-up smoke with DB/queue read-back.
+
+## Suggested Review Order
+
+**Intent normalization**
+
+- Keep exact-message routing typed while preserving mixed user actions.
+  [`openai-provider.ts:461`](../../packages/ai-openai/src/openai-provider.ts#L461)
+
+- Reject untyped or multi-action reminder exemptions before deterministic handling.
+  [`openai-provider.ts:499`](../../packages/ai-openai/src/openai-provider.ts#L499)
+
+**Database-backed scope**
+
+- Resolve exact, previous-exact, conversation-wide, and unresolved targets fail-closed.
+  [`conversation-orchestrator.ts:535`](../../packages/application/src/use-cases/conversation-orchestrator.ts#L535)
+
+- Query exact provenance without widening to unrelated conversation evidence.
+  [`survey.repository.ts:472`](../../apps/worker/src/survey/repositories/survey.repository.ts#L472)
+
+**Contracts and regression coverage**
+
+- Validate the discriminated pulse-capture scope at the shared boundary.
+  [`ai.ts:105`](../../packages/contracts/src/ai.ts#L105)
+
+- Exercise reminder, mixed-action, quoted-target, and previous-exact controls.
+  [`openai-provider.test.ts:632`](../../packages/ai-openai/src/openai-provider.test.ts#L632)
+
+- Prove deterministic target reuse and no unrelated evidence disclosure.
+  [`conversation-orchestrator.test.ts:1267`](../../packages/application/src/use-cases/conversation-orchestrator.test.ts#L1267)

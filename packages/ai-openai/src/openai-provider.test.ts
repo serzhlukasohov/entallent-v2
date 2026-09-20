@@ -655,6 +655,30 @@ describe('OpenAiProvider.classifySituation', () => {
       null,
     ],
     [
+      'demotes typed CAP-8 when a reminder is mixed with another action',
+      'Please help me understand what you captured from onboarding, remind me tomorrow, and draft a reply.',
+      'request',
+      { intent: 'review the onboarding note', dueAt: '2026-09-04T09:00:00.000Z' },
+      false,
+      { intent: 'review the onboarding note', dueAt: '2026-09-04T09:00:00.000Z' },
+    ],
+    [
+      'demotes typed CAP-8 when another action follows a reminder in the same clause',
+      'Please help me understand what you captured from onboarding, remind me tomorrow then draft a reply.',
+      'request',
+      { intent: 'review the onboarding note', dueAt: '2026-09-04T09:00:00.000Z' },
+      false,
+      { intent: 'review the onboarding note', dueAt: '2026-09-04T09:00:00.000Z' },
+    ],
+    [
+      'demotes typed CAP-8 when a newline separates another action',
+      'Please help me understand what you captured from onboarding.\nRemind me tomorrow.\nDraft a reply.',
+      'request',
+      { intent: 'review the onboarding note', dueAt: '2026-09-04T09:00:00.000Z' },
+      false,
+      { intent: 'review the onboarding note', dueAt: '2026-09-04T09:00:00.000Z' },
+    ],
+    [
       'keeps a typed exact target quoted with guillemets',
       'What pulse information did you save from «The onboarding was great»?',
       'request',
@@ -1029,12 +1053,7 @@ describe('OpenAiProvider.classifySituation', () => {
       { userName: 'Annna' },
     );
 
-    if (_label === 'mixed action') {
-      expect(result.primaryIntent).toBe('pulse_capture_explanation');
-      expect(result.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 0 });
-    } else {
-      expect(result.primaryIntent).not.toBe('pulse_capture_explanation');
-    }
+    expect(result.primaryIntent).not.toBe('pulse_capture_explanation');
   });
 
   it('keeps safety primary with CAP-8 as a secondary intent', async () => {
@@ -1087,11 +1106,11 @@ describe('OpenAiProvider.classifySituation', () => {
       modelIntent: 'pulse_capture_explanation',
       expectedIntent: 'clarification',
     },
-    {
-      content: 'What exact pulse information did you pick up from this discussion? Also remind me to send the report.',
-      modelIntent: 'pulse_capture_explanation',
-      expectedIntent: 'pulse_capture_explanation',
-    },
+  {
+    content: 'What exact pulse information did you pick up from this discussion? Also remind me to send the report.',
+    modelIntent: 'pulse_capture_explanation',
+    expectedIntent: 'clarification',
+  },
     {
       content: 'What do you use my messages for?',
       modelIntent: 'data_use_explanation',
