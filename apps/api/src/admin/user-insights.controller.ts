@@ -1,5 +1,7 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, isNull } from 'drizzle-orm';
+import type { Env } from '@entalent/config';
 import {
   surveyAssessments,
   surveyEvidence,
@@ -9,6 +11,7 @@ import {
 import type { AdminQuestionInsight, AdminUserInsightsResponse } from '@entalent/contracts';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
+import { assertInternalDashboardEnabled } from './internal-dashboard-gate';
 
 type QuestionInsight = AdminQuestionInsight;
 type UserInsightsResponse = AdminUserInsightsResponse;
@@ -16,13 +19,18 @@ type UserInsightsResponse = AdminUserInsightsResponse;
 @Controller('admin/users/:userId/insights')
 @UseGuards(ApiKeyGuard)
 export class UserInsightsController {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   @Get()
   async getInsights(
     @Param('userId') userId: string,
     @Query('tenantId') _tenantId?: string,
   ): Promise<UserInsightsResponse> {
+    assertInternalDashboardEnabled(this.config);
+
     // 1. Find active window for this user
     const [window] = await this.db.client
       .select({

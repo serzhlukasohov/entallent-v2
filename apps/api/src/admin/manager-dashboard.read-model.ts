@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Env } from '@entalent/config';
 import type { AdminManagerTeamResponse } from '@entalent/contracts';
 import {
@@ -55,7 +55,7 @@ export class ManagerDashboardReadModel {
       return buildEmptyTeamOverview(input.tenantId);
     }
 
-    const [lastMessages, activeRiskUserIds, surveyRows, evidenceRows] = await Promise.all([
+    const [lastMessages, activeRiskUserIds, surveyRows, evidenceRows, previousWindows] = await Promise.all([
       this.db.client
         .selectDistinctOn([messages.userId], {
           userId: messages.userId,
@@ -112,7 +112,63 @@ export class ManagerDashboardReadModel {
           ),
         )
         .orderBy(desc(surveyEvidence.strength)),
+
+      this.db.client
+        .selectDistinctOn([surveyWindows.userId], {
+          userId: surveyWindows.userId,
+          windowId: surveyWindows.id,
+          completedAt: surveyWindows.completedAt,
+        })
+        .from(surveyWindows)
+        .innerJoin(surveyAssessments, eq(surveyAssessments.surveyWindowId, surveyWindows.id))
+        .where(
+          and(
+            eq(surveyWindows.tenantId, input.tenantId),
+            eq(surveyWindows.status, 'closed'),
+            isNotNull(surveyWindows.completedAt),
+          ),
+        )
+        .orderBy(surveyWindows.userId, desc(surveyWindows.completedAt)),
     ]);
+
+    const previousWindowIds = previousWindows.map((window) => window.windowId);
+    const [previousSurveyRows, previousEvidenceRows] = previousWindowIds.length > 0
+      ? await Promise.all([
+          this.db.client
+            .select({
+              userId: surveyWindows.userId,
+              windowId: surveyWindows.id,
+              questionId: surveyQuestions.id,
+              stableKey: surveyQuestions.stableKey,
+              title: surveyQuestions.title,
+              dimension: surveyQuestions.dimension,
+              assessmentStatus: surveyAssessments.status,
+              assessmentConfidence: surveyAssessments.confidence,
+            })
+            .from(surveyAssessments)
+            .innerJoin(surveyWindows, eq(surveyAssessments.surveyWindowId, surveyWindows.id))
+            .innerJoin(surveyQuestions, eq(surveyAssessments.surveyQuestionId, surveyQuestions.id))
+            .where(inArray(surveyWindows.id, previousWindowIds)),
+          this.db.client
+            .select({
+              userId: surveyEvidence.userId,
+              questionId: surveyEvidence.surveyQuestionId,
+              polarity: surveyEvidence.polarity,
+              strength: surveyEvidence.strength,
+              confidence: surveyEvidence.confidence,
+              evidenceSummary: surveyEvidence.evidenceSummary,
+              createdAt: surveyEvidence.createdAt,
+            })
+            .from(surveyEvidence)
+            .where(
+              and(
+                inArray(surveyEvidence.surveyWindowId, previousWindowIds),
+                isNull(surveyEvidence.supersededAt),
+              ),
+            )
+            .orderBy(desc(surveyEvidence.strength)),
+        ])
+      : [[], []];
 
     const employees = buildEmployeeRows({
       teamUsers,
@@ -120,6 +176,9 @@ export class ManagerDashboardReadModel {
       activeRiskUserIds,
       assessments: surveyRows,
       evidence: evidenceRows,
+      previousWindows,
+      previousAssessments: previousSurveyRows,
+      previousEvidence: previousEvidenceRows,
     });
 
     return {

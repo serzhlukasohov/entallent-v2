@@ -8,7 +8,7 @@ Your goal: write a short, warm confirmation message that the employee can say "y
 Rules:
 - Write in English
 - Write in first person from the AI mentor's perspective: "Based on our conversations, it sounds like..."
-- Be specific about what they said — don't paraphrase vaguely
+- Be specific about the generalized status and root cause, but avoid names, project names, concrete events, exact dates, URLs, and handles
 - End with a clear invite to confirm or correct: "Is that a fair reflection of how you're feeling?"
 - Keep it under 150 words
 - For sentimentScores: score each piece of evidence 0.0 (very negative) to 1.0 (very positive) based on the employee's attitude

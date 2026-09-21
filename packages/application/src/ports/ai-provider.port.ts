@@ -42,10 +42,10 @@ export interface SurveyQuestionForEvaluation {
   id: string;
   stableKey: string;
   canonicalMeaning: string;
-  responseType?: SurveyResponseType;
   positiveIndicators: string[];
   negativeIndicators: string[];
   contraindications: string[];
+  responseType?: SurveyResponseType;
 }
 
 export interface ReplyPlan {
@@ -54,6 +54,8 @@ export interface ReplyPlan {
   correctionCarryover?: boolean;
   latestUserSubstance: string | null;
   topicAnchor: string | null;
+  /** Explicit employee-stated facts that must not be reopened as clarifications. */
+  resolvedDetails?: string[];
   memoryAnchors: Array<{ category: string; content: string }>;
   responseMove:
     | 'social_greeting'
@@ -81,7 +83,7 @@ export interface ReplyPlan {
     content: string;
     requirement: 'mention_explicitly';
   }>;
-  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan'>;
+  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan' | 'unsupported_interpretation'>;
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
@@ -99,6 +101,8 @@ export interface ResponseContext {
   tenantContext?: string;
   languagePolicy: LanguagePolicy;
   memoryContext?: MemoryContext;
+  /** Canonical policy text for answering employee questions about reporting. */
+  reportingDisclosure?: string;
   /** For proactive follow-ups: the original reason + message strategy hint for the LLM */
   followUpIntent?: string;
   /**
@@ -129,7 +133,7 @@ export interface ResponseContext {
    */
   confirmationRequest?: {
     questionGroup: string;
-    evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string }>;
+    evidence: Array<{ stableKey: string; evidenceSummary: string; polarity: string; sourceMessageIds?: string[] }>;
   };
   /**
    * OBSERVED user style (EMA, per-axis 0..1) + adaptation weight (0..0.4) + a few of

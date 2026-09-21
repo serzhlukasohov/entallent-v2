@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { eq, and, lt, lte, gt, asc, max, ne, sql, inArray } from 'drizzle-orm';
+import { eq, and, lt, lte, gt, max, ne, sql, inArray, type SQL } from 'drizzle-orm';
 import {
   pulseBacklog,
   surveyQuestions,
@@ -151,39 +151,9 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
     engagementOnly: boolean,
     questionGroup?: string,
   ): Promise<PulseBacklogRecord | null> {
-    const groupFilter = questionGroup
-      ? eq(surveyQuestions.questionGroup, questionGroup)
-      : engagementOnly
-      ? eq(surveyQuestions.questionGroup, 'engagement')
-      : ne(surveyQuestions.questionGroup, 'engagement');
-
-    const rows = await this.db.client
-      .select({
-        id: pulseBacklog.id,
-        surveyWindowId: pulseBacklog.surveyWindowId,
-        userId: pulseBacklog.userId,
-        tenantId: pulseBacklog.tenantId,
-        surveyQuestionId: pulseBacklog.surveyQuestionId,
-        position: pulseBacklog.position,
-        status: pulseBacklog.status,
-        ignoreCount: pulseBacklog.ignoreCount,
-        proactiveSentAt: pulseBacklog.proactiveSentAt,
-        evidenceCapturedCount: pulseBacklog.evidenceCapturedCount,
-        resultedInCoverage: pulseBacklog.resultedInCoverage,
-        doneAt: pulseBacklog.doneAt,
-      })
-      .from(pulseBacklog)
-      .innerJoin(surveyQuestions, eq(pulseBacklog.surveyQuestionId, surveyQuestions.id))
-      .where(
-        and(
-          eq(pulseBacklog.userId, userId),
-          eq(pulseBacklog.surveyWindowId, windowId),
-          eq(pulseBacklog.status, 'pending'),
-          groupFilter,
-        ),
-      )
-      .orderBy(asc(pulseBacklog.position), asc(surveyQuestions.displayOrder))
-      .limit(1);
+    const rows = (await this.db.client.execute(
+      buildFindNextPendingSql(userId, windowId, engagementOnly, questionGroup),
+    )) as unknown as PulseBacklogRecord[];
 
     if (!rows.length) return null;
     return rows[0] as PulseBacklogRecord;
@@ -234,6 +204,64 @@ export class PulseBacklogRepository implements PulseBacklogRepositoryPort {
       );
   }
 
+  async prioritizeQuestionGroup(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
+  ): Promise<void> {
+    await this.db.client.execute(sql`
+      WITH ranked AS (
+        SELECT
+          ${pulseBacklog.id} AS id,
+          row_number() over (
+            ORDER BY
+              CASE WHEN ${surveyQuestions.questionGroup} = ${questionGroup} THEN 0 ELSE 1 END,
+              ${pulseBacklog.position}
+          ) AS new_position
+        FROM ${pulseBacklog}
+        INNER JOIN ${surveyQuestions}
+          ON ${pulseBacklog.surveyQuestionId} = ${surveyQuestions.id}
+        WHERE
+          ${pulseBacklog.userId} = ${userId}
+          AND ${pulseBacklog.surveyWindowId} = ${windowId}
+          AND ${pulseBacklog.status} = 'pending'
+      )
+      UPDATE ${pulseBacklog}
+      SET position = ranked.new_position::integer, updated_at = now()
+      FROM ranked
+      WHERE ${pulseBacklog.id} = ranked.id
+    `);
+  }
+
+  async deprioritizeQuestionGroup(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
+  ): Promise<void> {
+    await this.db.client.execute(sql`
+      WITH ranked AS (
+        SELECT
+          ${pulseBacklog.id} AS id,
+          row_number() over (
+            ORDER BY
+              CASE WHEN ${surveyQuestions.questionGroup} = ${questionGroup} THEN 1 ELSE 0 END,
+              ${pulseBacklog.position}
+          ) AS new_position
+        FROM ${pulseBacklog}
+        INNER JOIN ${surveyQuestions}
+          ON ${pulseBacklog.surveyQuestionId} = ${surveyQuestions.id}
+        WHERE
+          ${pulseBacklog.userId} = ${userId}
+          AND ${pulseBacklog.surveyWindowId} = ${windowId}
+          AND ${pulseBacklog.status} = 'pending'
+      )
+      UPDATE ${pulseBacklog}
+      SET position = ranked.new_position::integer, updated_at = now()
+      FROM ranked
+      WHERE ${pulseBacklog.id} = ranked.id
+    `);
+  }
+
   async unlockEngagementIfNeeded(
     userId: string,
     tenantId: string,
@@ -271,4 +299,52 @@ export function shouldRequeueStaleActiveEntry(
   evidenceCapturedCount: number,
 ): boolean {
   return !hasInboundAfterProbe || evidenceCapturedCount <= 0;
+}
+
+export function buildFindNextPendingSql(
+  userId: string,
+  windowId: string,
+  engagementOnly: boolean,
+  questionGroup?: string,
+): SQL {
+  const groupFilter = questionGroup
+    ? sql`${surveyQuestions.questionGroup} = ${questionGroup}`
+    : engagementOnly
+    ? sql`${surveyQuestions.questionGroup} = 'engagement'`
+    : sql`${surveyQuestions.questionGroup} <> 'engagement'`;
+
+  return sql`
+    select
+      ${pulseBacklog.id} as "id",
+      ${pulseBacklog.surveyWindowId} as "surveyWindowId",
+      ${pulseBacklog.userId} as "userId",
+      ${pulseBacklog.tenantId} as "tenantId",
+      ${pulseBacklog.surveyQuestionId} as "surveyQuestionId",
+      ${pulseBacklog.position} as "position",
+      ${pulseBacklog.status} as "status",
+      ${pulseBacklog.ignoreCount} as "ignoreCount",
+      ${pulseBacklog.proactiveSentAt} as "proactiveSentAt",
+      ${pulseBacklog.evidenceCapturedCount} as "evidenceCapturedCount",
+      ${pulseBacklog.resultedInCoverage} as "resultedInCoverage",
+      ${pulseBacklog.doneAt} as "doneAt"
+    from ${pulseBacklog}
+    inner join ${surveyQuestions}
+      on ${pulseBacklog.surveyQuestionId} = ${surveyQuestions.id}
+    where ${pulseBacklog.userId} = ${userId}
+      and ${pulseBacklog.surveyWindowId} = ${windowId}
+      and ${pulseBacklog.status} = 'pending'
+      and ${groupFilter}
+      and not exists (
+        select 1
+        from pulse_backlog active_backlog
+        inner join survey_questions active_question
+          on active_backlog.survey_question_id = active_question.id
+        where active_backlog.user_id = ${userId}
+          and active_backlog.survey_window_id = ${windowId}
+          and active_backlog.status = 'active'
+          and active_question.question_group = survey_questions.question_group
+      )
+    order by ${pulseBacklog.position} asc, ${surveyQuestions.displayOrder} asc
+    limit 1
+  `;
 }

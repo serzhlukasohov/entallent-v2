@@ -103,6 +103,39 @@ describe('buildReplyPlan', () => {
     expect(brief.latestUserSubstance).toBe('I am barely sleeping');
     expect(brief.mayInferFromBrevity).toBe(true);
     expect(brief.forbiddenMoves).toContain('action_plan');
+    expect(brief.forbiddenMoves).toContain('unsupported_interpretation');
+  });
+
+  it('carries resolved thread details without blocking a materially new question', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'continuation',
+        latestUserSubstance: 'The live issue needed me; I am just venting about losing my place.',
+        topicAnchor: 'interruptions while mapping a payment exception',
+        resolvedDetails: [
+          '  The difficulty was reconstructing the whole analysis flow.  ',
+          '',
+        ],
+      } as Partial<SituationClassification> & { resolvedDetails: string[] }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief).toMatchObject({
+      resolvedDetails: ['The difficulty was reconstructing the whole analysis flow.'],
+      questionPolicy: { maxQuestions: 1 },
+    });
+  });
+
+  it('deduplicates resolved details before applying the five-item cap', () => {
+    const brief = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'continuation',
+        resolvedDetails: [' one ', 'one', 'two', 'three', 'four', 'five'],
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(brief.resolvedDetails).toEqual(['one', 'two', 'three', 'four', 'five']);
   });
 
   it('resets prior memory and questions when the employee corrects the frame', () => {
@@ -122,6 +155,7 @@ describe('buildReplyPlan', () => {
     expect(brief.responseMove).toBe('address_new_substance');
     expect(brief.memoryAnchors).toEqual([]);
     expect(brief.requiredGrounding).toEqual([]);
+    expect(brief.forbiddenMoves).toContain('unsupported_interpretation');
     expect(brief.questionPolicy).toEqual({
       maxQuestions: 0,
       reason: 'strategy_disallows_questions',
@@ -146,7 +180,7 @@ describe('buildReplyPlan', () => {
     expect(brief.memoryAnchors).toEqual([]);
   });
 
-  it('keeps memory anchors without required grounding for emotional check-ins', () => {
+  it('requires the best memory anchor for vague emotional check-ins', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'emotional_disclosure',
@@ -169,10 +203,17 @@ describe('buildReplyPlan', () => {
       maxQuestions: 1,
       reason: 'new_substance_allows_question',
     });
-    expect(brief.requiredGrounding).toEqual([]);
+    expect(brief.requiredGrounding).toEqual([
+      {
+        source: 'memory',
+        category: 'milestone',
+        content: 'defending the payments architecture on Friday',
+        requirement: 'mention_explicitly',
+      },
+    ]);
   });
 
-  it('selects concrete grounding anchors for anchored emotional support', () => {
+  it('does not require unrelated memory when the current emotional turn has a topic anchor', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'emotional_disclosure',
@@ -187,17 +228,10 @@ describe('buildReplyPlan', () => {
       includeFollowUpQuestion: false,
     });
 
-    expect(brief.requiredGrounding).toEqual([
-      {
-        source: 'memory',
-        category: 'milestone',
-        content: 'defending the payments architecture on Friday',
-        requirement: 'mention_explicitly',
-      },
-    ]);
+    expect(brief.requiredGrounding).toEqual([]);
   });
 
-  it('grounds vague emotional turns in commitments or milestones before generic project context', () => {
+  it('keeps anchored emotional memory optional even when a commitment outranks project context', () => {
     const brief = buildReplyPlan({
       classification: base({
         dialogueAct: 'emotional_disclosure',
@@ -211,14 +245,7 @@ describe('buildReplyPlan', () => {
       includeFollowUpQuestion: false,
     });
 
-    expect(brief.requiredGrounding).toEqual([
-      {
-        source: 'memory',
-        category: 'commitment',
-        content: 'defending the payments architecture on Friday',
-        requirement: 'mention_explicitly',
-      },
-    ]);
+    expect(brief.requiredGrounding).toEqual([]);
   });
 
   it('closes without reopening the conversation', () => {

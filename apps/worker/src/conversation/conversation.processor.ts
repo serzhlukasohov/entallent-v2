@@ -11,6 +11,7 @@ import { tenants } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
+import { ConversationRepository } from './repositories/conversation.repository';
 
 export type ConversationJob = {
   requestId: string;
@@ -22,11 +23,13 @@ export type ConversationJob = {
   externalWorkspaceId: string;
   externalConversationId: string;
   traceId: string;
+  rapidMessageCoalescing?: true;
 };
 
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;
 
 const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { ignoreWindowHours: 48 };
+const RAPID_MESSAGE_COALESCING_WINDOW_MS = 2_000;
 
 @Processor(QUEUE_NAMES.CONVERSATION)
 export class ConversationProcessor extends WorkerHost implements OnApplicationShutdown {
@@ -37,6 +40,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly checkInUseCase: ProactiveCheckInUseCase,
     private readonly llmRunRepo: LlmRunRepository,
     private readonly db: DatabaseService,
+    private readonly conversationRepo: ConversationRepository,
   ) {
     super();
   }
@@ -90,6 +94,20 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       messageId: job.data.messageId,
       conversationId: job.data.conversationId,
     });
+
+    if (
+      job.data.rapidMessageCoalescing === true &&
+      await this.conversationRepo.shouldSkipInboundMessage({
+        messageId: job.data.messageId,
+        conversationId: job.data.conversationId,
+        userId: job.data.userId,
+        tenantId: job.data.tenantId,
+        windowMs: RAPID_MESSAGE_COALESCING_WINDOW_MS,
+      })
+    ) {
+      this.logger.log(`Skipping stale conversation job ${job.id}`);
+      return;
+    }
 
     const start = Date.now();
     let status: 'success' | 'error' = 'success';

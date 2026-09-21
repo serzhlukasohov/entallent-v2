@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
@@ -8,10 +9,13 @@ import {
   integer,
   boolean,
   unique,
+  uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { users } from './users';
+import { teams } from './teams';
+import { workspaceConnections } from './workspace-connections';
 
 export const surveyDefinitions = pgTable('survey_definitions', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -59,6 +63,35 @@ export const surveyQuestions = pgTable(
   }),
 );
 
+export const surveyReportingCohorts = pgTable(
+  'survey_reporting_cohorts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    teamId: uuid('team_id')
+      .notNull()
+      .references(() => teams.id, { onDelete: 'cascade' }),
+    surveyDefinitionId: uuid('survey_definition_id')
+      .notNull()
+      .references(() => surveyDefinitions.id, { onDelete: 'cascade' }),
+    periodStart: timestamp('period_start', { withTimezone: true }).notNull(),
+    periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
+    rosterUserIds: uuid('roster_user_ids').array().notNull(),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    uniqueScope: unique('survey_reporting_cohorts_scope_unique').on(
+      t.tenantId,
+      t.teamId,
+      t.surveyDefinitionId,
+      t.periodStart,
+      t.periodEnd,
+    ),
+  }),
+);
+
 export const surveyWindows = pgTable('survey_windows', {
   id: uuid('id').primaryKey().defaultRandom(),
   tenantId: uuid('tenant_id')
@@ -73,6 +106,11 @@ export const surveyWindows = pgTable('survey_windows', {
   periodType: text('period_type').notNull().default('quarter'),
   periodStart: timestamp('period_start', { withTimezone: true }).notNull(),
   periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
+  reportingCohortId: uuid('reporting_cohort_id').references(() => surveyReportingCohorts.id, {
+    onDelete: 'set null',
+  }),
+  reportingTeamId: uuid('reporting_team_id').references(() => teams.id),
+  reportingRosterUserIds: uuid('reporting_roster_user_ids').array().notNull().default(sql`ARRAY[]::uuid[]`),
   status: text('status').notNull().default('active'),
   coverage: jsonb('coverage').notNull().default({}),
   completedAt: timestamp('completed_at', { withTimezone: true }),
@@ -128,13 +166,55 @@ export const surveyAssessments = pgTable('survey_assessments', {
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
 });
 
+export const surveyReportSnapshots = pgTable(
+  'survey_report_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    reportingCohortId: uuid('reporting_cohort_id')
+      .notNull()
+      .references(() => surveyReportingCohorts.id, { onDelete: 'cascade' }),
+    teamId: uuid('team_id')
+      .notNull()
+      .references(() => teams.id, { onDelete: 'cascade' }),
+    questionGroup: text('question_group').notNull(),
+    snapshotVersion: integer('snapshot_version').notNull().default(1),
+    status: text('status').notNull(),
+    managerPayload: jsonb('manager_payload').notNull(),
+    contributorUserIds: uuid('contributor_user_ids').array().notNull(),
+    sourceGroupStateIds: uuid('source_group_state_ids').array().notNull(),
+    policyVersion: text('policy_version').notNull(),
+    workspaceConnectionId: uuid('workspace_connection_id').references(() => workspaceConnections.id, {
+      onDelete: 'set null',
+    }),
+    managerSlackUserId: text('manager_slack_user_id'),
+    slackExternalMessageId: text('slack_external_message_id'),
+    failureReason: text('failure_reason'),
+    deliveryAttemptedAt: timestamp('delivery_attempted_at', { withTimezone: true }),
+    statusUpdatedAt: timestamp('status_updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    firstNonCancelledUnique: uniqueIndex('survey_report_snapshots_first_non_cancelled_unique')
+      .on(t.tenantId, t.reportingCohortId, t.questionGroup, t.snapshotVersion)
+      .where(sql`${t.status} <> 'cancelled'`),
+    scopeIdx: index('survey_report_snapshots_scope_idx').on(t.tenantId, t.reportingCohortId, t.questionGroup),
+  }),
+);
+
 export type DbSurveyDefinition = typeof surveyDefinitions.$inferSelect;
 export type DbNewSurveyDefinition = typeof surveyDefinitions.$inferInsert;
 export type DbSurveyQuestion = typeof surveyQuestions.$inferSelect;
 export type DbNewSurveyQuestion = typeof surveyQuestions.$inferInsert;
+export type DbSurveyReportingCohort = typeof surveyReportingCohorts.$inferSelect;
+export type DbNewSurveyReportingCohort = typeof surveyReportingCohorts.$inferInsert;
 export type DbSurveyWindow = typeof surveyWindows.$inferSelect;
 export type DbNewSurveyWindow = typeof surveyWindows.$inferInsert;
 export type DbSurveyEvidence = typeof surveyEvidence.$inferSelect;
 export type DbNewSurveyEvidence = typeof surveyEvidence.$inferInsert;
 export type DbSurveyAssessment = typeof surveyAssessments.$inferSelect;
 export type DbNewSurveyAssessment = typeof surveyAssessments.$inferInsert;
+export type DbSurveyReportSnapshot = typeof surveyReportSnapshots.$inferSelect;
+export type DbNewSurveyReportSnapshot = typeof surveyReportSnapshots.$inferInsert;

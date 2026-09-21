@@ -26,10 +26,14 @@ describe('Contract: SituationClassificationSchema', () => {
       dialogueAct: 'emotional_disclosure',
       latestUserSubstance: 'barely sleeping after carrying the release',
       topicAnchor: 'release strain',
+      resolvedDetails: ['The employee is barely sleeping after carrying the release.'],
     });
     expect(parsed.dialogueAct).toBe('emotional_disclosure');
     expect(parsed.latestUserSubstance).toContain('barely sleeping');
     expect(parsed.topicAnchor).toBe('release strain');
+    expect(parsed).toMatchObject({
+      resolvedDetails: ['The employee is barely sleeping after carrying the release.'],
+    });
   });
 
   it('defaults dialogue-state fields for older classifier payloads', () => {
@@ -46,6 +50,95 @@ describe('Contract: SituationClassificationSchema', () => {
     expect(parsed.dialogueAct).toBe('new_substance');
     expect(parsed.latestUserSubstance).toBeNull();
     expect(parsed.topicAnchor).toBeNull();
+    expect(parsed.resolvedDetails).toBeUndefined();
+  });
+
+  it('accepts a typed exact-message pulse capture scope', () => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'pulse_capture_explanation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: false,
+      reasoningSummary: 'The employee named an earlier message.',
+      pulseCaptureScope: { type: 'message', messageIndex: 3 },
+    });
+
+    expect(parsed.pulseCaptureScope).toEqual({ type: 'message', messageIndex: 3 });
+  });
+
+  it.each([
+    { type: 'message', messageIndex: -1 },
+    { type: 'message', messageIndex: 1.5 },
+    { type: 'something_else' },
+    { type: 'conversation', messageIndex: 3 },
+    { type: 'message', messageIndex: 3, previousExact: true },
+    { type: 'previous_exact', messageIndex: 3 },
+    { type: 'unresolved', messageIndex: 3 },
+  ])('fails a malformed pulse capture scope closed to unresolved: %j', (pulseCaptureScope) => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'pulse_capture_explanation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: false,
+      reasoningSummary: 'Malformed model scope.',
+      pulseCaptureScope,
+    });
+
+    expect(parsed.pulseCaptureScope).toEqual({ type: 'unresolved' });
+  });
+
+  it('keeps a missing CAP-8 scope on the intent but fails it closed to unresolved', () => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'pulse_capture_explanation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: false,
+      reasoningSummary: 'No scope supplied.',
+    });
+
+    expect(parsed.primaryIntent).toBe('pulse_capture_explanation');
+    expect(parsed.pulseCaptureScope).toEqual({ type: 'unresolved' });
+  });
+
+  it('keeps an explicit null scope absent for non-CAP-8 classifications', () => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'support',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: true,
+      reasoningSummary: 'No CAP-8 request.',
+      pulseCaptureScope: null,
+    });
+
+    expect(parsed.pulseCaptureScope).toBeUndefined();
+  });
+
+  it('normalizes duplicate and blank resolved details before applying the cap', () => {
+    const parsed = SituationClassificationSchema.parse({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: [],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: true,
+      reasoningSummary: 'The employee continues the same thread.',
+      resolvedDetails: [' one ', 'one', '', 'two', 'three', 'four', 'five'],
+    });
+
+    expect(parsed.resolvedDetails).toEqual(['one', 'two', 'three', 'four', 'five']);
   });
 
   it('accepts social check-in as a typed intent and dialogue act', () => {
@@ -434,6 +527,11 @@ describe('ConfirmationResponseSchema', () => {
   it('accepts correct with a note', () => {
     const r = ConfirmationResponseSchema.parse({ verdict: 'correct', correctionNote: 'not about pay' });
     expect(r.correctionNote).toBe('not about pay');
+  });
+
+  it('accepts an exclusion verdict', () => {
+    const r = ConfirmationResponseSchema.parse({ verdict: 'exclude' });
+    expect(r.verdict).toBe('exclude');
   });
 
   it('rejects an unknown verdict', () => {

@@ -18,6 +18,9 @@ export const SituationIntentSchema = z.enum([
   'celebration',
   'onboarding',
   'feedback_request',
+  'reporting_explanation',
+  'data_use_explanation',
+  'pulse_capture_explanation',
 ]);
 export type SituationIntent = z.infer<typeof SituationIntentSchema>;
 
@@ -47,6 +50,20 @@ export const DialogueActSchema = z.enum([
 ]);
 export type DialogueAct = z.infer<typeof DialogueActSchema>;
 
+export const CLASSIFIER_TRANSCRIPT_TURN_LIMIT = 15;
+export const PulseCaptureSourceMessageIdSchema = z.string().uuid();
+
+export const PulseCaptureScopeSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('conversation') }).strict(),
+  z.object({
+    type: z.literal('message'),
+    messageIndex: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({ type: z.literal('previous_exact') }).strict(),
+  z.object({ type: z.literal('unresolved') }).strict(),
+]);
+export type PulseCaptureScope = z.infer<typeof PulseCaptureScopeSchema>;
+
 export const SituationClassificationSchema = z.object({
   primaryIntent: SituationIntentSchema,
   secondaryIntents: z.array(z.string()),
@@ -73,6 +90,31 @@ export const SituationClassificationSchema = z.object({
    * Existing topic to continue when the latest turn has no new substance.
    */
   topicAnchor: z.string().nullable().default(null),
+  /**
+   * Explicit employee-stated details in the active thread that already close a
+   * potential clarification branch. Turn-local and bounded; never inferred.
+   */
+  resolvedDetails: z.array(z.string()).transform((details) => [...new Set(
+    details.map((detail) => detail.trim()).filter(Boolean),
+  )].slice(0, 5)).optional(),
+  /**
+   * Which prior employee content a CAP-8 pulse-capture explanation targets.
+   * Invalid model output fails closed; absence remains distinguishable so the
+   * application never treats a missing CAP-8 scope as conversation-wide.
+   */
+  pulseCaptureScope: z.preprocess(
+    (value) => value === null ? undefined : value,
+    PulseCaptureScopeSchema
+      .catch({ type: 'unresolved' })
+      .optional(),
+  ),
+}).transform((classification) => {
+  const hasPulseCaptureIntent = classification.primaryIntent === 'pulse_capture_explanation'
+    || classification.secondaryIntents.includes('pulse_capture_explanation');
+  if (!hasPulseCaptureIntent || classification.pulseCaptureScope !== undefined) {
+    return classification;
+  }
+  return { ...classification, pulseCaptureScope: { type: 'unresolved' as const } };
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 
@@ -200,7 +242,7 @@ export type SurveyEvidenceEvaluation = z.infer<typeof SurveyEvidenceEvaluationSc
 // ── Group Confirmation Response Interpreter ─────────────────────────────────
 
 export const ConfirmationResponseSchema = z.object({
-  verdict: z.enum(['agree', 'correct', 'unclear']),
+  verdict: z.enum(['agree', 'correct', 'exclude', 'unclear']),
   correctionNote: z.string().optional(),
 });
 export type ConfirmationResponse = z.infer<typeof ConfirmationResponseSchema>;
@@ -233,6 +275,7 @@ export type ReplyStrategy = z.infer<typeof ReplyStrategySchema>;
 
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
+  confirmationSummary: z.string().optional(),
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
   surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),

@@ -34,6 +34,7 @@ describe('admin manager team contract', () => {
               evidenceSummary: 'Clear positive evidence',
             },
           ],
+          previousWindow: null,
         },
       ],
     } satisfies AdminManagerTeamResponse;

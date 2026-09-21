@@ -18,6 +18,15 @@ export interface AdminManagerTeamQuestionSignal {
   evidenceSummary: string | null;
 }
 
+export interface AdminManagerTeamPreviousWindow {
+  surveyWindowId: string;
+  completedAt: string | null;
+  scoredCount: number;
+  totalQuestions: number;
+  coveragePct: number;
+  signals: AdminManagerTeamQuestionSignal[];
+}
+
 export interface AdminManagerTeamEmployee {
   userId: string;
   displayName: string;
@@ -28,6 +37,7 @@ export interface AdminManagerTeamEmployee {
   totalQuestions: number;
   coveragePct: number;
   signals: AdminManagerTeamQuestionSignal[];
+  previousWindow: AdminManagerTeamPreviousWindow | null;
 }
 
 export interface AdminManagerTeamResponse {

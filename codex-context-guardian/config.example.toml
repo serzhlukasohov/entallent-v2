@@ -1,0 +1,10 @@
+[context_guardian]
+enabled = true
+warning_threshold = 70
+handoff_threshold = 80
+monitor_subagents = false
+block_closed_sessions = true
+show_session_start_handoff_notice = true
+max_tail_bytes = 1048576
+git_timeout_seconds = 1.5
+log_max_bytes = 1048576

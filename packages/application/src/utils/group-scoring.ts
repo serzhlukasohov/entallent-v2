@@ -8,7 +8,7 @@ const POLARITY_STRUCTURED: Record<string, number> = {
 };
 
 export function computeEngagementIndex(q1: number, q2: number, q3: number): number {
-  return Math.round(((q1 + q2 + q3) / 3) * 10 * 100) / 100;
+  return Math.round(((q1 + q2 + q3) / 3) * 100) / 100;
 }
 
 export function computeOpenEndedQuestionScore(

@@ -24,12 +24,15 @@ export interface ResolvedIgnore {
 export interface ProactivePulseConfig {
   /** Hours after probe sent before no-response counts as ignore. Default: 48 */
   ignoreWindowHours: number;
+  /** Days before period end when numeric engagement questions unlock. Default: 14 */
+  engagementUnlockDays?: number;
   /** Temporary test filter: only ask pending questions from this question group. */
   questionGroup?: string;
 }
 
 export const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = {
   ignoreWindowHours: 48,
+  engagementUnlockDays: 14,
 };
 
 export interface PulseBacklogRepositoryPort {
@@ -94,6 +97,26 @@ export interface PulseBacklogRepositoryPort {
     windowId: string,
     questionId: string,
     evidenceCapturedCount: number,
+  ): Promise<void>;
+
+  /**
+   * Moves pending questions from the same group ahead of other pending questions,
+   * preserving relative order inside each set.
+   */
+  prioritizeQuestionGroup(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
+  ): Promise<void>;
+
+  /**
+   * Moves pending questions from a skipped group behind other pending questions,
+   * preserving relative order inside each set.
+   */
+  deprioritizeQuestionGroup(
+    userId: string,
+    windowId: string,
+    questionGroup: string,
   ): Promise<void>;
 
   /**

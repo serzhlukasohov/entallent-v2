@@ -28,6 +28,11 @@ export interface EvidenceInput {
   confidence: string | number;
   evidenceSummary: string;
 }
+export interface PreviousWindowInput {
+  userId: string;
+  windowId: string;
+  completedAt: Date | null;
+}
 
 export interface BuildEmployeeRowsInput {
   teamUsers: TeamUserInput[];
@@ -37,6 +42,11 @@ export interface BuildEmployeeRowsInput {
   assessments: AssessmentInput[];
   /** Active (non-superseded) evidence, ordered by strength DESC */
   evidence: EvidenceInput[];
+  /** Latest closed window with assessments for each user */
+  previousWindows: PreviousWindowInput[];
+  previousAssessments: AssessmentInput[];
+  /** Active evidence from the selected closed windows, ordered by strength DESC */
+  previousEvidence: EvidenceInput[];
 }
 
 /** Statuses that count as "we have a usable read on this question" */
@@ -51,44 +61,16 @@ const COVERED_STATUSES = new Set(['scored', 'partially_covered']);
 export function buildEmployeeRows(input: BuildEmployeeRowsInput): EmployeeRow[] {
   const lastActiveMap = new Map(input.lastMessages.map((m) => [m.userId, m.occurredAt]));
   const riskSet = new Set(input.activeRiskUserIds.map((r) => r.userId));
+  const previousWindowMap = new Map(input.previousWindows.map((window) => [window.userId, window]));
 
-  const assessmentsByUser = new Map<string, AssessmentInput[]>();
-  for (const row of input.assessments) {
-    const list = assessmentsByUser.get(row.userId) ?? [];
-    list.push(row);
-    assessmentsByUser.set(row.userId, list);
-  }
-
-  // Best evidence per (userId, questionId). Evidence is pre-ordered by strength
-  // DESC, so the first one seen for a key is the strongest.
-  const bestEvidence = new Map<string, EvidenceInput>();
-  for (const ev of input.evidence) {
-    const key = `${ev.userId}:${ev.questionId}`;
-    if (!bestEvidence.has(key)) bestEvidence.set(key, ev);
-  }
+  const assessmentsByUser = groupAssessments(input.assessments);
+  const previousAssessmentsByUser = groupAssessments(input.previousAssessments);
+  const bestEvidence = indexEvidence(input.evidence);
+  const previousBestEvidence = indexEvidence(input.previousEvidence);
 
   const employees: EmployeeRow[] = input.teamUsers.map((user) => {
-    const assessments = assessmentsByUser.get(user.id) ?? [];
-    const windowId = assessments[0]?.windowId ?? null;
-    const totalQuestions = assessments.length;
-    const scoredCount = assessments.filter((a) => COVERED_STATUSES.has(a.assessmentStatus)).length;
-
-    const signals: QuestionSignal[] = assessments
-      .map((a) => {
-        const ev = bestEvidence.get(`${user.id}:${a.questionId}`);
-        return {
-          stableKey: a.stableKey,
-          title: a.title,
-          dimension: a.dimension,
-          assessmentStatus: a.assessmentStatus,
-          polarity: ev?.polarity ?? null,
-          strength: ev ? Number(ev.strength) : null,
-          confidence: ev ? Number(ev.confidence) : null,
-          evidenceSummary: ev?.evidenceSummary ?? null,
-        };
-      })
-      .sort((a, b) => a.stableKey.localeCompare(b.stableKey));
-
+    const current = buildInsightSummary(user.id, assessmentsByUser, bestEvidence);
+    const previousWindow = previousWindowMap.get(user.id);
     const lastActive = lastActiveMap.get(user.id);
 
     return {
@@ -96,11 +78,14 @@ export function buildEmployeeRows(input: BuildEmployeeRowsInput): EmployeeRow[] 
       displayName: user.displayName ?? user.id,
       lastActiveAt: lastActive ? lastActive.toISOString() : null,
       hasActiveRisk: riskSet.has(user.id),
-      surveyWindowId: windowId,
-      scoredCount,
-      totalQuestions,
-      coveragePct: totalQuestions > 0 ? Math.round((scoredCount / totalQuestions) * 100) : 0,
-      signals,
+      ...current,
+      previousWindow: previousWindow
+        ? {
+            completedAt: previousWindow.completedAt?.toISOString() ?? null,
+            ...buildInsightSummary(user.id, previousAssessmentsByUser, previousBestEvidence),
+            surveyWindowId: previousWindow.windowId,
+          }
+        : null,
     };
   });
 
@@ -111,4 +96,56 @@ export function buildEmployeeRows(input: BuildEmployeeRowsInput): EmployeeRow[] 
   });
 
   return employees;
+}
+
+function groupAssessments(rows: AssessmentInput[]): Map<string, AssessmentInput[]> {
+  const byUser = new Map<string, AssessmentInput[]>();
+  for (const row of rows) {
+    const list = byUser.get(row.userId) ?? [];
+    list.push(row);
+    byUser.set(row.userId, list);
+  }
+  return byUser;
+}
+
+function indexEvidence(rows: EvidenceInput[]): Map<string, EvidenceInput> {
+  const best = new Map<string, EvidenceInput>();
+  for (const row of rows) {
+    const key = `${row.userId}:${row.questionId}`;
+    if (!best.has(key)) best.set(key, row);
+  }
+  return best;
+}
+
+function buildInsightSummary(
+  userId: string,
+  assessmentsByUser: Map<string, AssessmentInput[]>,
+  bestEvidence: Map<string, EvidenceInput>,
+) {
+  const assessments = assessmentsByUser.get(userId) ?? [];
+  const scoredCount = assessments.filter((assessment) => COVERED_STATUSES.has(assessment.assessmentStatus)).length;
+  const totalQuestions = assessments.length;
+  const signals: QuestionSignal[] = assessments
+    .map((assessment) => {
+      const evidence = bestEvidence.get(`${userId}:${assessment.questionId}`);
+      return {
+        stableKey: assessment.stableKey,
+        title: assessment.title,
+        dimension: assessment.dimension,
+        assessmentStatus: assessment.assessmentStatus,
+        polarity: evidence?.polarity ?? null,
+        strength: evidence ? Number(evidence.strength) : null,
+        confidence: evidence ? Number(evidence.confidence) : null,
+        evidenceSummary: evidence?.evidenceSummary ?? null,
+      };
+    })
+    .sort((a, b) => a.stableKey.localeCompare(b.stableKey));
+
+  return {
+    surveyWindowId: assessments[0]?.windowId ?? null,
+    scoredCount,
+    totalQuestions,
+    coveragePct: totalQuestions > 0 ? Math.round((scoredCount / totalQuestions) * 100) : 0,
+    signals,
+  };
 }

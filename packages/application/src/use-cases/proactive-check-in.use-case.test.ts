@@ -5,6 +5,10 @@ import type { AiProviderPort } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { SurveyQuestionRecord } from '../types/records';
+import {
+  REPORTING_DISCLOSURE_VERSION,
+  getReportingDisclosureText,
+} from '../utils/reporting-disclosure';
 
 function makeQuestion(): SurveyQuestionRecord {
   return {
@@ -46,6 +50,11 @@ function makeConversationRepo(
     findRecentMessages: vi.fn().mockResolvedValue([
       { id: 'm-1', direction: 'inbound', text: 'Hello', occurredAt: new Date(), conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', createdAt: new Date() },
     ]),
+    findLatestDeliveredReportingDisclosure: vi.fn().mockResolvedValue({
+      messageId: 'disclosure-1',
+      version: REPORTING_DISCLOSURE_VERSION,
+      shownAt: new Date('2026-09-03T09:00:00.000Z'),
+    }),
     saveMessage: vi.fn().mockResolvedValue({ id: 'out-1', conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', direction: 'outbound', text: 'Hi Alex!', occurredAt: new Date(), createdAt: new Date() }),
     findMessageById: vi.fn(),
     findConversationByExternal: vi.fn(),
@@ -146,6 +155,43 @@ describe('ProactiveCheckInUseCase', () => {
       id: 'q-1',
       probeStrategies: ['Ask about their OKRs'],
     });
+  });
+
+  it('sends disclosure and suppresses a probe until delivery is recorded', async () => {
+    const conversationRepo = makeConversationRepo({
+      findLatestDeliveredReportingDisclosure: vi.fn().mockResolvedValue(null),
+    });
+    const ai = makeAiProvider(true, 'q-1');
+    const outbox = makeOutbox();
+    const backlog = makePulseBacklogService(makeQuestion());
+    const useCase = new ProactiveCheckInUseCase(
+      conversationRepo,
+      ai,
+      outbox,
+      undefined,
+      backlog,
+    );
+
+    const result = await useCase.execute(BASE_INPUT);
+
+    const disclosure = getReportingDisclosureText('en');
+    expect(backlog.getNextProbeQuestion).not.toHaveBeenCalled();
+    expect((ai.generateResponse as ReturnType<typeof vi.fn>).mock.calls[0][2]
+      .proactiveCheckIn.probeQuestion).toBeUndefined();
+    expect(conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining(disclosure),
+      metadata: expect.objectContaining({
+        reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION,
+      }),
+    }));
+    expect(conversationRepo.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ containsSurveyProbe: true }),
+    }));
+    expect(outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining(disclosure),
+    }));
+    expect(backlog.recordProbeSent).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ responseText: expect.stringContaining(disclosure), probeQuestionId: null });
   });
 
   it('passes null probeQuestion to AI when backlog returns null', async () => {
