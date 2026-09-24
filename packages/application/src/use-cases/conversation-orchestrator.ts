@@ -1061,10 +1061,18 @@ function resolvePulseCaptureScope(input: {
   userId: string;
 }): PulseCaptureResolution {
   const scope = input.classification.pulseCaptureScope;
-  if (scope?.type === 'conversation') return { type: 'conversation' };
-
   const currentMessage = input.messages[input.currentMessageIndex];
   if (!currentMessage) return { type: 'unresolved' };
+  const excludesWholeConversation = /\bnot\s+(?:(?:this|the)\s+)?(?:whole|entire)\s+(?:conversation|discussion|chat)\b/iu
+    .test(currentMessage.text);
+  const namesOneMessage = /\b(?:my|this|that|the)\s+(?:(?:exact|earlier|previous)\s+)*message\b/iu
+    .test(currentMessage.text);
+  const hasLabeledQuote = /message:\s*[“"«]/iu.test(currentMessage.text);
+  if (scope?.type === 'conversation'
+    && (isExplicitPulseCaptureRequest(currentMessage.text)
+      || (!excludesWholeConversation && !namesOneMessage && !hasLabeledQuote))) {
+    return { type: 'conversation' };
+  }
 
   const isOwnedPriorInbound = (message: MessageRecord | undefined, index: number): message is MessageRecord =>
     message !== undefined
@@ -1086,7 +1094,7 @@ function resolvePulseCaptureScope(input: {
       : { type: 'unresolved' };
   }
 
-  if (scope?.type === 'unresolved') {
+  if (scope?.type === 'unresolved' || scope?.type === 'conversation') {
     const quotes = [...currentMessage.text.matchAll(/“([^”]+)”|"([^"]+)"|«([^»]+)»/gu)];
     if (quotes.length !== 1) return { type: 'unresolved' };
     const quoteStart = quotes[0]?.index;
