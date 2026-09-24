@@ -1075,15 +1075,32 @@ function resolvePulseCaptureScope(input: {
     && message.tenantId === input.tenantId
     && message.userId === input.userId;
 
+  const firstVisibleIndex = Math.max(0, input.currentMessageIndex + 1 - CLASSIFIER_TRANSCRIPT_TURN_LIMIT);
   if (scope?.type === 'message') {
-    const firstVisibleIndex = Math.max(
-      0,
-      input.currentMessageIndex + 1 - CLASSIFIER_TRANSCRIPT_TURN_LIMIT,
-    );
     if (scope.messageIndex < firstVisibleIndex) return { type: 'unresolved' };
     const target = input.messages[scope.messageIndex];
     if (!isOwnedPriorInbound(target, scope.messageIndex)) return { type: 'unresolved' };
     const parsedTargetId = PulseCaptureSourceMessageIdSchema.safeParse(target.id);
+    return parsedTargetId.success
+      ? { type: 'exact', sourceMessageId: parsedTargetId.data }
+      : { type: 'unresolved' };
+  }
+
+  if (scope?.type === 'unresolved') {
+    const quotes = [...currentMessage.text.matchAll(/“([^”]+)”|"([^"]+)"|«([^»]+)»/gu)];
+    if (quotes.length !== 1) return { type: 'unresolved' };
+    const quoteStart = quotes[0]?.index;
+    // ponytail: accept only an explicit message label; add other quote forms when a real request needs them.
+    if (quoteStart === undefined || !currentMessage.text.slice(0, quoteStart).trimEnd().toLowerCase().endsWith('message:')) {
+      return { type: 'unresolved' };
+    }
+    const quote = (quotes[0]?.[1] ?? quotes[0]?.[2] ?? quotes[0]?.[3] ?? '').trim();
+    if (quote.length < 24) return { type: 'unresolved' };
+    const matches = input.messages.slice(firstVisibleIndex, input.currentMessageIndex)
+      .filter((message, offset) => isOwnedPriorInbound(message, firstVisibleIndex + offset)
+        && message.text.replace(/\s+\*Sent using\*\s+<@[A-Z0-9]+(?:\|[^>]+)?>\s*$/iu, '').trim() === quote);
+    if (matches.length !== 1) return { type: 'unresolved' };
+    const parsedTargetId = PulseCaptureSourceMessageIdSchema.safeParse(matches[0]?.id);
     return parsedTargetId.success
       ? { type: 'exact', sourceMessageId: parsedTargetId.data }
       : { type: 'unresolved' };

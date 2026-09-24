@@ -806,6 +806,89 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
   });
 
+  it('resolves a uniquely quoted prior message when the CAP-8 classifier is unresolved', async () => {
+    const m = baseMocks();
+    const sourceText = 'I am onboarding a new teammate next week. The introduction meeting is scheduled.';
+    const question = `I mean this exact earlier message: “${sourceText}” Was that message captured as Pulse evidence?`;
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: CAP8_SOURCE_ID, ...OWNERSHIP, direction: 'inbound', text: `${sourceText}\n\n*Sent using* <@U123>`, occurredAt: new Date('2026-09-03T09:59:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'quote but unresolved',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+      pulseCaptureScope: { type: 'unresolved' },
+    });
+    m.surveyRepo.findPulseCaptureForConversation.mockResolvedValue([{
+      evidenceSummary: 'The onboarding meeting was scheduled.', questionGroup: 'growth',
+      sourceMessageIds: [CAP8_SOURCE_ID], status: 'temporary',
+    }]);
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).toContain('The onboarding meeting was scheduled.');
+    expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith(expect.objectContaining({
+      sourceMessageId: CAP8_SOURCE_ID,
+    }));
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .toHaveProperty('pulseCaptureSourceMessageId', CAP8_SOURCE_ID);
+  });
+
+  it('keeps a quoted CAP-8 request unresolved when two prior messages contain the quote', async () => {
+    const m = baseMocks();
+    const quote = 'The introduction meeting is already scheduled for next week.';
+    const question = `I mean this exact earlier message: “${quote}” Was that message captured as Pulse evidence?`;
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: CAP8_SOURCE_ID, ...OWNERSHIP, direction: 'inbound', text: quote, occurredAt: new Date('2026-09-03T09:58:00.000Z') },
+      { id: '11111111-1111-4111-8111-111111111111', ...OWNERSHIP, direction: 'inbound', text: quote, occurredAt: new Date('2026-09-03T09:59:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'ambiguous quote',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+      pulseCaptureScope: { type: 'unresolved' },
+    });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('pulseCaptureSourceMessageId');
+  });
+
+  it.each([
+    ['missing scope', undefined, 'The introduction meeting is scheduled.', true],
+    ['partial quote', { type: 'unresolved' } as const, 'The introduction meeting is scheduled.', true],
+    ['illustrative quote', { type: 'unresolved' } as const, 'I am onboarding next week. The introduction meeting is scheduled.', false],
+  ])('does not resolve a %s', async (_label, pulseCaptureScope, quote, pointsToQuote) => {
+    const m = baseMocks();
+    const sourceText = 'I am onboarding next week. The introduction meeting is scheduled.';
+    const question = pointsToQuote
+      ? `I mean this exact earlier message: “${quote}” Was that message captured as Pulse evidence?`
+      : `Did that onboarding message enter Pulse? For context: “${quote}”`;
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: CAP8_SOURCE_ID, ...OWNERSHIP, direction: 'inbound', text: sourceText, occurredAt: new Date('2026-09-03T09:59:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+      emotionalState: [], confidence: 0.95, reasoningSummary: 'quote is insufficient',
+      surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+      ...(pulseCaptureScope ? { pulseCaptureScope } : {}),
+    });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['missing scope', undefined],
     ['explicit unresolved scope', { type: 'unresolved' }],

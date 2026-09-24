@@ -510,6 +510,34 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.pulseCaptureScope).toEqual({ type: 'unresolved' });
   });
 
+  it('keeps a quoted exact-message CAP-8 request on the capture route', async () => {
+    const content = 'I mean this exact earlier message: “I felt supported during onboarding.” Did you capture Pulse information from that message?';
+    createMock.mockResolvedValue({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            primaryIntent: 'pulse_capture_explanation', secondaryIntents: [],
+            emotionalState: [], urgency: 'low', confidence: 0.95,
+            requiresSafetyCheck: false, surveyAllowed: false,
+            reasoningSummary: 'The employee quotes a prior message.',
+            reminderRequest: null, dialogueAct: 'request',
+            latestUserSubstance: content, topicAnchor: null,
+            pulseCaptureScope: { type: 'unresolved' },
+          }),
+        },
+      }],
+    });
+
+    const result = await makeProvider().classifySituation([
+      { role: 'user', content: 'I felt supported during onboarding.', timestamp: new Date('2026-09-03T09:00:00.000Z') },
+      { role: 'user', content, timestamp: new Date('2026-09-03T10:00:00.000Z') },
+    ], { userName: 'Annna' });
+
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'unresolved' });
+  });
+
   it('normalizes an explicit correction before CAP-8 intent gating', async () => {
     const content = 'No, I meant the onboarding message.';
     createMock.mockResolvedValue({

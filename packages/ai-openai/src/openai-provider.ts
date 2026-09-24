@@ -474,9 +474,6 @@ function normalizePulseCaptureExplanation(
       || intent === 'potential_crisis');
   const isControlRequest = EXPLICIT_TEXT_TRANSFORM_REQUEST.test(latestEmployeeText)
     || EXPLICIT_CHATBOT_EVALUATION_REQUEST.test(latestEmployeeText)
-    || (classification.pulseCaptureScope?.type !== 'message'
-      && /[“”«»]/u.test(latestEmployeeText)
-      && /(?:pulse|пульс).{0,40}(?:information|data|информац|дан)/iu.test(latestEmployeeText))
     || /^the\s+employee\s+(?:wrote|said|asked)\b/iu.test(latestEmployeeText);
   const explicitRequest = isExplicitPulseCaptureRequest(latestEmployeeText);
   const safetyRequest = safetyIntent !== undefined
