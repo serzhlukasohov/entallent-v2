@@ -636,7 +636,7 @@ export function buildFindPulseCaptureForConversationSql(
             and ${sourceMessageId === undefined
               ? sql`confirmation_prompt.metadata->'confirmationSourceMessageIds' ? provenance_message.id::text`
               : sql`provenance_message.id = ${sourceMessageId}
-                and confirmation_prompt.metadata->'confirmationSourceMessageIds' = jsonb_build_array(${sourceMessageId})`}
+                and confirmation_prompt.metadata->'confirmationSourceMessageIds' = jsonb_build_array(${sourceMessageId}::text)`}
         ),
         false
       ) as "hasFinalProvenance",
