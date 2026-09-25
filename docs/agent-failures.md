@@ -16,6 +16,15 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-09-25: required harness commands attempted dependency installation
+
+- Symptom: Both `pnpm exec tsx scripts/agent-harness.ts reflection` and `pnpm harness:check -- --base origin/main` found no local dependencies, started a workspace install, and entered repeated npm registry retries that could not resolve in the managed network environment.
+- Expected: Required reflection and final harness commands should use already provisioned tooling and must not mutate or install the workspace before a documentation-only task.
+- Root cause layer: environment
+- Harness fix: Provision workspace dependencies before the task or provide a dependency-independent reflection launcher that fails fast when its runtime is absent.
+- Regression check: Run reflection and `harness:check` in a clean checkout with network disabled; each must produce its artifact or a clear no-runtime diagnostic without invoking `pnpm install`.
+- Status: open
+
 ## 2026-09-18: local dashboard production verifier lacked the admin key
 
 - Symptom: `pnpm dashboard:prod:verify` stopped before network access with `ADMIN_API_KEY is required` because the local `.env` does not contain the production dashboard credential.
