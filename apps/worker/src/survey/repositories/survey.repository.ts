@@ -623,6 +623,9 @@ export function buildFindPulseCaptureForConversationSql(
       ${surveyGroupStates.status} as "groupStatus",
       coalesce(
         jsonb_typeof(confirmation_prompt.metadata->'confirmationSourceMessageIds') = 'array'
+        and ${sourceMessageId === undefined
+          ? sql`true`
+          : sql`cardinality(${surveyEvidence.sourceMessageIds}) = 1`}
         and exists (
           select 1
           from ${messages} provenance_message

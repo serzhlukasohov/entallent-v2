@@ -107,6 +107,7 @@ describe('SurveyRepository', () => {
 
     expect(query.sql).toContain('"survey_evidence"."source_message_ids"');
     expect(query.sql).toContain('confirmationSourceMessageIds');
+    expect(query.sql).toContain('cardinality("survey_evidence"."source_message_ids") = 1');
     expect(query.sql).toMatch(/confirmation_prompt\.metadata->'confirmationSourceMessageIds' = jsonb_build_array\(\$\d+::text\)/u);
     expect(query.sql).toContain('evidence_source.occurred_at <=');
     expect(query.sql).toContain('provenance_message.occurred_at <=');
