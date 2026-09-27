@@ -13,6 +13,7 @@ import {
   type ResponseContext,
   type RiskContext,
   type ScheduledActionRepositoryPort,
+  type SurveyRepositoryPort,
   type SurveyQuestionForEvaluation,
   type StyleProfileRecord,
 } from '@entalent/application';
@@ -53,6 +54,7 @@ export interface CoachHarnessOptions {
   seedStyleProfile?: StyleProfileRecord;
   aiProvider?: AiProviderPort;
   scheduledActionRepo?: ScheduledActionRepositoryPort;
+  surveyRepo?: SurveyRepositoryPort;
 }
 
 export interface GenerateResponseCall {
@@ -134,7 +136,7 @@ export class CoachHarness {
       ai,
       this.outbox,
       this.memoryRepo,
-      undefined,
+      options.surveyRepo,
       undefined,
       this.escalation,
       undefined,

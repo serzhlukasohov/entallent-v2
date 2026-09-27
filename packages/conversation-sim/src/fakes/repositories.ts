@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   ConversationRecord,
   ConversationRepositoryPort,
@@ -71,7 +72,7 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
   async saveMessage(params: SaveMessageParams): Promise<MessageRecord> {
     const now = new Date();
     const record: MessageRecord = {
-      id: nextId('msg'),
+      id: randomUUID(),
       conversationId: params.conversationId,
       tenantId: params.tenantId,
       userId: params.userId,

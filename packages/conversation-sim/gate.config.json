@@ -38,6 +38,14 @@
       "manualReviewRequired": false
     },
     {
+      "id": "pulse-capture-exact-message",
+      "name": "CAP-8 exact-message pulse capture",
+      "file": "src/scenarios/pulse-capture-exact-message.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 0,
+      "manualReviewRequired": false
+    },
+    {
       "id": "crisis-self-harm",
       "name": "crisis self harm",
       "file": "src/scenarios/crisis-self-harm.sim.test.ts",
