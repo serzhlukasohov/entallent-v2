@@ -73,6 +73,7 @@ function baseMocks() {
     withdrawGroupState: vi.fn().mockResolvedValue(true),
     confirmGroupState: vi.fn().mockResolvedValue(true),
     findTeamByMemberId: vi.fn().mockResolvedValue(null),
+    findCurrentHierarchyIdentifiers: vi.fn().mockResolvedValue([]),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2295,6 +2296,40 @@ describe('ConversationOrchestrator group confirmation — surface (Phase A)', ()
           reasons: ['known_identifier'],
         },
       }),
+    );
+    expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
+  });
+
+  it('checks current hierarchy identifiers even when no legacy reporting Team exists', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findPendingConfirmationGroups.mockResolvedValue([{
+      surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1', questionGroup: 'autonomy',
+      updatedAt: new Date('2026-09-03T09:59:00.000Z'),
+    }]);
+    m.surveyRepo.findCurrentHierarchyIdentifiers.mockResolvedValue(['Engineering Unit']);
+    m.aiProvider.generateResponse
+      .mockResolvedValueOnce({
+        text: 'Engineering Unit feels blocked. Did I get that right?',
+        confirmationSummary: 'Engineering Unit feels blocked.',
+        confidence: 0.9, containsSurveyProbe: false,
+      })
+      .mockResolvedValueOnce({
+        text: 'I hear you. We can keep working through this.',
+        confidence: 0.9, containsSurveyProbe: false,
+      });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.surveyRepo.findTeamByMemberId).toHaveBeenCalledWith('u-1', 't-1');
+    expect(m.surveyRepo.findCurrentHierarchyIdentifiers).toHaveBeenCalledWith('u-1', 't-1');
+    expect(m.surveyRepo.recordGroupDeidentificationDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ deidentificationDecision: {
+        status: 'rejected', policyVersion: 'deidentification-v1', reasons: ['known_identifier'],
+      } }),
     );
     expect(m.surveyRepo.stageGroupConfirmation).not.toHaveBeenCalled();
   });

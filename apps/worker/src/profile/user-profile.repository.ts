@@ -132,6 +132,7 @@ function buildChannelAccountPredicates(
   const predicates: SQL[] = [
     eq(channelAccounts.userId, userId),
     eq(channelAccounts.tenantId, tenantId),
+    eq(channelAccounts.linkStatus, 'linked'),
   ];
 
   if (scope.channelType) {

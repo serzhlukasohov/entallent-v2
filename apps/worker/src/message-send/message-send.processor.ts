@@ -46,7 +46,24 @@ export class MessageSendProcessor extends WorkerHost {
     ) {
       throw new Error(`Outbound delivery route mismatch: ${messageId}`);
     }
+    const onboarding = await this.conversationRepo.findOnboardingDelivery(messageId, tenantId, persisted.userId);
+    if (onboarding && persisted.onboardingDeliveryId !== messageId) {
+      throw new Error(`Onboarding message binding mismatch: ${messageId}`);
+    }
+    if (onboarding && onboarding.externalWorkspaceId !== externalWorkspaceId) {
+      throw new Error(`Onboarding workspace mismatch: ${messageId}`);
+    }
+    const eligible = onboarding
+      ? await this.conversationRepo.isUserOnboardingEligible(tenantId, persisted.userId, externalWorkspaceId)
+      : await this.conversationRepo.isUserRuntimeEligible(tenantId, persisted.userId);
+    if (!eligible) {
+      this.logger.warn(`Skipping outbound delivery for inactive runtime user ${persisted.userId}`);
+      return;
+    }
     if (persisted.sentAt) {
+      if (onboarding && persisted.externalMessageId) {
+        await this.conversationRepo.completeOnboardingDelivery(messageId, tenantId, persisted.userId, persisted.sentAt, persisted.externalMessageId);
+      }
       await this.activateDelivery(messageId, tenantId, conversationId, persisted.sentAt);
       return;
     }
@@ -87,6 +104,10 @@ export class MessageSendProcessor extends WorkerHost {
 
     if (channelType === 'slack') {
       const adapter = new SlackAdapter({ botToken: wsConn.botToken });
+      if (onboarding && !await this.conversationRepo.claimOnboardingDelivery(messageId, tenantId, persisted.userId)) {
+        this.logger.warn(`Onboarding delivery ${messageId} is already sending or delivered; manual reconciliation may be required`);
+        return;
+      }
       const result = await adapter.sendMessage(outgoing);
 
       await this.recordDelivery(messageId, {
@@ -96,6 +117,9 @@ export class MessageSendProcessor extends WorkerHost {
         externalThreadId: result.externalThreadId,
         sentAt: result.sentAt,
       });
+      if (onboarding) {
+        await this.conversationRepo.completeOnboardingDelivery(messageId, tenantId, persisted.userId, result.sentAt, result.externalMessageId);
+      }
 
       this.logger.log(`Message ${messageId} delivered — ts=${result.externalMessageId}`);
       return;

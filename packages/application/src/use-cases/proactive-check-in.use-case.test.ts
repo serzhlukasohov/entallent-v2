@@ -55,7 +55,7 @@ function makeConversationRepo(
       version: REPORTING_DISCLOSURE_VERSION,
       shownAt: new Date('2026-09-03T09:00:00.000Z'),
     }),
-    saveMessage: vi.fn().mockResolvedValue({ id: 'out-1', conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', direction: 'outbound', text: 'Hi Alex!', occurredAt: new Date(), createdAt: new Date() }),
+    saveMessage: vi.fn().mockImplementation(async (params: { id?: string; text: string; metadata?: Record<string, unknown> }) => ({ id: params.id ?? 'out-1', conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', direction: 'outbound', text: params.text, metadata: params.metadata, occurredAt: new Date(), createdAt: new Date() })),
     findMessageById: vi.fn(),
     findConversationByExternal: vi.fn(),
     ...overrides,
@@ -267,5 +267,59 @@ describe('ProactiveCheckInUseCase', () => {
 
     const result = await useCase.execute(BASE_INPUT);
     expect(result.outboundMessageId).toBe('out-1');
+  });
+
+  it('uses the existing first contact without Pulse disclosure for a non-Pulse Person', async () => {
+    const repo = makeConversationRepo({
+      findRecentMessages: vi.fn().mockResolvedValue([]),
+      findLatestDeliveredReportingDisclosure: vi.fn().mockResolvedValue(null),
+    });
+    const ai = makeAiProvider();
+    const outbox = makeOutbox();
+    const backlog = makePulseBacklogService();
+    const useCase = new ProactiveCheckInUseCase(repo, ai, outbox, undefined, backlog);
+
+    const result = await useCase.execute({ ...BASE_INPUT, onboardingMessageId: 'onboarding-1', pulseEnabled: false });
+
+    expect(result.outboundMessageId).toBe('onboarding-1');
+    expect(result.responseText).not.toContain(getReportingDisclosureText('en'));
+    expect(repo.findLatestDeliveredReportingDisclosure).not.toHaveBeenCalled();
+    expect(backlog.getNextProbeQuestion).not.toHaveBeenCalled();
+    expect((ai.generateResponse as ReturnType<typeof vi.fn>).mock.calls[0][2].reportingDisclosure).toBeUndefined();
+    expect(outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'onboarding-1' }));
+  });
+
+  it('resumes persisted onboarding text without generating a second response', async () => {
+    const repo = makeConversationRepo({
+      findMessageById: vi.fn().mockResolvedValue({
+        id: 'onboarding-1', tenantId: 't-1', conversationId: 'c-1', userId: 'u-1',
+        direction: 'outbound', text: 'Previously prepared hello', metadata: { onboardingDeliveryId: 'onboarding-1' }, occurredAt: new Date(), createdAt: new Date(),
+      }),
+    });
+    const ai = makeAiProvider();
+    const outbox = makeOutbox();
+    const useCase = new ProactiveCheckInUseCase(repo, ai, outbox);
+
+    const result = await useCase.execute({ ...BASE_INPUT, onboardingMessageId: 'onboarding-1' });
+
+    expect(result.responseText).toBe('Previously prepared hello');
+    expect(ai.generateResponse).not.toHaveBeenCalled();
+    expect(repo.saveMessage).not.toHaveBeenCalled();
+    expect(outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'onboarding-1', text: 'Previously prepared hello',
+    }));
+  });
+
+  it('does not turn rollout first contact into a Pulse probe if the employee wrote first', async () => {
+    const backlog = makePulseBacklogService();
+    const useCase = new ProactiveCheckInUseCase(
+      makeConversationRepo(), makeAiProvider(true, 'q-1'), makeOutbox(), undefined, backlog,
+    );
+
+    const result = await useCase.execute({ ...BASE_INPUT, onboardingMessageId: 'onboarding-1' });
+
+    expect(backlog.getNextProbeQuestion).not.toHaveBeenCalled();
+    expect(backlog.recordProbeSent).not.toHaveBeenCalled();
+    expect(result.probeQuestionId).toBeNull();
   });
 });

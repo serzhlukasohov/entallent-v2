@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, jsonb, timestamp, unique } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { check, pgTable, uuid, text, jsonb, timestamp, unique } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { users } from './users';
 
@@ -15,6 +16,7 @@ export const channelAccounts = pgTable(
     channelType: text('channel_type').notNull(),
     externalWorkspaceId: text('external_workspace_id').notNull(),
     externalUserId: text('external_user_id').notNull(),
+    linkStatus: text('link_status').notNull().default('linked'),
     displayName: text('display_name'),
     profileMetadata: jsonb('profile_metadata').notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -22,6 +24,7 @@ export const channelAccounts = pgTable(
   },
   (t) => ({
     uniqueAccount: unique().on(t.channelType, t.externalWorkspaceId, t.externalUserId),
+    linkStatusValid: check('channel_accounts_link_status_valid', sql`${t.linkStatus} IN ('linked', 'unlinked')`),
   }),
 );
 

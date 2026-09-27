@@ -86,6 +86,7 @@ export class ProfileHydrationStatusController implements OnModuleInit, OnModuleD
           and(
             eq(channelAccounts.tenantId, normalizedTenantId),
             eq(channelAccounts.channelType, 'slack'),
+            eq(channelAccounts.linkStatus, 'linked'),
             eq(users.status, 'active'),
           ),
         ),

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, jsonb, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, boolean, jsonb, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 export const users = pgTable('users', {
@@ -19,7 +19,9 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
-});
+}, (t) => ({
+  idTenantUnique: uniqueIndex('users_id_tenant_id_unique_idx').on(t.id, t.tenantId),
+}));
 
 export type DbUser = typeof users.$inferSelect;
 export type DbNewUser = typeof users.$inferInsert;

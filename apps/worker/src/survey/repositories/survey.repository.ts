@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { eq, and, gt, isNull, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
 import {
   surveyDefinitions,
+  eligiblePulsePersonOrLegacy,
   surveyReportingCohorts,
   surveyWindows,
   surveyQuestions,
@@ -104,6 +105,7 @@ export class SurveyRepository implements SurveyRepositoryPort {
           eq(users.tenantId, params.tenantId),
           eq(users.status, 'active'),
           isNull(users.deletedAt),
+          eligiblePulsePersonOrLegacy(users.id, users.tenantId),
           sql`${users.consentState}->'surveyEnabled' = 'true'::jsonb`,
           sql`not exists (
             select 1
@@ -576,6 +578,10 @@ export class SurveyRepository implements SurveyRepositoryPort {
   }
 
   // Team methods — delegated to TeamRepository
+  findCurrentHierarchyIdentifiers(userId: string, tenantId: string): Promise<string[]> {
+    return this.teamRepo.findCurrentHierarchyIdentifiers(userId, tenantId);
+  }
+
   findTeamByMemberId(
     userId: string,
     tenantId: string,

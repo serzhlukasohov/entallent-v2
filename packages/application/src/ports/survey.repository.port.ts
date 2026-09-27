@@ -207,6 +207,7 @@ export interface SurveyRepositoryPort {
   confirmGroupState(params: ConfirmGroupStateParams): Promise<boolean>;
   findConfirmedGroupStates(params: FindConfirmedGroupStatesParams): Promise<ConfirmedGroupReportStateRecord[]>;
   // Team methods
+  findCurrentHierarchyIdentifiers(userId: string, tenantId: string): Promise<string[]>;
   findTeamByMemberId(userId: string, tenantId: string, surveyWindowId?: string): Promise<SurveyTeamRecord | null>;
   findTeamById(teamId: string, tenantId: string, reportingCohortId?: string): Promise<SurveyTeamRecord | null>;
 }

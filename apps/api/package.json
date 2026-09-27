@@ -8,8 +8,12 @@
     "dev": "dotenv -e ../../.env -- nodemon",
     "start": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p scripts/tsconfig.json",
     "test": "vitest run --passWithNoTests",
+    "company-admin:oidc:bootstrap": "node --import tsx scripts/bootstrap-company-admin-oidc.ts",
+    "company-hierarchy:reconcile": "node --import tsx scripts/reconcile-legacy-hierarchy.ts",
+    "company-hierarchy:backfill": "node --import tsx scripts/backfill-legacy-hierarchy.ts",
+    "company-onboarding:reconcile": "node --import tsx scripts/reconcile-onboarding-sending.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -33,6 +37,7 @@
     "drizzle-orm": "^0.35.0",
     "fastify": "^4.28.0",
     "ioredis": "^5.3.2",
+    "jose": "6.2.7",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

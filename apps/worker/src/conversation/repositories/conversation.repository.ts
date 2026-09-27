@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { eq, and, desc, gte, isNotNull, isNull, lt, lte, ne, sql } from 'drizzle-orm';
-import { conversations, messages, users } from '@entalent/database';
+import { channelAccounts, conversations, messages, orgOnboardingDeliveries, people, users } from '@entalent/database';
+import { isRuntimeEligibleUser } from '@entalent/application';
 import type {
   ConversationRepositoryPort,
   ConversationRecord,
@@ -13,6 +14,68 @@ import { DatabaseService } from '../../database/database.service';
 @Injectable()
 export class ConversationRepository implements ConversationRepositoryPort {
   constructor(private readonly db: DatabaseService) {}
+
+  async isUserRuntimeEligible(tenantId: string, userId: string): Promise<boolean> {
+    const [row] = await this.db.client.select({
+      userStatus: users.status,
+      deletedAt: users.deletedAt,
+      personLifecycle: people.lifecycleStatus,
+      pulseParticipant: people.pulseParticipant,
+    }).from(users)
+      .leftJoin(people, and(eq(people.id, users.id), eq(people.tenantId, users.tenantId)))
+      .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)))
+      .limit(1);
+    return row ? isRuntimeEligibleUser(row) : false;
+  }
+
+  async findOnboardingDelivery(messageId: string, tenantId: string, userId: string): Promise<{
+    status: string; externalWorkspaceId: string;
+  } | null> {
+    const [row] = await this.db.client.select({
+      status: orgOnboardingDeliveries.status,
+      externalWorkspaceId: orgOnboardingDeliveries.externalWorkspaceId,
+    }).from(orgOnboardingDeliveries).where(and(
+      eq(orgOnboardingDeliveries.id, messageId), eq(orgOnboardingDeliveries.tenantId, tenantId),
+      eq(orgOnboardingDeliveries.personId, userId),
+    )).limit(1);
+    return row ?? null;
+  }
+
+  async isUserOnboardingEligible(tenantId: string, userId: string, externalWorkspaceId: string): Promise<boolean> {
+    const rows = await this.db.client.select({
+      userStatus: users.status, deletedAt: users.deletedAt,
+      personLifecycle: people.lifecycleStatus,
+    }).from(people).innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, people.tenantId)))
+      .innerJoin(channelAccounts, and(eq(channelAccounts.userId, people.id),
+        eq(channelAccounts.tenantId, people.tenantId), eq(channelAccounts.channelType, 'slack'),
+        eq(channelAccounts.linkStatus, 'linked'),
+        eq(channelAccounts.externalWorkspaceId, externalWorkspaceId)))
+      .where(and(eq(people.id, userId), eq(people.tenantId, tenantId))).limit(2);
+    return rows.length === 1 && rows[0].userStatus === 'active' &&
+      rows[0].deletedAt === null && rows[0].personLifecycle === 'active';
+  }
+
+  async claimOnboardingDelivery(messageId: string, tenantId: string, userId: string): Promise<boolean> {
+    const rows = await this.db.client.update(orgOnboardingDeliveries).set({
+      status: 'sending', attemptCount: sql`${orgOnboardingDeliveries.attemptCount} + 1`,
+      lastAttemptAt: new Date(), updatedAt: new Date(),
+    }).where(and(
+      eq(orgOnboardingDeliveries.id, messageId), eq(orgOnboardingDeliveries.tenantId, tenantId),
+      eq(orgOnboardingDeliveries.personId, userId),
+      eq(orgOnboardingDeliveries.status, 'pending'),
+    )).returning({ id: orgOnboardingDeliveries.id });
+    return rows.length === 1;
+  }
+
+  async completeOnboardingDelivery(messageId: string, tenantId: string, userId: string, sentAt: Date, externalMessageId: string): Promise<void> {
+    await this.db.client.update(orgOnboardingDeliveries).set({
+      status: 'delivered', deliveredAt: sentAt, externalMessageId, updatedAt: new Date(),
+    }).where(and(
+      eq(orgOnboardingDeliveries.id, messageId), eq(orgOnboardingDeliveries.tenantId, tenantId),
+      eq(orgOnboardingDeliveries.personId, userId),
+      ne(orgOnboardingDeliveries.status, 'delivered'),
+    ));
+  }
 
   async findById(id: string, tenantId: string): Promise<ConversationRecord | null> {
     const [row] = await this.db.client
@@ -142,9 +205,10 @@ export class ConversationRepository implements ConversationRepositoryPort {
   }
 
   async saveMessage(params: SaveMessageParams): Promise<MessageRecord> {
-    const [msg] = await this.db.client
+    const insert = this.db.client
       .insert(messages)
       .values({
+        ...(params.id ? { id: params.id } : {}),
         conversationId: params.conversationId,
         tenantId: params.tenantId,
         userId: params.userId,
@@ -157,8 +221,21 @@ export class ConversationRepository implements ConversationRepositoryPort {
         traceId: params.traceId,
         messageType: params.messageType ?? 'text',
         metadata: params.metadata ?? {},
-      })
-      .returning();
+      });
+    const inserted = params.id
+      ? await insert.onConflictDoNothing().returning()
+      : await insert.returning();
+    const msg = inserted[0] ?? (params.id
+      ? (await this.db.client.select().from(messages).where(and(
+        eq(messages.id, params.id), eq(messages.tenantId, params.tenantId),
+        eq(messages.conversationId, params.conversationId), isNull(messages.deletedAt),
+      )).limit(1))[0]
+      : null);
+    if (!msg || msg.userId !== params.userId || msg.direction !== params.direction ||
+      msg.messageType !== (params.messageType ?? 'text') ||
+      (params.id && (msg.metadata as Record<string, unknown>)['onboardingDeliveryId'] !== params.id)) {
+      throw new Error('Message idempotency scope mismatch');
+    }
 
     return {
       id: msg.id,
@@ -175,20 +252,42 @@ export class ConversationRepository implements ConversationRepositoryPort {
     };
   }
 
+  async findMessageById(id: string, tenantId: string, conversationId: string): Promise<MessageRecord | null> {
+    const [message] = await this.db.client.select().from(messages).where(and(
+      eq(messages.id, id), eq(messages.tenantId, tenantId), eq(messages.conversationId, conversationId),
+      isNull(messages.deletedAt),
+    )).limit(1);
+    return message ? {
+      id: message.id, tenantId: message.tenantId, conversationId: message.conversationId,
+      userId: message.userId, direction: message.direction as 'inbound' | 'outbound',
+      text: message.text, occurredAt: message.occurredAt, createdAt: message.occurredAt,
+      externalMessageId: message.externalMessageId ?? undefined,
+      externalThreadId: message.externalThreadId ?? undefined,
+      sentAt: message.sentAt ?? undefined,
+      metadata: message.metadata as MessageRecord['metadata'],
+    } : null;
+  }
+
   async findOutboundMessageForDelivery(
     messageId: string,
     tenantId: string,
     conversationId: string,
   ): Promise<{
+    userId: string;
     text: string;
     sentAt: Date | null;
+    externalMessageId: string | null;
+    onboardingDeliveryId: string | null;
     channelType: string;
     externalConversationId: string;
   } | null> {
     const [row] = await this.db.client
       .select({
+        userId: messages.userId,
         text: messages.text,
         sentAt: messages.sentAt,
+        externalMessageId: messages.externalMessageId,
+        onboardingDeliveryId: sql<string | null>`${messages.metadata}->>'onboardingDeliveryId'`,
         channelType: conversations.channelType,
         externalConversationId: conversations.externalConversationId,
       })
@@ -198,6 +297,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         and(
           eq(conversations.id, messages.conversationId),
           eq(conversations.tenantId, messages.tenantId),
+          eq(conversations.userId, messages.userId),
         ),
       )
       .where(and(

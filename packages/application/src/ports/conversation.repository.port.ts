@@ -6,6 +6,7 @@ import type {
 } from '../types/records';
 
 export interface SaveMessageParams {
+  id?: string;
   conversationId: string;
   tenantId: string;
   userId: string;
@@ -20,6 +21,7 @@ export interface SaveMessageParams {
 }
 
 export interface ConversationRepositoryPort {
+  findMessageById?(id: string, tenantId: string, conversationId: string): Promise<MessageRecord | null>;
   findById(id: string, tenantId: string): Promise<ConversationRecord | null>;
   findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]>;
   findLatestDeliveredReportingDisclosure(

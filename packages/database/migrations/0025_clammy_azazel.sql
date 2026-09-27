@@ -1,0 +1,2 @@
+ALTER TABLE "org_company_admin_sessions" ADD COLUMN "binding_fingerprint" text;--> statement-breakpoint
+ALTER TABLE "org_company_admin_sessions" ADD CONSTRAINT "org_company_admin_sessions_binding_fingerprint_valid" CHECK ("org_company_admin_sessions"."binding_fingerprint" IS NULL OR "org_company_admin_sessions"."binding_fingerprint" ~ '^[0-9a-f]{64}$');

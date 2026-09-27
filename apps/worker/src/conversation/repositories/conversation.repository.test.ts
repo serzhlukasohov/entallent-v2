@@ -25,6 +25,20 @@ function compileSql(value: unknown) {
 }
 
 describe('ConversationRepository', () => {
+  it('requires a linked Slack account for onboarding eligibility', async () => {
+    const joins: SQL[] = [];
+    const query = {
+      innerJoin: (_table: unknown, predicate: SQL) => { joins.push(predicate); return query; },
+      where: () => query,
+      limit: async () => [{ userStatus: 'active', deletedAt: null, personLifecycle: 'active' }],
+    };
+    const repo = new ConversationRepository({ client: { select: () => ({ from: () => query }) } } as never);
+    await expect(repo.isUserOnboardingEligible('tenant-1', 'person-1', 'T-1')).resolves.toBe(true);
+    const joinSql = joins.map((join) => compileSql(join).sql).join(' ');
+    expect(joinSql).toContain('"channel_accounts"."link_status"');
+    expect(joins.flatMap((join) => compileSql(join).params)).toContain('linked');
+  });
+
   it('finds a newer inbound only inside the queued tenant, user, conversation, and window', async () => {
     const occurredAt = new Date('2026-09-11T00:16:26.984Z');
     const candidate = {
@@ -229,14 +243,18 @@ describe('ConversationRepository', () => {
     });
 
     expect(Object.keys(select.mock.calls[0]![0] as object)).toEqual([
+      'userId',
       'text',
       'sentAt',
+      'externalMessageId',
+      'onboardingDeliveryId',
       'channelType',
       'externalConversationId',
     ]);
     const joinQuery = compileSql(innerJoin.mock.calls[0]?.[1]);
     expect(joinQuery.sql).toContain('"conversations"."id" = "messages"."conversation_id"');
     expect(joinQuery.sql).toContain('"conversations"."tenant_id" = "messages"."tenant_id"');
+    expect(joinQuery.sql).toContain('"conversations"."user_id" = "messages"."user_id"');
 
     const query = compileSql(where.mock.calls[0]?.[0]);
     expect(query.sql).toContain('"messages"."id"');

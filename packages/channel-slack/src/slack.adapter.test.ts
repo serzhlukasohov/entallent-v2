@@ -35,3 +35,25 @@ describe('SlackAdapter.sendMessage', () => {
     );
   });
 });
+
+describe('SlackAdapter.openDirectMessage', () => {
+  it('returns the DM channel and passes the linked Slack user ID', async () => {
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    let userId: string | undefined;
+    Reflect.set(adapter, 'webClient', {
+      conversations: { open: async (input: { users: string }) => {
+        userId = input.users;
+        return { ok: true, channel: { id: 'D123' } };
+      } },
+    });
+
+    assert.equal(await adapter.openDirectMessage('U123'), 'D123');
+    assert.equal(userId, 'U123');
+  });
+
+  it('rejects a successful response without a channel', async () => {
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', { conversations: { open: async () => ({ ok: true }) } });
+    await assert.rejects(adapter.openDirectMessage('U123'), /missing channel/);
+  });
+});

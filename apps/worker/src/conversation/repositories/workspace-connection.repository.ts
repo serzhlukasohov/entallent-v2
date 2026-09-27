@@ -57,6 +57,7 @@ export class WorkspaceConnectionRepository implements WorkspaceConnectionReposit
       eq(channelAccounts.userId, userId),
       eq(channelAccounts.tenantId, tenantId),
       eq(channelAccounts.channelType, 'slack'),
+      eq(channelAccounts.linkStatus, 'linked'),
     ];
     if (externalWorkspaceId) {
       predicates.push(eq(channelAccounts.externalWorkspaceId, externalWorkspaceId));

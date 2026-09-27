@@ -8,10 +8,12 @@ import { CheckInEnqueueService } from './check-in-enqueue.service';
 import { ProactiveScanProcessor } from './proactive-scan.processor';
 import { DatabaseModule } from '../database/database.module';
 import { QUEUE_NAMES } from '../queue/queue.module';
+import { ConversationModule } from '../conversation/conversation.module';
 
 @Module({
   imports: [
     DatabaseModule,
+    ConversationModule,
     BullModule.registerQueue(
       { name: QUEUE_NAMES.PROACTIVE_SCAN },
       { name: QUEUE_NAMES.CONVERSATION },

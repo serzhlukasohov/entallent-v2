@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 import { ManagerTeamController } from './manager-team.controller';
 import { ManagerTrendsController } from './manager-trends.controller';
 import {
@@ -157,6 +159,20 @@ describe('manager dashboard read model boundary', () => {
     expect(client.select).toHaveBeenCalledTimes(2);
     expect(client.selectDistinctOn).not.toHaveBeenCalled();
     expect(client.execute).not.toHaveBeenCalled();
+  });
+
+  it('filters provisioned non-Pulse Persons from each internal trends query', async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+    const readModel = new ManagerDashboardReadModel({ client: { execute } } as never,
+      { get: vi.fn() } as never);
+    await readModel.getTrends(TENANT_ID, '7');
+    expect(execute).toHaveBeenCalledTimes(4);
+    const dialect = new PgDialect();
+    for (const [fragment] of execute.mock.calls) {
+      const query = dialect.sqlToQuery(fragment as SQL);
+      expect(query.sql).toContain('not exists');
+      expect(query.sql).toContain('"people"."pulse_participant" = false');
+    }
   });
 
   it('rejects invalid team tenant before querying', async () => {

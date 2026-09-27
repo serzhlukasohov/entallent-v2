@@ -5,6 +5,7 @@ import type { Env } from '@entalent/config';
 import type { AdminManagerTeamResponse } from '@entalent/contracts';
 import {
   channelAccounts,
+  eligiblePulsePersonOrLegacy,
   messages,
   riskSignals,
   surveyAssessments,
@@ -42,11 +43,13 @@ export class ManagerDashboardReadModel {
       this.db.client
         .select({ id: users.id, preferredName: users.preferredName })
         .from(users)
-        .where(and(eq(users.tenantId, input.tenantId), eq(users.status, 'active'))),
+        .where(and(eq(users.tenantId, input.tenantId), eq(users.status, 'active'),
+          isNull(users.deletedAt), eligiblePulsePersonOrLegacy(users.id, users.tenantId))),
       this.db.client
         .select({ userId: channelAccounts.userId, displayName: channelAccounts.displayName })
         .from(channelAccounts)
-        .where(eq(channelAccounts.tenantId, input.tenantId)),
+        .where(and(eq(channelAccounts.tenantId, input.tenantId),
+          eq(channelAccounts.linkStatus, 'linked'))),
     ]);
 
     const teamUsers = attachTeamDisplayNames(userRows, channelAccountRows);
@@ -205,6 +208,7 @@ export class ManagerDashboardReadModel {
         FROM messages
         WHERE tenant_id = ${input.tenantId}
           AND direction = 'inbound'
+          AND ${eligiblePulsePersonOrLegacy(sql`messages.user_id`, sql`messages.tenant_id`)}
           AND text <> '__init__'
           AND deleted_at IS NULL
           AND occurred_at >= date_trunc('day', ${since})
@@ -219,6 +223,7 @@ export class ManagerDashboardReadModel {
         FROM survey_evidence e
         JOIN survey_windows w ON e.survey_window_id = w.id
         WHERE w.tenant_id = ${input.tenantId}
+          AND ${eligiblePulsePersonOrLegacy(sql`e.user_id`, sql`w.tenant_id`)}
           AND e.created_at >= date_trunc('day', ${since})
         GROUP BY 1, 2
         ORDER BY 1
@@ -229,6 +234,7 @@ export class ManagerDashboardReadModel {
         FROM survey_assessments a
         JOIN survey_windows w ON a.survey_window_id = w.id
         WHERE w.tenant_id = ${input.tenantId} AND w.status = 'active'
+          AND ${eligiblePulsePersonOrLegacy(sql`w.user_id`, sql`w.tenant_id`)}
         GROUP BY 1
       `) as unknown as Promise<FunnelRow[]>,
 
@@ -243,6 +249,7 @@ export class ManagerDashboardReadModel {
         JOIN survey_questions q ON e.survey_question_id = q.id
         WHERE w.tenant_id = ${input.tenantId}
           AND w.status = 'active'
+          AND ${eligiblePulsePersonOrLegacy(sql`e.user_id`, sql`w.tenant_id`)}
           AND e.superseded_at IS NULL
         GROUP BY 1, 2, 3, e.polarity
       `) as unknown as Promise<QuestionRow[]>,

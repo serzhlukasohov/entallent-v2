@@ -1,0 +1,8 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".."
+  },
+  "include": ["./bootstrap-company-admin-oidc.ts", "./reconcile-legacy-hierarchy.ts"]
+}

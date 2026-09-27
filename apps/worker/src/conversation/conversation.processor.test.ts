@@ -71,7 +71,10 @@ function createProcessor(options: {
   orchestrator?: { orchestrate: ReturnType<typeof vi.fn> };
   checkInUseCase?: { execute: ReturnType<typeof vi.fn> };
   llmRunRepo?: { record: ReturnType<typeof vi.fn> };
-  conversationRepo?: { shouldSkipInboundMessage: ReturnType<typeof vi.fn> };
+  conversationRepo?: {
+    shouldSkipInboundMessage: ReturnType<typeof vi.fn>;
+    isUserRuntimeEligible: ReturnType<typeof vi.fn>;
+  };
   db?: unknown;
 } = {}) {
   const orchestrator = options.orchestrator ?? {
@@ -89,6 +92,7 @@ function createProcessor(options: {
   };
   const conversationRepo = options.conversationRepo ?? {
     shouldSkipInboundMessage: vi.fn(async () => false),
+    isUserRuntimeEligible: vi.fn(async () => true),
   };
   const select = vi.fn(() => tenantQuery());
   const db = options.db ?? { client: { select } };
@@ -149,6 +153,7 @@ describe('ConversationProcessor TypeScript-only routing', () => {
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false),
+      isUserRuntimeEligible: vi.fn(async () => true),
     };
     const { processor, orchestrator, llmRunRepo } = createProcessor({ conversationRepo });
     const stale = {
@@ -196,6 +201,23 @@ describe('ConversationProcessor TypeScript-only routing', () => {
 
     expect(conversationRepo.shouldSkipInboundMessage).not.toHaveBeenCalled();
     expect(orchestrator.orchestrate).toHaveBeenCalledWith(data);
+  });
+
+  it('skips queued inbound and check-in work after a Person becomes ineligible', async () => {
+    const conversationRepo = {
+      shouldSkipInboundMessage: vi.fn(),
+      isUserRuntimeEligible: vi.fn(async () => false),
+    };
+    const { processor, orchestrator, checkInUseCase, llmRunRepo } = createProcessor({ conversationRepo });
+
+    await processor.process({ id: 'inactive-inbound', name: 'process', data: conversationJob } as Job<ConversationJob>);
+    await processor.process({ id: 'inactive-check-in', name: 'check-in', data: checkInJob } as Job<CheckInJob>);
+
+    expect(conversationRepo.isUserRuntimeEligible).toHaveBeenCalledTimes(2);
+    expect(conversationRepo.shouldSkipInboundMessage).not.toHaveBeenCalled();
+    expect(orchestrator.orchestrate).not.toHaveBeenCalled();
+    expect(checkInUseCase.execute).not.toHaveBeenCalled();
+    expect(llmRunRepo.record).not.toHaveBeenCalled();
   });
 
   it('routes every proactive check-in through ProactiveCheckInUseCase', async () => {

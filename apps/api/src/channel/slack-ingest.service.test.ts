@@ -62,6 +62,17 @@ describe('SlackIngestService rapid-message admission', () => {
     expect(ingestion.saveInboundMessage).toHaveBeenCalledOnce();
     expect(queue.add).toHaveBeenCalledOnce();
   });
+
+  it('does not create a conversation or queue a draft Person event', async () => {
+    const { service, ingestion, queue } = createService([]);
+    ingestion.findOrCreateUser.mockResolvedValueOnce({ userId: 'draft-person', runtimeEligible: false });
+
+    await service.processBody(slackMessage('event-draft', '1789078586.984529', 'hello'));
+
+    expect(ingestion.findOrCreateConversation).not.toHaveBeenCalled();
+    expect(ingestion.saveInboundMessage).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
 });
 
 function createService(messageIds: string[]) {
@@ -70,7 +81,7 @@ function createService(messageIds: string[]) {
       tenantId: 'tenant-1',
       signingSecret: 'secret',
     }),
-    findOrCreateUser: vi.fn().mockResolvedValue({ userId: 'user-1' }),
+    findOrCreateUser: vi.fn().mockResolvedValue({ userId: 'user-1', runtimeEligible: true }),
     findOrCreateConversation: vi.fn().mockResolvedValue({ conversationId: 'conversation-1' }),
     saveInboundMessage: vi.fn(),
   };

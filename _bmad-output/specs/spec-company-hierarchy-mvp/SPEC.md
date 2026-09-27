@@ -351,6 +351,7 @@ Free-form editing of active ownership and role fields is prohibited. Required do
 - deactivate Person, Team, or Unit.
 
 Each operation validates the complete affected subgraph and commits all changes in one database transaction.
+Replacing an active Team Lead or Manager requires an explicit action for the previous owner: assign another valid role and position, or deactivate that Person. The operation must never deactivate the previous owner implicitly.
 
 ### Deactivation rules
 
