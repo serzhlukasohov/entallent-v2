@@ -817,3 +817,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Add an audited, operator-scoped legacy adoption path inside the serializable Unit rollout transaction, with exact Slack email and account ownership checks. Keep legacy Team membership and report routing unchanged.
 - Regression check: A migrated PostgreSQL test starts with an active legacy User and historical conversation, rejects a failed rollout with no Person row, then activates the same User ID and verifies history, account ownership, onboarding uniqueness, and runtime eligibility.
 - Status: open
+
+## 2026-09-27: First-contact intents waited for the hourly proactive scan
+
+- Symptom: A successful Unit rollout created two pending onboarding intents, but the production worker's scheduled scan runs only once an hour, delaying live acceptance and first contact.
+- Expected: An operator should be able to process only the selected Unit's pending first contacts promptly, without triggering normal proactive candidates for the tenant.
+- Root cause layer: workflow
+- Harness fix: Add a distinct `onboarding-only` queue job requiring both tenant and Unit IDs; filter onboarding dispatch by both IDs and skip the proactive scheduler for that job.
+- Regression check: Worker processor tests reject missing scope and prove the proactive scheduler is not called; PostgreSQL/BullMQ onboarding integration proves an unrelated Unit filter queues nothing and the selected intent delivers once.
+- Status: open

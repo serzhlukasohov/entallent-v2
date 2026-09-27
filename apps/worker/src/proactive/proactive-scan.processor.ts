@@ -10,6 +10,8 @@ import { OnboardingDispatchService } from '../conversation/onboarding-dispatch.s
 export interface ProactiveScanJob {
   /** Optional tenant filter — omitted for the scheduled repeatable scan */
   tenantId?: string;
+  /** Required with onboarding-only jobs to prevent processing other Units. */
+  unitId?: string;
 }
 
 const REPEATABLE_JOB_ID = 'proactive-scan-recurring';
@@ -44,6 +46,14 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
   }
 
   async process(job: Job<ProactiveScanJob>): Promise<void> {
+    if (job.name === 'onboarding-only') {
+      if (!job.data.tenantId || !job.data.unitId) throw new Error('onboarding_scope_required');
+      const onboarding = await this.onboarding.dispatchPending(job.data.tenantId, job.data.unitId);
+      this.logger.log(
+        `Onboarding-only job=${job.id} — queued=${onboarding.queued} failed=${onboarding.failed}`,
+      );
+      return;
+    }
     const onboarding = await this.onboarding.dispatchPending(job.data.tenantId);
     const result = await this.scheduler.scan({ tenantId: job.data.tenantId });
     this.logger.log(

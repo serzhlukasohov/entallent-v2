@@ -78,6 +78,8 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
     const dispatcher = new OnboardingDispatchService({ client: client.db } as never,
       workspace as never, checkIn);
 
+    expect(await dispatcher.dispatchPending(tenantId, randomUUID())).toEqual({ found: 0, queued: 0, failed: 0 });
+    expect(slack.openDirectMessage).not.toHaveBeenCalled();
     expect(await dispatcher.dispatchPending(tenantId)).toEqual({ found: 1, queued: 1, failed: 0 });
     expect(slack.openDirectMessage).toHaveBeenCalledWith('U-LEADER');
     const queued = await queue.getWaiting();

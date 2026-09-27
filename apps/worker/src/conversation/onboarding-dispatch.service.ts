@@ -20,10 +20,11 @@ export class OnboardingDispatchService {
     private readonly checkIn: ProactiveCheckInUseCase,
   ) {}
 
-  async dispatchPending(tenantId?: string): Promise<{ found: number; queued: number; failed: number }> {
+  async dispatchPending(tenantId?: string, unitId?: string): Promise<{ found: number; queued: number; failed: number }> {
     const retryBefore = new Date(Date.now() - RETRY_AFTER_MS);
     const rows = await this.db.client.select().from(orgOnboardingDeliveries).where(and(
       tenantId ? eq(orgOnboardingDeliveries.tenantId, tenantId) : undefined,
+      unitId ? eq(orgOnboardingDeliveries.unitId, unitId) : undefined,
       or(
         eq(orgOnboardingDeliveries.status, 'pending'),
         and(eq(orgOnboardingDeliveries.status, 'failed'), lt(orgOnboardingDeliveries.lastAttemptAt, retryBefore)),
