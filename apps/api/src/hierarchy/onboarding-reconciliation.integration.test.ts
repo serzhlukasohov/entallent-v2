@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { auditLogs, conversations, createDbClient, messages, orgOnboardingDeliveries,
   orgUnits, people, tenants, users, type DbClient } from '@entalent/database';
-import { reconcileSendingOnboarding } from './onboarding-reconciliation';
+import { reconcileSendingOnboarding, retryFailedOnboardingPreparation } from './onboarding-reconciliation';
 
 const databaseUrl = process.env['DATABASE_URL'];
 const localDatabase = databaseUrl && /^postgres(?:ql)?:\/\/(?:[^@]+@)?(?:127\.0\.0\.1|localhost):\d+\//.test(databaseUrl);
@@ -84,5 +84,60 @@ describe.skipIf(!localDatabase)('onboarding sending reconciliation on migrated l
       .filter((row) => row.action === 'org.onboarding.reconcile_db_receipt')).toHaveLength(1);
     expect((await reconcileSendingOnboarding(client.db, tenantId,
       { apply: true, operatorId: 'reconciliation-fixture' })).applied).toBe(0);
+  });
+});
+
+describe.skipIf(!localDatabase)('failed onboarding preparation retry on migrated local PostgreSQL', () => {
+  const tenantId = randomUUID();
+  const unitId = randomUUID();
+  const personId = randomUUID();
+  const deliveryId = randomUUID();
+  let client: DbClient;
+
+  beforeAll(async () => {
+    client = createDbClient(databaseUrl!);
+    await client.db.insert(tenants).values({ id: tenantId, name: 'Failed preparation fixture' });
+    await client.db.insert(users).values({ id: personId, tenantId, status: 'active' });
+    await client.db.insert(people).values({ id: personId, tenantId, customerEmployeeId: 'E-1',
+      workEmail: 'retry@fixture.test', displayName: 'Retry Employee', primaryRole: 'employee',
+      pulseParticipant: true, lifecycleStatus: 'active' });
+    await client.db.insert(orgUnits).values({ id: unitId, tenantId, customerUnitKey: 'retry', name: 'Retry Unit' });
+    await client.db.insert(orgOnboardingDeliveries).values({ id: deliveryId, tenantId, personId, unitId,
+      externalWorkspaceId: 'T-fixture', status: 'failed', attemptCount: 1,
+      lastAttemptAt: new Date() });
+  });
+
+  afterAll(async () => {
+    if (!client) return;
+    await client.db.delete(tenants).where(eq(tenants.id, tenantId));
+    await client.sql.end();
+  });
+
+  it('requires no outbound message and resets only the exact failed intent with audit', async () => {
+    const dry = await retryFailedOnboardingPreparation(client.db, tenantId, unitId, [personId],
+      { apply: false });
+    expect(dry).toMatchObject({ mode: 'dry_run', deliveryIds: [deliveryId], reset: 0 });
+    const [conversation] = await client.db.insert(conversations).values({ tenantId, userId: personId,
+      channelType: 'slack', externalConversationId: 'D-retry' }).returning({ id: conversations.id });
+    await client.db.insert(messages).values({ id: deliveryId, tenantId, userId: personId,
+      conversationId: conversation!.id, direction: 'outbound', senderType: 'agent',
+      text: 'Uncertain first contact', occurredAt: new Date() });
+    await expect(retryFailedOnboardingPreparation(client.db, tenantId, unitId, [personId],
+      { apply: true, operatorId: 'retry-fixture' })).rejects.toThrow('outbound_message_requires_manual_reconciliation');
+    expect((await client.db.select().from(orgOnboardingDeliveries)
+      .where(eq(orgOnboardingDeliveries.id, deliveryId)))[0]?.status).toBe('failed');
+    await client.db.delete(messages).where(eq(messages.id, deliveryId));
+
+    const applied = await retryFailedOnboardingPreparation(client.db, tenantId, unitId, [personId],
+      { apply: true, operatorId: 'retry-fixture' });
+    expect(applied).toMatchObject({ mode: 'applied', deliveryIds: [deliveryId], reset: 1 });
+    expect((await client.db.select().from(orgOnboardingDeliveries)
+      .where(eq(orgOnboardingDeliveries.id, deliveryId)))[0]).toMatchObject({
+        status: 'pending', attemptCount: 1, lastAttemptAt: null,
+      });
+    expect((await client.db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId)))
+      .filter((row) => row.action === 'org.onboarding.retry_failed_preparation')).toHaveLength(1);
+    await expect(retryFailedOnboardingPreparation(client.db, tenantId, unitId, [personId],
+      { apply: true, operatorId: 'retry-fixture' })).rejects.toThrow('failed_preparation_intents_changed');
   });
 });

@@ -826,3 +826,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Add a distinct `onboarding-only` queue job requiring both tenant and Unit IDs; filter onboarding dispatch by both IDs and skip the proactive scheduler for that job.
 - Regression check: Worker processor tests reject missing scope and prove the proactive scheduler is not called; PostgreSQL/BullMQ onboarding integration proves an unrelated Unit filter queues nothing and the selected intent delivers once.
 - Status: open
+
+## 2026-09-27: Slack bot lacked DM creation scope during first-contact preparation
+
+- Symptom: The selected Manager and Employee onboarding intents failed before outbound message creation because Slack `conversations.open` returned `missing_scope`; the bot lacked `im:write`.
+- Expected: The connected bot opens each selected DM and delivers one first contact with a durable Slack receipt.
+- Root cause layer: environment
+- Harness fix: Verify the installed bot token's actual `x-oauth-scopes` and both recipient DM opens before scoped dispatch. Reinstall the app after adding `im:write`, reconcile stored workspace scope metadata with an audit record, and retry only an exact failed intent set with no outbound message or external receipt.
+- Regression check: Production preflight, both `conversations.open` probes, exact retry dry-run, targeted `onboarding-only` job, and receipt readback for the two selected Persons; migrated PostgreSQL retry test rejects an existing outbound message.
+- Status: fixed
