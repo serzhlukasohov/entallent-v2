@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { and, eq, inArray, ne } from 'drizzle-orm';
-import { planUnitActivation, type PrimaryOrgRole, type UnitActivationGraph, type UnitActivationPlan } from '@entalent/application';
+import { planUnitActivation, prepareDraftPerson, type PrimaryOrgRole, type UnitActivationGraph, type UnitActivationPlan } from '@entalent/application';
 import {
   auditLogs, channelAccounts, orgAdvisorAssignments, orgEmployeePlacements, orgHrbpScopes, orgOnboardingDeliveries, orgTeams, orgUnits,
   people, users, workspaceConnections,
@@ -8,6 +8,7 @@ import {
 } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { actorId, assertHierarchyActorAuthorized, HierarchyAuthorizationError, type HierarchyActor } from './hierarchy-authorization';
+import { SlackDirectoryService } from './slack-directory.service';
 import { withSerializableRetry } from './serializable-retry';
 
 type Transaction = Parameters<Parameters<DbClient['db']['transaction']>[0]>[0];
@@ -33,9 +34,21 @@ export interface BatchRolloutPreview {
   units: Array<{ unitId: string; plan: UnitActivationPlan }>;
 }
 
+export interface LegacyEmployeeAdoption {
+  userId: string;
+  externalSlackUserId: string;
+  unitId: string;
+  customerEmployeeId: string;
+  workEmail: string;
+  displayName: string;
+}
+
 @Injectable()
 export class HierarchyRolloutService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    @Optional() private readonly directory?: SlackDirectoryService,
+  ) {}
 
   async previewUnit(
     tenantId: string, unitId: string, workspaceId: string, actor: HierarchyActor,
@@ -68,13 +81,36 @@ export class HierarchyRolloutService {
 
   async activateUnits(
     tenantId: string, unitIds: string[], workspaceId: string, actor: HierarchyActor,
+    legacyEmployees: LegacyEmployeeAdoption[] = [],
   ): Promise<UnitRolloutResult[]> {
     let selectedIds = unitIds;
     try {
       selectedIds = this.selectedUnitIds(unitIds);
+      if (legacyEmployees.length > 0) {
+        if (actor.type !== 'internal_operator' || !this.directory) {
+          throw new HierarchyRolloutError('legacy_adoption_operator_required');
+        }
+        if (new Set(legacyEmployees.map((employee) => employee.userId)).size !== legacyEmployees.length ||
+          new Set(legacyEmployees.map((employee) => employee.externalSlackUserId)).size !== legacyEmployees.length ||
+          legacyEmployees.some((employee) => !selectedIds.includes(employee.unitId))) {
+          throw new HierarchyRolloutError('invalid_legacy_adoption');
+        }
+        const directoryUsers = await this.directory.listUsers(tenantId, workspaceId);
+        for (const employee of legacyEmployees) {
+          const prepared = prepareDraftPerson({ ...employee, primaryRole: 'employee' });
+          const emailMatches = directoryUsers.filter((user) => !user.deleted && !user.isBot &&
+            user.email?.trim().toLowerCase() === prepared.workEmail);
+          if (emailMatches.length !== 1 || emailMatches[0]!.externalUserId !== employee.externalSlackUserId) {
+            throw new HierarchyRolloutError('legacy_slack_email_mismatch');
+          }
+        }
+      }
       return await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
         await assertHierarchyActorAuthorized(tx, tenantId, actor);
         await this.assertWorkspace(tx, tenantId, workspaceId);
+        for (const employee of legacyEmployees) {
+          await this.adoptLegacyEmployee(tx, tenantId, workspaceId, employee, actorId(actor));
+        }
         const planned = [];
         for (const unitId of selectedIds) {
           const graph = await this.loadGraph(tx, tenantId, unitId, workspaceId);
@@ -146,6 +182,44 @@ export class HierarchyRolloutService {
       });
       throw error;
     }
+  }
+
+  private async adoptLegacyEmployee(
+    tx: Transaction, tenantId: string, workspaceId: string, employee: LegacyEmployeeAdoption, operatorId: string,
+  ): Promise<void> {
+    const prepared = prepareDraftPerson({ ...employee, primaryRole: 'employee' });
+    const [user] = await tx.select({ id: users.id, status: users.status, deletedAt: users.deletedAt })
+      .from(users).where(and(eq(users.id, employee.userId), eq(users.tenantId, tenantId))).for('update').limit(1);
+    if (!user || user.status !== 'active' || user.deletedAt !== null) {
+      throw new HierarchyRolloutError('legacy_user_not_active');
+    }
+    const [existingPerson] = await tx.select({ id: people.id }).from(people)
+      .where(and(eq(people.id, user.id), eq(people.tenantId, tenantId))).limit(1);
+    if (existingPerson) throw new HierarchyRolloutError('legacy_user_already_person');
+    const accounts = await tx.select({ id: channelAccounts.id }).from(channelAccounts).where(and(
+      eq(channelAccounts.tenantId, tenantId), eq(channelAccounts.userId, user.id),
+      eq(channelAccounts.channelType, 'slack'), eq(channelAccounts.externalWorkspaceId, workspaceId),
+      eq(channelAccounts.externalUserId, employee.externalSlackUserId), eq(channelAccounts.linkStatus, 'linked'),
+    )).for('update');
+    if (accounts.length !== 1) throw new HierarchyRolloutError('legacy_slack_account_mismatch');
+    const [unit] = await tx.select({ id: orgUnits.id, lifecycleStatus: orgUnits.lifecycleStatus })
+      .from(orgUnits).where(and(eq(orgUnits.id, employee.unitId), eq(orgUnits.tenantId, tenantId)))
+      .for('update').limit(1);
+    if (!unit || unit.lifecycleStatus === 'inactive') throw new HierarchyRolloutError('legacy_unit_not_found');
+
+    await tx.insert(people).values({ id: user.id, tenantId, ...prepared });
+    await tx.insert(orgEmployeePlacements).values({
+      tenantId, employeePersonId: user.id, unitId: unit.id,
+    });
+    await tx.insert(auditLogs).values({
+      tenantId, actorType: 'internal_operator', actorId: operatorId,
+      action: 'org.person.adopt_legacy', resourceType: 'person', resourceId: user.id,
+      metadata: {
+        workspaceId, externalSlackUserId: employee.externalSlackUserId, unitId: unit.id,
+        before: { userStatus: user.status, person: null, accountId: accounts[0]!.id },
+        after: { userStatus: user.status, personLifecycleStatus: 'draft', accountId: accounts[0]!.id },
+      },
+    });
   }
 
   private selectedUnitIds(unitIds: string[]): string[] {

@@ -808,3 +808,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Derive the expected `Date` from Unix milliseconds and make the `orderBy` mock variadic.
 - Regression check: Focused API/worker tests plus API/worker typecheck pass.
 - Status: fixed
+
+## 2026-09-27: Hierarchy rollout could not adopt a legacy Slack User
+
+- Symptom: The designated test Employee already has a linked Slack account, one conversation, and 102 messages. Setup draft creation would allocate a new User ID, while Slack linking rejects assigning that account to a second User.
+- Expected: Explicit hierarchy reconciliation should retain the existing User ID, channel account, and conversation history, then activate the Person and Unit atomically without interrupting the active conversation runtime.
+- Root cause layer: architecture
+- Harness fix: Add an audited, operator-scoped legacy adoption path inside the serializable Unit rollout transaction, with exact Slack email and account ownership checks. Keep legacy Team membership and report routing unchanged.
+- Regression check: A migrated PostgreSQL test starts with an active legacy User and historical conversation, rejects a failed rollout with no Person row, then activates the same User ID and verifies history, account ownership, onboarding uniqueness, and runtime eligibility.
+- Status: open
