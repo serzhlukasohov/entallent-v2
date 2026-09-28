@@ -178,6 +178,20 @@
   summary: Reconcile the opposite drift where a pending qualitative backlog row already has a completed assessment.
   evidence: Review confirmed assessment persistence and backlog closure are separate awaits, so a pre-existing or interrupted write can leave `pending + covered`; this story repairs the observed `done + insufficient_evidence` state, while symmetric healing needs separate attribution and active-probe policy decisions.
 
+- source_spec: `_bmad-output/implementation-artifacts/spec-cap-7-relevant-pulse-disclosure.md`
+  summary: Make legacy awaiting-confirmation recovery durable across generation or outbound-delivery failures and pause turns.
+  evidence: Recovery currently transitions awaiting groups to pending before a disclosure is successfully persisted and delivered; cadence previously masked some retries, but the state transition itself predates CAP-7 and needs a delivery-aware state-machine fix.
+- source_spec: `_bmad-output/implementation-artifacts/spec-cap-7-relevant-pulse-disclosure.md`
+  summary: Block Pulse state mutation when crisis or sensitive strategy conflicts with permissive survey classifier flags.
+  evidence: Phase B can run before the final crisis/sensitive strategy gate when surveyAllowed and risk flags are inconsistent; this pre-existing safety-state boundary is separate from CAP-7 disclosure relevance.
+
+## Deferred from: code review of spec-cap-2-session-concise-style (2026-09-17)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-cap-2-session-concise-style.md`
+  summary: Serialize overlapping same-conversation jobs so a later job cannot race a not-yet-persisted concise receipt.
+  status: todo
+  evidence: CAP-2 can carry a persisted receipt, but concurrent jobs that read before the first reply is saved require the separate CAP-9 turn-admission/coalescing boundary.
+
 - source_spec: `_bmad-output/implementation-artifacts/spec-cap-9-rapid-message-coalescing.md`
   summary: Make Slack event idempotency, inbound persistence, and conversation-job admission atomic or durably recoverable.
   evidence: The pre-existing flow records the event before message persistence and BullMQ admission; a queue failure can orphan a durable inbound, and CAP-9 stale admission can then suppress an older queued turn behind that orphan.
@@ -187,3 +201,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-cap-11-dashboard-conversation-activity.md`
   summary: Align manager-team activity semantics for synthetic `__init__` inbound rows.
   evidence: `lastActiveAt` currently includes every non-deleted inbound while the trends query excludes `text = '__init__'`; changing the read-model query is a pre-existing API semantic decision outside this UI-only story.
+
+## Deferred from: code review of spec-cap-8-exact-pulse-capture-2 (2026-09-19)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-cap-8-exact-pulse-capture-2.md`
+  summary: Add PostgreSQL-backed repository acceptance coverage for exact CAP-8 source filtering and soft-deleted message exclusion.
+  status: done
+  evidence: `survey.repository.integration.test.ts` executes the production SQL builder and repository mapper on local PostgreSQL with typed UUIDs, JSONB confirmation metadata, equal timestamps, tenant/user/conversation ownership, and deleted sources. It uses temporary tables because the available PostgreSQL 14 install lacks the pgvector extension required by full migrations; migrated-schema coverage remains separate.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-cap-8-exact-pulse-capture-2.md`
+  summary: Make scheduled-action deduplication and follow-up queue admission atomic or durably recoverable.
+  status: todo
+  evidence: The shared reminder path still performs `existsByDeduplicationKey` before insert and queues execution afterward; concurrent requests or a crash between insert and queue admission can leave a unique-key retry or an unqueued pending action. CAP-8 now acknowledges sequential dedup hits without creating a duplicate, but the cross-runtime atomicity boundary needs a dedicated scheduler slice.

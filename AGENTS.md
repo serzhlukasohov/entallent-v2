@@ -27,7 +27,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 Treat agent failures as harness defects. When a task fails, add or update an entry in `docs/agent-failures.md` before finishing.
 
-Before implementation or review, retrieve relevant open failures with `pnpm exec tsx scripts/agent-harness.ts reflection --changed-path <path>` for each primary changed area and use the generated `runs/harness/reflection.md` as context. An exit code of `2` means there are no eligible open failures.
+Before implementation or review, retrieve relevant open failures with `node --import tsx scripts/agent-harness.ts reflection --changed-path <path>` for each primary changed area and use the generated `runs/harness/reflection.md` as context. The direct Node launcher avoids the tsx CLI IPC socket blocked in some sandboxes. An exit code of `2` means there are no eligible open failures.
 
 After each implementation, review, debugging, or operations task, add one row to `docs/agent-task-log.md` with the task date, task summary, result, failure layer if any, verification run, and the next harness fix. Keep entries short.
 

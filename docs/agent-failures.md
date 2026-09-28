@@ -16,6 +16,24 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-09-26: default local database lacks hierarchy migration
+
+- Symptom: A read-only local tenant inventory that included `people` failed because the existing `entalent` database has not received the hierarchy migrations.
+- Expected: Inventory commands should identify schema readiness before querying new hierarchy tables.
+- Root cause layer: environment
+- Harness fix: Use the separate fully migrated `entalent_hierarchy_acceptance` database for integration acceptance; query legacy-only tables when inspecting the untouched default database.
+- Regression check: Check `to_regclass('public.people')` and migration status before new-schema inventory; verify integration commands target the named acceptance database.
+- Status: fixed
+
+## 2026-09-26: hand-built backfill SQL fixture omitted Drizzle columns
+
+- Symptom: The first synthetic backfill apply attempts failed because the temporary `audit_logs` and `org_units` tables omitted standard columns emitted by Drizzle inserts.
+- Expected: A transaction check should exercise the intended backfill behavior with a schema matching the application.
+- Root cause layer: verification
+- Harness fix: Added full-schema local rollout integration coverage and ran backfill acceptance against the complete pgvector-capable migration chain instead of the abbreviated fixture.
+- Regression check: On an isolated migrated PostgreSQL database, run reconciliation, dry-run, apply, and repeat apply; verify zero dry-run writes, one approved graph, and zero repeat inserts. Run `DATABASE_URL=<local-isolated-db> pnpm --filter @entalent/api exec vitest run src/hierarchy/hierarchy-rollout.integration.test.ts` for transactional rollout.
+- Status: fixed
+
 ## 2026-09-25: required harness commands attempted dependency installation
 
 - Symptom: Both `pnpm exec tsx scripts/agent-harness.ts reflection` and `pnpm harness:check -- --base origin/main` found no local dependencies, started a workspace install, and entered repeated npm registry retries that could not resolve in the managed network environment.
@@ -217,6 +235,15 @@ These entries are retained as historical evidence but are not active work becaus
 - Status: fixed
 
 ## Fixed Failures
+
+## 2026-09-26: onboarding delivery projection test lagged new receipt fields
+
+- Symptom: Focused worker tests failed because the outbound delivery projection assertion omitted the newly selected Slack receipt and onboarding binding fields.
+- Expected: The repository test should verify the fields consumed by the sender after the projection changes.
+- Root cause layer: verification
+- Harness fix: Update the projection assertion alongside the sender's required fields and keep the focused repository test in the worker check.
+- Regression check: `pnpm --filter @entalent/worker test -- src/conversation/repositories/conversation.repository.test.ts`
+- Status: fixed
 
 ## 2026-09-07: Homebrew Node drift left active node linked to a removed dylib
 
@@ -755,7 +782,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: The same focused reflection command exits `2` with `eligible=false`, not an IPC error.
 - Recurrence: On 2026-09-17, CAP-6 closeout reflection for four Markdown paths hit the same `listen EPERM`; all four narrowly escalated read-only reruns completed successfully with `eligible=true`.
 - Recurrence: On 2026-09-18, CAP-11 reflection and the focused `tsx --test` run hit the same IPC restriction; both narrowly escalated reruns passed.
-- Status: fixed
+- Recurrence: On 2026-09-26, Company Admin OIDC reflection and `pnpm harness:check` hit the same IPC restriction. `node --import tsx scripts/agent-harness.ts reflection --changed-path apps/api/src/company-auth` and `node --import tsx scripts/agent-harness.ts check --base 2e12d5b` passed without an IPC socket.
+- Recurrence: On 2026-09-27, `pnpm harness:check` again hit `listen EPERM`; the direct `node --import tsx scripts/agent-harness.ts check --base a189ed2776853a23c3315ffc23da348d4af3e235` passed and wrote a receipt.
+- Harness fix: `harness:check` and `harness:preflight` now use the direct `node --import tsx` launcher, avoiding the tsx CLI socket; use the same launcher for manual reflection.
+- Recurrence: On 2026-09-27, the instruction-mandated `pnpm exec tsx` reflection again hit `listen EPERM`; the direct Node launcher passed. `AGENTS.md` now names the direct launcher for reflection.
+- Regression check: Run `pnpm harness:check --base <base-revision>` under the managed sandbox and verify it emits a structured receipt. The 2026-09-27 rerun passed.
+- Status: open
 
 ## 2026-08-30: Broad formatting check mixed harness code with inherited docs
 - Symptom: A combined Prettier check failed on existing BMad and agent-log Markdown while validating the two changed harness scripts.
@@ -808,3 +840,235 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Derive the expected `Date` from Unix milliseconds and make the `orderBy` mock variadic.
 - Regression check: Focused API/worker tests plus API/worker typecheck pass.
 - Status: fixed
+
+## 2026-09-26: Person integration gate lacked a pgvector-capable local database
+
+- Symptom: The focused Person integration suite could not complete: local PostgreSQL 14 lacks `vector.control`, and Docker was not running. The initial socket-only connection also failed because the test client attempted TCP.
+- Expected: The complete migration chain and Person constraints run against a local PostgreSQL with pgvector.
+- Root cause layer: environment
+- Harness fix: Provide a reproducible pgvector-capable local integration target and an explicit connection URL in the database test setup.
+- Regression check: `DATABASE_URL=<local-pgvector-url> pnpm --filter @entalent/database exec vitest run --config vitest.integration.config.ts src/__tests__/people.integration.test.ts`.
+- Recurrence: The organization schema suite also needs the same pgvector-capable full migration chain; its new migration and targeted constraints passed in an isolated PostgreSQL fixture without the earlier migrations.
+- Status: open
+
+## 2026-09-26: Application suite gave a non-reproducible survey assessment failure
+
+- Symptom: The full application suite failed one existing numeric-survey assessment assertion (`upsertAssessment` had zero calls); the focused survey file then passed all 22 tests unchanged.
+- Expected: The same survey test should pass reliably in both package and focused runs.
+- Root cause layer: verification
+- Harness fix: Reproduce under the full suite and isolate any shared clock, mock, or test-order dependency before changing product code; the hierarchy slice did not touch survey evidence files.
+- Regression check: Compare the focused survey file with the full application suite under an isolated test-worker configuration.
+- Status: open
+
+## 2026-09-26: CSV verification fixtures initially missed required schema and header fields
+
+- Symptom: The focused CSV test initially omitted the `pulseParticipant` header; the isolated SQL check initially lacked runtime `users` columns and counted prior rejected audit attempts as new events.
+- Expected: Test fixtures match the CSV contract and the Drizzle table shape, and audit assertions isolate events from the current run.
+- Root cause layer: verification
+- Harness fix: Keep a reusable CSV fixture builder with the complete header set and a pgvector-backed integration database migrated through the normal chain; scope audit assertions to a fresh tenant or baseline count.
+- Regression check: Run focused CSV application/API tests and a valid plus invalid import on a clean migrated integration database.
+- Status: open
+
+## 2026-09-26: Slack link service first pass left an unused transaction type
+
+- Symptom: API typecheck and lint failed on an unused `Transaction` alias after the Slack link service was introduced.
+- Expected: The focused service passes static checks before harness completion.
+- Root cause layer: verification
+- Harness fix: Keep API typecheck and lint in the focused change loop; remove unused scaffolding before widening the verification scope.
+- Regression check: `pnpm --filter @entalent/api typecheck` and `pnpm --filter @entalent/api lint`.
+- Status: fixed
+
+## 2026-09-26: Isolated inbound SQL fixture omitted the users ID default
+
+- Symptom: The first real-SQL inbound identity check failed because the minimal temporary `users` table did not generate IDs, although the repository schema does.
+- Expected: The temporary fixture mirrors required defaults so a fallback-user transaction can run.
+- Root cause layer: environment
+- Harness fix: Prefer a database built from the full migration chain; while pgvector is unavailable, include schema defaults in any isolated fixture before testing writes.
+- Regression check: Run concurrent fallback identity creation on a fresh migrated PostgreSQL database and assert one user plus one account.
+- Status: open
+
+## 2026-09-26: Worker typecheck read stale application package declarations
+
+- Symptom: Worker typecheck initially reported that the new shared runtime eligibility export was missing, while application source tests passed.
+- Expected: The worker compiles against freshly built application declarations.
+- Root cause layer: workflow
+- Harness fix: Build `@entalent/application` after changing its exports and before package-scoped worker typecheck; the repository-wide harness already orders builds through Turbo.
+- Regression check: `pnpm --filter @entalent/application build` followed by `pnpm --filter @entalent/worker typecheck`.
+- Status: fixed
+
+## 2026-09-26: Worker harness found stale delivery projection assertion
+
+- Symptom: The repository-wide harness failed because the delivery repository test expected the old projection without `userId` after the worker eligibility guard added that field.
+- Expected: The projection test checks the user identity and conversation/user join used by the delivery guard.
+- Root cause layer: verification
+- Harness fix: Update projection assertions whenever a runtime guard adds a required identity field; keep the repository test in the harness gate.
+- Regression check: `pnpm --filter @entalent/worker exec vitest run src/conversation/repositories/conversation.repository.test.ts`.
+- Status: fixed
+
+## 2026-09-26: Activation SQL check loaded stale database package output
+
+- Symptom: The first onboarding-intent SQL check failed inside Drizzle because the API service imported a new table that was absent from the old built `@entalent/database` output.
+- Expected: Runtime checks load the current schema export after a schema change.
+- Root cause layer: workflow
+- Harness fix: Build `@entalent/database` after schema/migration generation and before direct `node --import tsx` integration probes; keep repository-wide harness ordering as the final gate.
+- Regression check: `pnpm --filter @entalent/database build` followed by the isolated activation/intent SQL check.
+- Status: fixed
+
+## 2026-09-26: Company Admin bootstrap script at repository root could not resolve package dependencies
+
+- Symptom: Direct Node execution failed with `Cannot find module 'drizzle-orm'` from the root `scripts/` directory.
+- Expected: The operator bootstrap uses the API package's declared dependencies and is typechecked with it.
+- Root cause layer: workflow
+- Harness fix: Place the script under `apps/api/scripts/` and include its dedicated tsconfig in the API typecheck command.
+- Regression check: `pnpm --filter @entalent/api typecheck` and run the bootstrap CLI without arguments; it should report the missing input argument, not a module error.
+- Status: fixed
+
+## 2026-09-26: OIDC session test omitted join predicates
+
+- Symptom: A test failed while asserting that the WHERE predicate contained the subject/provider join condition.
+- Expected: The test inspects the JOIN predicate where that condition actually lives.
+- Root cause layer: verification
+- Harness fix: Capture JOIN and WHERE predicates separately in the query mock and assert each SQL clause in its own location.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/company-auth/company-admin-identity.service.test.ts`.
+- Status: fixed
+
+## 2026-09-26: Isolated PostgreSQL initialization needs host shared memory
+
+- Symptom: `initdb` inside the sandbox failed at bootstrap with `shmget: Operation not permitted`; Docker daemon was not running.
+- Expected: A temporary local database supports migration SQL checks without touching an existing database.
+- Root cause layer: environment
+- Harness fix: Use the installed Homebrew PostgreSQL 14 in an isolated `/private/tmp` cluster with approved host shared-memory access. Use a minimal base-schema fixture for migrations `0021` and `0022`; do not call that a full pgvector migration test.
+- Regression check: Apply `0021` and `0022` with `psql -v ON_ERROR_STOP=1`, then verify single-use state, revocation, draft admin, and cross-tenant FK in the fixture.
+- Status: fixed
+
+## 2026-09-26: postgres-js fixture URL did not use the Unix socket
+
+- Symptom: the read-only legacy reconciliation command exited with `ECONNREFUSED` against an isolated socket-only PostgreSQL fixture.
+- Expected: the command connects to the intended temporary database and emits a tenant report.
+- Root cause layer: tooling
+- Harness fix: Start temporary PostgreSQL with a localhost listener when testing scripts that use postgres-js, and use an explicit `postgresql://localhost:<port>/<db>` URL; stop the host-started server with approved host access before deleting its data directory.
+- Regression check: Run `company-hierarchy:reconcile` against a synthetic localhost PostgreSQL fixture and assert one Team, one active member, and one manager candidate.
+- Status: fixed
+## 2026-09-26: Draft edit mock returned unrelated ownership rows
+
+- Symptom: the new role-change test reported a Team owner reference instead of its intended Employee placement reference; its inferred mixed-table `Map` also failed TypeScript compilation.
+- Expected: the fixture models only the references owned by the edited Person and compiles with mixed table keys.
+- Root cause layer: verification.
+- Harness fix: Type mixed-table fixture maps explicitly and clear unrelated table rows in each role-reference case.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/hierarchy/hierarchy-draft.service.test.ts` and `pnpm --filter @entalent/api typecheck`.
+- Status: fixed.
+
+## 2026-09-26: Local PostgreSQL integration test blocked by sandbox TCP policy
+
+- Symptom: the Company Admin session integration test failed with `connect EPERM` on `127.0.0.1:5434` and `::1:5434` inside the managed sandbox. The same local TCP restriction recurred for the owner replacement integration test on 2026-09-27; the scoped host-access rerun passed.
+- Expected: the test connects to the separate local `entalent_hierarchy_acceptance` database and exercises the migrated schema.
+- Root cause layer: environment.
+- Harness fix: Rerun only the local database test with scoped host access; keep its `DATABASE_URL` pointed at the isolated acceptance database.
+- Regression check: with scoped host access, run `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/entalent_hierarchy_acceptance pnpm --filter @entalent/api exec vitest run src/company-auth/company-admin-session.integration.test.ts src/hierarchy/hierarchy-mutation.integration.test.ts`.
+- Status: fixed.
+
+## 2026-09-26: Owner replacement left stale onboarding intents
+
+- Symptom: promoting a new Team Lead or Manager with the explicit `deactivate` action disabled the previous Person but left their `pending` or `failed` first-contact intent eligible for repeated worker preparation.
+- Expected: deactivation during owner replacement cancels unsent first-contact intents in the same transaction.
+- Root cause layer: architecture.
+- Harness fix: Apply the same onboarding cancellation rule as standalone Person, Team, and Unit deactivation; cover both owner replacements on the migrated PostgreSQL schema.
+- Regression check: `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/entalent_hierarchy_acceptance pnpm --filter @entalent/api exec vitest run src/hierarchy/hierarchy-mutation.integration.test.ts`.
+- Status: fixed.
+
+## 2026-09-26: Draft HRBP role correction was blocked by its own scope row
+
+- Symptom: removing all selected Unit assignments from a draft HRBP left a draft `org_hrbp_scopes` row, so a subsequent draft Person role edit still failed with `hrbp_scope_reference`.
+- Expected: Company Admin can explicitly clear a draft selected scope and then correct an imported draft role.
+- Root cause layer: architecture.
+- Harness fix: Interpret an empty selected scope for a draft HRBP as an inactive scope record, retain the active HRBP minimum, and document the clear action in setup.
+- Regression check: `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/entalent_hierarchy_acceptance pnpm --filter @entalent/api exec vitest run src/hierarchy/hierarchy-advisor-scope.service.test.ts src/hierarchy/hierarchy-advisor-scope.integration.test.ts`.
+- Status: fixed.
+
+## 2026-09-26: Company Admin session survived OIDC subject rotation
+
+- Symptom: a session stored only tenant and Person IDs; after the Person's issuer/subject binding changed, the old session still passed the any-binding check.
+- Expected: a session stays valid only while the exact OIDC identity used at login remains bound to that Person under an active provider and capability.
+- Root cause layer: architecture.
+- Harness fix: Persist a SHA-256 fingerprint of the verified issuer/subject pair in each new session, compare it on every resolve, and fail closed for pre-migration sessions without a fingerprint.
+- Regression check: apply migration `0025` to isolated PostgreSQL and run `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/entalent_hierarchy_acceptance pnpm --filter @entalent/api exec vitest run src/company-auth/company-admin-session.integration.test.ts`.
+- Status: fixed.
+
+## 2026-09-26: Persisted Slack receipt could leave onboarding in sending
+
+- Symptom: if a worker stopped after persisting `messages.sent_at` and `external_message_id` but before updating `org_onboarding_deliveries`, the intent remained `sending` with no scheduled scan retry.
+- Expected: an operator can safely reconcile a confirmed database receipt without resending; intents without a receipt remain untouched for Slack verification.
+- Root cause layer: workflow.
+- Harness fix: Add a tenant-scoped read-only inventory and confirmed apply path that validates the outbound message and writes an audit event; document the manual path for uncertain sends.
+- Regression check: `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/entalent_hierarchy_acceptance pnpm --filter @entalent/api exec vitest run src/hierarchy/onboarding-reconciliation.integration.test.ts`.
+- Status: fixed.
+## 2026-09-26: Empty optional setup fields reached draft validation as strings
+
+- Symptom: setup forms send empty strings for optional Manager, Team Lead, and Team fields; the controller passed them through, causing draft creation to reject an intentionally empty assignment.
+- Expected: an empty optional form field means no assignment.
+- Root cause layer: architecture.
+- Harness fix: Normalize empty optional strings to null at the customer setup controller boundary.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/hierarchy/company-setup.controller.test.ts`.
+- Status: fixed.
+## 2026-09-26: SQL eligibility test expected parameters for inline literals
+
+- Symptom: the SQL compilation test failed because its expected `active` and `false` values were not in the parameter array.
+- Expected: verify the generated predicate regardless of whether the SQL builder inlines fixed literals.
+- Root cause layer: verification.
+- Harness fix: Assert the compiled SQL text for fixed literals and column correlations.
+- Regression check: `pnpm --filter @entalent/database exec vitest run src/person-eligibility.test.ts`.
+- Status: fixed.
+
+## 2026-09-27: Concurrent hierarchy transactions surfaced PostgreSQL serialization aborts
+
+- Symptom: two of six parallel PostgreSQL integration files failed with `40001` while the same files passed serially.
+- Expected: independent hierarchy operations finish under normal database concurrency without recording a false rejected mutation for a transient serialization abort.
+- Root cause layer: architecture.
+- Harness fix: Retry the complete serializable database transaction a bounded number of times on PostgreSQL `40001`, before recording any final rejection. Keep the retry wrapper free of external side effects.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/hierarchy/serializable-retry.test.ts src/hierarchy/hierarchy-mutation.service.test.ts`, then run the six Company Hierarchy PostgreSQL integration files in parallel against the isolated local acceptance database.
+- Status: fixed.
+
+## 2026-09-27: Hierarchy audit omitted structured transitions for active operations
+
+- Symptom: rollout audit stored counts without affected Person/Team IDs, owner replacement and deactivation audit lacked structured before/after values, and invalid Unit selection bypassed the rejected rollout audit.
+- Expected: each invoked hierarchy mutation records its actor, affected IDs, structured transition, or rejection reason.
+- Root cause layer: verification.
+- Harness fix: Add affected IDs and structured before/after state to rollout, owner replacement, deactivation, Slack-link, and Company Admin capability audit records; move rollout selection validation inside its audited boundary.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/hierarchy/hierarchy-rollout.service.test.ts src/hierarchy/hierarchy-mutation.service.test.ts src/hierarchy/hierarchy-deactivation.service.test.ts src/hierarchy/hierarchy-slack-link.service.test.ts src/hierarchy/hierarchy-capability.service.test.ts`.
+- Status: fixed.
+
+## 2026-09-27: New hierarchy identifiers absent from confirmation safety check
+
+- Symptom: a newly provisioned active Person without legacy Team membership supplied no Unit/Team or colleague identifiers to confirmation deidentification.
+- Expected: confirmation safety uses current active organizational identifiers while legacy cohort and report routing remain unchanged.
+- Root cause layer: architecture.
+- Harness fix: Add a separate tenant-scoped active hierarchy identifier read to the Survey repository and include it in the existing deidentification decision. Keep the reporting Team lookup intact.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/conversation-orchestrator.test.ts` and the worker `team.repository.integration.test.ts` against the isolated migrated local PostgreSQL database.
+- Status: fixed.
+
+## 2026-09-27: Production legacy report required schema detection and export approval
+
+- Symptom: the report reader queried hierarchy tables and `channel_accounts.link_status` that are absent before migration; a later attempt to export the full production tenant report to a local file was rejected by automatic approval review.
+- Expected: pre-migration inventory works read-only and sensitive membership/Slack data is exported only to an explicitly approved destination.
+- Root cause layer: workflow.
+- Harness fix: Detect complete old versus migrated schema, treat old Slack accounts as linked when `link_status` is absent, fail on partial schema or unknown tenant, and mark report `schemaReady`; retain the full production export as an approval-gated operation with its payload and destination stated beforehand.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/hierarchy/legacy-reconciliation.read.test.ts src/hierarchy/legacy-reconciliation.test.ts`, followed by a read-only local report on the isolated migrated acceptance database.
+- Status: fixed (the user granted access and the restricted read-only production report was exported).
+
+## 2026-09-27: pnpm banner polluted redirected hierarchy JSON
+
+- Symptom: Redirecting `pnpm --filter @entalent/api company-hierarchy:reconcile` to a JSON report file included pnpm's command banner before the JSON, so parsing the restricted production report failed.
+- Expected: The read-only report command should produce one valid JSON document with no wrapper output.
+- Root cause layer: tooling.
+- Harness fix: The reconciliation and backfill runbook now invokes the TypeScript scripts directly with `node --import tsx` when JSON is redirected to a file.
+- Regression check: Redirect `node --import tsx apps/api/scripts/reconcile-legacy-hierarchy.ts` to a restricted file and parse the whole file as JSON.
+- Status: fixed.
+
+## 2026-09-27: quarantine reason widened past its validated union
+
+- Symptom: The first quarantine manifest parser passed its focused tests but API typecheck rejected `reason: string` where the validated reason union was required.
+- Expected: The parsed quarantine reason remains typed as the two accepted values.
+- Root cause layer: verification.
+- Harness fix: Narrow the validated reason explicitly and keep API typecheck in the implementation gate.
+- Regression check: `pnpm --filter @entalent/api typecheck`.
+- Status: fixed.
