@@ -66,7 +66,7 @@ context:
 - Given a specific target that cannot be resolved uniquely, when CAP-8 is requested, then the response asks for identification and discloses no evidence.
 
 **Production Acceptance:**
-- [ ] After separately approved commit/push/deploy, run preflight and one sequential real Slack exact-message request plus previous-exact follow-up, then verify PostgreSQL and both queues.
+- [x] After separately approved commit/push/deploy, run preflight and one sequential real Slack exact-message request plus previous-exact follow-up, then verify PostgreSQL and both queues. On worker `a189ed2`, descriptive, quoted, and previous-exact turns each stored source `e23f6711-8685-499d-bf70-300b3e19cbf8` and returned its two active temporary rows; conversation jobs `877`–`879` and message-send jobs `856`–`858` completed, with one delivered outbound per inbound and no failed send in the window.
 
 ## Spec Change Log
 
@@ -96,6 +96,10 @@ Exact SQL uses `<= beforeOccurredAt` only after application code has resolved a 
 - Harness: `pnpm harness:check -- --base 64e5f55` -- passed; receipt `runs/harness/receipt-1789854730527-25d2cc9b.json`.
 - Final post-review harness: `pnpm harness:check -- --base 64e5f55` -- passed; receipt `runs/harness/receipt-1789903668260-5865b404.json`.
 - After separately approved commit/push/deploy: `pnpm harness:preflight`, then sequential real Slack exact-message and follow-up smoke with DB/queue read-back.
+- 2026-09-25: PostgreSQL-backed repository regression covers exact source, deleted/foreign rows, equal timestamps, singleton final provenance, and mixed-source temporary status in an isolated local test database. The new multi-source RED case required a source-cardinality guard in the exact SQL branch.
+- Run it with `CAP8_TEST_DATABASE_URL=postgresql://<local-user>@127.0.0.1:<port>/entalent_cap8_test pnpm --filter @entalent/worker exec vitest run src/survey/repositories/survey.repository.integration.test.ts`; the database must already exist and the test uses transaction-scoped temporary tables.
+- 2026-09-25: LangWatch SDK scenario now checks quoted, descriptive, and mixed-status responses; five consecutive synthetic model-backed runs passed all 15 cases. The final local PostgreSQL check passed 22/22, and `runs/harness/receipt-1790342400376-562a5511.json` passed with the isolated database. Production deployment and a real mixed-source fixture remain unverified.
+- 2026-09-25: Focused code/test commit `030bc46` passed pre-push harness (`runs/harness/receipt-1790342576828-3055b569.json`), was pushed to `main`, and Railway worker deployment `a6f8990b-6768-4b03-a5b6-06349d4d43da` reached `SUCCESS` on that SHA. A production mixed-source read-back was not run: interactive DB access was auto-review rejected, worker SSH had no key, and connector preflight reported local PostgreSQL/Redis unavailable. No new Slack payload was sent.
 
 ## Suggested Review Order
 

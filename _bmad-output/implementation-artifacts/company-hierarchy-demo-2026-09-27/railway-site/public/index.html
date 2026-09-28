@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101c2a">
+  <meta name="description" content="Company Hierarchy MVP demo: setup, Slack matching, Manager replacement, and first-contact delivery.">
+  <title>Company Hierarchy — Team Demo</title>
+  <style>
+    :root{--ink:#edf5f4;--muted:#a9b9bf;--teal:#79dfcc;--navy:#101c2a;--line:rgba(255,255,255,.15);--gold:#f7cb78}
+    *{box-sizing:border-box}
+    html{height:100%;scroll-behavior:smooth}
+    body{margin:0;min-height:100%;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:radial-gradient(circle at 85% 8%,#1d5960 0,transparent 31%),radial-gradient(circle at 5% 100%,#26364d 0,transparent 34%),var(--navy)}
+    button,a{font:inherit}
+    button{cursor:pointer}
+    .shell{max-width:1660px;min-height:100dvh;margin:auto;padding:26px 38px 28px;display:flex;flex-direction:column;gap:22px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{display:flex;align-items:center;gap:13px;white-space:nowrap;font-weight:750;letter-spacing:.01em}
+    .brand-mark{width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#9ef7dc,#4fb7bd);display:grid;place-items:center;color:#102737;font-weight:900;font-size:19px;box-shadow:0 6px 24px #59c9b02f}
+    .header-right{display:flex;align-items:center;gap:10px}
+    .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--teal);font-weight:800}
+    .pilot-pill{border:1px solid var(--line);border-radius:99px;padding:8px 12px;color:#c5d3d4;font-size:12px}
+    .icon-button{border:1px solid var(--line);background:#ffffff0d;color:var(--ink);border-radius:11px;padding:9px 12px;min-height:38px}
+    .icon-button:hover,.icon-button:focus-visible{background:#ffffff1e;outline:2px solid transparent;border-color:var(--teal)}
+    main{flex:1;display:grid;grid-template-columns:minmax(310px,.34fr) minmax(0,.66fr);gap:36px;align-items:center}
+    .story{align-self:stretch;display:flex;flex-direction:column;justify-content:center;min-width:0;padding:18px 2px 20px 0}
+    .chapter{color:var(--teal);font-weight:750;font-size:13px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:22px}
+    h1{font-size:clamp(42px,4.25vw,76px);line-height:1.04;letter-spacing:-.055em;margin:0 0 24px;max-width:650px}
+    .lead{font-size:clamp(17px,1.38vw,23px);line-height:1.48;color:#d7e2e3;max-width:600px;margin:0 0 28px}
+    .takeaway{border-left:3px solid var(--teal);padding:7px 0 7px 17px;color:#b9cbce;font-size:15px;line-height:1.55;max-width:570px}
+    .proofs{display:flex;flex-wrap:wrap;gap:9px;margin-top:27px}
+    .proof{border:1px solid #79dfcc57;background:#79dfcc14;color:#c8f9ea;border-radius:99px;padding:9px 12px;font-size:12px;font-weight:700}
+    .scope{display:grid;gap:10px;margin-top:12px;max-width:600px}
+    .scope div{border:1px solid var(--line);background:#ffffff0b;padding:13px 15px;border-radius:12px;font-size:14px;line-height:1.4;color:#dce7e7}
+    .scope strong{color:var(--teal)}
+    .visual{min-width:0;position:relative}
+    .visual-label{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;color:#bccbcd;font-size:12px;gap:15px}
+    .visual-label strong{color:#e8f4f2;font-size:13px}
+    .capture{position:relative;border:1px solid #d1dfe426;border-radius:20px;padding:11px;background:linear-gradient(135deg,#ffffff20,#ffffff09);box-shadow:0 28px 80px #0007;overflow:visible}
+    .capture-inner{position:relative;overflow:hidden;border-radius:12px;background:#e9eef1;line-height:0}
+    .capture img{display:block;width:100%;height:auto;aspect-ratio:1453/772;object-fit:contain}
+    .spot{position:absolute;left:var(--x);top:var(--y);transform:translate(-50%,-50%);border:3px solid #fff;background:#f6c975;color:#122431;border-radius:50%;width:38px;height:38px;display:grid;place-items:center;font-size:16px;font-weight:900;box-shadow:0 0 0 9px #f6c97560,0 6px 22px #142c3f80;line-height:1;z-index:2;transition:transform .2s,box-shadow .2s}
+    .spot:hover,.spot:focus-visible,.spot.selected{transform:translate(-50%,-50%) scale(1.2);box-shadow:0 0 0 13px #f6c97565,0 6px 22px #142c3f80;outline:0}
+    .caption{min-height:78px;display:flex;align-items:center;gap:16px;padding:15px 3px 0;color:#d2e1e0;font-size:15px;line-height:1.45}
+    .caption-num{flex:none;width:32px;height:32px;border-radius:50%;background:var(--gold);color:#11212b;display:grid;place-items:center;font-weight:900}
+    .caption strong{color:#fff}
+    .progress{position:sticky;bottom:0;z-index:5;display:flex;align-items:center;gap:18px;border-top:1px solid var(--line);padding:20px 0 4px;background:#101c2ae8;backdrop-filter:blur(16px)}
+    .counter{font-variant-numeric:tabular-nums;color:#aebfc2;font-size:13px;white-space:nowrap}
+    .track{display:flex;gap:6px;flex:1}
+    .track button{height:5px;flex:1;background:#ffffff27;border:0;border-radius:99px;padding:0;min-width:10px}
+    .track button.active{background:var(--teal)}
+    .arrows{display:flex;gap:8px}
+    .arrows button{width:42px;height:42px;border-radius:12px;border:1px solid var(--line);background:#ffffff12;color:#fff;font-size:22px}
+    .arrows button:disabled{opacity:.35;cursor:default}
+    .arrows button:not(:disabled):hover{background:#79dfcc32}
+    .hint{color:#91a8ad;font-size:12px;white-space:nowrap}
+    .fade{animation:appear .35s ease both}
+    @keyframes appear{from{opacity:.2;transform:translateY(9px)}to{opacity:1;transform:translateY(0)}}
+    .zoom{position:fixed;inset:0;z-index:20;background:#08121aef;display:none;align-items:center;justify-content:center;padding:28px}
+    .zoom.open{display:flex}
+    .zoom img{max-width:100%;max-height:90vh;object-fit:contain;border-radius:8px;box-shadow:0 20px 80px #0009}
+    .zoom button{position:absolute;top:18px;right:18px;background:#ffffffee;color:#12212a;border:0;border-radius:10px;padding:11px 16px}
+    .image-button{border:0;padding:0;background:none;color:#b9dcd7;text-decoration:underline;text-underline-offset:3px;font-size:12px}
+    :focus-visible{outline:2px solid var(--teal);outline-offset:3px}
+    @media(max-width:1050px){.shell{padding:22px}.main,main{grid-template-columns:1fr;gap:15px}.story{padding:10px 0 0}h1{font-size:clamp(39px,7vw,62px);margin-bottom:15px}.lead{margin-bottom:18px}.chapter{margin-bottom:12px}.visual{max-width:100%}.capture{max-width:900px}.hint{display:none}}
+    @media(max-width:620px){.shell{padding:16px;gap:17px}.pilot-pill{display:none}.brand{font-size:14px}.header-right .eyebrow{display:none}h1{font-size:clamp(35px,10vw,49px)}.lead{font-size:16px}.takeaway{font-size:14px}.caption{font-size:13px;min-height:88px}.spot{width:28px;height:28px;font-size:12px;border-width:2px;box-shadow:0 0 0 5px #f6c97560}.spot:hover,.spot:focus-visible,.spot.selected{box-shadow:0 0 0 7px #f6c97565}.visual-label{font-size:11px}.capture{padding:5px;border-radius:11px}.capture-inner{border-radius:6px}.proofs{margin-top:17px}.progress{gap:11px}.counter{font-size:11px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.fade{animation:none}.spot{transition:none}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">e</span><span>enTalent <span style="color:#799aa0;font-weight:500">/ Company Hierarchy</span></span></div>
+      <div class="header-right"><span class="eyebrow">Demo · 5–6 minutes</span><span class="pilot-pill">Test AI Agent · pilot</span><button class="icon-button" id="fullscreen" title="Full screen" aria-label="Enter full screen">⛶</button></div>
+    </header>
+    <main id="slide" aria-live="polite"></main>
+    <nav class="progress" aria-label="Demo navigation">
+      <span class="counter" id="counter"></span><div class="track" id="track"></div><span class="hint">← → to navigate · Esc to exit</span>
+      <div class="arrows"><button id="prev" aria-label="Previous slide">←</button><button id="next" aria-label="Next slide">→</button></div>
+    </nav>
+  </div>
+  <div class="zoom" id="zoom" role="dialog" aria-modal="true" aria-label="Enlarged screenshot"><button id="closeZoom" aria-label="Close screenshot">Close ✕</button><img id="zoomImage" alt=""></div>
+  <script>
+    const slides=[
+      {chapter:'01 / Pilot outcome',title:'The hierarchy is live. First contacts delivered.',lead:'We tested Company Hierarchy MVP in the Test AI Agent production tenant, from setup to the first Slack conversation.',takeaway:'One active Unit now has a Manager and a direct Employee. Both first-contact messages show Delivered.',proofs:['1 active Unit','2 delivered messages','Employee reply received'],image:'03-delivery-hierarchy.png',imageTitle:'Pilot outcome: delivery and the active hierarchy',spots:[{x:74,y:50,title:'Both first contacts were delivered',body:'The First-contact delivery table shows Delivered for both the Manager and the Employee.'},{x:63,y:80,title:'An active hierarchy',body:'Below it, you can see the active Unit, Manager, and direct Employee. Both people have linked Slack identities.'}]},
+      {chapter:'02 / Setup',title:'Admins build the hierarchy step by step.',lead:'Person, Unit, and Team records are created separately. A CSV preview can reveal import errors before records are created.',takeaway:'Records start as drafts. Activation follows a readiness check of the structure.',image:'00-drafts.png',imageTitle:'Draft forms for Person, Unit, and Team',spots:[{x:18,y:14,title:'CSV preview',body:'Preview CSV lets admins find errors before importing drafts.'},{x:26,y:57,title:'Person',body:'A Person has an employee ID, work email, name, and primary role.'},{x:50,y:56,title:'Unit',body:'A Unit is created separately, with a Manager assigned in the hierarchy.'},{x:74,y:56,title:'Team',body:'A Team belongs to a Unit and can be assigned a Team Lead during setup.'}]},
+      {chapter:'03 / Slack',title:'Each person links to a Slack identity.',lead:'Automatic matching uses an exact work email. The setup screen shows the workspace status and email-matching readiness.',takeaway:'In the pilot, the connected workspace is active and email matching is ready. The existing User and conversation history were preserved.',image:'01-slack-ready.png',imageTitle:'Slack identity matching and workspace status',spots:[{x:21,y:47,title:'Match by email',body:'Admins can match by work email or resolve a missing or ambiguous match manually.'},{x:45,y:59,title:'Workspace active',body:'The test Slack workspace is connected and shows active.'},{x:64,y:59,title:'Email matching Ready',body:'The setup screen confirms that email matching is ready.'}]},
+      {chapter:'04 / Role changes',title:'Changing a Manager requires an explicit decision.',lead:'When assigning a new Manager, an admin must choose what happens to the previous Unit owner. The change cannot proceed without that choice.',takeaway:'In the pilot, we verified the blocked action, replaced the Manager, and restored the original roles. The Unit remained intact, and both actions were audited.',image:'02-owner-change.png',imageTitle:'Manager replacement with an action for the previous owner',spots:[{x:49,y:80,title:'New Manager',body:'The new owner is selected from people in the Unit.'},{x:73,y:80,title:'Previous Manager',body:'This required field specifies what happens to the previous owner: reassignment or deactivation.'}]},
+      {chapter:'05 / First contact',title:'The result appears in setup and Slack.',lead:'After activation, the Manager and Employee received their first messages. The Employee replied in the existing Slack conversation, and the bot replied there too.',takeaway:'Private conversation text is not shown here. The screenshot confirms delivery status and the active hierarchy.',proofs:['Manager · Delivered','Employee · Delivered','Conversation continued'],image:'03-delivery-hierarchy.png',imageTitle:'First-contact delivery and the current hierarchy',spots:[{x:74,y:50,title:'Two Delivered statuses',body:'The table shows separate delivered first contacts for the Manager and Employee.'},{x:76,y:82,title:'Linked participants',body:'The current hierarchy shows an active Manager and Employee with linked Slack identities.'}]},
+      {chapter:'06 / Demo scope',title:'Verified now. Next checks.',lead:'The pilot confirms the core admin flow and delivery. A larger live roster will let us test more of the hierarchy.',takeaway:'Open live setup only for questions. Avoid new activations or role changes during the demo.',scope:['<strong>Verified in production:</strong> Company Admin sign-in, an active Unit, Slack delivery, an incoming reply, and Manager replacement.','<strong>Passed local tests:</strong> Team Lead replacement and Employee transfer between Units.','<strong>Needs a live roster:</strong> Team setup and cross-Unit movement. This pilot has one Unit and no Team.'],image:'03-delivery-hierarchy.png',imageTitle:'Current pilot hierarchy',spots:[{x:51,y:80,title:'Current pilot size',body:'This screen shows one active Unit with a Manager and direct Employee; there is no Team yet.'}]}
+    ];
+    const slideEl=document.getElementById('slide'),counter=document.getElementById('counter'),track=document.getElementById('track'),prev=document.getElementById('prev'),next=document.getElementById('next');
+    const zoom=document.getElementById('zoom'),zoomImage=document.getElementById('zoomImage');let index=0,activeSpot=0;
+    function safeText(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+    function render(){const s=slides[index];activeSpot=0;slideEl.classList.remove('fade');void slideEl.offsetWidth;slideEl.classList.add('fade');
+      slideEl.innerHTML=`<section class="story"><div class="chapter">${safeText(s.chapter)}</div><h1>${safeText(s.title)}</h1><p class="lead">${safeText(s.lead)}</p><div class="takeaway">${safeText(s.takeaway)}</div>${s.proofs?`<div class="proofs">${s.proofs.map(p=>`<span class="proof">${safeText(p)}</span>`).join('')}</div>`:''}${s.scope?`<div class="scope">${s.scope.map(p=>`<div>${p}</div>`).join('')}</div>`:''}</section><section class="visual" aria-label="Product screenshot"><div class="visual-label"><strong>${safeText(s.imageTitle)}</strong><button class="image-button" id="openZoom">Enlarge screenshot ↗</button></div><div class="capture"><div class="capture-inner"><img src="${s.image}" alt="${safeText(s.imageTitle)}">${s.spots.map((p,n)=>`<button class="spot ${n===0?'selected':''}" style="--x:${p.x}%;--y:${p.y}%" data-spot="${n}" aria-label="Callout ${n+1}: ${safeText(p.title)}">${n+1}</button>`).join('')}</div></div><div class="caption" id="caption"></div></section>`;
+      slideEl.querySelectorAll('.spot').forEach(b=>b.addEventListener('click',()=>selectSpot(Number(b.dataset.spot))));slideEl.querySelector('#openZoom').addEventListener('click',openZoom);selectSpot(0);counter.textContent=`${String(index+1).padStart(2,'0')} / ${String(slides.length).padStart(2,'0')}`;track.innerHTML=slides.map((_,n)=>`<button class="${n===index?'active':''}" aria-label="Slide ${n+1}" aria-current="${n===index?'step':'false'}" data-index="${n}"></button>`).join('');track.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>go(Number(b.dataset.index))));prev.disabled=index===0;next.disabled=index===slides.length-1;}
+    function selectSpot(n){activeSpot=n;const p=slides[index].spots[n];slideEl.querySelectorAll('.spot').forEach((b,i)=>b.classList.toggle('selected',i===n));document.getElementById('caption').innerHTML=`<span class="caption-num">${n+1}</span><span><strong>${safeText(p.title)}</strong><br>${safeText(p.body)}</span>`}
+    function go(n){if(n<0||n>=slides.length)return;index=n;render();window.scrollTo({top:0,behavior:'smooth'})}
+    function openZoom(){zoomImage.src=slides[index].image;zoomImage.alt=slides[index].imageTitle;zoom.classList.add('open');document.getElementById('closeZoom').focus()}
+    function closeZoom(){zoom.classList.remove('open');zoomImage.removeAttribute('src');document.getElementById('openZoom').focus()}
+    prev.addEventListener('click',()=>go(index-1));next.addEventListener('click',()=>go(index+1));document.getElementById('closeZoom').addEventListener('click',closeZoom);zoom.addEventListener('click',e=>{if(e.target===zoom)closeZoom()});
+    document.getElementById('fullscreen').addEventListener('click',()=>{if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen?.()});
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'&&zoom.classList.contains('open')){closeZoom();return}if(zoom.classList.contains('open'))return;if(e.key==='ArrowRight'||e.key==='PageDown'){e.preventDefault();go(index+1)}if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(index-1)}if(e.key>='1'&&e.key<='6'&&!e.altKey&&!e.metaKey&&!e.ctrlKey){go(Number(e.key)-1)}});
+    render();
+  </script>
+</body>
+</html>
