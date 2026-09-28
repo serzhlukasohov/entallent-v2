@@ -62,6 +62,52 @@ export async function reconcileSendingOnboarding(
   }, { isolationLevel: options.apply ? 'serializable' : 'repeatable read' });
 }
 
+export async function retryFailedOnboardingPreparation(
+  db: DbClient['db'], tenantId: string, unitId: string, expectedPersonIds: string[],
+  options: { apply: boolean; operatorId?: string },
+): Promise<{ tenantId: string; unitId: string; mode: 'dry_run' | 'applied'; deliveryIds: string[]; reset: number }> {
+  if (expectedPersonIds.length === 0 || new Set(expectedPersonIds).size !== expectedPersonIds.length) {
+    throw new Error('expected_person_ids_invalid');
+  }
+  return db.transaction(async (tx) => {
+    if (!options.apply) await tx.execute(sql`SET TRANSACTION READ ONLY`);
+    if (options.apply && !options.operatorId?.trim()) throw new Error('operator_id_required');
+    const scope = and(eq(orgOnboardingDeliveries.tenantId, tenantId), eq(orgOnboardingDeliveries.unitId, unitId));
+    const deliveries = options.apply
+      ? await tx.select().from(orgOnboardingDeliveries).where(scope).for('update')
+      : await tx.select().from(orgOnboardingDeliveries).where(scope);
+    const actualPersonIds = deliveries.map((row) => row.personId).sort();
+    if (JSON.stringify(actualPersonIds) !== JSON.stringify([...expectedPersonIds].sort()) ||
+      deliveries.some((row) => row.status !== 'failed' || row.attemptCount < 1 ||
+        row.externalMessageId !== null || row.deliveredAt !== null)) {
+      throw new Error('failed_preparation_intents_changed');
+    }
+    const deliveryIds = deliveries.map((row) => row.id).sort();
+    const existingMessages = await tx.select({ id: messages.id }).from(messages).where(and(
+      eq(messages.tenantId, tenantId), inArray(messages.id, deliveryIds),
+    ));
+    if (existingMessages.length > 0) throw new Error('outbound_message_requires_manual_reconciliation');
+    if (options.apply) {
+      for (const delivery of deliveries) {
+        const [updated] = await tx.update(orgOnboardingDeliveries).set({ status: 'pending', lastAttemptAt: null,
+          updatedAt: new Date() }).where(and(eq(orgOnboardingDeliveries.id, delivery.id),
+          eq(orgOnboardingDeliveries.tenantId, tenantId), eq(orgOnboardingDeliveries.status, 'failed')))
+          .returning({ id: orgOnboardingDeliveries.id });
+        if (!updated) throw new Error('failed_preparation_intent_stale');
+        await tx.insert(auditLogs).values({ tenantId, actorType: 'internal_operator',
+          actorId: options.operatorId!, action: 'org.onboarding.retry_failed_preparation',
+          resourceType: 'org_onboarding_delivery', resourceId: delivery.id,
+          metadata: { unitId, personId: delivery.personId,
+            before: { status: 'failed', attemptCount: delivery.attemptCount },
+            after: { status: 'pending', attemptCount: delivery.attemptCount } },
+        });
+      }
+    }
+    return { tenantId, unitId, mode: options.apply ? 'applied' : 'dry_run',
+      deliveryIds, reset: options.apply ? deliveries.length : 0 };
+  }, { isolationLevel: options.apply ? 'serializable' : 'repeatable read' });
+}
+
 function hasOnboardingMarker(metadata: unknown, deliveryId: string): boolean {
   return typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata) &&
     (metadata as Record<string, unknown>)['onboardingDeliveryId'] === deliveryId;

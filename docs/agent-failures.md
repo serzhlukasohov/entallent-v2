@@ -1072,3 +1072,29 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Narrow the validated reason explicitly and keep API typecheck in the implementation gate.
 - Regression check: `pnpm --filter @entalent/api typecheck`.
 - Status: fixed.
+## 2026-09-27: Hierarchy rollout could not adopt a legacy Slack User
+
+- Symptom: The designated test Employee already has a linked Slack account, one conversation, and 102 messages. Setup draft creation would allocate a new User ID, while Slack linking rejects assigning that account to a second User.
+- Expected: Explicit hierarchy reconciliation should retain the existing User ID, channel account, and conversation history, then activate the Person and Unit atomically without interrupting the active conversation runtime.
+- Root cause layer: architecture
+- Harness fix: Add an audited, operator-scoped legacy adoption path inside the serializable Unit rollout transaction, with exact Slack email and account ownership checks. Keep legacy Team membership and report routing unchanged.
+- Regression check: A migrated PostgreSQL test starts with an active legacy User and historical conversation, rejects a failed rollout with no Person row, then activates the same User ID and verifies history, account ownership, onboarding uniqueness, and runtime eligibility.
+- Status: open
+
+## 2026-09-27: First-contact intents waited for the hourly proactive scan
+
+- Symptom: A successful Unit rollout created two pending onboarding intents, but the production worker's scheduled scan runs only once an hour, delaying live acceptance and first contact.
+- Expected: An operator should be able to process only the selected Unit's pending first contacts promptly, without triggering normal proactive candidates for the tenant.
+- Root cause layer: workflow
+- Harness fix: Add a distinct `onboarding-only` queue job requiring both tenant and Unit IDs; filter onboarding dispatch by both IDs and skip the proactive scheduler for that job.
+- Regression check: Worker processor tests reject missing scope and prove the proactive scheduler is not called; PostgreSQL/BullMQ onboarding integration proves an unrelated Unit filter queues nothing and the selected intent delivers once.
+- Status: open
+
+## 2026-09-27: Slack bot lacked DM creation scope during first-contact preparation
+
+- Symptom: The selected Manager and Employee onboarding intents failed before outbound message creation because Slack `conversations.open` returned `missing_scope`; the bot lacked `im:write`.
+- Expected: The connected bot opens each selected DM and delivers one first contact with a durable Slack receipt.
+- Root cause layer: environment
+- Harness fix: Verify the installed bot token's actual `x-oauth-scopes` and both recipient DM opens before scoped dispatch. Reinstall the app after adding `im:write`, reconcile stored workspace scope metadata with an audit record, and retry only an exact failed intent set with no outbound message or external receipt.
+- Regression check: Production preflight, both `conversations.open` probes, exact retry dry-run, targeted `onboarding-only` job, and receipt readback for the two selected Persons; migrated PostgreSQL retry test rejects an existing outbound message.
+- Status: fixed
