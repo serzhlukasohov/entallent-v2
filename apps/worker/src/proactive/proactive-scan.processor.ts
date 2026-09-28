@@ -5,10 +5,13 @@ import { Job, Queue } from 'bullmq';
 import { ProactiveSchedulerUseCase } from '@entalent/application';
 import type { Env } from '@entalent/config';
 import { QUEUE_NAMES } from '../queue/queue.module';
+import { OnboardingDispatchService } from '../conversation/onboarding-dispatch.service';
 
 export interface ProactiveScanJob {
   /** Optional tenant filter — omitted for the scheduled repeatable scan */
   tenantId?: string;
+  /** Required with onboarding-only jobs to prevent processing other Units. */
+  unitId?: string;
 }
 
 const REPEATABLE_JOB_ID = 'proactive-scan-recurring';
@@ -21,6 +24,7 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
     private readonly scheduler: ProactiveSchedulerUseCase,
     @InjectQueue(QUEUE_NAMES.PROACTIVE_SCAN) private readonly queue: Queue<ProactiveScanJob>,
     private readonly config: ConfigService<Env, true>,
+    private readonly onboarding: OnboardingDispatchService,
   ) {
     super();
   }
@@ -42,9 +46,18 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
   }
 
   async process(job: Job<ProactiveScanJob>): Promise<void> {
+    if (job.name === 'onboarding-only') {
+      if (!job.data.tenantId || !job.data.unitId) throw new Error('onboarding_scope_required');
+      const onboarding = await this.onboarding.dispatchPending(job.data.tenantId, job.data.unitId);
+      this.logger.log(
+        `Onboarding-only job=${job.id} — queued=${onboarding.queued} failed=${onboarding.failed}`,
+      );
+      return;
+    }
+    const onboarding = await this.onboarding.dispatchPending(job.data.tenantId);
     const result = await this.scheduler.scan({ tenantId: job.data.tenantId });
     this.logger.log(
-      `Proactive scan job=${job.id} — candidates=${result.candidatesFound} enqueued=${result.enqueued} skippedQuietHours=${result.skippedQuietHours}`,
+      `Proactive scan job=${job.id} — onboardingQueued=${onboarding.queued} onboardingFailed=${onboarding.failed} candidates=${result.candidatesFound} enqueued=${result.enqueued} skippedQuietHours=${result.skippedQuietHours}`,
     );
   }
 }

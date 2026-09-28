@@ -10,6 +10,8 @@ import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
 import { shouldMountDevModule } from './dev/dev-endpoints';
 import { InternalMafContextModule } from './internal-maf-context/internal-maf-context.module';
+import { HierarchyModule } from './hierarchy/hierarchy.module';
+import { CompanyAuthModule } from './company-auth/company-auth.module';
 
 const mountDevModule = shouldMountDevModule();
 
@@ -22,6 +24,8 @@ const mountDevModule = shouldMountDevModule();
     ChannelModule,
     UsersModule,
     AdminModule,
+    HierarchyModule,
+    CompanyAuthModule,
     InternalMafContextModule,
     ...(mountDevModule ? [DevModule] : []),
   ],

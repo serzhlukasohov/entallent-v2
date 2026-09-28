@@ -101,6 +101,9 @@ importers:
       ioredis:
         specifier: ^5.3.2
         version: 5.11.1
+      jose:
+        specifier: 6.2.7
+        version: 6.2.7
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -9394,8 +9397,7 @@ snapshots:
 
   iterare@1.2.1: {}
 
-  jose@6.2.7:
-    optional: true
+  jose@6.2.7: {}
 
   joycon@3.1.1: {}
 

@@ -1,0 +1,2 @@
+ALTER TABLE "channel_accounts" ADD COLUMN "link_status" text DEFAULT 'linked' NOT NULL;--> statement-breakpoint
+ALTER TABLE "channel_accounts" ADD CONSTRAINT "channel_accounts_link_status_valid" CHECK ("channel_accounts"."link_status" IN ('linked', 'unlinked'));

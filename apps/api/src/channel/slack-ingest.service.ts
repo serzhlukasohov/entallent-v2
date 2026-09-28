@@ -51,12 +51,16 @@ export class SlackIngestService {
       const requestId = randomUUID();
       const traceId = randomUUID();
 
-      const { userId } = await this.ingestion.findOrCreateUser({
+      const { userId, runtimeEligible } = await this.ingestion.findOrCreateUser({
         tenantId: workspaceIdentity.tenantId,
         channelType: 'slack',
         externalWorkspaceId: payload.externalWorkspaceId,
         externalUserId: payload.externalUserId,
       });
+      if (!runtimeEligible) {
+        this.logger.debug(`Inbound Slack user is not active for runtime: ${userId}`);
+        continue;
+      }
 
       const { conversationId } = await this.ingestion.findOrCreateConversation({
         tenantId: workspaceIdentity.tenantId,

@@ -60,6 +60,39 @@ const validEvidenceParams: SaveSurveyEvidenceParams = {
 };
 
 describe('SurveyRepository', () => {
+  it('excludes provisioned non-Pulse Persons from a new reporting roster', async () => {
+    let selectIndex = 0;
+    let rosterPredicate: SQL | undefined;
+    const rows = [[{ id: 'definition-1' }], [], [{ teamId: 'team-1' }], [], []];
+    const tx = {
+      select: () => {
+        const index = selectIndex++;
+        const result = rows[index] ?? [];
+        const query = {
+          from: () => query,
+          innerJoin: () => query,
+          where: (predicate: SQL) => { if (index === 3) rosterPredicate = predicate; return query; },
+          limit: async () => result,
+          orderBy: () => query,
+          then: (resolve: (value: unknown[]) => unknown) => Promise.resolve(result).then(resolve),
+        };
+        return query;
+      },
+      insert: () => ({ values: () => ({ onConflictDoNothing: async () => undefined }) }),
+    };
+    const repository = new SurveyRepository({ client: {
+      transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx),
+    } } as never, {} as never, {} as never);
+    await repository.openReportingCycle({ tenantId: 'tenant-1', surveyDefinitionId: 'definition-1',
+      periodStart: new Date('2026-07-01T00:00:00Z'), periodEnd: new Date('2026-09-30T00:00:00Z'),
+      openedAt: new Date('2026-09-01T00:00:00Z') });
+    expect(rosterPredicate).toBeDefined();
+    const compiled = compileSql(rosterPredicate);
+    expect(compiled.sql).toContain('not exists');
+    expect(compiled.sql).toContain('"people"."id" = "users"."id"');
+    expect(compiled.sql).toContain('"people"."pulse_participant" = false');
+  });
+
   it('scopes all pulse capture provenance to owned earlier inbound messages in one conversation', () => {
     const beforeOccurredAt = new Date('2026-09-03T10:00:00.000Z');
     const query = compileSql(buildFindPulseCaptureForConversationSql({

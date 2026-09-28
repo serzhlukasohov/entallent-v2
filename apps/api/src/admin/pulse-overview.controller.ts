@@ -10,6 +10,7 @@ import type {
 } from '@entalent/contracts';
 import {
   channelAccounts,
+  eligiblePulsePersonOrLegacy,
   users,
   surveyWindows,
   surveyAssessments,
@@ -54,12 +55,14 @@ export class PulseOverviewController {
             eq(users.tenantId, resolvedTenantId),
             eq(users.status, 'active'),
             isNull(users.deletedAt),
+            eligiblePulsePersonOrLegacy(users.id, users.tenantId),
           ),
         ),
       this.db.client
         .select({ userId: channelAccounts.userId, displayName: channelAccounts.displayName })
         .from(channelAccounts)
-        .where(eq(channelAccounts.tenantId, resolvedTenantId)),
+        .where(and(eq(channelAccounts.tenantId, resolvedTenantId),
+          eq(channelAccounts.linkStatus, 'linked'))),
     ]);
 
     const teamUsers = attachTeamDisplayNames(userRows, channelAccountRows);

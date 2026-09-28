@@ -641,6 +641,7 @@ export class ConversationOrchestrator {
     }
     if (confirmationRequest && surfacedGroup && confirmationSummary && this.surveyRepo) {
       const team = await this.surveyRepo.findTeamByMemberId(userId, tenantId);
+      const hierarchyIdentifiers = await this.surveyRepo.findCurrentHierarchyIdentifiers(userId, tenantId);
       const decision = evaluateDeidentification({
         text: confirmationSummary,
         knownIdentifiers: [
@@ -653,6 +654,7 @@ export class ConversationOrchestrator {
           team?.teamName,
           team?.managerSlackUserId,
           ...(team?.memberUserIds ?? []),
+          ...hierarchyIdentifiers,
         ].filter((identifier): identifier is string => typeof identifier === 'string' && identifier.trim().length > 0),
         sourceMessageIds: confirmationRequest.evidence.flatMap((item) => item.sourceMessageIds ?? []),
       });

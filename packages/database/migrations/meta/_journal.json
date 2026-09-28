@@ -127,6 +127,62 @@
       "when": 1788789487597,
       "tag": "0017_overjoyed_justice",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790439868105,
+      "tag": "0018_lumpy_callisto",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790440548809,
+      "tag": "0019_supreme_mole_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790444109742,
+      "tag": "0020_minor_forgotten_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790445917294,
+      "tag": "0021_good_cerise",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790446728385,
+      "tag": "0022_wet_black_cat",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790449119283,
+      "tag": "0023_silent_nitro",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790451387481,
+      "tag": "0024_certain_mercury",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790458159256,
+      "tag": "0025_clammy_azazel",
+      "breakpoints": true
     }
   ]
 }

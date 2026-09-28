@@ -1,0 +1,2 @@
+ALTER TABLE "org_onboarding_deliveries" DROP CONSTRAINT "org_onboarding_deliveries_status_valid";--> statement-breakpoint
+ALTER TABLE "org_onboarding_deliveries" ADD CONSTRAINT "org_onboarding_deliveries_status_valid" CHECK ("org_onboarding_deliveries"."status" IN ('pending', 'sending', 'delivered', 'failed', 'cancelled'));

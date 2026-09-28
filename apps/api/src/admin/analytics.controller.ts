@@ -1,6 +1,6 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { and, eq, gte, isNull, sql } from 'drizzle-orm';
-import { messages, users, riskSignals, surveyAssessments, surveyWindows } from '@entalent/database';
+import { eligiblePulsePersonOrLegacy, messages, users, riskSignals, surveyAssessments, surveyWindows } from '@entalent/database';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
 
@@ -39,6 +39,7 @@ export class AnalyticsController {
             gte(messages.occurredAt, daysAgo(7)),
             eq(messages.direction, 'inbound'),
             isNull(messages.deletedAt),
+            eligiblePulsePersonOrLegacy(messages.userId, messages.tenantId),
           ),
         ),
 
@@ -52,6 +53,7 @@ export class AnalyticsController {
             gte(messages.occurredAt, daysAgo(30)),
             eq(messages.direction, 'inbound'),
             isNull(messages.deletedAt),
+            eligiblePulsePersonOrLegacy(messages.userId, messages.tenantId),
           ),
         ),
 
@@ -67,6 +69,7 @@ export class AnalyticsController {
             tenantId ? eq(messages.tenantId, tenantId) : undefined,
             gte(messages.occurredAt, daysAgo(30)),
             isNull(messages.deletedAt),
+            eligiblePulsePersonOrLegacy(messages.userId, messages.tenantId),
           ),
         )
         .groupBy(messages.direction),
@@ -79,6 +82,8 @@ export class AnalyticsController {
           and(
             tenantId ? eq(users.tenantId, tenantId) : undefined,
             eq(users.status, 'active'),
+            isNull(users.deletedAt),
+            eligiblePulsePersonOrLegacy(users.id, users.tenantId),
           ),
         ),
 
@@ -93,6 +98,7 @@ export class AnalyticsController {
           and(
             tenantId ? eq(riskSignals.tenantId, tenantId) : undefined,
             eq(riskSignals.status, 'active'),
+            eligiblePulsePersonOrLegacy(riskSignals.userId, riskSignals.tenantId),
           ),
         )
         .groupBy(riskSignals.severity),
@@ -107,6 +113,7 @@ export class AnalyticsController {
             tenantId ? eq(surveyWindows.tenantId, tenantId) : undefined,
             eq(surveyWindows.status, 'active'),
             eq(surveyAssessments.status, 'scored'),
+            eligiblePulsePersonOrLegacy(surveyWindows.userId, surveyWindows.tenantId),
           ),
         ),
     ]);

@@ -5,19 +5,24 @@ import type { Env } from '@entalent/config';
 import { decryptField } from '@entalent/crypto-utils';
 import {
   users,
+  people,
   channelAccounts,
   conversations,
   messages,
   workspaceConnections,
+  type DbClient,
 } from '@entalent/database';
 import {
   resolveExternalProfileFacts,
+  isRuntimeEligibleUser,
   type IngestionRepositoryPort,
   type WorkspaceIdentity,
   type IngestMessageResult,
   type IngestMessageParams,
 } from '@entalent/application';
 import { DatabaseService } from '../database/database.service';
+
+type Transaction = Parameters<Parameters<DbClient['db']['transaction']>[0]>[0];
 
 @Injectable()
 export class IngestionService implements IngestionRepositoryPort {
@@ -58,41 +63,68 @@ export class IngestionService implements IngestionRepositoryPort {
     externalWorkspaceId: string;
     externalUserId: string;
     displayName?: string;
-  }): Promise<{ userId: string }> {
-    const [existing] = await this.db.client
-      .select({ userId: channelAccounts.userId })
-      .from(channelAccounts)
-      .where(
-        and(
-          eq(channelAccounts.channelType, params.channelType),
-          eq(channelAccounts.externalWorkspaceId, params.externalWorkspaceId),
-          eq(channelAccounts.externalUserId, params.externalUserId),
-        ),
-      )
-      .limit(1);
-
-    if (existing) return { userId: existing.userId };
-
+  }): Promise<{ userId: string; runtimeEligible: boolean }> {
     const profileFacts = resolveExternalProfileFacts({
       externalUserId: params.externalUserId,
       displayName: params.displayName,
     });
+    try {
+      return await this.db.client.transaction(async (tx) => {
+        const existing = await this.findAccount(tx, params);
+        if (existing) return existing;
 
-    const [newUser] = await this.db.client
-      .insert(users)
-      .values({ tenantId: params.tenantId, preferredName: profileFacts.preferredName })
-      .returning({ id: users.id });
+        const [newUser] = await tx.insert(users)
+          .values({ tenantId: params.tenantId, preferredName: profileFacts.preferredName })
+          .returning({ id: users.id });
+        if (!newUser) throw new Error('user insert returned no row');
+        await tx.insert(channelAccounts).values({
+          userId: newUser.id,
+          tenantId: params.tenantId,
+          channelType: params.channelType,
+          externalWorkspaceId: params.externalWorkspaceId,
+          externalUserId: params.externalUserId,
+          displayName: profileFacts.displayName,
+        });
+        return { userId: newUser.id, runtimeEligible: true };
+      });
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
+        const winner = await this.db.client.transaction((tx) => this.findAccount(tx, params));
+        if (winner) return winner;
+      }
+      throw error;
+    }
+  }
 
-    await this.db.client.insert(channelAccounts).values({
-      userId: newUser.id,
-      tenantId: params.tenantId,
-      channelType: params.channelType,
-      externalWorkspaceId: params.externalWorkspaceId,
-      externalUserId: params.externalUserId,
-      displayName: profileFacts.displayName,
-    });
-
-    return { userId: newUser.id };
+  private async findAccount(
+    tx: Transaction,
+    params: { tenantId: string; channelType: string; externalWorkspaceId: string; externalUserId: string },
+  ): Promise<{ userId: string; runtimeEligible: boolean } | null> {
+    const [account] = await tx.select({
+      userId: channelAccounts.userId,
+      accountTenantId: channelAccounts.tenantId,
+      userTenantId: users.tenantId,
+      userStatus: users.status,
+      linkStatus: channelAccounts.linkStatus,
+      deletedAt: users.deletedAt,
+      personLifecycle: people.lifecycleStatus,
+      pulseParticipant: people.pulseParticipant,
+    }).from(channelAccounts)
+      .innerJoin(users, eq(users.id, channelAccounts.userId))
+      .leftJoin(people, and(eq(people.id, users.id), eq(people.tenantId, users.tenantId)))
+      .where(and(
+        eq(channelAccounts.channelType, params.channelType),
+        eq(channelAccounts.externalWorkspaceId, params.externalWorkspaceId),
+        eq(channelAccounts.externalUserId, params.externalUserId),
+      )).limit(1);
+    if (!account) return null;
+    if (account.accountTenantId !== params.tenantId || account.userTenantId !== params.tenantId) {
+      throw new Error('channel_account_tenant_mismatch');
+    }
+    return {
+      userId: account.userId,
+      runtimeEligible: account.linkStatus === 'linked' && isRuntimeEligibleUser(account),
+    };
   }
 
   async findOrCreateConversation(params: {

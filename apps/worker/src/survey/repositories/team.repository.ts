@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, isNull } from 'drizzle-orm';
-import { surveyReportingCohorts, surveyWindows, teams, teamMemberships } from '@entalent/database';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
+import {
+  channelAccounts, orgEmployeePlacements, orgTeams, orgUnits, people,
+  surveyReportingCohorts, surveyWindows, teams, teamMemberships,
+} from '@entalent/database';
 import { DatabaseService } from '../../database/database.service';
 
 type TeamInfo = {
@@ -19,6 +22,74 @@ type TeamInfo = {
 @Injectable()
 export class TeamRepository {
   constructor(private readonly db: DatabaseService) {}
+
+  async findCurrentHierarchyIdentifiers(userId: string, tenantId: string): Promise<string[]> {
+    const [person] = await this.db.client.select({ role: people.primaryRole }).from(people).where(and(
+      eq(people.id, userId), eq(people.tenantId, tenantId),
+      eq(people.lifecycleStatus, 'active'), eq(people.pulseParticipant, true),
+    )).limit(1);
+    if (!person) return [];
+
+    const [placement] = person.role === 'employee'
+      ? await this.db.client.select({ unitId: orgEmployeePlacements.unitId, teamId: orgEmployeePlacements.teamId })
+        .from(orgEmployeePlacements).where(and(
+          eq(orgEmployeePlacements.tenantId, tenantId),
+          eq(orgEmployeePlacements.employeePersonId, userId),
+          eq(orgEmployeePlacements.lifecycleStatus, 'active'),
+        )).limit(1)
+      : [];
+    const [ownedTeam] = person.role === 'team_lead'
+      ? await this.db.client.select({ id: orgTeams.id, unitId: orgTeams.unitId })
+        .from(orgTeams).where(and(
+          eq(orgTeams.tenantId, tenantId), eq(orgTeams.teamLeadPersonId, userId),
+          eq(orgTeams.lifecycleStatus, 'active'),
+        )).limit(1)
+      : [];
+    const unitId = placement?.unitId ?? ownedTeam?.unitId;
+    const teamId = placement?.teamId ?? ownedTeam?.id ?? null;
+    if (!unitId) return [];
+
+    const [unit] = await this.db.client.select({
+      id: orgUnits.id, name: orgUnits.name, managerPersonId: orgUnits.managerPersonId,
+    }).from(orgUnits).where(and(
+      eq(orgUnits.id, unitId), eq(orgUnits.tenantId, tenantId),
+      eq(orgUnits.lifecycleStatus, 'active'),
+    )).limit(1);
+    if (!unit) return [];
+    const [team] = teamId ? await this.db.client.select({
+      id: orgTeams.id, name: orgTeams.name, teamLeadPersonId: orgTeams.teamLeadPersonId,
+    }).from(orgTeams).where(and(
+      eq(orgTeams.id, teamId), eq(orgTeams.unitId, unitId),
+      eq(orgTeams.tenantId, tenantId), eq(orgTeams.lifecycleStatus, 'active'),
+    )).limit(1) : [];
+    if (teamId && !team) return [];
+
+    const members = await this.db.client.select({ personId: orgEmployeePlacements.employeePersonId })
+      .from(orgEmployeePlacements).where(and(
+        eq(orgEmployeePlacements.tenantId, tenantId), eq(orgEmployeePlacements.unitId, unitId),
+        eq(orgEmployeePlacements.lifecycleStatus, 'active'),
+        team ? eq(orgEmployeePlacements.teamId, team.id) : isNull(orgEmployeePlacements.teamId),
+      ));
+    const personIds = [...new Set([
+      userId, unit.managerPersonId, team?.teamLeadPersonId,
+      ...members.map((member) => member.personId),
+    ].filter((id): id is string => Boolean(id)))];
+    const [persons, accounts] = await Promise.all([
+      this.db.client.select({ id: people.id, displayName: people.displayName }).from(people).where(and(
+        eq(people.tenantId, tenantId), eq(people.lifecycleStatus, 'active'),
+        inArray(people.id, personIds),
+      )),
+      this.db.client.select({ externalUserId: channelAccounts.externalUserId }).from(channelAccounts).where(and(
+        eq(channelAccounts.tenantId, tenantId), eq(channelAccounts.channelType, 'slack'),
+        eq(channelAccounts.linkStatus, 'linked'), inArray(channelAccounts.userId, personIds),
+      )),
+    ]);
+    return [...new Set([
+      unit.id, unit.name, team?.id, team?.name,
+      ...persons.flatMap((member) => [member.id, member.displayName]),
+      ...accounts.map((account) => account.externalUserId),
+    ].filter((value): value is string => Boolean(value)))];
+  }
 
   async findTeamByMemberId(
     userId: string,

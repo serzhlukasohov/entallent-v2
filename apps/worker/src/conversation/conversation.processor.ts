@@ -63,6 +63,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     });
 
     try {
+      if (!await this.conversationRepo.isUserRuntimeEligible(job.data.tenantId, job.data.userId)) {
+        this.logger.log(`Skipping check-in for inactive runtime user ${job.data.userId}`);
+        return;
+      }
       const [tenantRow] = await this.db.client
         .select({ policy: tenants.proactiveMessagingPolicy })
         .from(tenants)
@@ -94,6 +98,11 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       messageId: job.data.messageId,
       conversationId: job.data.conversationId,
     });
+
+    if (!await this.conversationRepo.isUserRuntimeEligible(job.data.tenantId, job.data.userId)) {
+      this.logger.log(`Skipping conversation job for inactive runtime user ${job.data.userId}`);
+      return;
+    }
 
     if (
       job.data.rapidMessageCoalescing === true &&

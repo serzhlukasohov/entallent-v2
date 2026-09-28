@@ -25,6 +25,10 @@ export interface ProactiveCheckInInput {
   traceId: string;
   /** Tenant-specific pulse cadence config. Falls back to defaults if omitted. */
   pulseConfig?: ProactivePulseConfig;
+  /** Stable outbound ID for a rollout first contact. Repeated calls reuse the persisted text. */
+  onboardingMessageId?: string;
+  /** Non-Pulse organizational roles still receive first contact without Pulse disclosure. */
+  pulseEnabled?: boolean;
 }
 
 export interface ProactiveCheckInResult {
@@ -58,6 +62,19 @@ export class ProactiveCheckInUseCase {
       throw new Error(`Conversation ownership mismatch: ${conversationId}`);
     }
 
+    if (input.onboardingMessageId) {
+      if (!this.conversationRepo.findMessageById) throw new Error('Onboarding message lookup unavailable');
+      const existing = await this.conversationRepo.findMessageById(input.onboardingMessageId, tenantId, conversationId);
+      if (existing) {
+        if (existing.userId !== userId || existing.direction !== 'outbound' ||
+          existing.metadata?.onboardingDeliveryId !== input.onboardingMessageId) {
+          throw new Error('Onboarding message ownership mismatch');
+        }
+        await this.enqueue(input, conversation.channelType, existing.id, existing.text);
+        return { outboundMessageId: existing.id, responseText: existing.text, probeQuestionId: null };
+      }
+    }
+
     const dbMessages = await this.conversationRepo.findRecentMessages(conversationId, 10);
     const turns: ConversationTurn[] = dbMessages
       .filter((m) => m.text !== '__init__')
@@ -71,7 +88,7 @@ export class ProactiveCheckInUseCase {
     const flagCtx = { tenantId, userId };
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
 
-    const [memoryEnabled, surveyEnabled] = await Promise.all([
+    const [memoryEnabled, surveyFlagEnabled] = await Promise.all([
       this.featureFlags
         ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx)
         : Promise.resolve(true),
@@ -79,6 +96,7 @@ export class ProactiveCheckInUseCase {
         ? this.featureFlags.isEnabled(FEATURE_FLAGS.CONVERSATIONAL_SURVEY, flagCtx)
         : Promise.resolve(true),
     ]);
+    const surveyEnabled = input.pulseEnabled !== false && surveyFlagEnabled;
 
     const memoryItems =
       memoryEnabled && this.memoryRepo
@@ -97,7 +115,7 @@ export class ProactiveCheckInUseCase {
       reportingDisclosureReceipt?.version === REPORTING_DISCLOSURE_VERSION;
 
     // First contact (no history, no memory): earn trust first, never steer toward a survey topic
-    const isFirstContact = turns.length === 0 && memoryItems.length === 0;
+    const isFirstContact = Boolean(input.onboardingMessageId) || (turns.length === 0 && memoryItems.length === 0);
 
     const pulseConfig = input.pulseConfig ?? DEFAULT_PULSE_CONFIG;
 
@@ -159,6 +177,7 @@ export class ProactiveCheckInUseCase {
       && generated.surveyProbeQuestionId === probeQuestion.id;
 
     const outbound = await this.conversationRepo.saveMessage({
+      ...(input.onboardingMessageId ? { id: input.onboardingMessageId } : {}),
       conversationId,
       tenantId,
       userId,
@@ -168,6 +187,7 @@ export class ProactiveCheckInUseCase {
       traceId: input.traceId,
       messageType: 'proactive_check_in',
       metadata: {
+        ...(input.onboardingMessageId ? { onboardingDeliveryId: input.onboardingMessageId } : {}),
         ...(surveyEnabled && !hasCurrentDeliveredDisclosure
           ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
           : {}),
@@ -181,15 +201,7 @@ export class ProactiveCheckInUseCase {
       },
     });
 
-    await this.outbox.enqueueMessageSend({
-      messageId: outbound.id,
-      tenantId,
-      conversationId,
-      channelType: conversation.channelType,
-      externalWorkspaceId: input.externalWorkspaceId,
-      externalChannelId: input.externalConversationId,
-      text: responseText,
-    });
+    await this.enqueue(input, conversation.channelType, outbound.id, outbound.text);
 
     // Record that a probe was sent so ignore detection knows when to follow up
     if (
@@ -208,9 +220,21 @@ export class ProactiveCheckInUseCase {
 
     return {
       outboundMessageId: outbound.id,
-      responseText,
+      responseText: outbound.text,
       probeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId ?? null : null,
     };
+  }
+
+  private async enqueue(input: ProactiveCheckInInput, channelType: string, messageId: string, text: string): Promise<void> {
+    await this.outbox.enqueueMessageSend({
+      messageId,
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      channelType,
+      externalWorkspaceId: input.externalWorkspaceId,
+      externalChannelId: input.externalConversationId,
+      text,
+    });
   }
 }
 
