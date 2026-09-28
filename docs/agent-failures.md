@@ -835,3 +835,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Verify the installed bot token's actual `x-oauth-scopes` and both recipient DM opens before scoped dispatch. Reinstall the app after adding `im:write`, reconcile stored workspace scope metadata with an audit record, and retry only an exact failed intent set with no outbound message or external receipt.
 - Regression check: Production preflight, both `conversations.open` probes, exact retry dry-run, targeted `onboarding-only` job, and receipt readback for the two selected Persons; migrated PostgreSQL retry test rejects an existing outbound message.
 - Status: fixed
+
+## 2026-09-28: Documentation reflection attempted an implicit dependency install
+
+- Symptom: The documented `_bmad/scripts/resolve_config.py` path was absent, CodeGraph had no callable CLI or MCP tool, and `pnpm exec tsx scripts/agent-harness.ts reflection` attempted to install missing workspace dependencies before failing on npm DNS.
+- Expected: Repository-guided documentation review should use the indexed/BMad tools named by `AGENTS.md`, or fail fast without creating a local dependency store or retrying the registry.
+- Root cause layer: environment
+- Harness fix: Restore or correct the BMad resolver and CodeGraph tool paths, and make reflection fail fast when the pinned local `tsx` executable is absent.
+- Regression check: In a dependency-incomplete checkout, tool discovery identifies the usable path or exits immediately without network installation attempts.
+- Status: open
