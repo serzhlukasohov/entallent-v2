@@ -1,4 +1,5 @@
 import type { Job } from 'bullmq';
+import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ConversationProcessor,
@@ -71,11 +72,13 @@ function createProcessor(options: {
   orchestrator?: { orchestrate: ReturnType<typeof vi.fn> };
   checkInUseCase?: { execute: ReturnType<typeof vi.fn> };
   llmRunRepo?: { record: ReturnType<typeof vi.fn> };
-  conversationRepo?: {
+  conversationRepo?: Partial<{
     shouldSkipInboundMessage: ReturnType<typeof vi.fn>;
     isUserRuntimeEligible: ReturnType<typeof vi.fn>;
-  };
+    markInboundConversationJobProcessed: ReturnType<typeof vi.fn>;
+  }>;
   db?: unknown;
+  queue?: { add: ReturnType<typeof vi.fn> };
 } = {}) {
   const orchestrator = options.orchestrator ?? {
     orchestrate: vi.fn(async () => runtimeResult),
@@ -90,12 +93,19 @@ function createProcessor(options: {
   const llmRunRepo = options.llmRunRepo ?? {
     record: vi.fn(async () => undefined),
   };
-  const conversationRepo = options.conversationRepo ?? {
+  const conversationRepo = {
     shouldSkipInboundMessage: vi.fn(async () => false),
     isUserRuntimeEligible: vi.fn(async () => true),
+    markInboundConversationJobProcessed: vi.fn(async () => undefined),
+    ...options.conversationRepo,
+  };
+  const surveyRepo = {
+    hasUnresolvedQuestionConfirmationForInbound: vi.fn(async () => false),
+    expireTemporaryQuestionInsightsForClosedWindows: vi.fn(async () => 0),
   };
   const select = vi.fn(() => tenantQuery());
   const db = options.db ?? { client: { select } };
+  const queue = options.queue ?? { add: vi.fn(async () => undefined) };
 
   return {
     processor: new ConversationProcessor(
@@ -104,12 +114,16 @@ function createProcessor(options: {
       llmRunRepo as never,
       db as never,
       conversationRepo as never,
+      surveyRepo as never,
+      queue as never,
     ),
     orchestrator,
     checkInUseCase,
     llmRunRepo,
     conversationRepo,
+    surveyRepo,
     select,
+    queue,
   };
 }
 
@@ -187,6 +201,78 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'trace-2' }));
   });
 
+  it('processes a timely pending Bundle reply despite rapid-message coalescing', async () => {
+    const { processor, surveyRepo, conversationRepo, orchestrator } = createProcessor();
+    surveyRepo.hasUnresolvedQuestionConfirmationForInbound.mockResolvedValue(true);
+    conversationRepo.shouldSkipInboundMessage.mockResolvedValue(true);
+
+    await processor.process({
+      id: 'bundle-reply', name: 'process', attemptsMade: 0,
+      data: conversationJob,
+    } as Job<ConversationJob>);
+
+    expect(conversationRepo.shouldSkipInboundMessage).not.toHaveBeenCalled();
+    expect(orchestrator.orchestrate).toHaveBeenCalledWith(conversationJob);
+    expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalledWith(conversationJob);
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).toHaveBeenCalledWith({
+      tenantId: conversationJob.tenantId, now: expect.any(Date),
+    });
+    expect(orchestrator.orchestrate.mock.invocationCallOrder[0]).toBeLessThan(
+      conversationRepo.markInboundConversationJobProcessed.mock.invocationCallOrder[0]!,
+    );
+    expect(conversationRepo.markInboundConversationJobProcessed.mock.invocationCallOrder[0])
+      .toBeLessThan(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows.mock.invocationCallOrder[0]!);
+  });
+
+  it('queues a receipt-only retry after completed orchestration without releasing cutoff', async () => {
+    const { processor, surveyRepo, conversationRepo, llmRunRepo, queue, orchestrator } = createProcessor();
+    surveyRepo.hasUnresolvedQuestionConfirmationForInbound.mockResolvedValue(true);
+    conversationRepo.markInboundConversationJobProcessed.mockRejectedValue(new Error('database unavailable'));
+
+    await processor.process({
+      id: 'receipt-failure', name: 'process', attemptsMade: 0,
+      data: conversationJob,
+    } as Job<ConversationJob>);
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(queue.add).toHaveBeenCalledWith('receipt-retry', {
+      messageId: conversationJob.messageId,
+      conversationId: conversationJob.conversationId,
+      tenantId: conversationJob.tenantId,
+      userId: conversationJob.userId,
+    }, expect.objectContaining({ jobId: `receipt-${conversationJob.messageId}` }));
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+
+    conversationRepo.markInboundConversationJobProcessed.mockResolvedValue(undefined);
+    await processor.process({
+      id: 'receipt-retry', name: 'receipt-retry',
+      data: {
+        messageId: conversationJob.messageId, conversationId: conversationJob.conversationId,
+        tenantId: conversationJob.tenantId, userId: conversationJob.userId,
+      },
+    } as never);
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).toHaveBeenCalledOnce();
+  });
+
+  it('finishes an orchestrated job when both receipt storage and retry enqueue fail', async () => {
+    const { processor, surveyRepo, conversationRepo, queue, orchestrator } = createProcessor();
+    surveyRepo.hasUnresolvedQuestionConfirmationForInbound.mockResolvedValue(true);
+    conversationRepo.markInboundConversationJobProcessed.mockRejectedValue(new Error('database unavailable'));
+    queue.add.mockRejectedValue(new Error('redis unavailable'));
+
+    await expect(processor.process({
+      id: `conversation-${conversationJob.messageId}`, name: 'process', attemptsMade: 0,
+      data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(queue.add).toHaveBeenCalledWith('receipt-retry', expect.objectContaining({
+      messageId: conversationJob.messageId,
+    }), expect.objectContaining({ jobId: `receipt-${conversationJob.messageId}` }));
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
+  });
+
   it('does not coalesce unmarked non-Slack conversation jobs', async () => {
     const { processor, orchestrator, conversationRepo } = createProcessor();
     const data = { ...conversationJob, rapidMessageCoalescing: undefined };
@@ -221,11 +307,12 @@ describe('ConversationProcessor TypeScript-only routing', () => {
   });
 
   it('routes every proactive check-in through ProactiveCheckInUseCase', async () => {
+    const privateText = 'Private check-in text about Project Atlas';
     const query = tenantQuery({ ignoreWindowHours: 24 });
     const checkInUseCase = {
       execute: vi.fn(async () => ({
         outboundMessageId: 'check-in-outbound-1',
-        responseText: 'TypeScript check-in',
+        responseText: privateText,
         probeQuestionId: 'probe-1',
       })),
     };
@@ -233,13 +320,19 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       checkInUseCase,
       db: { client: { select: vi.fn(() => query) } },
     });
+    const logged = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
-    await processor.process({
-      id: 'check-in-job-1',
-      name: 'check-in',
-      attemptsMade: 0,
-      data: checkInJob,
-    } as Job<CheckInJob>);
+    try {
+      await processor.process({
+        id: 'check-in-job-1',
+        name: 'check-in',
+        attemptsMade: 0,
+        data: checkInJob,
+      } as Job<CheckInJob>);
+      expect(logged.mock.calls.flat().join(' ')).not.toContain(privateText);
+    } finally {
+      logged.mockRestore();
+    }
 
     expect(checkInUseCase.execute).toHaveBeenCalledOnce();
     expect(checkInUseCase.execute).toHaveBeenCalledWith({
@@ -248,28 +341,52 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     });
   });
 
-  it('propagates orchestrator failures and records the inbound run as failed', async () => {
+  it('redacts orchestrator failures while recording the inbound run as failed', async () => {
+    const privateText = 'private employee meaning about Project Atlas';
     const orchestrator = {
       orchestrate: vi.fn(async () => {
-        throw new Error('orchestrator failed');
+        throw new Error(privateText);
       }),
     };
     const llmRunRepo = {
       record: vi.fn(async () => undefined),
     };
-    const { processor } = createProcessor({ orchestrator, llmRunRepo });
+    const { processor, conversationRepo, surveyRepo } = createProcessor({ orchestrator, llmRunRepo });
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
-    await expect(processor.process({
-      id: 'job-1',
-      name: 'process',
-      attemptsMade: 0,
-      opts: { delay: 2_000 },
-      data: conversationJob,
-    } as Job<ConversationJob>)).rejects.toThrow('orchestrator failed');
+    try {
+      await expect(processor.process({
+        id: 'job-1',
+        name: 'process',
+        attemptsMade: 0,
+        opts: { delay: 2_000 },
+        data: conversationJob,
+      } as Job<ConversationJob>)).rejects.toThrow('conversation_processing_failed');
+      expect(logged.mock.calls.flat().join(' ')).not.toContain(privateText);
+    } finally {
+      logged.mockRestore();
+    }
 
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
       status: 'error',
       traceId: 'trace-1',
     }));
+    expect(conversationRepo.markInboundConversationJobProcessed).not.toHaveBeenCalled();
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
+  });
+
+  it('redacts failed check-in content from queue reasons and logs', async () => {
+    const privateText = 'private check-in context about Project Atlas';
+    const checkInUseCase = { execute: vi.fn().mockRejectedValue(new Error(privateText)) };
+    const { processor } = createProcessor({ checkInUseCase });
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(processor.process({
+        id: 'check-in-job-2', name: 'check-in', data: checkInJob,
+      } as Job<CheckInJob>)).rejects.toThrow('check_in_processing_failed');
+      expect(logged.mock.calls.flat().join(' ')).not.toContain(privateText);
+    } finally {
+      logged.mockRestore();
+    }
   });
 });

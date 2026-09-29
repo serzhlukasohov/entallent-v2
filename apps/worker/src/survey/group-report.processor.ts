@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { SlackAdapter } from '@entalent/channel-slack';
 import type { OutgoingMessage } from '@entalent/contracts';
@@ -9,6 +9,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { GroupReportSnapshotRepository } from './repositories/group-report-snapshot.repository';
 import { TeamRepository } from './repositories/team.repository';
+import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 
 const MIN_CHANGED_INPUTS_FOR_NEXT_INTERMEDIATE_SNAPSHOT = 5;
 
@@ -21,17 +22,32 @@ export class GroupReportProcessor extends WorkerHost {
     private readonly wsRepo: WorkspaceConnectionRepository,
     private readonly snapshotRepo: GroupReportSnapshotRepository,
     private readonly teamRepo: TeamRepository,
+    @Optional() private readonly conversationRepo?: ConversationRepository,
   ) {
     super();
   }
 
   async process(job: Job<GroupReportPayload>): Promise<void> {
-    const { reportingCohortId, tenantId, teamId, questionGroup, traceId } = job.data;
-    const reportKind = job.data.reportKind ?? 'intermediate';
+    const { reportingCohortId, tenantId, teamId, questionGroup } = job.data;
     if (!reportingCohortId || !tenantId || !teamId || !questionGroup) {
       this.logger.warn(`Group report job ${job.id ?? 'unknown'} is missing tenant/team/cycle scope`);
       return;
     }
+    if (job.data.sourceGroupStateId && !this.conversationRepo) {
+      throw new Error('group_report_completion_repository_missing');
+    }
+    await this.processReport(job);
+    if (job.data.sourceGroupStateId) {
+      await this.conversationRepo!.completeGroupReportIntent({
+        sourceGroupStateId: job.data.sourceGroupStateId,
+        reportingCohortId, tenantId, teamId, questionGroup,
+      });
+    }
+  }
+
+  private async processReport(job: Job<GroupReportPayload>): Promise<void> {
+    const { reportingCohortId, tenantId, teamId, questionGroup, traceId } = job.data;
+    const reportKind = job.data.reportKind ?? 'intermediate';
     this.logger.debug(`Group report for team ${teamId} group ${questionGroup} [${traceId}]`);
 
     const reportGroups = reportKind === 'final' && questionGroup === 'cycle' && job.data.questionGroups?.length
@@ -139,8 +155,8 @@ export class GroupReportProcessor extends WorkerHost {
       const receipt = await adapter.sendMessage(outgoing);
       if (!receipt.externalMessageId.trim()) throw new Error('slack_external_message_id_missing');
       await this.snapshotRepo.markDelivered(snapshotId, receipt.externalMessageId, receipt.sentAt);
-    } catch (error) {
-      await this.snapshotRepo.markDeliveryUnknown(snapshotId, errorMessage(error), deliveryAttemptedAt);
+    } catch {
+      await this.snapshotRepo.markDeliveryUnknown(snapshotId, 'group_report_delivery_unknown', deliveryAttemptedAt);
       this.logger.warn(
         `Group report delivery unknown for snapshot=${snapshotId} team=${teamId} group=${questionGroup} [${traceId}]`,
       );
@@ -179,10 +195,6 @@ export class GroupReportProcessor extends WorkerHost {
       failureReason,
     });
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function aggregateFinalCycleResults(results: GroupReportResult[]): GroupReportResult {

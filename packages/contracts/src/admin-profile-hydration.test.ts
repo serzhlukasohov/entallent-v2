@@ -38,7 +38,7 @@ describe('admin profile hydration contract', () => {
         {
           id: '42',
           name: 'hydrate',
-          failedReason: 'Slack timeout',
+          failedReason: 'profile_hydration_job_failed',
           attemptsMade: 3,
           timestamp: 1786492800000,
           finishedOn: 1786492860000,
@@ -46,7 +46,6 @@ describe('admin profile hydration contract', () => {
             userId: 'user-1',
             tenantId: 'tenant-1',
             channelType: 'slack',
-            traceId: 'trace-1',
           },
         },
       ],

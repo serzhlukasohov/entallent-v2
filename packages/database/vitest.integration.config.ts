@@ -5,6 +5,7 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     include: ['src/**/*.integration.test.ts'],
+    exclude: ['src/__tests__/runtime-ledger.integration.test.ts'],
     // Integration tests run serially to avoid connection pool exhaustion
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },

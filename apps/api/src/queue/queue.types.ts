@@ -18,7 +18,6 @@ export type MessageSendJob = {
   channelType: string;
   externalWorkspaceId: string;
   externalChannelId: string;
-  text: string;
   replyToExternalThreadId?: string;
 };
 

@@ -30,4 +30,19 @@ describe('StyleAnalysisUseCase', () => {
     expect(d.ai.analyzeStyle).not.toHaveBeenCalled();
     expect(d.styleRepo.upsert).not.toHaveBeenCalled();
   });
+
+  it('completes a committed source with insufficient turns without calling the model', async () => {
+    const d = deps(2);
+    d.conversationRepo.findMessagesThrough = vi.fn().mockResolvedValue(msgs(4));
+    d.styleRepo.isCommittedStyleAnalysisComplete = vi.fn().mockResolvedValue(false);
+    d.styleRepo.completeCommittedStyleAnalysis = vi.fn().mockResolvedValue(undefined);
+    await new StyleAnalysisUseCase(d.ai, d.conversationRepo, d.styleRepo).execute({
+      ...INPUT, inboundMessageId: 'm-3',
+    });
+    expect(d.conversationRepo.findRecentMessages).not.toHaveBeenCalled();
+    expect(d.ai.analyzeStyle).not.toHaveBeenCalled();
+    expect(d.styleRepo.completeCommittedStyleAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ inboundMessageId: 'm-3' }), null,
+    );
+  });
 });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { describe, it } from 'node:test';
 import type { ChatPostMessageResponse } from '@slack/web-api';
 import { SlackAdapter } from './slack.adapter';
@@ -19,6 +20,35 @@ function adapterReturning(result: ChatPostMessageResponse): SlackAdapter {
   });
   return adapter;
 }
+
+describe('SlackAdapter.verifyRequest', () => {
+  const signingSecret = 'test-secret';
+  const rawBody = '{"type":"event_callback"}';
+  const adapter = new SlackAdapter({ signingSecret });
+
+  function signedAt(timestamp: string) {
+    return adapter.verifyRequest({
+      rawBody,
+      headers: {
+        'x-slack-request-timestamp': timestamp,
+        'x-slack-signature': 'v0=' + createHmac('sha256', signingSecret)
+          .update(`v0:${timestamp}:${rawBody}`).digest('hex'),
+      },
+    });
+  }
+
+  it('accepts a current signed request', async () => {
+    assert.equal(await signedAt(String(Math.floor(Date.now() / 1000))), true);
+  });
+
+  it('rejects a signed request more than five minutes in the future', async () => {
+    assert.equal(await signedAt(String(Math.floor(Date.now() / 1000) + 301)), false);
+  });
+
+  it('rejects a malformed signed timestamp', async () => {
+    assert.equal(await signedAt('not-a-timestamp'), false);
+  });
+});
 
 describe('SlackAdapter.sendMessage', () => {
   it('uses the Slack message timestamp as the delivery time', async () => {

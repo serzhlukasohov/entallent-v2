@@ -1,0 +1,1 @@
+ALTER TABLE "survey_question_working_insights" ADD COLUMN "ready_for_confirmation" boolean DEFAULT false NOT NULL;

@@ -1,0 +1,2 @@
+ALTER TABLE "audit_logs" ADD COLUMN "idempotency_key" text;--> statement-breakpoint
+ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_tenant_idempotency_unique" UNIQUE("tenant_id","idempotency_key");

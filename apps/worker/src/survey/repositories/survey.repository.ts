@@ -9,7 +9,13 @@ import {
   surveyEvidence,
   surveyGroupStates,
   surveyAssessments,
+  surveyQuestionConfirmationBundles,
+  surveyQuestionWorkingInsights,
+  surveyCycleScoringPolicies,
+  surveyWindowScoringPolicies,
   messages,
+  conversationJobAdmissions,
+  conversationTurnEffects,
   teamMemberships,
   teams,
   users,
@@ -167,6 +173,21 @@ export class SurveyRepository implements SurveyRepositoryPort {
           ? eq(surveyReportingCohorts.surveyDefinitionId, params.surveyDefinitionId)
           : undefined,
         lte(surveyReportingCohorts.periodEnd, params.now),
+        sql`not exists (
+          select 1 from ${surveyCycleScoringPolicies} v2_cycle
+          where v2_cycle.tenant_id = ${surveyReportingCohorts.tenantId}
+            and v2_cycle.survey_definition_id = ${surveyReportingCohorts.surveyDefinitionId}
+            and v2_cycle.period_start = ${surveyReportingCohorts.periodStart}
+            and v2_cycle.period_end = ${surveyReportingCohorts.periodEnd}
+        )`,
+        sql`not exists (
+          select 1 from ${surveyWindows} v2_window
+          join ${surveyWindowScoringPolicies} v2_binding
+            on v2_binding.survey_window_id = v2_window.id
+          where v2_window.reporting_cohort_id = ${surveyReportingCohorts.id}
+            and v2_window.tenant_id = ${surveyReportingCohorts.tenantId}
+            and v2_binding.tenant_id = ${surveyReportingCohorts.tenantId}
+        )`,
       ))
       .orderBy(surveyReportingCohorts.teamId);
     return rows.map(mapReportingCohort);
@@ -213,6 +234,267 @@ export class SurveyRepository implements SurveyRepositoryPort {
       ))
       .returning({ id: surveyGroupStates.id });
     return rows.length;
+  }
+
+  async findTenantsWithClosedTemporaryQuestionInsights(now: Date): Promise<string[]> {
+    const rows = await this.db.client.selectDistinct({ tenantId: surveyWindows.tenantId })
+      .from(surveyWindows)
+      .where(and(
+        lte(surveyWindows.periodEnd, now),
+        or(
+          sql`exists (
+            select 1 from ${surveyQuestionWorkingInsights} working
+            where working.survey_window_id = ${surveyWindows.id}
+              and working.tenant_id = ${surveyWindows.tenantId}
+              and working.user_id = ${surveyWindows.userId}
+              and (
+                working.status in ('collecting', 'pending_confirmation', 'pending_clarification', 'reset')
+                or (working.status = 'confirmed' and (
+                  working.confirmed_at is null
+                  or working.confirmed_at < ${surveyWindows.periodStart}
+                  or working.confirmed_at >= ${surveyWindows.periodEnd}
+                ))
+              )
+          )`,
+          sql`exists (
+            select 1 from ${surveyQuestionConfirmationBundles} bundle
+            where bundle.survey_window_id = ${surveyWindows.id}
+              and bundle.tenant_id = ${surveyWindows.tenantId}
+              and bundle.user_id = ${surveyWindows.userId}
+              and bundle.purged_at is null
+          )`,
+        ),
+      ))
+      .orderBy(surveyWindows.tenantId);
+    return rows.map((row) => row.tenantId);
+  }
+
+  async countOverdueQuestionConfirmationReplies(now: Date): Promise<number> {
+    const graceEnd = new Date(now.getTime() - 15 * 60 * 1000);
+    const rows = await this.db.client.execute(sql`select count(distinct inbound.id)::integer as count
+      from ${surveyQuestionConfirmationBundles} bundle
+      join ${surveyWindows} cycle_window on cycle_window.id = bundle.survey_window_id
+        and cycle_window.tenant_id = bundle.tenant_id
+        and cycle_window.user_id = bundle.user_id
+      join ${messages} prompt on prompt.id = bundle.prompt_message_id
+        and prompt.tenant_id = bundle.tenant_id
+        and prompt.user_id = bundle.user_id
+        and prompt.direction = 'outbound' and prompt.deleted_at is null
+      join ${messages} inbound on inbound.tenant_id = bundle.tenant_id
+        and inbound.user_id = bundle.user_id
+        and inbound.conversation_id = prompt.conversation_id
+        and inbound.direction = 'inbound' and inbound.deleted_at is null
+        and inbound.occurred_at > prompt.sent_at
+        and inbound.occurred_at >= cycle_window.period_start
+        and inbound.occurred_at < cycle_window.period_end
+      left join conversation_job_receipts receipt on receipt.message_id = inbound.id
+      where cycle_window.period_end <= ${graceEnd.toISOString()}::timestamptz
+        and bundle.status in ('pending_delivery', 'awaiting_confirmation', 'resolved')
+        and bundle.purged_at is null
+        and receipt.message_id is null`);
+    return Number(rows[0]?.['count'] ?? 0);
+  }
+
+  async findUndispatchedTimelyQuestionReplies(now: Date): Promise<Array<{
+    messageId: string; tenantId: string; userId: string; conversationId: string;
+    externalWorkspaceId: string; externalConversationId: string;
+    eventId: string; requestId: string; traceId: string;
+  }>> {
+    return this.findTimelyQuestionReplyAdmissions(now, false);
+  }
+
+  async findQueuedTimelyQuestionRepliesWithoutReceipt(now: Date, afterMessageId?: string): Promise<Array<{
+    messageId: string; tenantId: string; userId: string; conversationId: string;
+  }>> {
+    return (await this.findTimelyQuestionReplyAdmissions(now, true, afterMessageId)).map((row) => ({
+      messageId: row.messageId, tenantId: row.tenantId,
+      userId: row.userId, conversationId: row.conversationId,
+    }));
+  }
+
+  private async findTimelyQuestionReplyAdmissions(now: Date, queued: boolean, afterMessageId?: string): Promise<Array<{
+    messageId: string; tenantId: string; userId: string; conversationId: string;
+    externalWorkspaceId: string; externalConversationId: string;
+    eventId: string; requestId: string; traceId: string;
+  }>> {
+    const queuePredicate = queued ? sql`admission.queued_at is not null` : sql`admission.queued_at is null`;
+    const cursorPredicate = afterMessageId
+      ? sql`admission.message_id > ${afterMessageId}::uuid` : sql`true`;
+    const rows = await this.db.client.execute(sql`select distinct on (admission.message_id)
+        admission.message_id, admission.tenant_id, admission.user_id, admission.conversation_id,
+        admission.external_workspace_id, admission.external_conversation_id,
+        admission.event_id, admission.request_id, admission.trace_id
+      from ${conversationJobAdmissions} admission
+      join ${messages} inbound on inbound.id = admission.message_id
+        and inbound.tenant_id = admission.tenant_id
+        and inbound.user_id = admission.user_id
+        and inbound.conversation_id = admission.conversation_id
+        and inbound.direction = 'inbound' and inbound.deleted_at is null
+      join ${surveyQuestionConfirmationBundles} bundle on bundle.tenant_id = admission.tenant_id
+        and bundle.user_id = admission.user_id
+        and (bundle.purged_at is null or (${queued} and exists (
+          select 1 from ${conversationTurnEffects} effect
+          where effect.inbound_message_id = admission.message_id
+            and effect.tenant_id = admission.tenant_id
+            and effect.user_id = admission.user_id
+            and effect.conversation_id = admission.conversation_id
+        )))
+        and bundle.status in ('pending_delivery', 'awaiting_confirmation', 'resolved')
+      join ${surveyWindows} cycle_window on cycle_window.id = bundle.survey_window_id
+        and cycle_window.tenant_id = admission.tenant_id
+        and cycle_window.user_id = admission.user_id
+      join ${messages} prompt on prompt.id = bundle.prompt_message_id
+        and prompt.tenant_id = admission.tenant_id
+        and prompt.user_id = admission.user_id
+        and prompt.conversation_id = admission.conversation_id
+        and prompt.direction = 'outbound' and prompt.sent_at is not null
+        and prompt.deleted_at is null
+      left join conversation_job_receipts receipt on receipt.message_id = admission.message_id
+      where ${queuePredicate} and ${cursorPredicate} and receipt.message_id is null
+        and cycle_window.period_end <= ${now.toISOString()}::timestamptz
+        and inbound.occurred_at > prompt.sent_at
+        and inbound.occurred_at >= cycle_window.period_start
+        and inbound.occurred_at < cycle_window.period_end
+      order by admission.message_id
+      limit 100`);
+    return rows.map((row) => ({
+      messageId: String(row['message_id']), tenantId: String(row['tenant_id']),
+      userId: String(row['user_id']), conversationId: String(row['conversation_id']),
+      externalWorkspaceId: String(row['external_workspace_id']),
+      externalConversationId: String(row['external_conversation_id']),
+      eventId: String(row['event_id']), requestId: String(row['request_id']),
+      traceId: String(row['trace_id']),
+    }));
+  }
+
+  async markQuestionReplyAdmissionQueued(messageId: string, tenantId: string): Promise<void> {
+    const [row] = await this.db.client.update(conversationJobAdmissions)
+      .set({ queuedAt: new Date() })
+      .where(and(
+        eq(conversationJobAdmissions.messageId, messageId),
+        eq(conversationJobAdmissions.tenantId, tenantId),
+      )).returning({ messageId: conversationJobAdmissions.messageId });
+    if (!row) throw new Error('conversation_job_admission_stale');
+  }
+
+  async expireTemporaryQuestionInsightsForClosedWindows(
+    params: FindReportingCohortsReadyForFinalReportsParams,
+  ): Promise<number> {
+    return this.db.client.transaction(async (tx) => {
+      const noUnprocessedTimelyReply = sql`not exists (
+        select 1 from survey_question_confirmation_bundles pending_bundle
+        join messages prompt on prompt.id = pending_bundle.prompt_message_id
+          and prompt.tenant_id = pending_bundle.tenant_id
+          and prompt.user_id = pending_bundle.user_id
+          and prompt.direction = 'outbound' and prompt.deleted_at is null
+        join messages inbound on inbound.tenant_id = pending_bundle.tenant_id
+          and inbound.user_id = pending_bundle.user_id
+          and inbound.conversation_id = prompt.conversation_id
+          and inbound.direction = 'inbound' and inbound.deleted_at is null
+          and inbound.occurred_at > prompt.sent_at
+          and inbound.occurred_at >= ${surveyWindows.periodStart}
+          and inbound.occurred_at < ${surveyWindows.periodEnd}
+        left join conversation_job_receipts receipt on receipt.message_id = inbound.id
+        where pending_bundle.survey_window_id = ${surveyWindows.id}
+          and pending_bundle.tenant_id = ${surveyWindows.tenantId}
+          and pending_bundle.user_id = ${surveyWindows.userId}
+          and pending_bundle.status in ('pending_delivery', 'awaiting_confirmation', 'resolved')
+          and pending_bundle.purged_at is null
+          and receipt.message_id is null
+      )`;
+      const windowScope = sql`exists (
+        select 1 from ${surveyWindows}
+        where ${surveyWindows.id} = ${surveyQuestionWorkingInsights.surveyWindowId}
+          and ${surveyWindows.tenantId} = ${params.tenantId}
+          and ${surveyWindows.userId} = ${surveyQuestionWorkingInsights.userId}
+          ${params.surveyDefinitionId
+            ? sql`and ${surveyWindows.surveyDefinitionId} = ${params.surveyDefinitionId}`
+            : sql``}
+          and ${surveyWindows.periodEnd} <= ${params.now.toISOString()}::timestamptz
+          and ${noUnprocessedTimelyReply}
+      )`;
+      const expired = await tx.update(surveyQuestionWorkingInsights).set({
+        status: 'no_data',
+        workingSummary: null,
+        confirmedSemanticSummary: null,
+        sourceMessageIds: [],
+        clarificationPromptMessageId: null,
+        confirmationMessageId: null,
+        confirmedAt: null,
+        purgedAt: params.now,
+        updatedAt: params.now,
+      }).where(and(
+        eq(surveyQuestionWorkingInsights.tenantId, params.tenantId),
+        or(
+          inArray(surveyQuestionWorkingInsights.status,
+            ['collecting', 'pending_confirmation', 'pending_clarification', 'reset']),
+          and(
+            eq(surveyQuestionWorkingInsights.status, 'confirmed'),
+            sql`(${surveyQuestionWorkingInsights.confirmedAt} is null or exists (
+              select 1 from ${surveyWindows}
+              where ${surveyWindows.id} = ${surveyQuestionWorkingInsights.surveyWindowId}
+                and ${surveyWindows.tenantId} = ${surveyQuestionWorkingInsights.tenantId}
+                and ${surveyWindows.userId} = ${surveyQuestionWorkingInsights.userId}
+                and (${surveyQuestionWorkingInsights.confirmedAt} < ${surveyWindows.periodStart}
+                  or ${surveyQuestionWorkingInsights.confirmedAt} >= ${surveyWindows.periodEnd})
+            ))`,
+          ),
+        ),
+        windowScope,
+      )).returning({ id: surveyQuestionWorkingInsights.id });
+
+      await tx.update(surveyQuestionConfirmationBundles).set({
+        displayedText: null,
+        components: null,
+        status: 'purged',
+        purgedAt: params.now,
+      }).where(and(
+        eq(surveyQuestionConfirmationBundles.tenantId, params.tenantId),
+        isNull(surveyQuestionConfirmationBundles.purgedAt),
+        sql`exists (
+          select 1 from ${surveyWindows}
+          where ${surveyWindows.id} = ${surveyQuestionConfirmationBundles.surveyWindowId}
+            and ${surveyWindows.tenantId} = ${params.tenantId}
+            and ${surveyWindows.userId} = ${surveyQuestionConfirmationBundles.userId}
+            ${params.surveyDefinitionId
+              ? sql`and ${surveyWindows.surveyDefinitionId} = ${params.surveyDefinitionId}`
+              : sql``}
+            and ${surveyWindows.periodEnd} <= ${params.now.toISOString()}::timestamptz
+            and ${noUnprocessedTimelyReply}
+        )`,
+      ));
+      return expired.length;
+    });
+  }
+
+  async hasUnresolvedQuestionConfirmationForInbound(input: {
+    tenantId: string; userId: string; conversationId: string; messageId: string;
+  }): Promise<boolean> {
+    const rows = await this.db.client.execute(sql`select 1
+      from messages inbound
+      join survey_question_confirmation_bundles bundle
+        on bundle.tenant_id = inbound.tenant_id
+        and bundle.user_id = inbound.user_id
+        and bundle.status in ('pending_delivery', 'awaiting_confirmation', 'resolved')
+        and bundle.purged_at is null
+      join survey_windows cycle_window on cycle_window.id = bundle.survey_window_id
+        and cycle_window.tenant_id = bundle.tenant_id
+        and cycle_window.user_id = bundle.user_id
+      join messages prompt on prompt.id = bundle.prompt_message_id
+        and prompt.tenant_id = bundle.tenant_id
+        and prompt.user_id = bundle.user_id
+        and prompt.conversation_id = inbound.conversation_id
+        and prompt.direction = 'outbound' and prompt.deleted_at is null
+      where inbound.id = ${input.messageId}
+        and inbound.tenant_id = ${input.tenantId}
+        and inbound.user_id = ${input.userId}
+        and inbound.conversation_id = ${input.conversationId}
+        and inbound.direction = 'inbound' and inbound.deleted_at is null
+        and inbound.occurred_at > prompt.sent_at
+        and inbound.occurred_at >= cycle_window.period_start
+        and inbound.occurred_at < cycle_window.period_end
+      limit 1`);
+    return rows.length > 0;
   }
 
   async findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | null> {

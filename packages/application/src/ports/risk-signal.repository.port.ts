@@ -17,3 +17,7 @@ export interface RiskSignalRepositoryPort {
   findActiveByUser(userId: string, tenantId: string): Promise<RiskSignalRecord[]>;
   resolve(id: string, tenantId: string): Promise<void>;
 }
+
+export interface SourceIdempotentRiskSignalRepositoryPort extends RiskSignalRepositoryPort {
+  saveOnceForSource(params: SaveRiskSignalParams & { sourceMessageId: string }): Promise<RiskSignalRecord>;
+}

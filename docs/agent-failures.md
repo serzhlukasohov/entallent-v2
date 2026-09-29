@@ -16,6 +16,348 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-09-29: V2 implementation expanded into adjacent runtime recovery
+
+- Symptom: The local PR #7 implementation grew to 265 changed or untracked files, including generic memory, profile, style, follow-up, and V1 report recovery that the approved V2 spec does not directly request.
+- Expected: Each changed area should trace to IA-001–IA-047 or to a demonstrated dependency of the V2 cutover.
+- Root cause layer: workflow
+- Harness fix: Audit changed paths against the BMad spec's in-scope and out-of-scope lists before handoff; separate adjacent reliability changes after checking dependencies and preserve unrelated work.
+- Regression check: Review `git status --porcelain`, the PR diff, and a requirement-to-file map before any PR update.
+- Status: open
+
+## 2026-09-29: Gate receipt was cited without checking its file
+
+- Symptom: A status update named a nonexistent full-harness receipt despite the run passing.
+- Expected: A receipt link must identify the actual JSON file produced by the last gate.
+- Root cause layer: verification
+- Harness fix: List the newest receipt and read its structured statuses before citing it; correct the task log when a citation is wrong.
+- Regression check: `test -f <reported-receipt>` and inspect its `status` and `checks` fields before reporting.
+- Status: fixed
+
+## 2026-09-29: Late API receipt excluded a pre-cutoff Slack event from recovery
+
+- Symptom: An inbound confirmation with `occurredAt` before cycle cutoff but `receivedAt` after cutoff held temporary Bundle content, while the admission scanner excluded the event and could not restore its job.
+- Expected: REQ-009 eligibility and recovery use the durable source-event timestamp, independent of API or queue delay.
+- Root cause layer: architecture
+- Harness fix: Remove the `receivedAt < periodEnd` filter from the admission recovery query and keep a PostgreSQL fixture with a pre-cutoff event received after cutoff.
+- Regression check: Run the focused admission and cutoff PostgreSQL integration tests; both must retain the Bundle before a receipt and purge it after processing.
+- Status: fixed
+
+## 2026-09-29: Full harness test failure lost its assertion in truncated output
+
+- Symptom: The first full harness run after group-report recovery reported `test` failed, but the streamed output was truncated before the failing assertion could be identified. The standalone worker suite and a second full harness run passed.
+- Expected: Every failed harness test check should preserve the exact failing command and assertion in a bounded diagnostic artifact.
+- Root cause layer: verification
+- Harness fix: Have the harness capture each test command's failure summary in an artifact with no private fixture content; investigate the underlying test if it recurs.
+- Regression check: Re-run the full harness with output captured and inspect the failing test summary whenever status is failed.
+- Status: open
+
+## 2026-09-29: Group-report recovery fixture inserted an already queued intent
+
+- Symptom: The first migrated PostgreSQL recovery test failed with `conversation_dispatch_intent_scope_mismatch` when it inserted a new intent with `lastQueuedAt` already populated.
+- Expected: The fixture should follow the production two-step commit then enqueue transition enforced by migration `0046`.
+- Root cause layer: verification
+- Harness fix: Insert the committed intent without a queue timestamp, then update `lastQueuedAt` after insert.
+- Regression check: Run the focused migrated PostgreSQL/Redis group-report recovery fixture.
+- Status: fixed
+
+## 2026-09-29: Cutoff recovery fixture lacked new follow-up repository methods
+
+- Symptom: The focused cutoff test failed after the scanner began querying committed follow-up sends and executions because its repository fake lacked those methods.
+- Expected: A focused scanner fixture should model each recovery port it exercises and fail only for behavior regressions.
+- Root cause layer: verification
+- Harness fix: Extend the scanner fixture with the follow-up recovery methods and retain the migrated PostgreSQL/Redis delivery regression.
+- Regression check: `pnpm --filter @entalent/worker test:focused src/survey/question-cutoff.processor.test.ts` and the opt-in follow-up delivery recovery fixture.
+- Status: fixed
+
+## 2026-09-29: Multiline type assertion broke message-send test parsing
+
+- Symptom: The first focused Vitest and worker typecheck run could not parse a multiline `as Job<MessageSendJob>` assertion in the new privacy regression.
+- Expected: The test should compile and exercise the delivery-error boundary.
+- Root cause layer: verification
+- Harness fix: Bind the job data separately and use a single unambiguous assertion at the call site.
+- Regression check: `pnpm --filter @entalent/worker exec vitest run src/message-send/message-send.processor.test.ts && pnpm --filter @entalent/worker typecheck`.
+- Status: fixed
+
+## 2026-09-29: Cutoff receipt probe used a reserved SQL alias
+
+- Symptom: The first migrated PostgreSQL/BullMQ run failed all eight V2 scenarios with `syntax error at or near "window"`.
+- Expected: A scoped pending-reply query should run on the production schema before any conversation job changes state.
+- Root cause layer: verification
+- Harness fix: Renamed the raw SQL alias to `cycle_window` and reran the opt-in queue matrix.
+- Regression check: `V2_CONVERSATION_QUEUE_TEST=1` migrated PostgreSQL/Redis worker flow.
+- Status: fixed
+
+## 2026-09-29: After-cutoff fixture assumed an intermediate eligibility flag was stage-specific
+
+- Symptom: The new BullMQ cutoff-order test completed the agreement and finalization but failed on `intermediateEligible`, which describes complete `3/3` coverage even when the selected stage is final.
+- Expected: The fixture should assert final-stage rows and empty intermediate rows without changing the selector's completion predicate.
+- Root cause layer: verification
+- Harness fix: Asserted `3/3` eligibility and final-stage content separately; the focused delayed-cutoff queue run passed.
+- Regression check: `V2_CONVERSATION_QUEUE_TEST=1` worker test filtered to `afterCutoff=true`.
+- Status: fixed
+
+## 2026-09-29: V2 cutoff can discard an in-period confirmation before its queued verdict
+
+- Symptom: A PostgreSQL regression persists a delivered Bundle and employee agreement before `periodEnd`, runs the cutoff cleanup first, then finds no awaiting Bundle for the still-queued confirmation. The three working rows become `no_data` and Bundle components are purged.
+- Expected: REQ-009 determines eligibility from persisted event timestamps, so queue ordering must not change the outcome of an in-period confirmation; private derivatives must still be purged after resolution.
+- Root cause layer: architecture
+- Harness fix: Added a content-free job receipt and cutoff barrier, bypassed rapid-message coalescing for pending Bundle replies, and retained passing PostgreSQL and BullMQ cutoff-before-verdict regressions.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.bundle.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Report-input test asserted request fields outside repository scope
+
+- Symptom: The first selector test failed when an intermediate request changed `reportKind` and `now`, although the repository should receive only stable window scope.
+- Expected: The fixture should assert tenant, person, window, definition, and question group independently of report stage and clock.
+- Root cause layer: verification
+- Harness fix: Scope the repository fixture assertion to the fields it actually owns.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/select-question-insight-inputs.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Worker typecheck used stale application package declarations
+
+- Symptom: Worker typecheck rejected the new selector fields before the changed application package had been rebuilt.
+- Expected: Cross-package typecheck should read declarations built from the current application source.
+- Root cause layer: workflow
+- Harness fix: Build `@entalent/application` before a standalone worker typecheck after changing its public types; the full Turbo typecheck already builds dependencies in order.
+- Regression check: `pnpm --filter @entalent/application build && pnpm --filter @entalent/worker typecheck`.
+- Status: fixed
+
+## 2026-09-29: Expanded queue fixture assumed database row order and pre-purge Bundle status
+
+- Symptom: The first partial-confirmation queue run failed because the fixture compared unordered working rows positionally; a later assertion expected `resolved` after finalization had already advanced the Bundle to `purged`.
+- Expected: The fixture should match question identity and assert the lifecycle state at the observed boundary.
+- Root cause layer: verification
+- Harness fix: Index working rows by question ID and assert `purged` only after finalization, while checking text and components are null.
+- Regression check: `V2_CONVERSATION_QUEUE_TEST=1 DATABASE_URL=<isolated-postgres> REDIS_URL=<isolated-redis-db-15> pnpm --filter @entalent/worker test -- src/conversation/v2-conversation-flow.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Full AppModule fixture lacked constructor metadata in Vitest
+
+- Symptom: The first production AppModule HTTP fixture returned 500 on a valid Company Admin session because Vitest transpilation left `CompanyAdminSessionService` without its database constructor dependency.
+- Expected: The fixture should execute the real session and route guards against migrated PostgreSQL.
+- Root cause layer: verification
+- Harness fix: Declare design-time constructor metadata for the session, identity, guard, and tested controllers in the fixture before importing AppModule.
+- Regression check: `DATABASE_URL=<isolated-postgres> REDIS_URL=<isolated-redis> pnpm --filter @entalent/api test -- src/company-auth/company-admin-session.integration.test.ts` checks a positive Admin session and negative role/private-route matrix.
+- Status: fixed
+
+## 2026-09-29: V2 prompt attributed old employee evidence to a new message
+
+- Symptom: The live model extracted clear-goal evidence from an older employee turn when the latest turn only asked about weather, despite an instruction to focus on the latest turn.
+- Expected: V2 working meaning attributed to a source message must originate in that employee message, with the preceding assistant question used only to interpret a short reply.
+- Root cause layer: architecture and verification
+- Harness fix: Limit V2 evaluator input to the source inbound message and nearest preceding outbound message; keep the latest-turn instruction. Add an isolated synthetic model probe for unrelated and grounded short replies.
+- Regression check: `pnpm --filter @entalent/application test -- src/use-cases/survey-evidence.use-case.test.ts` and `pnpm exec dotenv -e .env -- node --import tsx scripts/verify-v2-model-bridge.ts` when model credentials are available.
+- Status: fixed
+
+## 2026-09-29: Isolated typecheck read stale built workspace declarations
+
+- Symptom: AI and worker package typechecks rejected the new optional survey evaluation argument until upstream application and AI packages were rebuilt; the first model command also resolved a different system `dotenv` binary.
+- Expected: Targeted downstream checks should use the current workspace declarations and repository-local dotenv CLI.
+- Root cause layer: tooling
+- Harness fix: Build changed upstream workspace packages before isolated downstream typecheck; invoke `pnpm exec dotenv`. The full harness already follows dependency order.
+- Regression check: `pnpm --filter @entalent/application build`, `pnpm --filter @entalent/ai-openai build`, then `pnpm --filter @entalent/worker typecheck`.
+- Status: fixed
+
+## 2026-09-29: Backfill boundary fix used an unavailable array method
+
+- Symptom: The first backfill boundary change passed its behavior test but failed application typecheck because `findLastIndex` is outside the configured ES2022 library.
+- Expected: A targeted change should pass both behavior tests and the package's configured TypeScript target.
+- Root cause layer: verification
+- Harness fix: Use a reverse index loop compatible with ES2022 and run package typecheck alongside the focused test.
+- Regression check: `pnpm --filter @entalent/application typecheck` plus `pnpm --filter @entalent/application test -- src/use-cases/survey-evidence.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Local verification used the wrong Vitest and PostgreSQL binaries
+
+- Symptom: Root `pnpm exec vitest` could not find Vitest, and the default `pg_ctl` was version 14 against a PostgreSQL 17 data directory.
+- Expected: Targeted tests and isolated PostgreSQL should start with the package-local test runner and matching server version.
+- Root cause layer: tooling
+- Harness fix: Use `pnpm --filter @entalent/application test -- <test-path>` and `/opt/homebrew/opt/postgresql@17/bin/pg_ctl` for this local fixture.
+- Regression check: Confirm the package test command resolves Vitest and `pg_ctl --version` matches `PG_VERSION` before starting an existing cluster.
+- Status: fixed
+
+## 2026-09-29: Clarification continued after its Bundle prompt was deleted
+
+- Symptom: A partially resolved Bundle still exposed its disputed private meaning and accepted a clarification after the original outbound confirmation message was soft-deleted.
+- Expected: A deleted original prompt cannot authorize further clarification reads, prompt staging, or verdict application.
+- Root cause layer: architecture and verification
+- Harness fix: Require the original Bundle prompt to remain sent, outbound, scoped, and undeleted at all three clarification boundaries; preserve a safe scope error.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.bundle.integration.test.ts` deletes the original prompt before each boundary.
+- Status: fixed
+
+## 2026-09-29: Route inventory test exceeded Vitest default timeout
+
+- Symptom: The full harness failed when the production AppModule route inventory took 5.01 seconds under parallel API tests, just beyond Vitest's default five-second limit.
+- Expected: A module-graph privacy assertion should have enough time for cold imports while still failing if initialization stalls.
+- Root cause layer: verification
+- Harness fix: Give this import-heavy test a scoped 15-second timeout; leave the global test timeout unchanged.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm harness:check -- --base origin/main` runs the route inventory alongside other API tests.
+- Status: fixed
+
+## 2026-09-29: Resolved clarification text survived in a partial Bundle
+
+- Symptom: With two disputed questions, confirming the first left its private statement in the Bundle `components` until the second dispute was resolved.
+- Expected: Each resolved question loses its Bundle copy immediately; only still-pending disputed statements remain.
+- Root cause layer: architecture and verification
+- Harness fix: Lock the Bundle in the clarification verdict transaction, remove the resolved component, verify the remainder matches pending questions, and purge the Bundle after the final verdict.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.bundle.integration.test.ts` with two disputed questions resolved in sequence.
+- Status: fixed
+
+## 2026-09-29: BullMQ repeat metadata stores interval as text
+
+- Symptom: The first isolated Redis cutoff test failed because it expected numeric `every: 300000`, while `getRepeatableJobs()` returned the persisted value as `"300000"`.
+- Expected: The test should assert BullMQ's public readback shape while still proving the five-minute interval.
+- Root cause layer: verification
+- Harness fix: Assert the stored string interval and retain the live repeat-registration check.
+- Regression check: `V2_CUTOFF_QUEUE_TEST=1 DATABASE_URL=<isolated-postgres> REDIS_URL=<isolated-redis-db-15> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/survey.repository.cutoff.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Connector preflight accepted a silent Redis socket
+
+- Symptom: `harness:preflight` passed with a TCP connection to Redis DB 15, but a subsequent Redis command did not receive a reply and had to be stopped.
+- Expected: Preflight should confirm a bounded protocol response from the named Redis and PostgreSQL targets before allowing connector payloads.
+- Root cause layer: verification and tooling
+- Harness fix: Preflight now sends bounded Redis PING and PostgreSQL `select 1` through the configured clients, keeping credentials and responses out of receipts. A direct fake listener regression and the local blocked-Redis preflight verify fail-closed behavior.
+- Regression check: `pnpm exec tsx scripts/agent-harness.test.ts` uses silent TCP listeners for both services; a live `pnpm harness:preflight` must return blocked when Redis does not answer PING.
+- Status: fixed
+
+## 2026-09-29: Timed Redis probe left a pending command rejection
+
+- Symptom: The first protocol-probe test appeared to pass, then the process crashed when ioredis rejected a queued command after disconnect.
+- Expected: A timed preflight returns blocked and exits cleanly without an unhandled rejection.
+- Root cause layer: tooling and verification
+- Harness fix: Use one explicit deadline for the whole Redis operation, disable ioredis command timeouts, handle client error events, and disconnect in `finally`.
+- Regression check: `pnpm exec tsx scripts/agent-harness.test.ts` completes and exits zero after silent Redis and PostgreSQL probes.
+- Status: fixed
+
+## 2026-09-29: V2 accepted replies to deleted confirmation prompts
+
+- Symptom: A pending bundle could still be selected and its reply applied after the stored outbound confirmation prompt was marked deleted; the clarification reply transaction had the same missing guard.
+- Expected: Only a still-present, delivered outbound prompt may authorize a bundle or clarification verdict.
+- Root cause layer: architecture and verification
+- Harness fix: Check outbound direction, deletion state, and active window in the bundle read; check deletion state again inside both verdict transactions.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.bundle.integration.test.ts` with deleted-prompt cases.
+- Status: fixed
+
+## 2026-09-29: V1 confirmation reads crossed a V2 policy binding
+
+- Symptom: A legacy pending or awaiting group state remained visible to the V1 conversation confirmation lookup after its survey window was bound to V2.
+- Expected: V2-bound windows never surface V1 confirmation prompts or block unrelated V1 pending groups.
+- Root cause layer: architecture and verification
+- Harness fix: Exclude V2-bound windows from both V1 confirmation reads and the pending-group blocker subquery; extend the migrated-PostgreSQL quarantine fixture beyond report inputs.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/group-state.repository.v2-quarantine.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Isolated PostgreSQL restart used the default port
+
+- Symptom: A migrated-DB regression could not connect to port 55435 after `pg_ctl start` restarted the disposable cluster on its default port 5432.
+- Expected: The test cluster resumes on its assigned isolated port.
+- Root cause layer: environment and tooling
+- Harness fix: Pass `-o '-p 55435'` when starting this disposable cluster and check `pg_isready` before the DB test.
+- Regression check: `pg_isready -h 127.0.0.1 -p 55435` succeeds before invoking Vitest with the matching `DATABASE_URL`.
+- Status: fixed
+
+## 2026-09-29: Local API shutdown did not finish after SIGTERM
+
+- Symptom: The compiled API kept listening after SIGTERM during two isolated route checks and required forced stop; the second check showed multiple Redis sockets still established.
+- Expected: The local API should release its HTTP and Redis handles promptly on shutdown.
+- Root cause layer: tooling; the specific Nest or BullMQ lifecycle owner is unverified.
+- Harness fix: Add a bounded compiled-API shutdown smoke, identify which lifecycle provider retains Redis sockets, then close that owner before changing lifecycle code.
+- Regression check: Launch compiled API on a local test port, send SIGTERM, and assert the listener and process exit within a bounded interval.
+- Status: open
+
+## 2026-09-29: Vitest API bootstrap omitted Nest constructor metadata
+
+- Symptom: A Vitest-based HTTP check returned 500 because `ApiKeyGuard` received no `Reflector`; the compiled API returned 401 for the same unauthenticated route.
+- Expected: HTTP access acceptance should exercise the compiled production DI path.
+- Root cause layer: verification and tooling
+- Harness fix: Drop the incompatible Vitest AppModule bootstrap; use the compiled API with isolated PostgreSQL and Redis for HTTP route acceptance, while keeping the network-free module-graph unit test.
+- Regression check: Compiled API yields 404 for private routes with a fixture admin key and 401/200 for a mounted admin route without/with that key.
+- Status: fixed
+
+## 2026-09-29: Model bundle changed display text capitalization
+
+- Symptom: A synthetic model-generated bundle rendered `You` while its mapped statement used `you`, so exact-text validation rejected an otherwise traceable three-question bundle.
+- Expected: A unique case-only variation maps back to the exact displayed phrase; ambiguous or substantive differences remain invalid.
+- Root cause layer: architecture and verification
+- Harness fix: Normalize a unique case-insensitive match to the displayed phrase at the bundle boundary and retain focused exact-text and ambiguous-match regressions plus the synthetic model bridge.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/utils/question-bundle-composition.test.ts` and `pnpm exec tsx scripts/verify-v2-model-bridge.ts` with configured model credentials.
+- Status: fixed
+
+## 2026-09-29: Route metadata helper used a banned broad function type
+
+- Symptom: Full harness failed API lint on the new production route inventory test because its reflection helper used `Function`.
+- Expected: The route metadata test should satisfy repository lint while still accepting Nest controller classes.
+- Root cause layer: verification
+- Harness fix: Use a minimal decorated-class shape with a prototype record and cast method handlers to `object` for metadata inspection.
+- Regression check: `pnpm --filter @entalent/api lint` and `pnpm --filter @entalent/api exec vitest run src/private-production-route-boundary.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Production route inventory test lacked a valid config fixture
+
+- Symptom: The first module-graph test passed its assertions but Vitest reported an asynchronous environment-validation rejection because required service variables were absent.
+- Expected: Importing the production AppModule for route metadata should complete without background config errors or external connections.
+- Root cause layer: environment and verification
+- Harness fix: Supply synthetic database, Redis, encryption, model, and admin-key values before importing AppModule; keep the route test network-free and restore the environment afterward.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/private-production-route-boundary.test.ts` must exit zero without unhandled errors.
+- Status: fixed
+
+## 2026-09-29: One failed Question Insight blocked later confirmed questions
+
+- Symptom: `executePending` stopped at the first failing confirmed question, so another confirmed question for the same employee was never finalized during that job attempt.
+- Expected: Independent confirmed questions should each receive a finalization attempt while the job still reports a safe failure for retry.
+- Root cause layer: architecture and verification
+- Harness fix: Continue through the pending list, remember whether any attempt failed, and throw a stable batch error after processing all questions; keep a two-question regression with a failing first item.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/finalize-question-insight.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Partial Bundle retained accepted and declined private statements
+
+- Symptom: A partial confirmation kept the full displayed Bundle and all three component statements while only one question needed clarification; the first cleanup patch then hit the parser's exact-three assumption.
+- Expected: After the partial verdict, only disputed question statements remain as temporary analytical content; clarification can still find its mapped statement.
+- Root cause layer: architecture and verification
+- Harness fix: Scrub Bundle display text and non-disputed components in the verdict transaction, then validate one or two components on the clarification path while retaining exact-three validation for initial Bundle replies.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.bundle.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Labeled-name parser consumed an unrelated preceding word
+
+- Symptom: After adding Polish and Ukrainian labels, the first implementation let `Atlas` through when the source said `my Project Atlas`; a broad word-plus-name match consumed `my Project` before the parser reached the project label.
+- Expected: Every recognized project or person label should contribute its following proper name to the privacy rejection set, even in the middle of a sentence.
+- Root cause layer: verification
+- Harness fix: Match known labels first, then parse the following proper name with a separate case-sensitive Unicode expression; keep English, Polish, and Ukrainian label-drop regressions.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/finalize-question-insight.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-28: V2 provider interface expansion missed wrappers and a test mock
+
+- Symptom: Package typechecks failed because `RecordingAiProvider` and a focused application test mock lacked the new question-bundle provider method; the worker initially saw an older built provider declaration.
+- Expected: The interface, live provider, fallback router, recording wrapper, scripted fake, worker service, test mocks, and built declarations should agree before package typechecks run.
+- Root cause layer: verification
+- Harness fix: Treat every `AiProviderPort` change as a cross-package contract edit; build application and provider packages before checking consumers, then run the full workspace typecheck.
+- Regression check: `pnpm typecheck`.
+- Status: fixed
+
+## 2026-09-29: SQL-shape test missed invalid correlated exclusion syntax
+
+- Symptom: API SQL-shape tests passed, but the migrated-PostgreSQL analytics fixture failed with `syntax error at or near "SELECT"` because `notExists(sql`...`)` emitted an unparenthesized subquery.
+- Expected: The V2 policy exclusion should compile and execute in PostgreSQL.
+- Root cause layer: verification
+- Harness fix: Use an explicit `NOT EXISTS (SELECT ...)` SQL fragment and keep a migrated-PostgreSQL fixture covering overview, coverage, and trends before and after policy binding.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/api exec vitest run src/admin/v2-analytics-quarantine.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Trends fixture crossed the UTC reporting-day boundary
+
+- Symptom: The first API integration fixture saw a scored funnel but zero daily signal capture at local midnight in Warsaw.
+- Expected: The fixture's synthetic evidence should fall inside the UTC range used by the trends response.
+- Root cause layer: verification
+- Harness fix: Set fixture evidence time twelve hours before the test instant and use a two-day range; keep separate funnel and question assertions independent of the daily bucket.
+- Regression check: Run `v2-analytics-quarantine.integration.test.ts` near the local/UTC date boundary.
+- Status: fixed
+
 ## 2026-09-26: default local database lacks hierarchy migration
 
 - Symptom: A read-only local tenant inventory that included `people` failed because the existing `entalent` database has not received the hierarchy migrations.
@@ -23,6 +365,15 @@ Use this file to turn agent misses into harness improvements.
 - Root cause layer: environment
 - Harness fix: Use the separate fully migrated `entalent_hierarchy_acceptance` database for integration acceptance; query legacy-only tables when inspecting the untouched default database.
 - Regression check: Check `to_regclass('public.people')` and migration status before new-schema inventory; verify integration commands target the named acceptance database.
+- Status: fixed
+
+## 2026-09-28: Privacy route test used the banned broad Function type
+
+- Symptom: API lint rejected the new module-registration test's `Function[]` cast.
+- Expected: A structural route assertion should pass the repository's TypeScript lint rules.
+- Root cause layer: verification
+- Harness fix: Treat reflective Nest metadata as `unknown[]` and assert membership without a broad callable type.
+- Regression check: `pnpm --filter @entalent/api lint`.
 - Status: fixed
 
 ## 2026-09-26: hand-built backfill SQL fixture omitted Drizzle columns
@@ -55,11 +406,13 @@ Use this file to turn agent misses into harness improvements.
 ## 2026-09-08: production survey cycle open script rejects Date values
 
 - Symptom: `railway run --service api -- ... pnpm exec tsx scripts/open-survey-reporting-cycle.ts` failed with `The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date`.
+- Repeat: A V2 confirmation PostgreSQL fixture passed a `Date` directly to a raw `postgres` tagged SQL parameter and failed with the same error; serializing it to ISO resolved the fixture error.
 - Expected: The production open-cycle helper should create a reporting cohort using the same Date inputs accepted by the application use case and Drizzle schema.
 - Root cause layer: tooling
-- Harness fix: Add a focused script regression or adjust the helper/repository boundary so production `survey:cycle:open` serializes timestamp inputs consistently.
-- Regression check: `TENANT_ID=<tenant> SURVEY_DEFINITION_ID=<definition> CONFIRM_SURVEY_CYCLE_OPEN=<tenant> SURVEY_PERIOD_START=<iso> SURVEY_PERIOD_END=<iso> SURVEY_OPENED_AT=<iso> pnpm exec tsx scripts/open-survey-reporting-cycle.ts`
-- Status: open
+- Harness fix: The repository serializes the raw SQL instant to ISO; `scripts/open-survey-reporting-cycle.integration.test.ts` now executes the same script/use-case/repository path against migrated PostgreSQL and verifies roster creation and idempotent retry.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm exec tsx scripts/open-survey-reporting-cycle.integration.test.ts`.
+- Status: fixed
+- Verification limit: isolated DB proof; production command was not rerun.
 
 ## 2026-09-08: terse style adaptation still asks a question every turn
 
@@ -1106,4 +1459,966 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: environment
 - Harness fix: Restore or correct the BMad resolver and CodeGraph tool paths, and make reflection fail fast when the pinned local `tsx` executable is absent.
 - Regression check: In a dependency-incomplete checkout, tool discovery identifies the usable path or exits immediately without network installation attempts.
+- Status: open
+
+## 2026-09-28: Local PostgreSQL proxy accepted TCP but did not answer
+
+- Symptom: `pnpm db:migrate` for the new Insight Analysis V2 migration timed out connecting to `localhost:5434`; `nc` succeeded, but `pg_isready -h 127.0.0.1 -p 5434 -t 3` reported no response and Docker CLI commands hung. The V2 clarification fixture repeated this failure on 2026-09-28. A fresh 2026-09-29 `docker compose ps` probe also hung after port 5434 failed readiness. Isolated Homebrew PostgreSQL 17 with pgvector and Redis then passed all V2 migrations, the BullMQ fixture, and full local gates.
+- Expected: A local migration attempt should verify a responsive PostgreSQL target before opening the migration transaction.
+- Root cause layer: environment
+- Harness fix: Keep the bounded PostgreSQL/Redis preflight before local database and queue tests; when Docker does not answer, use disposable isolated services. Investigate the Docker daemon/proxy separately without delaying isolated local acceptance.
+- Regression check: `pg_isready -h 127.0.0.1 -p 5434 -t 3` must report accepting connections before `pnpm db:migrate`; a listening socket alone is insufficient.
+- Status: open
+
+## 2026-09-28: Cutoff integration fixture assumed UUID sort order
+
+- Symptom: The first PostgreSQL cutoff integration test failed while checking bundle cleanup even though the returned rows showed the future bundle was correctly retained.
+- Expected: Assertions identify the closed and future bundle by identity, independent of lexical UUID order.
+- Root cause layer: verification
+- Harness fix: Select bundle IDs and match each expected row by ID in the integration fixture.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/survey.repository.cutoff.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-28: API test invocation used a Jest-only option
+
+- Symptom: `pnpm --filter @entalent/api test -- --runInBand` stopped before running tests because Vitest does not recognize `--runInBand`.
+- Expected: The API test command should use the repository's Vitest CLI options.
+- Root cause layer: workflow
+- Harness fix: Use the documented `pnpm --filter @entalent/api test` command without the Jest option.
+- Regression check: `pnpm --filter @entalent/api test` completes the suite.
+- Status: fixed
+
+## 2026-09-28: Boundary unit test imported the full API module
+
+- Symptom: The private-route test passed its assertions but Vitest exited with an unhandled environment validation error after importing `AppModule` without database, Redis, and encryption settings.
+- Expected: A route registration unit test should inspect the narrow module metadata without initializing the application configuration.
+- Root cause layer: verification
+- Harness fix: Keep the boundary test scoped to `UsersModule`; verify root imports by code review or a boot test with explicit safe test configuration.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/users/private-user-route-boundary.test.ts` exits cleanly without production settings.
+- Status: fixed
+
+## 2026-09-28: Survey evidence fixture expired during the test
+
+- Symptom: The harness intermittently skipped an explicit Engagement rating because the fixture set the window end to the current instant, while the inbound message was created milliseconds later.
+- Expected: The numeric answer test uses a window that remains active throughout the test.
+- Root cause layer: verification
+- Harness fix: Set the shared fixture window to a bounded interval around the current time.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/survey-evidence.use-case.test.ts` and the full harness gate pass repeatedly.
+- Status: fixed
+
+## 2026-09-28: V2 cutoff fixture lagged behind clarification migration
+
+- Symptom: Full harness with `DATABASE_URL` failed on `survey.repository.cutoff.integration.test.ts` because its temporary working-insights table lacked `clarification_prompt_message_id` used by the cutoff cleanup query.
+- Expected: The PostgreSQL fixture matches the columns touched by the current V2 repository and verifies that cutoff clears the clarification prompt reference.
+- Root cause layer: verification
+- Harness fix: Add the `0028` column and a non-null fixture value, then assert it is cleared. Run the harness with an isolated migrated database so conditional DB tests are not silently skipped.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm harness:check -- --base origin/main`.
+- Status: fixed
+
+## 2026-09-28: Worker integration test used a stale application build
+
+- Symptom: The DB-backed harness rejected a safe V2 summary with a categorical fallback while the application unit test passed. The same stale-build class recurred when a direct worker cutoff test loaded old application output.
+- Expected: The worker integration test should exercise the current application source and preserve a safe generalized summary.
+- Root cause layer: verification
+- Harness fix: Rebuild `@entalent/application` before running worker tests after application changes and document that order in `AGENTS.md`; retain the cross-package safe-summary regression. The privacy identifier extractor also now keeps its uppercase-name match case-sensitive so it cannot absorb ordinary words after a project name.
+- Regression check: `pnpm --filter @entalent/application build && DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.migrated.integration.test.ts`; then run the DB-backed harness.
+- Status: fixed
+
+## 2026-09-28: V2 reporting fixture used a nullable tenant ID inside a mapped insert
+
+- Symptom: Worker and later API migrated-DB fixtures passed runtime checks but failed typecheck because a nullable cleanup tenant ID was reused inside mapped inserts.
+- Expected: The integration fixture should typecheck as part of the full workspace gate.
+- Root cause layer: verification
+- Harness fix: Capture the inserted tenant row's non-null ID in a local constant for fixture construction; reserve the nullable variable for afterAll cleanup, then rerun the full DB-backed harness.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm harness:check -- --base origin/main`.
+- Status: fixed
+
+## 2026-09-28: Cycle-policy migration used a PostgreSQL reserved alias
+
+- Symptom: Migration `0030` failed on the isolated PostgreSQL cluster with `syntax error at or near "JOIN"`.
+- Expected: The forward migration should apply after `0029` without partial schema state.
+- Root cause layer: verification
+- Harness fix: Rename the `window` table alias to `cycle_window` in the trigger SQL and keep a migrated-PostgreSQL activation test.
+- Regression check: Apply all migrations on an isolated database, then run `survey-cycle-policy-activation.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-28: Operational script lacked a compile gate at the root
+
+- Symptom: A database-package test could not resolve the root activation script's application dependency; a direct root `tsc` also lacked declared Node and workspace dependencies.
+- Expected: The database package should test only schema behavior, and the operational script should compile and run from its owning root workspace.
+- Root cause layer: architecture and tooling
+- Harness fix: Keep the database fixture package-local, add a root script integration fixture, declare the root script dependencies, and include its dedicated TypeScript config in `pnpm typecheck`.
+- Regression check: `pnpm exec tsc -p scripts/tsconfig.v2-policy.json` plus the DB-backed root activation script integration test.
+- Status: fixed
+## 2026-09-29: Delivery queue and dev log retained private response text
+
+- Symptom: New message-send jobs copied the persisted outbound text into Redis, and the dev delivery path logged the full text.
+- Expected: Delivery should read the authorized persisted message and emit only metadata to the queue and operational logs.
+- Root cause layer: architecture and verification
+- Harness fix: Remove the redundant queue text field, redact dev delivery logging, and convert Slack-send exceptions to a fixed safe failure code; add focused queue-payload, log, and failure-reason regressions.
+- Regression check: `pnpm --filter @entalent/worker exec vitest run src/conversation/outbox.service.test.ts src/message-send/message-send.processor.test.ts`.
+- Status: fixed
+- Historical queued jobs require a separate retention audit.
+## 2026-09-29: Internal V1 analytics did not quarantine V2 policy windows
+
+- Symptom: Manager trends, general overview survey count, and survey coverage still queried V1 evidence or assessments for windows bound to a V2 scoring policy.
+- Expected: V1 analytics should exclude those windows while V2 reporting consumes only finalized safe question insights.
+- Root cause layer: architecture and verification
+- Harness fix: Add policy-binding exclusion to each V1 survey query and SQL-shape regressions for all three API paths.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/admin/manager-dashboard.read-model.test.ts src/admin/analytics.controller.test.ts src/admin/survey-coverage.controller.test.ts`.
+- Status: fixed
+## 2026-09-29: Evidence extraction failure blocked confirmed V2 finalization
+
+- Symptom: The survey evidence processor ran extraction before finalization, so a failed extraction prevented a previously confirmed question from being scored and purged.
+- Expected: Confirmation should finalize independently of new evidence extraction on the same queued job.
+- Root cause layer: workflow
+- Harness fix: Finalize pending confirmed questions first; retain a migrated-PostgreSQL regression where extraction fails after the final record commits and private working text is purged.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/survey-evidence.processor.test.ts src/survey/repositories/question-insight.repository.migrated.integration.test.ts`.
+- Status: fixed
+## 2026-09-29: V2 privacy gate accepted localized direct identifiers
+
+- Symptom: The generic V1 de-identification check did not reject Unicode Slack handles, bare domains, local nine-digit phone numbers, dotted dates, or Russian and Polish written dates in V2 summaries. A later adversarial pass found that dotted clock time `14.30` and accent-folded variants of known Polish names also passed the V2 gate.
+- Expected: Persistent Question Insight text should reject these identifiers before the score and summary commit.
+- Root cause layer: architecture and verification
+- Harness fix: Add a separately versioned Question Insight policy with Unicode-aware boundaries, route V2 finalization through it, and retain focused identifier tests plus a migrated-PostgreSQL retry/commit fixture. Expand the policy to `question-deidentification-v2` for dotted clock times and accent-folded known names. Keep the V1 group-state policy version stable.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/utils/question-deidentification-policy.test.ts src/use-cases/finalize-question-insight.use-case.test.ts` and the migrated worker `question-insight.repository.migrated.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: V2 privacy gate accepted localized labeled names
+
+- Symptom: A V2 summary could retain a capitalized project, customer, team, or person name after a Polish, Ukrainian, or Russian label, such as `Projekt Orion`.
+- Expected: The privacy gate should reject the candidate and retry before persisting reportable text.
+- Root cause layer: architecture and verification
+- Harness fix: Extend the V2-only labeled-identifier check to localized labels and retain a finalizer regression for a model-introduced Polish project name.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/utils/question-deidentification-policy.test.ts src/use-cases/finalize-question-insight.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Privacy policy version bump left a migrated fixture on v1
+
+- Symptom: The full harness failed its migrated worker test because a newly finalized row correctly stored `question-deidentification-v2` while the fixture still expected `v1`.
+- Expected: Integration assertions should distinguish the new policy version on fresh finalization from historical v1 rows inserted directly as fixtures.
+- Root cause layer: verification
+- Harness fix: Update the fresh-finalization assertion to v2 and retain the historical v1 fixture unchanged.
+- Regression check: Migrated question-insight PostgreSQL test and `pnpm harness:check -- --base origin/main`.
+- Status: fixed
+
+## 2026-09-29: One full harness run reported an API session test error
+
+- Symptom: One full harness run failed during the API suite with a Vitest unhandled error attributed to the Company Admin session test. The isolated session test, the full API suite, and the next full harness run passed without edits to that test.
+- Expected: The full gate should pass consistently on the isolated PostgreSQL and Redis targets.
+- Root cause layer: verification (unconfirmed)
+- Harness fix: Retain the isolated session and full-suite commands as a diagnostic pair; capture complete API suite output on recurrence before changing product code.
+- Regression check: `pnpm --filter @entalent/api test` and `pnpm harness:check -- --base origin/main` against the same isolated services.
+- Status: open
+
+## 2026-09-29: V2 cutoff discovery could strand private question text
+
+- Symptom: A migrated-PostgreSQL RED fixture showed a closed-window `confirmed` row with an out-of-window confirmation remained private and unfinalizable. A separate unbound V2 working row was invisible to cutoff discovery because discovery required a Scoring Policy binding.
+- Expected: Cutoff must purge invalid confirmed rows and all unresolved V2 working text in closed windows, independent of scoring-policy activation, while preserving valid confirmed rows for finalization retry.
+- Root cause layer: architecture and verification
+- Harness fix: Discover tenants from V2 working/bundle content directly, include invalid confirmed rows in the cutoff purge, and keep isolated PostgreSQL plus BullMQ restart fixtures.
+- Regression check: `V2_CUTOFF_QUEUE_TEST=1 DATABASE_URL=<isolated-postgres> REDIS_URL=<isolated-redis-db-15> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/survey.repository.cutoff.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Cutoff test table omitted a production window column
+
+- Symptom: After adding confirmation-window validation, the focused cutoff fixture failed with `column survey_windows.period_start does not exist`; its temporary table modeled only `period_end`.
+- Expected: The PostgreSQL fixture should expose the window columns used by the production cutoff query.
+- Root cause layer: verification
+- Harness fix: Add `period_start` to the temporary window table and keep the focused migrated-PostgreSQL check.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/survey.repository.cutoff.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Cycle-close script discarded the Redis database number
+
+- Symptom: `close-survey-reporting-cycle.ts` rebuilt the Redis connection from host, port, and password, so a configured `/15` database silently became DB 0 for enqueued report jobs.
+- Expected: Operational cycle close should enqueue into the same Redis database named by `REDIS_URL` and used by the worker.
+- Root cause layer: tooling
+- Harness fix: Pass the complete Redis URL to ioredis. Keep a local DB-15 connection probe and the close-script configuration test in the verification recipe.
+- Regression check: import `createRedis`, connect with an isolated `redis://127.0.0.1:56381/15`, verify `redis.options.db === 15`, then run the full harness.
+- Status: fixed
+
+## 2026-09-29: Inline tsx probe used unsupported top-level await
+
+- Symptom: The first Redis URL verification command failed at transform time because `tsx -e` emits CommonJS and did not support top-level `await`.
+- Expected: The local probe should reach Redis and verify the parsed database number.
+- Root cause layer: workflow
+- Harness fix: Wrap asynchronous inline probes in an async function and catch failures with a stable code.
+- Regression check: the DB-15 connection probe exits zero and prints only `redis_db_15_ok`.
+- Status: fixed
+
+## 2026-09-29: Cutoff timer proof launcher could not load Nest decorators
+
+- Symptom: An inline `node --import tsx` timer probe failed while transforming the decorated QuestionCutoffProcessor.
+- Expected: The real BullMQ timing probe should load the same processor code that the worker runs.
+- Root cause layer: tooling
+- Harness fix: Build the worker with its Nest TypeScript config and load the emitted JavaScript for this probe.
+- Regression check: `pnpm --filter @entalent/worker build`, then import `apps/worker/dist/survey/question-cutoff.processor.js` in the isolated BullMQ probe.
+- Status: fixed
+
+## 2026-09-29: PostgreSQL timestamp serialization broke purge assertion
+
+- Symptom: The rejection purge assertion expected a JavaScript Date, but the raw PostgreSQL client returned a timestamp string.
+- Expected: The test should verify purge completion independent of driver timestamp representation.
+- Root cause layer: verification
+- Harness fix: Assert `purged_at IS NOT NULL` for each working row and the Bundle, alongside the absence of private text and the preserved original message.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.bundle.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Mounted analytics read Employee Conversation Storage
+
+- Symptom: `/admin/analytics` and `/admin/manager/trends` queried `messages` directly for activity, contrary to the V2 analytics storage boundary.
+- Expected: Mounted analytical readers consume content-free metadata and cannot query original conversation messages.
+- Root cause layer: architecture
+- Harness fix: Add a tenant/person/day activity projection maintained by a database trigger, backfill existing counts, and switch the mounted aggregate readers to that projection. Retain SQL-shape and migrated-PostgreSQL tests.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/api exec vitest run src/admin/analytics.controller.test.ts src/admin/manager-dashboard.read-model.test.ts src/admin/v2-analytics-quarantine.integration.test.ts` plus `pnpm --filter @entalent/database test:integration`.
+- Status: fixed
+
+## 2026-09-29: UTC day filter applied timezone to an interval
+
+- Symptom: The first migrated-PostgreSQL analytics fixture failed with `function pg_catalog.timezone(unknown, interval) does not exist` after switching the trends query to daily activity.
+- Expected: The query converts the completed timestamp expression to a UTC date.
+- Root cause layer: verification
+- Harness fix: Parenthesize the `now() - make_interval(...)` expression before `AT TIME ZONE 'UTC'` and keep the PostgreSQL API fixture in the gate.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/api exec vitest run src/admin/v2-analytics-quarantine.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Final-cycle closure enqueued V1 report jobs for V2 cycles
+
+- Symptom: The final-cycle cohort query selected every ended cohort, including cohorts with a V2 scoring-policy binding. The later V1 group-state reader suppressed their data, but the queue job was still created.
+- Expected: V1 report jobs should be created only for legacy cycles; V2 cycle cleanup should still run independently.
+- Root cause layer: architecture and verification
+- Harness fix: Exclude cohorts with a company-cycle V2 policy or any V2-bound window in the close repository query. Keep a PostgreSQL fixture for bound windows, registered cycles with no window, older V1 cycles, and the close use case's queued cohort IDs.
+- Regression check: `DATABASE_URL=<isolated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/survey.repository.final-report-quarantine.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Vitest did not emit Nest constructor metadata in HTTP session fixture
+
+- Symptom: The new Company Admin HTTP test returned 500 because Nest constructed the controller without its session dependency.
+- Expected: The focused HTTP fixture should exercise a valid database-backed session and the admin guard.
+- Root cause layer: tooling
+- Harness fix: Supply explicit `design:paramtypes` metadata for the fixture controllers and guard before creating the test app.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/api exec vitest run src/company-auth/company-admin-session.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Report boundary fixture used an unsorted frozen roster
+
+- Symptom: The five-person control case produced no V1 report before V2 binding because the test cohort's roster order differed from the sorted team roster.
+- Expected: The control case should be reportable so the later V2 suppression assertion proves the boundary.
+- Root cause layer: verification
+- Harness fix: Sort the frozen cohort and window roster in the PostgreSQL fixture before exercising the report use case.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/group-state.repository.v2-quarantine.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Analytical read-scope probe assumed missing database guard
+
+- Symptom: A regression probe intended to expose a mismatched employee/window analytical row failed during insert with `survey_insight_v2_window_user_mismatch`.
+- Expected: The test should prove the actual cross-scope boundary, including the database guard already installed by migration `0026`.
+- Root cause layer: context and verification
+- Harness fix: Assert the migrated PostgreSQL rejects both mismatched window ownership and mismatched question group, then verify the legitimate selector remains scoped.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.migrated.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Conversation repository accepted mismatched message ownership
+
+- Symptom: A message with valid tenant/user foreign keys but a different conversation owner entered private history or was readable by ID; a forged delivered disclosure could also satisfy the employee receipt lookup.
+- Expected: Every private message read verifies that the referenced conversation has the same tenant and user as the message.
+- Root cause layer: architecture and verification
+- Harness fix: Join messages to their owning conversation in recent history, ID lookup, disclosure lookup, and inbound admission; reject mismatched external conversation reuse during API ingestion; add forward migration `0032` to reject new mismatched message writes while retaining a migrated-PostgreSQL regression for historical cross-tenant and same-tenant mismatches.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/worker exec vitest run src/conversation/repositories/conversation.repository.privacy.integration.test.ts src/conversation/repositories/conversation.repository.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Historical privacy fixture failed after message owner guard
+
+- Symptom: The migrated-PostgreSQL privacy test could no longer insert intentionally inconsistent historical messages after migration `0032`; its first raw-SQL replacement passed JavaScript Date objects that postgres.js could not bind.
+- Expected: The fixture should reproduce possible pre-migration rows while the production write guard remains enabled for normal inserts.
+- Root cause layer: verification and tooling
+- Harness fix: Insert only the historical mismatch fixtures in a transaction with local replica trigger mode, use ISO timestamp strings, and restore normal trigger behavior at transaction end.
+- Regression check: `DATABASE_URL=<isolated-migrated-postgres> pnpm --filter @entalent/worker exec vitest run src/conversation/repositories/conversation.repository.privacy.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: BullMQ delivery fixture returned a string timestamp
+
+- Symptom: The first V2 Bundle delivery-restart probe failed after retry because its mock repository returned raw postgres.js `sent_at` text, while the processor expects a `Date` from the production Drizzle repository.
+- Expected: The queue probe should exercise the production message repository and verify recovery from a failure after delivery persistence.
+- Root cause layer: verification
+- Harness fix: Replace the mock message read/write with `ConversationRepository` on PostgreSQL; stub only eligibility and onboarding outside this fixture's scope.
+- Regression check: `DATABASE_URL=<isolated-postgres> REDIS_URL=<isolated-redis-db-15> V2_BUNDLE_QUEUE_TEST=1 pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.bundle.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Conversation job caused side effects before private admission
+
+- Symptom: A queued inbound message with mismatched ownership still enqueued profile hydration before the orchestrator rejected it. A job with a valid conversation owner but mismatched external destination generated an outbound reply.
+- Expected: The stored conversation owner, external destination, and inbound message ownership must be verified before any profile, model, or outbound effect.
+- Root cause layer: architecture and verification
+- Harness fix: Validate the persisted external conversation ID, then validate the scoped inbound message before profile hydration. Keep focused negative tests for both cases in the orchestrator suite.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/conversation-orchestrator.test.ts -t 'rejects a queue destination|rejects a confirming message outside the conversation ownership'`.
+- Status: fixed
+
+## 2026-09-29: Survey evidence job evaluated an unowned conversation
+
+- Symptom: The evidence use case read recent messages by conversation ID and could call the model using another employee's history for a forged queue user. The processor also finalized that queue user's pending insights before validating the conversation owner. A stale inbound ID still caused evaluation of newer history.
+- Expected: Validate the conversation owner before finalization, window creation, or model work; evaluate a live job only when its exact inbound message remains in scoped recent history.
+- Root cause layer: architecture and verification
+- Harness fix: Add an owner admission check before processor finalization and in both live/backfill use cases, validate every returned message's scope, and skip live work when the source message is absent. Keep a migrated-PostgreSQL/BullMQ forged-owner fixture alongside the unit regressions.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/survey-evidence.use-case.test.ts` and `DATABASE_URL=<isolated-migrated-postgres> REDIS_URL=<isolated-redis-db-15> V2_CONVERSATION_QUEUE_TEST=1 pnpm --filter @entalent/worker exec vitest run src/conversation/v2-conversation-flow.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Full-rejection queue fixture lacked backlog state
+
+- Symptom: The new rejection flow reached its database assertions, but found no backlog rows to verify reopening. The first local run also used a PostgreSQL role absent from this isolated cluster.
+- Expected: The fixture should represent an active Pulse cycle with pending backlog rows and connect using the cluster's actual role.
+- Root cause layer: verification and environment
+- Harness fix: Seed all twelve backlog questions in the queue fixture and use the isolated cluster's verified `serzh` role in the local test command.
+- Regression check: `DATABASE_URL=postgresql://serzh@127.0.0.1:55435/postgres REDIS_URL=redis://127.0.0.1:56381/15 V2_CONVERSATION_QUEUE_TEST=1 pnpm --filter @entalent/worker exec vitest run src/conversation/v2-conversation-flow.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Slack ingestion failures logged raw error objects
+
+- Symptom: HTTP event and Socket Mode catch paths passed original pipeline/start errors to Nest logging; a pipeline error containing employee message text would expose that text in operational logs.
+- Expected: Slack ingress acknowledges or handles the failure while logs contain only stable non-content error codes.
+- Root cause layer: architecture and verification
+- Harness fix: Replace raw error logging in both ingress paths with fixed codes and add private-marker regressions for HTTP events, Socket Mode events, and socket startup.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/channel/slack-events.controller.test.ts src/channel/slack-socket-mode.lifecycle.test.ts`.
+- Status: fixed
+
+## 2026-09-29: V2 backfill skipped most employee messages
+
+- Symptom: A 35-message conversation with 18 employee turns produced only four V2 backfill evaluations because the inherited V1 stride processed the last inbound message of each 15-message window.
+- Expected: Recovery backfill should evaluate every in-cycle V2 employee turn once, attributing evidence to that exact source message and limiting model context to the nearest earlier assistant reply.
+- Root cause layer: architecture and verification
+- Harness fix: Give V2 backfill a per-inbound traversal with bounded two-turn context while retaining the existing V1 window traversal. Add a 35-message regression that verifies all source IDs and model context.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/survey-evidence.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Hydration response contract fixture retained a removed field
+
+- Symptom: The full harness typecheck failed after `traceId` was removed from the hydration-status response contract because its contract test fixture still included that field.
+- Expected: The response contract and its typed fixture should describe the same safe fields.
+- Root cause layer: verification
+- Harness fix: Update the typed fixture in the same change as the contract; retain the full contract typecheck gate to catch future field drift.
+- Regression check: `pnpm --filter @entalent/contracts typecheck` followed by `pnpm harness:check -- --base origin/main`.
+- Status: fixed
+
+## 2026-09-29: Model environment probe used an unavailable dotenv import
+
+- Symptom: A one-line credential-presence probe failed because the root workspace does not expose `dotenv` as an importable Node package.
+- Expected: The probe should confirm configuration presence without printing secret values or installing dependencies.
+- Root cause layer: tooling
+- Harness fix: Use the repo's configured `pnpm exec dotenv -e .env -- ...` launcher for model scripts and a key-only parser for read-only environment inspection.
+- Regression check: Run `pnpm exec dotenv -e .env -- node -e 'console.log(Boolean(process.env.AZURE_OPENAI_API_KEY))'` before a synthetic model probe.
+- Status: fixed
+
+## 2026-09-29: Local migrated PostgreSQL started with wrong major version
+
+- Symptom: `pg_ctl` failed to start the retained V2 test cluster because the shell resolved PostgreSQL 14 while its data directory was initialized by PostgreSQL 17.
+- Expected: Local migrated-schema verification should start the retained cluster with the matching server major version.
+- Root cause layer: environment and tooling
+- Harness fix: Read `PG_VERSION` before starting a retained test cluster and invoke that major version's `pg_ctl` explicitly; this cluster uses `/opt/homebrew/opt/postgresql@17/bin/pg_ctl`.
+- Regression check: Compare `cat <cluster>/PG_VERSION` with `<pg_ctl> --version` before `pg_ctl start`, then run `pg_isready` on the chosen test port.
+- Status: fixed
+
+## 2026-09-29: Recovery processor test used an unsupported matcher and stale application build
+
+- Symptom: The first focused recovery run failed because this Vitest version lacks `toHaveBeenCalledBefore`; typecheck also found one finalizer fake missing the new repository method, two cutoff fixtures using the old constructor, and a worker import pointing at stale built application exports.
+- Expected: Recovery tests and worker typecheck should exercise the new periodic path with current package exports and complete test doubles.
+- Root cause layer: verification and tooling
+- Harness fix: Compare Vitest mock invocation order directly, update all constructor and repository fixtures with the new dependency, and build `@entalent/application` before isolated worker typecheck.
+- Regression check: `pnpm --filter @entalent/application typecheck && pnpm --filter @entalent/application build && pnpm --filter @entalent/worker typecheck && pnpm --filter @entalent/worker exec vitest run src/survey/question-cutoff.processor.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Raw SQL tuple comparison received a Date object
+
+- Symptom: The first migrated-PostgreSQL delayed-source test failed because postgres-js could not bind a JavaScript `Date` interpolated inside a raw Drizzle SQL tuple.
+- Expected: The source-bound history query should compare the timestamp and return earlier messages.
+- Root cause layer: tooling
+- Harness fix: Serialize timestamps to ISO strings and cast them to `timestamptz` in raw SQL fragments.
+- Regression check: `DATABASE_URL=<migrated-local-db> pnpm --filter @entalent/worker exec vitest run src/conversation/repositories/conversation.repository.privacy.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Retained PostgreSQL cluster restarted on default port
+
+- Symptom: Four migrated-database tests failed with `ECONNREFUSED` on port 55435 after the retained cluster started on port 5432.
+- Expected: The retained test cluster should listen on the port named by `DATABASE_URL`.
+- Root cause layer: environment and tooling
+- Harness fix: Start the retained PostgreSQL 17 cluster with `pg_ctl -o '-p 55435'` and check its readiness on that port before database tests.
+- Regression check: `pg_isready -h 127.0.0.1 -p 55435` before the migrated-database Vitest command.
+- Status: fixed
+
+## 2026-09-29: Existing Pulse question map mistaken for missing rubric input
+
+- Symptom: The handoff said all twelve rubrics needed to be provided, overlooking the approved question-to-Index map and separate Engagement rules in REQ-008.
+- Expected: Reuse prior approved requirements before asking the user to resupply product definitions.
+- Root cause layer: context and workflow
+- Harness fix: Check `docs/collected-product-requirements.md` REQ-008 and the current V2 spec scope before declaring a scoring dependency; distinguish stable question mapping from exact `0–100` rubric anchors.
+- Regression check: Compare the V2 spec question model and deferred decisions against REQ-008 before updating IA-022 or asking for rubric content.
+- Status: fixed
+
+## 2026-09-29: Canonical-map guard exposed synthetic stable-key fixtures
+
+- Symptom: The first full harness failed three worker repository fixtures with `v2_scoring_policy_incomplete`; one edited fixture then had a syntax error and a remaining lookup for `growth_2`.
+- Expected: V2 test definitions should use the approved REQ-008 stable keys while keeping synthetic scoring anchors confined to fixtures.
+- Root cause layer: verification and context
+- Harness fix: Reuse the canonical key map in worker fixtures, keep an independent literal map in validator and database tests, and run worker typecheck plus targeted migrated-database tests before the full harness.
+- Regression check: `pnpm --filter @entalent/worker typecheck` and the migrated PostgreSQL worker test suite with `DATABASE_URL` set.
+- Status: fixed
+
+## 2026-09-29: Legacy analytics accepted cross-definition survey rows
+
+- Symptom: A migrated-PostgreSQL fixture counted scored assessments whose question belonged to another tenant's survey definition; forged evidence suppressed or altered trends, and a window carrying another tenant's employee was counted.
+- Expected: Overview, coverage, and trends should use only questions from the window's definition, tenant-owned or global definitions, windows owned by the tenant's employee, and evidence from that window's employee.
+- Root cause layer: architecture and verification
+- Harness fix: Add scoped definition and employee joins to all mounted survey aggregate readers and retain the forged cross-definition and cross-person PostgreSQL fixture.
+- Regression check: `DATABASE_URL=<migrated-local-db> pnpm --filter @entalent/api exec vitest run src/admin/v2-analytics-quarantine.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Retained production delivery jobs outlive message text ownership
+
+- Symptom: A read-only production queue audit found `text` in all 1000 retained completed and four failed `message-send` jobs. None of the four failed jobs had a matching scoped outbound message row, so the queue retained text after its source message was gone. Their failure reasons were not stable codes.
+- Expected: Redis delivery jobs should hold identifiers only; retained failures should not preserve raw provider errors or private text beyond the message lifecycle.
+- Root cause layer: architecture and verification
+- Harness fix: Keep new delivery payloads identifier-only and add a dry-run-first retained-job redaction tool. Require the message-ID worker deployment before using its apply mode, and verify the queue state and post-write contents.
+- Regression check: `pnpm exec tsx scripts/redact-retained-message-send-jobs.test.ts`, isolated Redis dry-run/apply, and a production dry-run returning zero retained `withText` after the authorized cleanup.
+- Status: open
+
+## 2026-09-29: Redaction tool initially used a protected BullMQ job key method
+
+- Symptom: Script typecheck rejected `Job.toKey()` because it is protected and expects a key argument.
+- Expected: The script should use a public queue API to address a retained job's Redis hash.
+- Root cause layer: tooling
+- Harness fix: Use `Queue.toKey(job.id)` and include the script in the TypeScript gate.
+- Regression check: `pnpm exec tsc -p scripts/tsconfig.v2-policy.json` and isolated Redis apply verification.
+- Status: fixed
+
+## 2026-09-29: Full harness caught nullable BullMQ stacktrace type
+
+- Symptom: The full harness failed script typecheck because `Job.stacktrace` can be null after reloading a retained job.
+- Expected: Post-redaction verification should accept an absent stacktrace as empty without weakening the failure-reason check.
+- Root cause layer: verification
+- Harness fix: Treat a null stacktrace as length zero and keep the redaction script in the full TypeScript gate.
+- Regression check: `pnpm exec tsc -p scripts/tsconfig.v2-policy.json` and `pnpm harness:check -- --base origin/main`.
+- Status: fixed
+
+## 2026-09-29: V2 reporting selector admitted a confirmation at the cycle cutoff
+
+- Symptom: A migrated-PostgreSQL RED fixture inserted a finalized question with `confirmedAt = periodEnd`; the final selector returned its score and summary. A late prior-cycle score could also become the chosen trend baseline.
+- Expected: Only confirmations within the half-open `[periodStart, periodEnd)` window may enter final or prior-cycle reporting inputs; a late working confirmation must not reach scoring.
+- Root cause layer: architecture and verification
+- Harness fix: Scope final and prior-score reads by their owner window and confirmation interval, reject out-of-window working confirmation before finalization, and keep the migrated cutoff fixture.
+- Regression check: `DATABASE_URL=<migrated-local-db> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.migrated.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Cross-package worker test used stale application build
+
+- Symptom: After changing the application repository port, the worker typecheck and integration test still loaded the old `@entalent/application` declaration and runtime build, reporting a missing `findWindowPeriodEnd` method.
+- Expected: Worker verification should use the current application package build after a shared port change.
+- Root cause layer: workflow
+- Harness fix: Added `pnpm --filter @entalent/worker test:focused <test-path>` and made worker `typecheck` build `@entalent/application` first. Pass the test path without `--`: that separator becomes a literal Vitest argument and runs the whole suite. Direct `exec vitest` can load stale `dist`.
+- Regression check: `pnpm --filter @entalent/worker test:focused src/survey/survey-evidence.recovery.integration.test.ts` with isolated `DATABASE_URL`, `REDIS_URL`, and `V2_CONVERSATION_QUEUE_TEST=1`.
+- Status: fixed
+
+## 2026-09-29: Delayed V2 conversation message fell outside recent history
+
+- Symptom: Orchestration rejected a valid queued inbound when twenty newer messages were stored before its job ran.
+- Expected: The queued inbound and its preceding context should be read by source ID, regardless of newer messages.
+- Root cause layer: architecture and verification
+- Harness fix: Use the source-bound history repository path for conversation orchestration when available, and keep a delayed-message regression.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/conversation-orchestrator.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Late V2 capture could recreate private text after cutoff
+
+- Symptom: A delayed job with an in-period source timestamp could insert a collecting summary after the cutoff scanner had run.
+- Expected: Capture after the window end should be ignored, even for an older source message.
+- Root cause layer: architecture and verification
+- Harness fix: Check current time against the window end in the capture transaction and retain a PostgreSQL cutoff regression.
+- Regression check: `DATABASE_URL=<local-db> pnpm --filter @entalent/worker exec vitest run src/survey/repositories/question-insight.repository.capture.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Isolated PostgreSQL start used an older client binary
+
+- Symptom: The default `pg_ctl` from PostgreSQL 14 could not start the isolated PostgreSQL 17 data directory.
+- Expected: Local verification should launch the server with its matching major-version binary.
+- Root cause layer: environment
+- Harness fix: Record and use `/opt/homebrew/opt/postgresql@17/bin/pg_ctl` for this isolated test directory.
+- Regression check: Check the data-directory version before starting PostgreSQL for the harness.
+- Status: fixed
+
+## 2026-09-29: Privacy documentation advertised unmounted rights routes
+
+- Symptom: `PRIVACY.md` described arbitrary-user shared-key export/deletion routes as active and listed retention periods that conflict with current code defaults.
+- Expected: The privacy inventory should reflect mounted access boundaries, distinguish current configured defaults from an approved policy, and avoid claiming a rights workflow that is not implemented.
+- Root cause layer: context and verification
+- Harness fix: Compare privacy documentation with the production AppModule route graph and `DEFAULT_RETENTION_POLICY` during IA-043 review; require a separate identity and privacy contract for employee-rights delivery.
+- Regression check: Review `PRIVACY.md` alongside `apps/api/src/app.module.ts`, `apps/api/src/users/users.module.ts`, and `packages/domain/src/tenant/tenant.ts` before publishing privacy claims.
+- Status: fixed
+
+## 2026-09-29: Unlabeled person name survived the V2 privacy gate
+
+- Symptom: A candidate summary retaining `Sarah` was accepted when the confirmed meaning named Sarah without a role label and hierarchy identifiers did not include her. Follow-up RED fixtures found the same gap for names at the first sentence start in English, Polish, and Ukrainian, then again at the start of a later sentence.
+- Expected: A person name already visible in the confirmed source should be treated as a known identifier before final analytical text is persisted.
+- Root cause layer: architecture and verification
+- Harness fix: Extract capitalized names occurring within source sentences and at every likely sentence start into the privacy identifier set; exempt common generic starters, retain multilingual RED/GREEN finalizer regressions, and keep categorical fallback.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/use-cases/finalize-question-insight.use-case.test.ts` and migrated PostgreSQL finalization test.
+- Status: fixed
+
+## 2026-09-29: Slack HTTP webhook accepted events without a signed body
+
+- Symptom: A direct controller call with no `rawBody` reached the ingestion pipeline; URL verification also returned its challenge before signature verification.
+- Expected: Every Slack HTTP request must have a raw body and pass workspace signature verification before ingestion or challenge response.
+- Root cause layer: architecture and verification
+- Harness fix: Fail closed when `rawBody` is absent and verify the signature before handling either request type; retain focused controller regressions.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/channel/slack-events.controller.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Slack URL challenge lacked a workspace identity
+
+- Symptom: The first signature hardening required a workspace lookup before returning a URL challenge, but Slack URL verification may omit `team_id` before any workspace connection exists.
+- Expected: A valid app-signed challenge should succeed without a workspace ID, while unsigned challenges and ordinary events remain rejected.
+- Root cause layer: architecture and verification
+- Harness fix: Verify URL challenges with the configured app signing secret when present, retain the workspace secret path for ordinary events, and cover both valid and invalid challenge signatures.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/channel/slack-events.controller.test.ts`.
+- Status: fixed
+
+## 2026-09-29: zsh reserved `status` masked a successful harness exit
+
+- Symptom: A harness wrapper attempted to assign `status=$?` in zsh, which is read-only; the wrapper exited 1 after the harness had already written a passed receipt.
+- Expected: The wrapper should preserve the harness exit code and print its final lines without adding a shell error.
+- Root cause layer: tooling
+- Harness fix: Use a task-specific nonreserved name such as `harness_exit_code` in zsh wrappers and inspect the structured receipt when a wrapper fails after a command.
+- Regression check: Run the wrapper in zsh with a nonreserved exit-code variable and confirm its exit matches `pnpm harness:check`.
+- Status: fixed
+
+## 2026-09-29: Mounted Slack webhook test used an incompatible parser type
+
+- Symptom: The mounted Fastify test passed at runtime but API typecheck rejected a `Record<string, unknown>` parser request annotation.
+- Expected: Route verification and TypeScript's Fastify parser contract should both pass.
+- Root cause layer: verification
+- Harness fix: Let Fastify infer the parser callback types and cast only the added `rawBody` property.
+- Regression check: `pnpm --filter @entalent/api typecheck` plus the mounted controller test.
+- Status: fixed
+
+## 2026-09-29: Slack signed timestamp accepted future and malformed values
+
+- Symptom: RED adapter tests showed HMAC-valid requests with a timestamp more than five minutes in the future or a nonnumeric timestamp passed verification.
+- Expected: A signed Slack HTTP request must carry a valid integer timestamp within five minutes of local time.
+- Root cause layer: architecture and verification
+- Harness fix: Validate decimal timestamp syntax and safe integer range before enforcing the symmetric five-minute window; retain focused adapter tests.
+- Regression check: `node --import tsx --test packages/channel-slack/src/slack.adapter.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Unsigned Slack team ID reached API warning logs
+
+- Symptom: A RED controller test sent an invalidly signed URL challenge with a private marker in `team_id`; the API warning included the marker verbatim.
+- Expected: Untrusted Slack request fields must not enter ingestion diagnostics before signature verification.
+- Root cause layer: architecture and verification
+- Harness fix: Use stable warning codes for missing raw body, missing signing secret, and invalid signature; retain the private-marker controller regression.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/channel/slack-events.controller.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Parameterized V2 queue fixture used a readonly statement list
+
+- Symptom: Worker typecheck rejected passing a readonly group-example statement list into the mutable `arrayContaining` matcher after the queue fixture was extended to four Index groups.
+- Expected: The expanded fixture should typecheck and run all canonical group scenarios.
+- Root cause layer: verification
+- Harness fix: Copy the example tuple into a mutable fixture array before using matchers and model doubles.
+- Regression check: `pnpm --filter @entalent/worker typecheck` and the opt-in V2 BullMQ flow.
+- Status: fixed
+
+## 2026-09-29: V2 privacy gate accepted bare contact and Slack identifiers
+
+- Symptom: RED policy tests accepted a ten-digit phone number without separators, a raw Slack user ID, and a Slack channel mention embedded in a candidate analytical summary.
+- Expected: These identifying forms must fail the privacy gate so the finalizer retries or uses a safe fallback before persistence.
+- Root cause layer: architecture and verification
+- Harness fix: Extend the versioned V2 policy with bounded numeric, Slack user ID, and channel-mention patterns; keep policy and finalizer retry regressions.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/utils/question-deidentification-policy.test.ts src/use-cases/finalize-question-insight.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-29: V2 privacy gate accepted Slack user-group ID without alias
+
+- Symptom: A RED policy test accepted `<!subteam^S12345678>` in a candidate Question Insight. The aliased form was rejected only because its alias looked like a Slack handle.
+- Expected: A Slack user-group ID must fail the privacy gate with or without an alias.
+- Root cause layer: architecture and verification
+- Harness fix: Match Slack user-group mentions as known identifiers in the versioned V2 policy and retain both policy regressions.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/utils/question-deidentification-policy.test.ts`.
+- Status: fixed
+
+## 2026-09-29: V2 privacy gate accepted internationalized email
+
+- Symptom: RED policy tests accepted `sara@会社.jp` and failed to classify `sara@przykład.pl` as an email; the first address could enter a final analytical summary.
+- Expected: An email address with Unicode local or domain characters must fail the V2 privacy gate.
+- Root cause layer: architecture and verification
+- Harness fix: Add a Unicode-aware email pattern to the versioned V2 policy and retain policy plus finalizer retry regressions.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/utils/question-deidentification-policy.test.ts src/use-cases/finalize-question-insight.use-case.test.ts`.
+- Status: fixed
+
+## 2026-09-29: BullMQ cutoff retry test read a stale job object
+
+- Symptom: The three-attempt integration test observed the job in Redis as `failed` but reported `attemptsMade = 0` from the enqueue-time JavaScript object.
+- Expected: The test should verify the authoritative attempt count after the worker has processed the job.
+- Root cause layer: verification
+- Harness fix: Reload the job from its queue before asserting `attemptsMade`, then exercise manual retry and privacy cleanup.
+- Regression check: Run the opt-in V2 cutoff queue test with isolated PostgreSQL and Redis DB 15.
+- Status: fixed
+
+## 2026-09-29: Receipt failure retried a completed V2 verdict
+
+- Symptom: A transient failure writing the conversation-job receipt made BullMQ rerun a successfully orchestrated V2 verdict and send a second outbound message.
+- Expected: A receipt failure after durable orchestration must retry only receipt and cutoff cleanup, without repeating the employee response.
+- Root cause layer: architecture and verification
+- Harness fix: Queue an identifier-only `receipt-retry` job after a failed receipt write and keep a migrated PostgreSQL/BullMQ regression that injects this failure and checks the outbound count, receipt, and cleanup.
+- Regression check: `V2_CONVERSATION_QUEUE_TEST=1 pnpm --filter @entalent/worker exec vitest run src/conversation/v2-conversation-flow.integration.test.ts` with isolated PostgreSQL and Redis.
+- Status: fixed
+
+## 2026-09-29: Timely V2 clarification disappeared when its worker ran after cutoff
+
+- Symptom: A persisted, in-period clarification was absent from the pending lookup after wall-clock cutoff, even while the receipt barrier retained its private Bundle.
+- Expected: A reply recorded before the window end remains eligible when delayed queue processing reaches it.
+- Root cause layer: architecture and verification
+- Harness fix: Scope clarification lookup to the persisted inbound message and compare its timestamp with the window end; retain a PostgreSQL regression for timely and late messages.
+- Regression check: Run `question-insight.repository.bundle.integration.test.ts` with a responsive PostgreSQL target, then process a timely clarification through BullMQ after cutoff.
+- Status: fixed
+
+## 2026-09-29: Missing conversation job can hold V2 temporary content indefinitely
+
+- Symptom: Slack ingestion persisted an inbound message before enqueueing its conversation job; an enqueue failure could leave no job or receipt while cutoff deferred private cleanup indefinitely. New admissions recover this case. Retained completed jobs can now recover their missing receipt, but older messages without an admission and jobs that failed or were evicted still need reconciliation.
+- Expected: A durable recovery path eventually processes every timely persisted reply or reaches an explicit, audited terminal decision.
+- Root cause layer: architecture
+- Harness fix: Migration `0036` records a content-free admission transactionally with Slack inbound; the cutoff scanner requeues never-admitted timely replies with a stable job ID and queues receipt-only recovery for retained completed jobs. Add durable side-effect reconciliation for failed or evicted jobs before replaying those.
+- Regression check: The opt-in V2 BullMQ flow must recover a never-enqueued reply after cutoff with one response and eventual purge; separately inject a failed or evicted job after orchestration to prove no duplicate response.
+- Status: open
+
+## 2026-09-29: Clarification integration fixture reused a later message ID
+
+- Symptom: The first PostgreSQL run of the cutoff regression failed in a subsequent test with a duplicate `messages_pkey`.
+- Expected: Each fixture message has a unique ID across the shared temporary tables.
+- Root cause layer: verification
+- Harness fix: Give the late-response fixture a distinct message ID and rerun the whole file on isolated PostgreSQL.
+- Regression check: Run `question-insight.repository.bundle.integration.test.ts` with `DATABASE_URL` set; all enabled tests must pass together.
+- Status: fixed
+
+## 2026-09-29: Admission test doubles lagged behind the new API call
+
+- Symptom: The first Slack ingest unit run failed because its spy expected one `saveInboundMessage` argument while durable admission adds a second argument.
+- Expected: The test should assert both the inbound source and its content-free admission metadata.
+- Root cause layer: verification
+- Harness fix: Update the spy expectation and add an enqueue-failure case that keeps the admission pending.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/channel/slack-ingest.service.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Cutoff test constructor patch landed on the conversation processor
+
+- Symptom: Typecheck found seven arguments on `ConversationProcessor` and only three on `QuestionCutoffProcessor` in one integration fixture.
+- Expected: Only the cutoff fixture should receive the new admission repository and conversation queue dependencies.
+- Root cause layer: workflow and verification
+- Harness fix: Move the test doubles to the exact cutoff constructor and run worker typecheck before the BullMQ suite.
+- Regression check: `pnpm --filter @entalent/worker typecheck`.
+- Status: fixed
+
+## 2026-09-29: Receipt recovery fixture misread BullMQ attempt count
+
+- Symptom: The first completed-job recovery scenario expected `attemptsMade = 0`, but BullMQ reported one attempt for a job that ran once and completed.
+- Expected: The test should use BullMQ's persisted attempt count and separately assert one model verdict and one outbound response.
+- Root cause layer: verification
+- Harness fix: Expect one attempt, retain the post-cutoff completed-job receipt recovery assertion, and rerun the scenario against isolated PostgreSQL and Redis.
+- Regression check: Run the opt-in V2 BullMQ flow filtered to `receiptRetryUnavailable=true`, then the full file.
+- Status: fixed
+
+## 2026-09-29: Completed-job receipt test used a purged Bundle
+
+- Symptom: A post-cutoff agreement resolved and purged its Bundle, so the missing-receipt scanner correctly found no held temporary content; the test expected a receipt-retry job that this cleanup path did not need.
+- Expected: The fixture should retain a pending Bundle while proving a completed job's missing receipt is recovered without repeating the response.
+- Root cause layer: verification
+- Harness fix: Use an unrelated timely reply that leaves the Bundle pending until the receipt releases cutoff; assert one response, one interpretation, receipt-only retry, and `no_data` cleanup.
+- Regression check: Run the opt-in V2 BullMQ flow filtered to `receiptRetryUnavailable=true` against migrated PostgreSQL and Redis DB 15.
+- Status: fixed
+
+## 2026-09-29: Pagination regression used an unsupported Vitest matcher
+
+- Symptom: The first focused run and worker typecheck failed because `toHaveBeenCalledExactlyOnceWith` is unavailable in this Vitest version.
+- Expected: The test should prove one receipt retry with the scoped payload using supported matchers.
+- Root cause layer: verification
+- Harness fix: Assert `toHaveBeenCalledOnce` and `toHaveBeenCalledWith` separately.
+- Regression check: Run the focused cutoff unit test and `pnpm --filter @entalent/worker typecheck` together.
+- Status: fixed
+
+## 2026-09-29: Late-persisted reply holds a Bundle without a recovery path
+
+- Symptom: A reply with an event timestamp before cutoff but first persisted after cutoff enters the no-receipt purge barrier and overdue count, while the admission recovery selector excludes it.
+- Expected: The purge barrier and recovery eligibility must follow one approved policy for late Slack delivery; a Bundle must not be retained with no possible processing path.
+- Root cause layer: architecture
+- Harness fix: Keep a PostgreSQL fixture for late first persistence and apply the selected cutoff policy consistently to receipt barrier, admission recovery, and verdict eligibility.
+- Regression check: Run `survey.repository.cutoff.integration.test.ts` and `survey.repository.admission.integration.test.ts` together with `DATABASE_URL` set.
+- Status: open
+
+## 2026-09-29: Root scoring script was invoked with the package test runner
+
+- Symptom: `pnpm exec vitest run scripts/activate-v2-scoring-policy.test.ts` failed because the root workspace does not provide a Vitest binary.
+- Expected: Root script tests use the repository's `tsx` launcher.
+- Root cause layer: workflow
+- Harness fix: Use the command declared in `package.json`: `pnpm exec tsx scripts/activate-v2-scoring-policy.test.ts`.
+- Regression check: Run that exact command before scoring-policy activation changes are handed off.
+- Status: fixed
+
+## 2026-09-29: Activated V2 question content remained editable
+
+- Symptom: A migrated PostgreSQL fixture accepted a version and semantic-content edit to an open-ended question after its V2 cycle was registered.
+- Expected: An activated cycle retains the same question identity, version, wording, and interpretation throughout processing and finalization.
+- Root cause layer: architecture
+- Harness fix: Forward migration `0037` freezes substantive question-row updates after V2 activation while permitting no-op updates and edits to unactivated definitions.
+- Regression check: Run `DATABASE_URL=<isolated-local-postgres> pnpm --filter @entalent/database exec vitest run --config vitest.integration.config.ts src/__tests__/survey-cycle-policy-activation.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: BullMQ retry delivered two responses for one V2 verdict
+
+- Symptom: A migrated-PostgreSQL/Redis worker fixture queued one outbound, injected a post-enqueue error, retried the same conversation job, and delivered two different outbound message IDs for the same inbound while recording one receipt.
+- Expected: A committed V2 turn has one outbound identity and resumes missing dispatch without reapplying its verdict or generating another response.
+- Root cause layer: architecture
+- Harness fix: Add a scoped PostgreSQL turn-effect commit and identifier-only durable dispatch intents, then reconcile failed or evicted jobs from that state. Keep the new two-attempt fixture as the regression and change its assertion to exactly one delivered outbound when the fix is wired.
+- Regression check: Run `V2_CONVERSATION_QUEUE_TEST=1 DATABASE_URL=<isolated-local-postgres> REDIS_URL=redis://127.0.0.1:<port>/15 pnpm --filter @entalent/worker exec vitest run src/conversation/v2-conversation-flow.integration.test.ts -t deliveryEnqueuedThenError=true`.
+- Current mitigation: Stable inbound-derived outbound UUID and scoped text/owner checks now yield one delivered response in the two-attempt fixture. The post-verdict/pre-outbound gap and Redis-loss reconciliation remain open.
+- Status: open
+
+## 2026-09-29: V2 queue test used a future synthetic inbound timestamp as delivery cutoff
+
+- Symptom: The first duplicate-delivery assertion found zero responses because it filtered response `occurredAt` against a synthetic inbound timestamp set one second after prompt delivery, which was still in the future during rapid test execution.
+- Expected: The fixture should identify the two response rows by the actual queued outbound IDs and verify each has a delivery timestamp.
+- Root cause layer: verification
+- Harness fix: Assert distinct message-send job IDs and their scoped persisted delivery rows instead of comparing fixture timestamps to wall-clock delivery time.
+- Regression check: Run the focused `deliveryEnqueuedThenError=true` PostgreSQL/Redis scenario.
+- Status: fixed
+
+## 2026-09-29: Outbound identity tests missed schema and metadata requirements
+
+- Symptom: Initial focused tests failed because two exact metadata assertions omitted the new source ID and a new Drizzle integration fixture omitted the required `occurred_at` value.
+- Expected: Tests changing persisted message shape should update exact allowlists and construct complete schema-valid rows.
+- Root cause layer: verification
+- Harness fix: Include the identifier-only source marker in expected metadata and set explicit timestamps in newly inserted message fixtures.
+- Regression check: Run application orchestrator tests and worker typecheck before the PostgreSQL/BullMQ queue scenario.
+- Status: fixed
+
+## 2026-09-29: Bundle fixture wrote verdict receipts outside its temporary schema
+
+- Symptom: Four Bundle integration cases failed after migration `0038`; the receipt insert reached the real table and failed its tenant/person/conversation scope trigger.
+- Expected: The fixture isolates every table used by the repository, including newly added durable receipts.
+- Root cause layer: verification
+- Harness fix: Add `survey_question_verdict_receipts` to the fixture's temporary tables so its inbound and receipt share the same isolated scope.
+- Regression check: Run the Bundle integration file with migrated PostgreSQL, then `pnpm harness:check -- --base origin/main`.
+- Status: fixed
+
+## 2026-09-29: Isolated PostgreSQL restarted on its default port
+
+- Symptom: The first `0039` integration run could not connect to the named `55441` target after restarting the saved test cluster.
+- Expected: The restarted cluster listens on the explicit port used by the test environment.
+- Root cause layer: environment
+- Harness fix: Restart `pg_ctl` with `-o '-p 55441'` and verify its listener before running the migration test.
+- Regression check: Read `postmaster.opts` or probe the named port before invoking the integration suite.
+- Status: fixed
+
+## 2026-09-29: Custom migration used a reserved SQL alias
+
+- Symptom: Migration `0040` failed to parse at `window` during the first isolated PostgreSQL run.
+- Expected: The group-report intent guard migration applies before integration assertions.
+- Root cause layer: verification
+- Harness fix: Use `cycle_window` as the SQL alias and rerun the migrated integration fixture.
+- Regression check: Apply every custom migration to isolated PostgreSQL before relying on a generated snapshot or typecheck.
+- Status: fixed
+
+## 2026-09-29: Clarification preview assertion mixed object and null matchers
+
+- Symptom: Worker typecheck rejected a `toMatchObject` expectation whose conditional argument could be `null`, although the Vitest run passed.
+- Expected: The test checks the first remaining clarification as an object and the final one as null with their respective matchers.
+- Root cause layer: verification
+- Harness fix: Split the assertion by case and run worker typecheck alongside the focused PostgreSQL test.
+- Regression check: `pnpm --filter @entalent/worker typecheck` before the full V2 queue suite.
+- Status: fixed
+
+## 2026-09-29: Isolated PostgreSQL restarted with the wrong major version
+
+- Symptom: The first restart of the saved PostgreSQL fixture failed because shell `pg_ctl` resolved to version 14 while its data directory was created by version 17.
+- Expected: The saved fixture starts on port 55441 for the migrated V2 queue test.
+- Root cause layer: environment
+- Harness fix: Use `/opt/homebrew/opt/postgresql@17/bin/pg_ctl` for this version 17 fixture and retain its explicit port.
+- Regression check: Check `PG_VERSION` and the selected `pg_ctl --version` before restarting a saved fixture.
+- Status: fixed
+
+## 2026-09-29: Orchestrator fake omitted persisted response text
+
+- Symptom: The full harness failed 81 application assertions after the orchestrator began using the committed outbound text; the test repository returned only an ID.
+- Expected: The repository fake returns the saved response text as the real adapter does.
+- Root cause layer: verification
+- Harness fix: Make the shared fake echo the saved text and preserve its test ID in sequential overrides.
+- Regression check: Run the full conversation-orchestrator test file after changing persisted response reads.
+- Status: fixed
+
+## 2026-09-29: Concurrent committed turns duplicated downstream evidence dispatch
+
+- Symptom: Two workers for one admitted inbound produced one outbound and one verdict but queued Pulse evidence twice.
+- Expected: A committed turn has one stable intent and queue job per downstream effect.
+- Root cause layer: architecture
+- Harness fix: Commit identifier-only evidence, memory, and style intents with the response; dispatch only unqueued intents under stable job IDs. Keep the concurrent BullMQ case.
+- Regression check: Run the `concurrentThird=true` migrated PostgreSQL/Redis V2 flow and assert one job per effect.
+- Status: fixed
+
+## 2026-09-29: Purged Bundle hid a committed turn from cutoff recovery
+
+- Symptom: A timely V2 agreement committed its outbound and verdict, then its original Redis job failed before the receipt; the cutoff scanner found no pending admission.
+- Expected: The scanner finds that committed turn by scoped inbound identity and resumes its receipt and undispatched send without repeating the verdict.
+- Root cause layer: architecture
+- Harness fix: Permit the queued admission selector to include a purged Bundle only when a same-tenant, same-user, same-conversation committed turn effect exists; retain the unpurged rule for uncommitted replies.
+- Regression check: Run the migrated PostgreSQL/Redis `lostMessageJob=true` flow and the admission selector fixture with a purged Bundle.
+- Status: fixed
+
+## 2026-09-29: Isolated PostgreSQL test command assumed Docker credentials
+
+- Symptom: Initial focused tests failed with `role "postgres" does not exist`; the local fixture on port 55441 uses the OS user and the `postgres` database.
+- Expected: The test command targets the named isolated PostgreSQL fixture with its actual role and database.
+- Root cause layer: environment
+- Harness fix: Check the isolated server role and database before constructing `DATABASE_URL`; use the verified target in the test command.
+- Regression check: Run `psql -h 127.0.0.1 -p 55441 -d postgres -Atqc 'select current_user, current_database()'` before the V2 queue fixture.
+- Status: fixed
+
+## 2026-09-29: Profile hydration queued before the response transaction
+
+- Symptom: An inbound turn with missing profile data queued hydration before the model response existed; a response-model failure left a Redis job without a committed turn.
+- Expected: The hydration job is dispatched only from a committed, scoped turn intent and repeated dispatch uses one job identity.
+- Root cause layer: architecture
+- Harness fix: Add a profile-hydration intent to the turn transaction, dispatch it after commit with an inbound-derived job ID, and scan old unqueued committed intents outside survey windows.
+- Regression check: Run the application response-failure test, Redis outbox identity test, and migrated PostgreSQL/BullMQ lost-job recovery case.
+- Status: fixed
+
+## 2026-09-29: Employee reminder escaped a failed response turn
+
+- Symptom: Reminder scheduling saved an action and enqueued its job before the response was prepared; a later response failure left a reminder without the committed answer.
+- Expected: The action and answer commit or roll back together, and a delayed job follows only a committed action intent.
+- Root cause layer: architecture
+- Harness fix: Save the action in the turn transaction, persist an action-scoped follow-up intent, and use a stable action-and-due-time job ID after commit.
+- Regression check: Run the application response-failure test and the migrated PostgreSQL/Redis reminder transaction rollback test.
+- Status: fixed
+
+## 2026-09-29: V1 group confirmation and report escaped a failed answer
+
+- Symptom: V1 agreement changed the group state and queued a report before the employee answer was prepared; a later answer failure left the confirmation and report without its committed turn.
+- Expected: The state transition, answer, and report intent commit together, with the Redis report job queued only after commit.
+- Root cause layer: architecture
+- Harness fix: Prepare the V1 decision without mutation, apply it in the turn transaction, and use a group-state-scoped immutable report intent and stable job ID.
+- Regression check: Run the V1 pre-response branch tests and migrated PostgreSQL/Redis rollback, enqueue-failure, and committed-resume fixture.
+- Status: fixed
+
+## 2026-09-29: Safety repository contract broke an archived fixture
+
+- Symptom: The full harness failed typecheck because the historical MAF test fixture lacked the new source-idempotent risk write method.
+- Expected: Active TypeScript safety writes require source idempotency while the retired runtime remains untouched.
+- Root cause layer: architecture
+- Harness fix: Keep the legacy repository contract and define a narrower extended contract required by the active orchestrator and worker adapter.
+- Regression check: Run `pnpm --filter @entalent/application typecheck` and the full harness after changing a shared safety port.
+- Status: fixed
+
+## 2026-09-29: Profile outcome SQL failed on the real database
+
+- Symptom: The migrated-PostgreSQL profile recovery fixture failed while recording `profileHydration` metadata: first a cast bound to the JSON key, then an untyped parameter in `jsonb_build_object`.
+- Expected: Profile facts, outcome metadata, and the committed completion receipt save in one transaction.
+- Root cause layer: verification
+- Harness fix: Parenthesize the extracted attempt-count value before casting, cast JSON-building parameters to text, and retain a real-schema transaction regression that checks rollback and one successful outcome.
+- Regression check: Run `DATABASE_URL=<isolated local URL> REDIS_URL=<isolated local DB 15 URL> V2_CONVERSATION_QUEUE_TEST=1 pnpm --filter @entalent/worker exec vitest run src/profile/user-profile.repository.integration.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Style recovery fixture failed TypeScript checking
+
+- Symptom: The first migrated-PostgreSQL style fixture passed at runtime but failed worker typecheck because a mutable cleanup tenant ID was inferred as possibly undefined inside an insert mapping callback.
+- Expected: Both runtime and static checks accept a fixture scoped to one created tenant.
+- Root cause layer: verification
+- Harness fix: Narrow the mapped tenant value at the insert site and retain the worker typecheck in the full gate.
+- Regression check: Run `pnpm --filter @entalent/worker typecheck` with the style recovery fixture included.
+- Status: fixed
+
+## 2026-09-29: Late style recovery overwrote a newer observation
+
+- Symptom: A migrated PostgreSQL regression completed a newer style intent before an older one; the late older job changed the profile again and incremented its analysis count.
+- Expected: A completed newer source remains authoritative, and each accepted observation merges with the current profile inside a serialized transaction.
+- Root cause layer: architecture
+- Harness fix: Serialize committed style writes by tenant and user, apply the style update to the profile read inside that transaction, and mark an older intent complete without applying it when a newer source already completed. The fixture also records required outbound source metadata and updates an intent's queue timestamp only after creation.
+- Regression check: Run `DATABASE_URL=<isolated local URL> REDIS_URL=<isolated local DB 15 URL> V2_CONVERSATION_QUEUE_TEST=1 pnpm --filter @entalent/worker exec vitest run src/style/repositories/style-profile.repository.integration.test.ts` after rebuilding `@entalent/application`.
+- Status: fixed
+
+## 2026-09-29: Retention cleanup bound Date objects to raw SQL
+
+- Symptom: A migrated-PostgreSQL V2 retention fixture failed before cleanup because postgres.js received a JavaScript Date as an untyped raw SQL parameter.
+- Expected: The active tenant policy applies its cutoffs to durable stores, including private V2 working text and Bundles.
+- Root cause layer: verification
+- Harness fix: Bind ISO instants with explicit timestamptz casts in every raw retention query and retain the migrated-PostgreSQL tenant-scope, age, and repeat-run fixture.
+- Regression check: Run `DATABASE_URL=<isolated local URL> pnpm --filter @entalent/worker exec vitest run src/retention/retention.repository.v2.integration.test.ts src/retention/retention.repository.test.ts`.
+- Status: fixed
+
+## 2026-09-29: Risk-source guard blocked retention provenance clearing
+
+- Symptom: The migrated-PostgreSQL retention fixture failed with `risk_signal_source_scope_mismatch` when cleanup tried to clear expired risk-signal evidence IDs.
+- Expected: Tenant retention expires private risk content without violating the immutable source and ownership constraints.
+- Root cause layer: architecture
+- Harness fix: Keep the guarded source IDs for now, clear the recommended action, and require an explicit forward schema and policy decision before removing risk provenance.
+- Regression check: Run the migrated-PostgreSQL retention fixture and assert expired risk signals retain source IDs while their recommended action is cleared.
+- Status: open
+
+## 2026-09-29: Delayed memory extraction read later employee turns
+
+- Symptom: A source-scoped memory job used the conversation's latest 20 messages, so a delayed worker could pass a later private disclosure to the model and attach its meaning to the older source.
+- Expected: The extractor sees only messages through the committed inbound and its own outbound reply.
+- Root cause layer: architecture
+- Harness fix: Read source-bounded history, fetch the scoped outbound separately, and reject a reply linked to another inbound before any model call.
+- Regression check: Run `pnpm --filter @entalent/application exec vitest run src/use-cases/memory-extraction.use-case.test.ts` and assert the late-turn and mismatched-source cases.
+- Status: fixed
+
+## 2026-09-29: Completion guard erased report-intent scope in a later migration
+
+- Symptom: The migrated-PostgreSQL turn-effect fixture rejected a valid `group_report` dispatch intent after migration `0045` with `conversation_dispatch_intent_scope_mismatch`.
+- Expected: The completion receipt guard preserves the prior tenant/person/cohort report target validation from `0040`.
+- Root cause layer: architecture and verification
+- Harness fix: Add forward migration `0046` combining both guards, assert a valid report target and immutable completion receipt in the migrated fixture, and run active database integration tests for every changed SQL migration in `harness:check` with an explicit local database target.
+- Regression check: Run `DATABASE_URL=<isolated local URL> pnpm --filter @entalent/database test:integration` and verify the harness selects that suite for a SQL migration.
+- Status: fixed
+
+## 2026-09-29: Conversation simulations missed committed style adapter
+
+- Symptom: `terse-user` model gate stopped with `committed_style_repository_missing` before evaluating the coach.
+- Expected: The simulation's in-memory adapters satisfy the same source-scoped style completion contract as the active worker.
+- Root cause layer: verification
+- Harness fix: Add source-bounded message history and an idempotent committed-style completion receipt to the simulation repositories; keep the production fail-closed contract.
+- Regression check: Run `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/terse-user.sim.test.ts` with model credentials and require the scenario report.
+- Status: fixed
+
+## 2026-09-29: Consultation simulation lacked an empty Pulse read adapter
+
+- Symptom: `annna-intent-fidelity` model gate stopped at a Pulse capture question with `pulse_capture_repository_unavailable` before assessing intent fidelity.
+- Expected: A consultation scenario with no captured Pulse evidence receives a scoped empty lookup result.
+- Root cause layer: verification
+- Harness fix: Supply empty Pulse and confirmation reads by default in the simulation harness, which has no survey state; keep explicit scenario survey repositories and the worker's missing-repository guard.
+- Regression check: Run `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/annna-intent-fidelity.sim.test.ts` with model credentials and require the scenario report.
+- Status: fixed
+- Follow-up: The scenario now reaches its report; its semantic assertions still fail, as in the 2026-09-08 gate.
+
+## 2026-09-29: New simulation adapter test missed the Vitest include pattern
+
+- Symptom: A focused `src/fakes/repositories.test.ts` run exited with no test files found.
+- Expected: The small adapter regression executes under the conversation-sim package's configured Vitest pattern.
+- Root cause layer: workflow
+- Harness fix: Place the test under `src/scenarios/` with the `.sim.test.ts` suffix used by this package.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/simulation-repositories.sim.test.ts` passes two tests.
+- Status: fixed
+
+## 2026-09-29: Annna model replay still infers an unstated testing motive
+
+- Symptom: After the adapter repair, the exact Annna replay completed 15 turns but failed its semantic judge and correction acknowledgment assertion. The coach described Anna as checking whether it stayed inside the chat, although she had not stated that motive.
+- Expected: A request about what the coach learned should list only stated conversation facts, and a correction should acknowledge the mistaken frame before answering.
+- Root cause layer: architecture and verification
+- Harness fix: Keep the exact transcript and hard assertions; compare this known preexisting failure against the 2026-09-08 gate before changing production prompts. Capture post-report assertions in the scenario artifact so `Deterministic checks all clear` cannot mask them.
+- Regression check: Run the focused Annna scenario and inspect both the judge verdict and post-report Vitest assertions; the 2026-09-29 run remains failed.
+- Status: open
+
+## 2026-09-29: Memory-recall judge disagreed across identical one-run gates
+
+- Symptom: The first PR #7 one-run model gate passed memory recall, while the second passed all hard assertions but its judge rejected a question about the source of Igor's nervousness as re-asking the already known Friday defense.
+- Expected: The gate distinguishes an actual repeated question from a new uncertainty and gives a stable acceptance signal for unchanged code.
+- Root cause layer: verification
+- Harness fix: Preserve the judge rationale and transcript from both runs, then tighten the scenario criterion or add a deterministic check for exact repeated facts before relying on one judge sample as a regression verdict.
+- Regression check: Compare `memory-recall` reports from the 2026-09-29 gate runs at `19-36-04` and `19-54-50` before attributing this failure to PR #7.
 - Status: open

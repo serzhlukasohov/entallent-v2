@@ -18,6 +18,7 @@ import { DatabaseService } from '../database/database.service';
 import { buildEmployeeRows } from './manager-team.aggregate';
 import {
   buildTrends,
+  dateRange,
   type EngagementRow,
   type FunnelRow,
   type QuestionRow,
@@ -28,6 +29,7 @@ import { attachTeamDisplayNames } from './team-users';
 
 const DEFAULT_DAYS = 14;
 const MAX_DAYS = 120;
+const MIN_COHORT_SIZE = 5;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
@@ -202,16 +204,16 @@ export class ManagerDashboardReadModel {
 
     const [engagement, signals, funnel, questions] = await Promise.all([
       this.db.client.execute(sql`
-        SELECT to_char(date_trunc('day', occurred_at), 'YYYY-MM-DD') AS day,
-               count(DISTINCT user_id)::int AS "activeUsers",
-               count(*)::int AS "inboundMessages"
-        FROM messages
-        WHERE tenant_id = ${input.tenantId}
-          AND direction = 'inbound'
-          AND ${eligiblePulsePersonOrLegacy(sql`messages.user_id`, sql`messages.tenant_id`)}
-          AND text <> '__init__'
-          AND deleted_at IS NULL
-          AND occurred_at >= date_trunc('day', ${since})
+        SELECT to_char(activity.day, 'YYYY-MM-DD') AS day,
+               count(DISTINCT activity.user_id)::int AS "activeUsers",
+               sum(activity.inbound_non_init_count)::int AS "inboundMessages"
+        FROM conversation_activity_daily activity
+        JOIN users activity_owner ON activity_owner.id = activity.user_id
+          AND activity_owner.tenant_id = activity.tenant_id
+        WHERE activity.tenant_id = ${input.tenantId}
+          AND ${eligiblePulsePersonOrLegacy(sql`activity.user_id`, sql`activity.tenant_id`)}
+          AND activity.inbound_non_init_count > 0
+          AND activity.day >= ((${since}) AT TIME ZONE 'UTC')::date
         GROUP BY 1
         ORDER BY 1
       `) as unknown as Promise<EngagementRow[]>,
@@ -219,41 +221,92 @@ export class ManagerDashboardReadModel {
       this.db.client.execute(sql`
         SELECT to_char(date_trunc('day', e.created_at), 'YYYY-MM-DD') AS day,
                e.polarity AS polarity,
-               count(*)::int AS count
+               count(*)::int AS count,
+               count(DISTINCT e.user_id)::int AS "cohortUsers"
         FROM survey_evidence e
         JOIN survey_windows w ON e.survey_window_id = w.id
+        JOIN users window_owner ON window_owner.id = w.user_id
+          AND window_owner.tenant_id = w.tenant_id
+        JOIN survey_questions q ON e.survey_question_id = q.id
+          AND q.survey_definition_id = w.survey_definition_id
+        JOIN survey_definitions d ON d.id = w.survey_definition_id
+          AND (d.tenant_id IS NULL OR d.tenant_id = w.tenant_id)
         WHERE w.tenant_id = ${input.tenantId}
+          AND e.user_id = w.user_id
           AND ${eligiblePulsePersonOrLegacy(sql`e.user_id`, sql`w.tenant_id`)}
+          AND NOT EXISTS (
+            SELECT 1 FROM survey_window_scoring_policies v2
+            WHERE v2.survey_window_id = w.id AND v2.tenant_id = w.tenant_id
+          )
           AND e.created_at >= date_trunc('day', ${since})
         GROUP BY 1, 2
         ORDER BY 1
-      `) as unknown as Promise<SignalRow[]>,
+      `) as unknown as Promise<Array<SignalRow & { cohortUsers: number }>>,
 
       this.db.client.execute(sql`
-        SELECT a.status AS status, count(*)::int AS count
+        SELECT a.status AS status, count(*)::int AS count,
+               count(DISTINCT w.user_id)::int AS "cohortUsers"
         FROM survey_assessments a
         JOIN survey_windows w ON a.survey_window_id = w.id
+        JOIN users window_owner ON window_owner.id = w.user_id
+          AND window_owner.tenant_id = w.tenant_id
+        JOIN survey_questions q ON a.survey_question_id = q.id
+          AND q.survey_definition_id = w.survey_definition_id
+        JOIN survey_definitions d ON d.id = w.survey_definition_id
+          AND (d.tenant_id IS NULL OR d.tenant_id = w.tenant_id)
         WHERE w.tenant_id = ${input.tenantId} AND w.status = 'active'
           AND ${eligiblePulsePersonOrLegacy(sql`w.user_id`, sql`w.tenant_id`)}
+          AND NOT EXISTS (
+            SELECT 1 FROM survey_window_scoring_policies v2
+            WHERE v2.survey_window_id = w.id AND v2.tenant_id = w.tenant_id
+          )
         GROUP BY 1
-      `) as unknown as Promise<FunnelRow[]>,
+      `) as unknown as Promise<Array<FunnelRow & { cohortUsers: number }>>,
 
       this.db.client.execute(sql`
         SELECT q.stable_key AS "stableKey",
                q.title AS title,
                q.dimension AS dimension,
                e.polarity AS polarity,
-               count(*)::int AS count
+               count(*)::int AS count,
+               count(DISTINCT e.user_id)::int AS "cohortUsers"
         FROM survey_evidence e
         JOIN survey_windows w ON e.survey_window_id = w.id
+        JOIN users window_owner ON window_owner.id = w.user_id
+          AND window_owner.tenant_id = w.tenant_id
         JOIN survey_questions q ON e.survey_question_id = q.id
+          AND q.survey_definition_id = w.survey_definition_id
+        JOIN survey_definitions d ON d.id = w.survey_definition_id
+          AND (d.tenant_id IS NULL OR d.tenant_id = w.tenant_id)
         WHERE w.tenant_id = ${input.tenantId}
+          AND e.user_id = w.user_id
           AND w.status = 'active'
           AND ${eligiblePulsePersonOrLegacy(sql`e.user_id`, sql`w.tenant_id`)}
+          AND NOT EXISTS (
+            SELECT 1 FROM survey_window_scoring_policies v2
+            WHERE v2.survey_window_id = w.id AND v2.tenant_id = w.tenant_id
+          )
           AND e.superseded_at IS NULL
         GROUP BY 1, 2, 3, e.polarity
-      `) as unknown as Promise<QuestionRow[]>,
+      `) as unknown as Promise<Array<QuestionRow & { cohortUsers: number }>>,
     ]);
+
+    // A breakdown with fewer than five distinct employees could identify a person.
+    // Hide the entire response so the dashboard never presents suppressed cells as zero.
+    if (engagement.some((row) => row.activeUsers < MIN_COHORT_SIZE)
+      || [...signals, ...funnel, ...questions].some((row) =>
+        !Number.isInteger(row.cohortUsers) || row.cohortUsers < MIN_COHORT_SIZE)) {
+      const dates = dateRange(new Date().toISOString().slice(0, 10), input.days);
+      return {
+        rangeStart: dates[0],
+        rangeEnd: dates[dates.length - 1],
+        suppressed: true,
+        engagement: [],
+        signalCapture: [],
+        coverageFunnel: {},
+        questionSentiment: [],
+      };
+    }
 
     return buildTrends({
       rangeEnd: new Date().toISOString().slice(0, 10),

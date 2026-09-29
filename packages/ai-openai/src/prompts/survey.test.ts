@@ -23,4 +23,11 @@ describe('survey evidence numeric ratings', () => {
 
     expect(prompt).toContain('Response type: numeric_0_10');
   });
+
+  it('limits V2 evidence to the latest employee message while retaining context', () => {
+    const v2Prompt = buildSurveySystemPrompt({ focusLatestEmployeeMessage: true });
+    expect(v2Prompt).toContain('latest employee message');
+    expect(v2Prompt).toContain('Earlier turns are context only');
+    expect(buildSurveySystemPrompt()).not.toContain('Earlier turns are context only');
+  });
 });

@@ -8,16 +8,18 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:net';
+import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  buildActiveTestCommands,
   buildReceipt,
   buildReflectionContext,
   findRetiredPaths,
   isAuditReference,
   isAllowedSpecPath,
   parsePreflightTargets,
+  probeProtocol,
   probeTcp,
   readChangedFiles,
   resolveDefaultBase,
@@ -46,6 +48,27 @@ function testDiffSelection(): void {
     scope: 'full',
     checks: ['diff-check', 'typecheck', 'lint', 'test'],
   });
+}
+
+function testDatabaseMigrationRunsIntegrationGate(): void {
+  const repo = mkdtempSync(join(tmpdir(), 'agent-harness-database-'));
+  const changed = ['packages/database/migrations/0046_restore_group_report_intent_guard.sql'];
+  assert.throws(() => buildActiveTestCommands(repo, changed, {}),
+    /database integration target required/);
+  assert.deepEqual(buildActiveTestCommands(repo, changed, { DATABASE_URL: 'local-test-target' }), [
+    ['pnpm', ['--filter', '@entalent/database', 'test:integration']],
+  ]);
+
+  const testDir = join(repo, 'packages/database/src/__tests__');
+  mkdirSync(testDir, { recursive: true });
+  writeFileSync(join(repo, 'packages/database/package.json'), '{"name":"@entalent/database"}');
+  writeFileSync(join(testDir, 'conversation-turn-effects.integration.test.ts'), '');
+  assert.deepEqual(buildActiveTestCommands(repo, [
+    'packages/database/src/__tests__/conversation-turn-effects.integration.test.ts',
+  ], { DATABASE_URL: 'local-test-target' }), [
+    ['pnpm', ['--filter', '@entalent/database', 'test:integration',
+      'src/__tests__/conversation-turn-effects.integration.test.ts']],
+  ]);
 }
 
 function testRetiredScopeGuard(): void {
@@ -148,6 +171,63 @@ async function testTcpPreflightUsesSafeTargets(): Promise<void> {
   const invalid = tryParsePreflightTargets({ DATABASE_URL: 'not-a-url' });
   assert.equal(invalid.ok, false);
   if (!invalid.ok) assert.match(invalid.reason, /postgres URL is invalid/i);
+}
+
+async function testProtocolPreflightRejectsSilentListeners(): Promise<void> {
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  try {
+    for (const name of ['redis', 'postgres'] as const) {
+      const target = { name, host: '127.0.0.1', port: address.port };
+      const url = `${name === 'redis' ? 'redis' : 'postgresql'}://user:private-password@127.0.0.1:${address.port}/test`;
+      const started = Date.now();
+      assert.deepEqual(await probeProtocol(target, url, 200), {
+        name,
+        target: `127.0.0.1:${address.port}`,
+        status: 'blocked',
+      });
+      assert.ok(Date.now() - started < 1_500);
+    }
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+}
+
+async function testRedisProtocolPreflightAcceptsPong(): Promise<void> {
+  const server = createServer((socket) => {
+    socket.on('data', (data) => {
+      const commands = data.toString('utf8').split(/(?=\*\d+\r\n)/).filter(Boolean);
+      socket.write(commands.map((command) =>
+        command.toUpperCase().includes('PING') ? '+PONG\r\n' : '+OK\r\n').join(''));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  try {
+    assert.deepEqual(await probeProtocol(
+      { name: 'redis', host: '127.0.0.1', port: address.port },
+      `redis://127.0.0.1:${address.port}/0`,
+      2_000,
+    ), {
+      name: 'redis',
+      target: `127.0.0.1:${address.port}`,
+      status: 'reachable',
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 }
 
 function testReadySpecValidation(): void {
@@ -393,9 +473,12 @@ function testSpecPathCannotEscapeApprovedArtifacts(): void {
 
 async function main(): Promise<void> {
   testDiffSelection();
+  testDatabaseMigrationRunsIntegrationGate();
   testRetiredScopeGuard();
   testReceiptIsStructuredAndRedacted();
   await testTcpPreflightUsesSafeTargets();
+  await testProtocolPreflightRejectsSilentListeners();
+  await testRedisProtocolPreflightAcceptsPong();
   testReadySpecValidation();
   testReflectionRetrievesRelevantOpenFailure();
   testChangedFilesIncludeWorkingTreeAndMissingBaseFallsBack();

@@ -78,6 +78,11 @@ export class SlackIngestService {
         externalThreadId: payload.externalThreadId,
         occurredAt: payload.timestamp,
         traceId,
+      }, {
+        externalWorkspaceId: payload.externalWorkspaceId,
+        externalConversationId: payload.externalConversationId,
+        eventId: eventId ?? String(rawEvent?.['ts'] ?? requestId),
+        requestId,
       });
 
       await this.conversationQueue.add(
@@ -94,8 +99,11 @@ export class SlackIngestService {
           traceId,
           rapidMessageCoalescing: true,
         },
-        { delay: CONVERSATION_DELAY_MS },
+        { delay: CONVERSATION_DELAY_MS, jobId: `conversation-${messageId}` },
       );
+      await this.ingestion.markConversationJobQueued({
+        messageId, tenantId: workspaceIdentity.tenantId, userId,
+      });
 
       this.logger.log(`Enqueued conversation job traceId=${traceId} messageId=${messageId}`);
     }

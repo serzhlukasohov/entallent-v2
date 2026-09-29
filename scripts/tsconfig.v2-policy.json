@@ -1,0 +1,21 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "noEmit": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "types": ["node"]
+  },
+  "include": [
+    "open-survey-reporting-cycle.ts",
+    "open-survey-reporting-cycle.test.ts",
+    "open-survey-reporting-cycle.integration.test.ts",
+    "activate-v2-scoring-policy.ts",
+    "activate-v2-scoring-policy.test.ts",
+    "activate-v2-scoring-policy.integration.test.ts",
+    "verify-v2-model-bridge.ts",
+    "redact-retained-message-send-jobs.ts",
+    "redact-retained-message-send-jobs.test.ts"
+  ]
+}

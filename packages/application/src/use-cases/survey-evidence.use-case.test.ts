@@ -4,12 +4,16 @@ import { PulseBacklogService } from '../services/pulse-backlog.service';
 import type { AiProviderPort } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
+import type { QuestionWorkingCapturePort } from '../ports/question-working-capture.port';
 import type { SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord } from '../types/records';
 
 function makeWindow(overrides: Partial<SurveyWindowRecord> = {}): SurveyWindowRecord {
   return {
     id: 'w-1', tenantId: 't-1', userId: 'u-1', surveyDefinitionId: 'def-1',
-    periodType: 'quarter', periodStart: new Date(), periodEnd: new Date(), status: 'active',
+    periodType: 'quarter',
+    periodStart: new Date(Date.now() - 7 * 86_400_000),
+    periodEnd: new Date(Date.now() + 7 * 86_400_000),
+    status: 'active',
     ...overrides,
   };
 }
@@ -43,10 +47,11 @@ const EVIDENCE_BY_STATUS: Record<string, { confidence: number; completeness: num
   insufficient_evidence: { strength: 0.6, completeness: 0.2, confidence: 0.6 },
 };
 
-function makeAi(status: string, numericValue?: number): AiProviderPort {
+function makeAi(status: string, numericValue?: number, voluntaryReopenQuestionIds: string[] = []): AiProviderPort {
   const vals = EVIDENCE_BY_STATUS[status] ?? EVIDENCE_BY_STATUS['scored'];
   return {
     evaluateSurveyEvidence: vi.fn().mockResolvedValue({
+      voluntaryReopenQuestionIds,
       evidence: [{
         questionId: 'q-1', evidenceSummary: 'Knows their goals clearly',
         polarity: 'positive', strength: vals.strength, completeness: vals.completeness,
@@ -86,7 +91,10 @@ function makeConversationRepo(): ConversationRepositoryPort {
     findRecentMessages: vi.fn().mockResolvedValue([
       { id: 'm-1', direction: 'inbound', text: 'I know exactly what my OKRs are', occurredAt: new Date(), conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', createdAt: new Date() },
     ]),
-    findById: vi.fn(),
+    findById: vi.fn().mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'dev',
+      externalConversationId: 'ec-1', status: 'active',
+    }),
     saveMessage: vi.fn(),
     findMessageById: vi.fn(),
     findConversationByExternal: vi.fn(),
@@ -122,6 +130,277 @@ function makePulseService(): PulseBacklogService {
 const BASE_INPUT = { conversationId: 'c-1', userId: 'u-1', tenantId: 't-1', inboundMessageId: 'm-1' };
 
 describe('SurveyEvidenceExtractionUseCase', () => {
+  it('rejects another employee in the queued scope before reading history or calling AI', async () => {
+    const ai = makeAi('covered');
+    const conversationRepo = makeConversationRepo();
+    const surveyRepo = makeSurveyRepo('covered');
+    const useCase = new SurveyEvidenceExtractionUseCase(ai, conversationRepo, surveyRepo);
+
+    await expect(useCase.execute({ ...BASE_INPUT, userId: 'u-other' }))
+      .rejects.toThrow('survey_evidence_conversation_scope_mismatch');
+    expect(conversationRepo.findRecentMessages).not.toHaveBeenCalled();
+    expect(surveyRepo.findOrCreateActiveWindow).not.toHaveBeenCalled();
+    expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('does not evaluate a queued source message absent from the owned history', async () => {
+    const ai = makeAi('covered');
+    const conversationRepo = makeConversationRepo();
+    const surveyRepo = makeSurveyRepo('covered');
+    const useCase = new SurveyEvidenceExtractionUseCase(ai, conversationRepo, surveyRepo);
+
+    await useCase.execute({ ...BASE_INPUT, inboundMessageId: 'missing-source' });
+    expect(surveyRepo.findOrCreateActiveWindow).not.toHaveBeenCalled();
+    expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('bounds a delayed live evaluation to its source message', async () => {
+    const ai = makeAi('covered');
+    const conversationRepo = makeConversationRepo();
+    const time = new Date('2026-09-29T12:00:00.000Z');
+    const message = (id: string, direction: 'inbound' | 'outbound', text: string) => ({
+      id, conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', direction, text,
+      occurredAt: time, createdAt: time,
+    });
+    vi.mocked(conversationRepo.findRecentMessages).mockResolvedValue([
+      message('m-probe', 'outbound', 'How clear are your goals?'),
+      message('m-1', 'inbound', 'My goals are clear.'),
+      message('m-reply', 'outbound', 'Thanks for sharing.'),
+      message('m-newer', 'inbound', 'My goals have changed.'),
+    ]);
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+
+    await new SurveyEvidenceExtractionUseCase(
+      ai, conversationRepo, makeSurveyRepo('covered'), makePulseService(), questionCapture,
+    ).execute(BASE_INPUT);
+
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledWith([
+      { role: 'assistant', content: 'How clear are your goals?', timestamp: time },
+      { role: 'user', content: 'My goals are clear.', timestamp: time },
+    ], expect.anything(), { focusLatestEmployeeMessage: true });
+    expect(questionCapture.captureMeaning).toHaveBeenCalledWith(expect.objectContaining({
+      sourceMessageId: 'm-1',
+    }));
+  });
+
+  it('captures a delayed source even when newer turns displace it from recent history', async () => {
+    const ai = makeAi('covered');
+    const conversationRepo = makeConversationRepo();
+    const time = new Date('2026-09-29T12:00:00.000Z');
+    const source = {
+      id: 'm-1', conversationId: 'c-1', tenantId: 't-1', userId: 'u-1',
+      direction: 'inbound' as const, text: 'My goals are clear.', occurredAt: time, createdAt: time,
+    };
+    const newer = { ...source, id: 'm-newer', text: 'A later turn.' };
+    vi.mocked(conversationRepo.findRecentMessages).mockResolvedValue([newer]);
+    conversationRepo.findMessagesThrough = vi.fn().mockResolvedValue([source]);
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+
+    await new SurveyEvidenceExtractionUseCase(
+      ai, conversationRepo, makeSurveyRepo('covered'), makePulseService(), questionCapture,
+    ).execute(BASE_INPUT);
+
+    expect(conversationRepo.findMessagesThrough).toHaveBeenCalledWith({ ...BASE_INPUT, limit: 15 });
+    expect(conversationRepo.findRecentMessages).not.toHaveBeenCalled();
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledWith(
+      [{ role: 'user', content: source.text, timestamp: time }],
+      expect.anything(), { focusLatestEmployeeMessage: true },
+    );
+    expect(questionCapture.captureMeaning).toHaveBeenCalledWith(expect.objectContaining({
+      sourceMessageId: source.id,
+    }));
+  });
+
+  it('rejects a mismatched message in the history before model evaluation', async () => {
+    const ai = makeAi('covered');
+    const conversationRepo = makeConversationRepo();
+    const surveyRepo = makeSurveyRepo('covered');
+    vi.mocked(conversationRepo.findRecentMessages).mockResolvedValue([{
+      id: 'm-1', conversationId: 'c-1', tenantId: 't-1', userId: 'u-other',
+      direction: 'inbound', text: 'private text', occurredAt: new Date(), createdAt: new Date(),
+    }]);
+
+    await expect(new SurveyEvidenceExtractionUseCase(ai, conversationRepo, surveyRepo)
+      .execute(BASE_INPUT)).rejects.toThrow('survey_evidence_message_scope_mismatch');
+    expect(surveyRepo.findOrCreateActiveWindow).not.toHaveBeenCalled();
+    expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('rejects a backfill for another employee before reading conversation history', async () => {
+    const ai = makeAi('covered');
+    const conversationRepo = makeConversationRepo();
+    const surveyRepo = makeSurveyRepo('covered');
+    const useCase = new SurveyEvidenceExtractionUseCase(ai, conversationRepo, surveyRepo);
+
+    await expect(useCase.backfill({ conversationId: 'c-1', tenantId: 't-1', userId: 'u-other' }))
+      .rejects.toThrow('survey_evidence_conversation_scope_mismatch');
+    expect(conversationRepo.findRecentMessages).not.toHaveBeenCalled();
+    expect(surveyRepo.findOrCreateActiveWindow).not.toHaveBeenCalled();
+    expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('captures open-ended V2 meaning without writing V1 evidence or assessments', async () => {
+    const surveyRepo = makeSurveyRepo('insufficient_evidence');
+    const ai = makeAi('covered');
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      ai, makeConversationRepo(), surveyRepo, makePulseService(), questionCapture,
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), { focusLatestEmployeeMessage: true },
+    );
+
+    expect(questionCapture.captureMeaning).toHaveBeenCalledWith(expect.objectContaining({
+      surveyWindowId: 'w-1', surveyQuestionId: 'q-1', questionVersion: '1',
+      sourceMessageId: 'm-1', meaning: 'Knows their goals clearly',
+      sufficientMeaning: true,
+    }));
+    expect(surveyRepo.saveEvidence).not.toHaveBeenCalled();
+    expect(surveyRepo.upsertAssessment).not.toHaveBeenCalled();
+    expect(surveyRepo.upsertGroupState).not.toHaveBeenCalled();
+  });
+
+  it('evaluates V2 evidence before writes and rejects changed source history', async () => {
+    const conversationRepo = makeConversationRepo();
+    const surveyRepo = makeSurveyRepo('insufficient_evidence');
+    const ai = makeAi('covered');
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      ai, conversationRepo, surveyRepo, undefined, questionCapture,
+    );
+    const prepared = await useCase.prepare(BASE_INPUT);
+    expect(prepared?.mode).toBe('v2');
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledOnce();
+    expect(questionCapture.captureMeaning).not.toHaveBeenCalled();
+    await useCase.apply(BASE_INPUT, prepared!);
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledOnce();
+    expect(questionCapture.captureMeaning).toHaveBeenCalledOnce();
+
+    const original = await conversationRepo.findRecentMessages('c-1', 15);
+    vi.mocked(conversationRepo.findRecentMessages).mockResolvedValue([
+      { ...original[0]!, text: 'Edited source after model evaluation' },
+    ]);
+    await expect(useCase.apply(BASE_INPUT, prepared!))
+      .rejects.toThrow('survey_evidence_prepared_history_changed');
+    expect(questionCapture.captureMeaning).toHaveBeenCalledOnce();
+  });
+
+  it('excludes older employee statements from a new V2 evidence evaluation', async () => {
+    const conversationRepo = makeConversationRepo();
+    const time = new Date('2026-09-29T12:00:00.000Z');
+    const message = (id: string, direction: 'inbound' | 'outbound', text: string) => ({
+      id, conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', direction, text,
+      occurredAt: time, createdAt: time,
+    });
+    vi.mocked(conversationRepo.findRecentMessages).mockResolvedValue([
+      message('m-old', 'inbound', 'My goals at work are very clear.'),
+      message('m-transition', 'outbound', 'What would you like to discuss now?'),
+      message('m-1', 'inbound', 'Can you tell me the weather today?'),
+    ]);
+    const ai = makeAi('covered');
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+
+    await new SurveyEvidenceExtractionUseCase(
+      ai, conversationRepo, makeSurveyRepo('covered'), makePulseService(), questionCapture,
+    ).execute(BASE_INPUT);
+
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledWith([
+      { role: 'assistant', content: 'What would you like to discuss now?', timestamp: time },
+      { role: 'user', content: 'Can you tell me the weather today?', timestamp: time },
+    ], expect.anything(), { focusLatestEmployeeMessage: true });
+  });
+
+  it('reopens a declined question before capturing a new meaning', async () => {
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      reopenDeclinedQuestion: vi.fn().mockResolvedValue(true),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      makeAi('covered', undefined, ['q-1']), makeConversationRepo(), makeSurveyRepo('covered'),
+      makePulseService(), questionCapture,
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(questionCapture.reopenDeclinedQuestion).toHaveBeenCalledWith(expect.objectContaining({
+      sourceMessageId: 'm-1', surveyQuestionId: 'q-1', questionVersion: '1',
+    }));
+    expect(vi.mocked(questionCapture.reopenDeclinedQuestion).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(questionCapture.captureMeaning).mock.invocationCallOrder[0]!);
+  });
+
+  it('reopens an explicitly revisited question without requiring new evidence', async () => {
+    const ai = makeAi('insufficient_evidence');
+    vi.mocked(ai.evaluateSurveyEvidence).mockResolvedValue({
+      candidateQuestionIds: [], voluntaryReopenQuestionIds: ['q-1'], evidence: [],
+    });
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      reopenDeclinedQuestion: vi.fn().mockResolvedValue(true),
+      captureMeaning: vi.fn(),
+    } as unknown as QuestionWorkingCapturePort;
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      ai, makeConversationRepo(), makeSurveyRepo('insufficient_evidence'),
+      makePulseService(), questionCapture,
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(questionCapture.reopenDeclinedQuestion).toHaveBeenCalledOnce();
+    expect(questionCapture.captureMeaning).not.toHaveBeenCalled();
+  });
+
+  it('keeps an incomplete V2 meaning out of confirmation readiness', async () => {
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      makeAi('insufficient_evidence'), makeConversationRepo(), makeSurveyRepo('insufficient_evidence'),
+      makePulseService(), questionCapture,
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(questionCapture.captureMeaning).toHaveBeenCalledWith(expect.objectContaining({
+      surveyQuestionId: 'q-1', sufficientMeaning: false,
+    }));
+  });
+
+  it('fails closed when a bound V2 window has an incomplete policy', async () => {
+    const surveyRepo = makeSurveyRepo('covered');
+    const questionCapture = {
+      getWindowMode: vi.fn().mockRejectedValue(new Error('v2_scoring_policy_incomplete')),
+      captureMeaning: vi.fn(),
+    } as unknown as QuestionWorkingCapturePort;
+    const useCase = new SurveyEvidenceExtractionUseCase(
+      makeAi('covered'), makeConversationRepo(), surveyRepo, makePulseService(), questionCapture,
+    );
+
+    await expect(useCase.execute(BASE_INPUT)).rejects.toThrow('v2_scoring_policy_incomplete');
+    expect(surveyRepo.saveEvidence).not.toHaveBeenCalled();
+    expect(questionCapture.captureMeaning).not.toHaveBeenCalled();
+  });
+
   it('calls markQuestionCovered when assessment reaches scored', async () => {
     const pulseService = makePulseService();
     const useCase = new SurveyEvidenceExtractionUseCase(
@@ -281,6 +560,71 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     expect(ai.evaluateSurveyEvidence).toHaveBeenCalledTimes(4);
   });
 
+  it('backfills every V2 employee turn once with only its nearest assistant reply', async () => {
+    const time = new Date('2026-09-29T12:00:00.000Z');
+    const history = Array.from({ length: 35 }, (_, index) => ({
+      id: `m-${index}`,
+      direction: index % 2 === 0 ? 'inbound' as const : 'outbound' as const,
+      text: `message ${index}`,
+      occurredAt: new Date(time.getTime() + index * 1_000),
+      conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', createdAt: time,
+    }));
+    const conversationRepo = makeConversationRepo();
+    vi.mocked(conversationRepo.findRecentMessages).mockResolvedValue(history);
+    const surveyRepo = makeSurveyRepo('covered');
+    vi.mocked(surveyRepo.findOrCreateActiveWindow).mockResolvedValue(makeWindow({
+      periodStart: new Date(time.getTime() - 1_000),
+      periodEnd: new Date(time.getTime() + 60_000),
+    }));
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+      reopenDeclinedQuestion: vi.fn().mockResolvedValue(false),
+    } as unknown as QuestionWorkingCapturePort;
+    const ai = makeAi('covered');
+
+    const result = await new SurveyEvidenceExtractionUseCase(
+      ai, conversationRepo, surveyRepo, undefined, questionCapture,
+    ).backfill({ conversationId: 'c-1', tenantId: 't-1', userId: 'u-1' });
+
+    expect(result.windowsProcessed).toBe(18);
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledTimes(18);
+    expect(vi.mocked(questionCapture.captureMeaning).mock.calls.map(([input]) =>
+      input.sourceMessageId)).toEqual(Array.from({ length: 18 }, (_, index) => `m-${index * 2}`));
+    expect(ai.evaluateSurveyEvidence).toHaveBeenNthCalledWith(2, [
+      { role: 'assistant', content: 'message 1', timestamp: history[1]!.occurredAt },
+      { role: 'user', content: 'message 2', timestamp: history[2]!.occurredAt },
+    ], expect.anything(), { focusLatestEmployeeMessage: true });
+  });
+
+  it('bounds a backfill window to the employee message it attributes evidence to', async () => {
+    const conversationRepo = makeConversationRepo();
+    const time = new Date('2026-09-29T12:00:00.000Z');
+    const message = (id: string, direction: 'inbound' | 'outbound', text: string) => ({
+      id, conversationId: 'c-1', tenantId: 't-1', userId: 'u-1', direction, text,
+      occurredAt: time, createdAt: time,
+    });
+    vi.mocked(conversationRepo.findRecentMessages).mockResolvedValue([
+      message('m-probe', 'outbound', 'What changed?'),
+      message('m-1', 'inbound', 'My goals became clearer.'),
+      message('m-reply', 'outbound', 'Let me suggest another interpretation.'),
+    ]);
+    const ai = makeAi('covered');
+    const surveyRepo = makeSurveyRepo('covered');
+
+    const result = await new SurveyEvidenceExtractionUseCase(ai, conversationRepo, surveyRepo)
+      .backfill({ conversationId: 'c-1', tenantId: 't-1', userId: 'u-1' });
+
+    expect(result.windowsProcessed).toBe(1);
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledWith([
+      { role: 'assistant', content: 'What changed?', timestamp: time },
+      { role: 'user', content: 'My goals became clearer.', timestamp: time },
+    ], expect.anything());
+    expect(surveyRepo.saveEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      sourceMessageIds: ['m-1'],
+    }));
+  });
+
   it('backfill returns zero windows for an empty history', async () => {
     const convRepo = {
       ...makeConversationRepo(),
@@ -371,7 +715,7 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     );
   });
 
-  it('fails engagement eligibility closed when the queued inbound is no longer in recent context', async () => {
+  it('skips stale queued evidence when its inbound is no longer in recent context', async () => {
     const surveyRepo = makeSurveyRepo('scored');
     const regular = makeQuestion('q-regular', 'autonomy');
     const engagement = makeQuestion('q-engagement', 'engagement', { responseType: 'numeric_0_10' });
@@ -390,10 +734,8 @@ describe('SurveyEvidenceExtractionUseCase', () => {
 
     await new SurveyEvidenceExtractionUseCase(ai, conversationRepo, surveyRepo).execute(BASE_INPUT);
 
-    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledWith(
-      expect.anything(),
-      [expect.objectContaining({ id: 'q-regular' })],
-    );
+    expect(surveyRepo.findOrCreateActiveWindow).not.toHaveBeenCalled();
+    expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
   });
 
   it.each([0, 7, 10])('persists the explicit numeric rating %s exactly', async (numericValue) => {

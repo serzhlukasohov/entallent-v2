@@ -6,17 +6,11 @@ import { QueuesController } from './queues.controller';
 import { LlmRunsController } from './llm-runs.controller';
 import { AuditLogsController } from './audit-logs.controller';
 import { SurveyCoverageController } from './survey-coverage.controller';
-import { UserDebugController } from './user-debug.controller';
 import { AnalyticsController } from './analytics.controller';
 import { FeatureFlagsController } from './feature-flags.controller';
-import { ManagerTeamController } from './manager-team.controller';
 import { ManagerTrendsController } from './manager-trends.controller';
-import { PulseOverviewController } from './pulse-overview.controller';
-import { UserInsightsController } from './user-insights.controller';
 import { ProfileHydrationStatusController } from './profile-hydration-status.controller';
-import { UserResetController } from './user-reset.controller';
 import { ManagerDashboardReadModel } from './manager-dashboard.read-model';
-import { UserResetService } from './user-reset.service';
 
 @Module({
   imports: [DatabaseModule, AuditModule],
@@ -25,16 +19,11 @@ import { UserResetService } from './user-reset.service';
     LlmRunsController,
     AuditLogsController,
     SurveyCoverageController,
-    UserDebugController,
     AnalyticsController,
     FeatureFlagsController,
-    ManagerTeamController,
     ManagerTrendsController,
-    PulseOverviewController,
-    UserInsightsController,
     ProfileHydrationStatusController,
-    UserResetController,
   ],
-  providers: [ApiKeyGuard, ManagerDashboardReadModel, UserResetService],
+  providers: [ApiKeyGuard, ManagerDashboardReadModel],
 })
 export class AdminModule {}
