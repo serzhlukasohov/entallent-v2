@@ -2422,3 +2422,21 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Preserve the judge rationale and transcript from both runs, then tighten the scenario criterion or add a deterministic check for exact repeated facts before relying on one judge sample as a regression verdict.
 - Regression check: Compare `memory-recall` reports from the 2026-09-29 gate runs at `19-36-04` and `19-54-50` before attributing this failure to PR #7.
 - Status: open
+
+## 2026-09-29: PR #7 push and CI omitted integration targets
+
+- Symptom: The first push pre-push harness lacked `DATABASE_URL`; after a local retry succeeded, GitHub's quality job failed with `database integration target required`.
+- Expected: The required harness gate runs against a named, migrated PostgreSQL database and Redis in both local push and CI.
+- Root cause layer: workflow and environment
+- Harness fix: Pass isolated local database and Redis targets to the push hook; give the CI quality job PostgreSQL/Redis services, test environment variables, and a migration step before `harness:check`.
+- Regression check: Re-run `pnpm harness:check -- --base 49f9845` locally with isolated targets and require both PR checks to pass on the amended head.
+- Status: open
+
+## 2026-09-29: Railway SSH and local restore verification used incompatible defaults
+
+- Symptom: `railway ssh` stopped at host-key verification; local `pg_restore` could not read the production server's newer custom-format dump.
+- Expected: A verified SSH host key allows internal preflight, and backup validation uses a compatible PostgreSQL client.
+- Root cause layer: environment and tooling
+- Harness fix: Use a dedicated known-hosts file for direct Railway SSH and validate the restricted backup with `pg_restore` on the production PostgreSQL image.
+- Regression check: Require internal `SELECT 1`/Redis `PING` and a successful remote `pg_restore -l` before migration.
+- Status: fixed
