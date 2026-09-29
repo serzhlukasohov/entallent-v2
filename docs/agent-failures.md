@@ -2425,10 +2425,10 @@ These entries are retained as historical evidence but are not active work becaus
 
 ## 2026-09-29: PR #7 push and CI omitted integration targets
 
-- Symptom: The first push pre-push harness lacked `DATABASE_URL`; after a local retry succeeded, GitHub's quality job failed with `database integration target required`.
+- Symptom: The first push pre-push harness lacked `DATABASE_URL`; GitHub's quality job then failed first without database services and again because its Redis URL used DB 0 while worker isolation guards require DB 15.
 - Expected: The required harness gate runs against a named, migrated PostgreSQL database and Redis in both local push and CI.
 - Root cause layer: workflow and environment
-- Harness fix: Pass isolated local database and Redis targets to the push hook; give the CI quality job PostgreSQL/Redis services, test environment variables, and a migration step before `harness:check`.
+- Harness fix: Pass isolated local database and Redis targets to the push hook; give the CI quality job PostgreSQL/Redis services, Redis DB 15, test environment variables, and a migration step before `harness:check`.
 - Regression check: Re-run `pnpm harness:check -- --base 49f9845` locally with isolated targets and require both PR checks to pass on the amended head.
 - Status: open
 

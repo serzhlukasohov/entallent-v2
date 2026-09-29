@@ -42,7 +42,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/entalent_test
-      REDIS_URL: redis://localhost:6379
+      REDIS_URL: redis://localhost:6379/15
       OPENAI_API_KEY: sk-test-placeholder
       FIELD_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
       NODE_ENV: test
