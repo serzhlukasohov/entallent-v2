@@ -2430,7 +2430,7 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: workflow and environment
 - Harness fix: Pass isolated local database and Redis targets to the push hook; give the CI quality job PostgreSQL/Redis services, Redis DB 15, test environment variables, and a migration step before `harness:check`.
 - Regression check: Re-run `pnpm harness:check -- --base 49f9845` locally with isolated targets and require both PR checks to pass on the amended head.
-- Status: open
+- Status: fixed
 
 ## 2026-09-29: Railway SSH and local restore verification used incompatible defaults
 
