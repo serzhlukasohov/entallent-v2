@@ -827,6 +827,24 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: Worker processor tests reject missing scope and prove the proactive scheduler is not called; PostgreSQL/BullMQ onboarding integration proves an unrelated Unit filter queues nothing and the selected intent delivers once.
 - Status: open
 
+## 2026-10-01: Scoring review used the legacy seeded topic catalog
+
+- Symptom: Initial rubric proposals used legacy seeded topics before reconciliation with the Product Owner's intended twelve-topic set.
+- Expected: Rubric approval starts from the explicitly approved canonical topic catalog.
+- Root cause layer: context
+- Harness fix: Use SCORING-POLICY.md as the approved topic source; retain brownfield mapping and explicit calibration approval status.
+- Regression check: Verify twelve canonical meanings against the approved catalog before proposing rubrics or migrating definitions.
+- Status: fixed
+
+## 2026-10-01: Documentation harness launcher attempted implicit installation
+
+- Symptom: pnpm attempted installation and generated unresolved allowBuilds entries; sandboxed tsx could not create its IPC socket.
+- Expected: Documentation verification uses provisioned tooling without changing dependency policy.
+- Root cause layer: tooling
+- Harness fix: Run the harness with provisioned Node/tsx, restore only generated configuration changes, and keep generated caches outside the checkout. Add a durable no-install launcher in a separate tooling task.
+- Regression check: Reflection and documentation check run without changes to pnpm-workspace.yaml.
+- Status: open
+
 ## 2026-09-27: Slack bot lacked DM creation scope during first-contact preparation
 
 - Symptom: The selected Manager and Employee onboarding intents failed before outbound message creation because Slack `conversations.open` returned `missing_scope`; the bot lacked `im:write`.

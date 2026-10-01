@@ -71,13 +71,15 @@ The product completion and reporting unit is a Pulse Index: exactly three questi
 
 The MVP pulse check has four regular indices and one end-of-cycle engagement index:
 
-| Pulse Index | Canonical question stable keys |
+| Pulse Index | Approved canonical topics / Engagement stable keys |
 | --- | --- |
-| Autonomy | `q12_expectations`, `q12_strengths_opportunity`, `q12_opinions_count` |
-| Belonging | `wellbeing_at_work`, `q12_supervisor_cares`, `belonging_psychological_safety` |
-| Growth | `role_clarity`, `professional_growth`, `q12_progress_discussion` |
-| Purpose | `q12_recognition`, `purpose_meaning`, `purpose_contribution` |
+| Autonomy | A1 Control over work; A2 Voice and influence; A3 Clarity of expectations |
+| Belonging | B1 Team belonging; B2 Psychological safety; B3 Manager support |
+| Growth | G1 Skill development; G2 Useful feedback; G3 Future development opportunities |
+| Purpose | P1 Personal meaning; P2 Visibility of contribution; P3 Recognition of good work |
 | Engagement | `engagement_nps` (Recommendation Likelihood), `engagement_motivation`, `engagement_current` |
+
+The twelve open-ended canonical meanings and scoring rubrics were approved on 2026-10-01 in [Scoring Policy 1.0.0](../_bmad-output/specs/spec-insight-analysis-v2/SCORING-POLICY.md). A1–B3 are catalog topic IDs, not existing database stable keys. The former seeded meanings remain implementation history; changed topics need versioned definitions and must not silently inherit old answers. Engagement retains its separate contract below.
 
 Engagement questions are eligible only during the half-open interval `[periodEnd - 14 calendar days, periodEnd)`. Each answer must be an integer explicitly stated by the employee from 1 through 10. Polarity, sentiment, or an inferred score must not substitute for an explicit answer.
 
