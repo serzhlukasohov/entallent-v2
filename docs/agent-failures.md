@@ -838,10 +838,10 @@ These entries are retained as historical evidence but are not active work becaus
 
 ## 2026-10-01: Documentation harness launcher attempted implicit installation
 
-- Symptom: pnpm attempted installation and generated unresolved allowBuilds entries; sandboxed tsx could not create its IPC socket.
+- Symptom: pnpm attempted installation and generated unresolved allowBuilds entries; sandboxed tsx could not create its IPC socket. The worktree pre-push hook also attempted to reinstall shared modules and stopped because no TTY was available.
 - Expected: Documentation verification uses provisioned tooling without changing dependency policy.
 - Root cause layer: tooling
-- Harness fix: Run the harness with provisioned Node/tsx, restore only generated configuration changes, and keep generated caches outside the checkout. Add a durable no-install launcher in a separate tooling task.
+- Harness fix: Run the harness with provisioned Node/tsx, restore only generated configuration changes, and keep generated caches outside the checkout. For the documentation-only push, disable pnpm's implicit dependency installation while retaining the actual pre-push harness. Add a durable no-install launcher in a separate tooling task.
 - Regression check: Reflection and documentation check run without changes to pnpm-workspace.yaml.
 - Status: open
 
