@@ -16,9 +16,9 @@ export function validateQuestionBundleComposition(
     || QUESTIONNAIRE_LABELS.test(draft['text'])
     || (draft['text'].match(/[?？]/g)?.length ?? 0) !== 1
     || !Array.isArray(draft['statements'])
-    || requiredQuestionIds.length !== 3
-    || new Set(requiredQuestionIds).size !== 3
-    || draft['statements'].length !== 3) {
+    || requiredQuestionIds.length < 1 || requiredQuestionIds.length > 3
+    || new Set(requiredQuestionIds).size !== requiredQuestionIds.length
+    || draft['statements'].length !== requiredQuestionIds.length) {
     throw new Error('v2_confirmation_composition_invalid');
   }
   const text = draft['text'] as string;
@@ -39,8 +39,8 @@ export function validateQuestionBundleComposition(
     }
     statements.push({ surveyQuestionId: entry['surveyQuestionId'], statement: displayed });
   }
-  if (new Set(statements.map((statement) => statement.surveyQuestionId)).size !== 3
-    || new Set(statements.map((statement) => statement.statement)).size !== 3
+  if (new Set(statements.map((statement) => statement.surveyQuestionId)).size !== statements.length
+    || new Set(statements.map((statement) => statement.statement)).size !== statements.length
     || requiredQuestionIds.some((id) => !statements.some((statement) => statement.surveyQuestionId === id))) {
     throw new Error('v2_confirmation_composition_invalid');
   }

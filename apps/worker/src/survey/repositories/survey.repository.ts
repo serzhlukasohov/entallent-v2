@@ -511,19 +511,23 @@ export class SurveyRepository implements SurveyRepositoryPort {
       .limit(1);
 
     // Find active definition for this tenant (tenant-specific first, then global)
-    const [tenantDef] = await this.db.client
+    const tenantDefs = await this.db.client
       .select()
       .from(surveyDefinitions)
       .where(and(eq(surveyDefinitions.tenantId, tenantId), eq(surveyDefinitions.active, true)))
-      .limit(1);
+      .limit(2);
+    if (tenantDefs.length > 1) throw new Error('survey_active_definition_ambiguous');
+    const [tenantDef] = tenantDefs;
 
-    const [globalDef] = tenantDef
+    const globalDefs = tenantDef
       ? [tenantDef]
       : await this.db.client
           .select()
           .from(surveyDefinitions)
           .where(and(isNull(surveyDefinitions.tenantId), eq(surveyDefinitions.active, true)))
-          .limit(1);
+          .limit(2);
+    if (globalDefs.length > 1) throw new Error('survey_active_definition_ambiguous');
+    const [globalDef] = globalDefs;
 
     if (!globalDef) return existing ? mapWindow(existing) : null;
 
@@ -544,6 +548,18 @@ export class SurveyRepository implements SurveyRepositoryPort {
       ? cohorts[0]
       : null;
     if (!cohort) {
+      if (globalDef.version === 'v2-policy-1.0.0') {
+        const [binding] = existing?.surveyDefinitionId === globalDef.id
+          ? await this.db.client.select({ id: surveyWindowScoringPolicies.surveyWindowId })
+            .from(surveyWindowScoringPolicies)
+            .where(and(
+              eq(surveyWindowScoringPolicies.surveyWindowId, existing.id),
+              eq(surveyWindowScoringPolicies.tenantId, tenantId),
+            )).limit(1)
+          : [];
+        if (binding) return mapWindow(existing!);
+        throw new Error('v2_reporting_cohort_missing');
+      }
       if (!existing && currentTeam) {
         const quarterStartMonth = Math.floor(now.getUTCMonth() / 3) * 3;
         const periodStart = new Date(Date.UTC(now.getUTCFullYear(), quarterStartMonth, 1));

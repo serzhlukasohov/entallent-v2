@@ -8,7 +8,7 @@ import {
   surveyQuestionWorkingInsights, surveyScoringPolicies, surveyWindowScoringPolicies,
   surveyWindows, tenants, users,
 } from '@entalent/database';
-import { SurveyEvidenceExtractionUseCase, V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
+import { SurveyEvidenceExtractionUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { DatabaseService } from '../database/database.service';
 import { QuestionCutoffProcessor } from './question-cutoff.processor';
@@ -46,7 +46,7 @@ describe.skipIf(!enabled)('committed survey evidence recovery on PostgreSQL and 
         tenantId, name: 'Evidence recovery', version: `fixture-${randomUUID()}`,
       }).returning();
       const questions = await db.insert(surveyQuestions).values(
-        Object.entries(V2_QUESTION_GROUP_BY_STABLE_KEY).map(([stableKey, questionGroup], index) => ({
+        Object.entries(LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY).map(([stableKey, questionGroup], index) => ({
           surveyDefinitionId: definition!.id, stableKey, title: stableKey,
           canonicalMeaning: `Synthetic ${stableKey}`, dimension: questionGroup,
           questionGroup, version: 'v2', displayOrder: index,

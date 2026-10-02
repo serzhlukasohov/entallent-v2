@@ -401,7 +401,7 @@ export class OpenAiProvider implements AiProviderPort {
     responseLanguage: string,
   ): Promise<QuestionBundleComposition> {
     const raw = await this.complete(
-      buildQuestionBundleSystemPrompt(responseLanguage),
+      buildQuestionBundleSystemPrompt(responseLanguage, questions.length),
       buildQuestionBundleUserPrompt(turns, questions),
       this.generationModel,
       2048,
@@ -417,7 +417,7 @@ export class OpenAiProvider implements AiProviderPort {
     bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
   ): Promise<QuestionBundleVerdict> {
     const raw = await this.complete(
-      buildQuestionBundleInterpretSystemPrompt(),
+      buildQuestionBundleInterpretSystemPrompt(bundle.components.length),
       buildQuestionBundleInterpretUserPrompt(turns, bundle),
       this.analysisModel,
       512,

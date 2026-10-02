@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
+import { LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
 import { QuestionInsightRepository } from './question-insight.repository';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -16,7 +16,7 @@ const FIRST_MESSAGE = '88888888-8888-4888-8888-888888888888';
 const SECOND_MESSAGE = '99999999-9999-4999-8999-999999999999';
 const REOPEN_MESSAGE = '99999999-9999-4999-8999-999999999998';
 const groups = ['autonomy', 'growth', 'purpose', 'belonging'];
-const questionKeys = Object.entries(V2_QUESTION_GROUP_BY_STABLE_KEY);
+const questionKeys = Object.entries(LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY);
 
 describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL', () => {
   const client = databaseUrl ? postgres(databaseUrl, { max: 1 }) : null;
@@ -26,6 +26,7 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
 
   beforeAll(async () => {
     if (!client) return;
+    await client`create temp table survey_definitions (id uuid primary key, version text not null)`;
     await client`create temp table survey_windows (
       id uuid primary key, tenant_id uuid not null, user_id uuid not null,
       survey_definition_id uuid not null, status text not null,
@@ -34,10 +35,11 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
     await client`create temp table survey_questions (
       id uuid primary key, survey_definition_id uuid not null,
       stable_key text not null, question_group text not null,
-      response_type text not null, version text not null
+      response_type text not null, version text not null, title text, canonical_meaning text
     )`;
     await client`create temp table survey_scoring_policies (
-      id uuid primary key, tenant_id uuid not null, rubrics jsonb not null
+      id uuid primary key, tenant_id uuid not null, rubrics jsonb not null,
+      version text not null default 'synthetic-legacy'
     )`;
     await client`create temp table survey_window_scoring_policies (
       survey_window_id uuid primary key, tenant_id uuid not null, scoring_policy_id uuid not null
@@ -50,6 +52,11 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
     await client`create temp table survey_evidence (
       id uuid primary key, survey_window_id uuid not null,
       survey_question_id uuid not null, user_id uuid not null
+    )`;
+    await client`create temp table survey_question_insights (
+      tenant_id uuid not null, user_id uuid not null, survey_window_id uuid not null,
+      survey_question_id uuid not null, question_version text not null,
+      confirmed_at timestamptz not null, is_current boolean not null
     )`;
     await client`create temp table survey_group_states (
       id uuid primary key, survey_window_id uuid not null,
@@ -88,10 +95,12 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
         : `aaaaaaaa-aaaa-4aaa-8aaa-${String(groupIndex * 3 + number).padStart(12, '0')}`,
     })));
     const rubrics = Object.fromEntries(questionRows.map((question) => [question.stableKey, rubric]));
+    await client`insert into survey_definitions values (${DEFINITION}, 'synthetic-legacy')`;
     await client`insert into survey_windows values
       (${WINDOW}, ${TENANT}, ${PERSON}, ${DEFINITION}, 'active',
-       '2026-09-01T00:00:00Z', '2026-10-01T00:00:00Z')`;
-    await client`insert into survey_scoring_policies values (${POLICY}, ${TENANT}, ${JSON.stringify(rubrics)}::jsonb)`;
+       '2026-09-01T00:00:00Z', '2026-11-01T00:00:00Z')`;
+    await client`insert into survey_scoring_policies (id, tenant_id, rubrics)
+      values (${POLICY}, ${TENANT}, ${JSON.stringify(rubrics)}::jsonb)`;
     await client`insert into survey_window_scoring_policies values (${WINDOW}, ${TENANT}, ${POLICY})`;
     for (const question of questionRows) {
       await client`insert into survey_questions values
@@ -109,6 +118,34 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
 
   afterAll(async () => {
     await client?.end();
+  });
+
+  it('rejects a legacy definition bound to approved policy version 1.0.0', async () => {
+    if (!client || !repository) return;
+    await client`update survey_scoring_policies set version = '1.0.0' where id = ${POLICY}`;
+    try {
+      await expect(repository.getWindowMode({ tenantId: TENANT, userId: PERSON, surveyWindowId: WINDOW }))
+        .rejects.toThrow('v2_scoring_policy_incomplete');
+    } finally {
+      await client`update survey_scoring_policies set version = 'synthetic-legacy' where id = ${POLICY}`;
+    }
+  });
+
+  it('rejects an approved V2 definition without a window policy binding', async () => {
+    if (!client || !repository) return;
+    await client`delete from survey_window_scoring_policies where survey_window_id = ${WINDOW}`;
+    await client`update survey_definitions set version = 'v2-policy-1.0.0' where id = ${DEFINITION}`;
+    try {
+      await expect(repository.getWindowMode({ tenantId: TENANT, userId: PERSON, surveyWindowId: WINDOW }))
+        .rejects.toThrow('v2_window_policy_binding_missing');
+    } finally {
+      await client`update survey_definitions set version = 'synthetic-legacy' where id = ${DEFINITION}`;
+      const legacyMode = await repository.getWindowMode({
+        tenantId: TENANT, userId: PERSON, surveyWindowId: WINDOW,
+      });
+      await client`insert into survey_window_scoring_policies values (${WINDOW}, ${TENANT}, ${POLICY})`;
+      expect(legacyMode).toBe('v1');
+    }
   });
 
   it('keeps working meaning scoped, durable, and idempotent without writing V1 evidence', async () => {
@@ -185,11 +222,38 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
     await expect(repository.getWindowMode(scope)).rejects.toThrow('v2_window_contains_legacy_open_ended_data');
   });
 
+  it('rejects old in-window turns before and after a finalized topic reopens', async () => {
+    if (!client || !repository) return;
+    const questionId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002';
+    const oldMessageId = '99999999-9999-4999-8999-999999999991';
+    const newMessageId = '99999999-9999-4999-8999-999999999992';
+    const delayedOldId = '99999999-9999-4999-8999-999999999993';
+    await client`insert into messages values
+      (${oldMessageId}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-16T00:00:00Z', null),
+      (${newMessageId}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-18T00:00:00Z', null),
+      (${delayedOldId}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-16T12:00:00Z', null)`;
+    await client`insert into survey_question_working_insights (
+      tenant_id, user_id, survey_window_id, survey_question_id, question_version,
+      status, confirmed_at, finalized_at, purged_at)
+      values (${TENANT}, ${PERSON}, ${WINDOW}, ${questionId}, 'v2', 'confirmed',
+        '2026-09-17T00:00:00Z', '2026-09-17T00:01:00Z', '2026-09-17T00:01:00Z')`;
+    await client`insert into survey_question_insights values
+      (${TENANT}, ${PERSON}, ${WINDOW}, ${questionId}, 'v2', '2026-09-17T00:00:00Z', true)`;
+    const base = { tenantId: TENANT, userId: PERSON, conversationId: CONVERSATION,
+      surveyWindowId: WINDOW, surveyQuestionId: questionId, questionVersion: 'v2',
+      meaning: 'A later detail.', sufficientMeaning: true };
+    expect(await repository.captureMeaning({ ...base, sourceMessageId: oldMessageId })).toBe('ignored');
+    expect(await repository.captureMeaning({ ...base, sourceMessageId: newMessageId })).toBe('captured');
+    expect(await repository.captureMeaning({ ...base, sourceMessageId: delayedOldId })).toBe('ignored');
+    expect(await client`select source_message_ids from survey_question_working_insights
+      where survey_question_id = ${questionId}`).toMatchObject([{ source_message_ids: [newMessageId] }]);
+  });
+
   it('rejects delayed capture after the window cutoff', async () => {
     if (!client || !repository) return;
     await client`update survey_windows set period_end = '2026-09-20T00:00:00Z'
       where id = ${WINDOW}`;
-    const questionId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002';
+    const questionId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000003';
     expect(await repository.captureMeaning({
       tenantId: TENANT, userId: PERSON, conversationId: CONVERSATION,
       surveyWindowId: WINDOW, surveyQuestionId: questionId,

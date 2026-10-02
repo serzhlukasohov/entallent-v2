@@ -3,7 +3,7 @@ import { Queue, QueueEvents, Worker } from 'bullmq';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
+import { LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
 import { MessageSendProcessor } from '../../message-send/message-send.processor';
 import { ConversationRepository } from '../../conversation/repositories/conversation.repository';
 import { QuestionInsightRepository } from './question-insight.repository';
@@ -25,6 +25,7 @@ const questionIds = [
 ];
 const statements = ['I can choose my methods.', 'I can set priorities.', 'I can challenge decisions.'];
 const displayedText = `I heard that ${statements.join(' ')} Is that fair?`;
+const activePeriodEnd = new Date(Date.now() + 86_400_000).toISOString();
 const secondaryIds = (groupIndex: number) => [1, 2, 3].map((number) =>
   `aaaaaaaa-aaaa-4aaa-8aaa-${String(groupIndex * 3 + number).padStart(12, '0')}`);
 
@@ -36,6 +37,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
 
   beforeAll(async () => {
     if (!client) return;
+    await client`create temp table survey_definitions (id uuid primary key, version text not null)`;
     await client`create temp table survey_windows (
       id uuid primary key, tenant_id uuid not null, user_id uuid not null,
       survey_definition_id uuid not null, status text not null,
@@ -45,10 +47,12 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
     await client`create temp table survey_questions (
       id uuid primary key, survey_definition_id uuid not null,
       stable_key text not null, question_group text not null,
-      response_type text not null, version text not null, display_order integer not null
+      response_type text not null, version text not null, display_order integer not null,
+      title text, canonical_meaning text
     )`;
     await client`create temp table survey_scoring_policies (
-      id uuid primary key, tenant_id uuid not null, rubrics jsonb not null
+      id uuid primary key, tenant_id uuid not null, rubrics jsonb not null,
+      version text not null default 'synthetic-legacy'
     )`;
     await client`create temp table survey_window_scoring_policies (
       survey_window_id uuid primary key, tenant_id uuid not null, scoring_policy_id uuid not null
@@ -104,16 +108,18 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       evidence_captured_count integer not null default 1,
       resulted_in_coverage boolean, updated_at timestamptz not null default now()
     )`;
+    await client`insert into survey_definitions values (${definitionId}, 'synthetic-legacy')`;
     await client`insert into survey_windows
       (id, tenant_id, user_id, survey_definition_id, status, period_end) values
-      (${surveyWindowId}, ${tenantId}, ${userId}, ${definitionId}, 'active', '2026-10-01T00:00:00Z')`;
+      (${surveyWindowId}, ${tenantId}, ${userId}, ${definitionId}, 'active', ${activePeriodEnd})`;
     const groups = ['autonomy', 'growth', 'purpose', 'belonging'];
-    const questionKeys = Object.entries(V2_QUESTION_GROUP_BY_STABLE_KEY);
+    const questionKeys = Object.entries(LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY);
     const rubric = { version: 'approved-v1', instructions: 'Assess meaning.', anchors: [
       { score: 0, description: 'Low' }, { score: 100, description: 'High' },
     ] };
     const rubrics = Object.fromEntries(questionKeys.map(([key]) => [key, rubric]));
-    await client`insert into survey_scoring_policies values (${policyId}, ${tenantId}, ${JSON.stringify(rubrics)}::jsonb)`;
+    await client`insert into survey_scoring_policies (id, tenant_id, rubrics)
+      values (${policyId}, ${tenantId}, ${JSON.stringify(rubrics)}::jsonb)`;
     await client`insert into survey_window_scoring_policies values (${surveyWindowId}, ${tenantId}, ${policyId})`;
     await client`insert into messages values
       (${promptMessageId}, ${tenantId}, ${userId}, ${conversationId}, 'outbound', ${displayedText},
@@ -169,7 +175,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
     expect(await repository.findReadyQuestionBundle({ tenantId, userId })).toBeNull();
     await expect(repository.stageQuestionConfirmationBundle(input))
       .rejects.toThrow('v2_confirmation_bundle_scope_mismatch');
-    await client`update survey_windows set period_end = '2026-10-01T00:00:00Z'
+    await client`update survey_windows set period_end = ${activePeriodEnd}
       where id = ${surveyWindowId}`;
     await client`update survey_question_working_insights set working_summary = 'A newer meaning.'
       where survey_question_id = ${questionIds[2]}`;
@@ -436,7 +442,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
     expect(await repository.findPendingQuestionClarification({ tenantId, userId, conversationId, inboundMessageId: clarificationInboundId })).toBeNull();
     expect(await client`select displayed_text, components from survey_question_confirmation_bundles
       where id = ${growthBundleId}`).toMatchObject([{ displayed_text: null, components: null }]);
-    await client`update survey_windows set period_end = '2026-10-01T00:00:00Z'
+    await client`update survey_windows set period_end = ${activePeriodEnd}
       where id = ${surveyWindowId}`;
   });
 
@@ -551,7 +557,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       const text = `I heard that ${meanings.join(' ')} Is that fair?`;
       await client`insert into survey_windows (id, tenant_id, user_id, survey_definition_id, status, period_end)
         values (${delayedWindowId}, ${tenantId}, ${userId}, ${definitionId}, 'active',
-          '2026-10-01T00:00:00Z')`;
+          ${activePeriodEnd})`;
       await client`insert into survey_window_scoring_policies values
         (${delayedWindowId}, ${tenantId}, ${policyId})`;
       for (const [index, id] of ids.entries()) {
@@ -646,7 +652,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         add column external_message_id text,
         add column external_thread_id text`;
       await client`insert into survey_windows values
-        (${queuedWindowId}, ${tenantId}, ${userId}, ${definitionId}, 'active', '2026-10-01T00:00:00Z')`;
+        (${queuedWindowId}, ${tenantId}, ${userId}, ${definitionId}, 'active', ${activePeriodEnd})`;
       await client`insert into survey_window_scoring_policies values
         (${queuedWindowId}, ${tenantId}, ${policyId})`;
       await client`insert into messages (

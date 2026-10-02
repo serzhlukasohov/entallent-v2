@@ -16,6 +16,60 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-10-02: Multiple active tenant definitions made V2 routing arbitrary
+
+- Symptom: V2 activation could leave an older tenant survey definition active, while `findOrCreateActiveWindow` selected one active definition with an unordered `LIMIT 1`. The activation script also accepted a global V2 definition, which could lose to a tenant-specific V1 definition at runtime.
+- Expected: A Pulse employee has one deterministic active tenant definition; approved V2 activation uses a definition owned by that tenant and refuses a conflicting tenant definition until cutover is explicit.
+- Root cause layer: architecture and verification
+- Harness fix: Detect multiple active definitions at window selection, require the approved V2 definition's exact tenant, and reject activation while another tenant definition is active. Add repository and activation integration cases.
+- Regression check: Run `survey.repository.test.ts` and `scripts/activate-v2-scoring-policy.integration.test.ts` on migrated PostgreSQL.
+- Status: fixed
+
+## 2026-10-02: Unbound V2 window could enter the V1 evidence path
+
+- Symptom: With an active approved V2 definition but no open reporting cohort, window creation could make a team-only window without a policy binding; `getWindowMode` then returned `v1` for that V2 definition.
+- Expected: Approved V2 questions never run through V1 evidence or scoring without a bound Scoring Policy; an already-bound V2 window remains usable without a reporting cohort.
+- Root cause layer: architecture and verification
+- Harness fix: Reject creation of an unbound V2 window and reject an existing V2 window without a binding at mode selection. Keep a bound existing window available. Add repository and PostgreSQL regression cases.
+- Regression check: Run `survey.repository.test.ts`, `question-insight.repository.capture.integration.test.ts`, and the opt-in approved-policy BullMQ conversation case.
+- Status: fixed
+
+## 2026-10-02: Approved scoring probe reported success without checking reference scores
+
+- Symptom: The `--approved-only` bridge labeled any in-range integer response as passed even when it differed from the Product-approved example score.
+- Expected: The diagnostic receipt states the actual observed and approved scores and does not imply calibration acceptance without an approved tolerance.
+- Root cause layer: verification
+- Harness fix: Report exact reference matches and mark calibration acceptance unassessed; add a separate synthetic out-of-example contrast probe.
+- Regression check: Run both bridge modes after named PostgreSQL/Redis preflight and inspect structured match counts and low/high ordering.
+- Status: fixed
+
+## 2026-10-02: IA-037 tracker treated a removed queue-cleanup script as current
+
+- Symptom: The requirement row cited a successful historical Redis redaction script without saying it had been removed from the PR #7 worktree.
+- Expected: Acceptance evidence distinguishes a past dry run from a tool and deployment step available in the current PR.
+- Root cause layer: context
+- Harness fix: Cross-check tracker claims about operational tools against current tracked files and the implementation plan; date production observations.
+- Regression check: During IA acceptance review, compare each named tool in the tracker with `rg --files` and any recorded scope-removal decision.
+- Status: fixed
+
+## 2026-10-02: Confirmed unscored insight vanished from final analysis input
+
+- Symptom: The final selector omitted a current `insufficient_evidence` Question Insight, including its privacy-safe summary.
+- Expected: Final analysis receives the qualitative summary with null score, while intermediate `3/3` and trends remain scored-only.
+- Root cause layer: architecture
+- Harness fix: Carry outcome and nullable score through the shared selector and repository; retain a migrated-PostgreSQL regression that supersedes an earlier scored row with an unscored result.
+- Regression check: Run the focused selector test and `question-insight.repository.migrated.integration.test.ts` against a migrated PostgreSQL database.
+- Status: fixed
+
+## 2026-10-02: Isolated PostgreSQL test used the wrong local role
+
+- Symptom: The first migrated-PostgreSQL rerun failed with `role "postgres" does not exist` despite the isolated server being ready.
+- Expected: The test uses the actual named isolated database owner.
+- Root cause layer: environment
+- Harness fix: Read `current_user` from the isolated target before constructing the test URL; use `serzh` for this local cluster.
+- Regression check: `psql -h 127.0.0.1 -p 55434 -d entalent_review -Atc 'select current_user'` before the focused test.
+- Status: fixed
+
 ## 2026-09-29: V2 implementation expanded into adjacent runtime recovery
 
 - Symptom: The local PR #7 implementation grew to 265 changed or untracked files, including generic memory, profile, style, follow-up, and V1 report recovery that the approved V2 spec does not directly request.
@@ -589,6 +643,51 @@ These entries are retained as historical evidence but are not active work becaus
 
 ## Fixed Failures
 
+## 2026-10-02: Unscored queue fixture assumed partial trends before cutoff
+
+- Symptom: The first approved-policy BullMQ `insufficient_evidence` scenario expected two intermediate trends and failed because the selector returned none.
+- Expected: A null score blocks the entire three-question intermediate Index and its trends; after cutoff the final inputs retain the safe unscored text plus two scored question trends.
+- Root cause layer: verification
+- Harness fix: Add the full queue-to-finalization fixture and assert the separate intermediate and final-stage outputs, including null score and no partial Index score.
+- Regression check: Named PostgreSQL/Redis preflight, focused `insufficientEvidence=true` case, then full opt-in conversation/recovery/backfill set; 28/28 passed.
+- Status: fixed
+
+## 2026-10-02: Approved-policy queue fixture covered only Autonomy and mismatched its meanings
+
+- Symptom: The BullMQ fixture tested the approved A1–B3 policy only for Autonomy; its three synthetic statements did not align with A1–A3 meaning order. Other Index cases used legacy fixture policy.
+- Expected: Each approved Index has a representative queue scenario whose three confirmed meanings match its active topic order and whose finalization uses the approved policy.
+- Root cause layer: verification and context
+- Harness fix: Add approved-policy agreement cases for Growth, Purpose, and Belonging; align the four approved fixtures with A1–B3; assert P3 `recognition` reaches the final row.
+- Regression check: Named PostgreSQL/Redis preflight followed by the opt-in V2 conversation/recovery/backfill files; 27/27 must pass on migrated PostgreSQL and Redis `/15`.
+- Status: fixed
+
+## 2026-10-02: Bundle model probe still used superseded V2 topics
+
+- Symptom: The bridge reported four Index Bundle cases while using the old seeded question keys and meanings, including the replaced seven-day recognition event.
+- Expected: Model acceptance scenarios represent the approved Scoring Policy 1.0.0 catalog and cover all twelve A1–B3 topics.
+- Root cause layer: verification and context
+- Harness fix: Align all four Index fixtures with approved topic keys and meanings; assert exact catalog coverage and group membership against the generated policy JSON before the model calls.
+- Regression check: `pnpm exec tsc -p scripts/tsconfig.v2-policy.json` and a preflighted `node --import tsx scripts/verify-v2-model-bridge.ts` synthetic model run.
+- Status: fixed
+
+## 2026-10-02: Implementation plan contradicted the approved unscored outcome
+
+- Symptom: The plan still required a valid numeric score for every final analytical row, while the approved SPEC and Scoring Policy allow a confirmed `insufficient_evidence` insight with a null score.
+- Expected: Implementation and acceptance guidance describe the same scored and unscored outcomes as the approved contract.
+- Root cause layer: context and verification
+- Harness fix: Reconcile the plan's scoring stage and invariant with SPEC IA-024/IA-045 before assessing finalization and report inputs.
+- Regression check: Compare plan invariant 2 with SPEC sections covering `insufficient_evidence` and the selector's null-score tests during PR scope review.
+- Status: fixed
+
+## 2026-10-02: P3 scoring response category was rejected before finalization
+
+- Symptom: The full synthetic model probe twice stopped at `purpose_recognition` with `rootCauseCategory` enum validation failure; the original invalid value was redacted. A focused mock returning `recognition` reproduced the same failure.
+- Expected: A valid recognition-related response for the approved P3 meaning can pass the scoring response, finalizer, and PostgreSQL category constraint without admitting arbitrary model strings.
+- Root cause layer: architecture and verification
+- Harness fix: Add `recognition` consistently to the bounded prompt, Zod contract, application validator, and forward PostgreSQL check; increment prompt provenance and retain the focused provider and migrated-database regressions.
+- Regression check: Run the provider recognition test, migrated `question-insight.repository` fixture, and the 12-topic model generalization probe after named preflight.
+- Status: fixed
+
 ## 2026-09-26: onboarding delivery projection test lagged new receipt fields
 
 - Symptom: Focused worker tests failed because the outbound delivery projection assertion omitted the newly selected Slack receipt and onboarding binding fields.
@@ -940,7 +1039,8 @@ These entries are retained as historical evidence but are not active work becaus
 - Expected: Package builds that consume sibling package `dist` artifacts run after those dependencies finish building.
 - Root cause layer: workflow
 - Harness fix: After changing a package export, build that dependency before any consumer typecheck/build; keep parallelism only for checks that do not read sibling `dist` output.
-- Regression check: Sequential dependency builds, then `pnpm --filter @entalent/worker typecheck` and `pnpm --filter @entalent/worker build`.
+- Regression check: Sequential dependency builds, then `pnpm --filter @entalent/ai-openai test -- openai-provider.test.ts`, `pnpm --filter @entalent/worker typecheck`, and `pnpm --filter @entalent/worker build`.
+- Recurrence (2026-10-02): The focused provider test still read the previous `@entalent/contracts/dist` after its source changed; building contracts first made all 115 tests pass. The full harness also built dependencies in order.
 - Status: fixed
 
 ## 2026-09-06: Exclusion verdict schema lacked prompt semantics
@@ -2439,4 +2539,94 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: environment and tooling
 - Harness fix: Use a dedicated known-hosts file for direct Railway SSH and validate the restricted backup with `pg_restore` on the production PostgreSQL image.
 - Regression check: Require internal `SELECT 1`/Redis `PING` and a successful remote `pg_restore -l` before migration.
+- Status: fixed
+
+## 2026-10-01: Production conversation failure hid its cause
+
+- Symptom: One September 30 production conversation job failed on all three attempts; no committed turn or reply followed. The worker logged only `conversation_processing_failed`, and its LLM run rows have no error code.
+- Expected: A failed production turn has a safe, actionable error code and can be distinguished from a V2 scoring failure without reading conversation text.
+- Root cause layer: verification
+- Harness fix: Preserve a sanitized failure code at the conversation processor boundary and add a narrow failure-path check before replaying any production job.
+- Regression check: Review failed conversation jobs against `conversation_turn_effects` and `llm_runs`; require an error code for each uncommitted failed turn.
+- Status: open
+
+## 2026-10-02: V2 queue scenarios were silently skipped by the harness
+
+- Symptom: The required full harness passed while all 22 BullMQ conversation scenarios were skipped.
+- Expected: Final V2 evidence includes a real local queue run against isolated PostgreSQL and Redis DB 15.
+- Root cause layer: verification
+- Harness fix: Run the queue suite explicitly with `V2_CONVERSATION_QUEUE_TEST=1` and record its pass count alongside the harness receipt; make that flag part of a future scoped harness gate.
+- Regression check: `V2_CONVERSATION_QUEUE_TEST=1 DATABASE_URL=... REDIS_URL=redis://127.0.0.1:6381/15 pnpm --filter @entalent/worker test:focused src/conversation/v2-conversation-flow.integration.test.ts` must report 22 passed and zero skipped.
+- Status: open
+
+## 2026-10-02: Local V2 integration depended on unavailable Docker Desktop
+
+- Symptom: Docker Compose could not reach its daemon, so the intended local database and Redis fixtures did not start.
+- Expected: Integration verification runs on named, isolated local services without touching production or existing data.
+- Root cause layer: environment
+- Harness fix: Use temporary PostgreSQL 17 with pgvector and Redis DB 15 instances when Docker is unavailable, and identify those targets in the verification record.
+- Regression check: Check both targets with `pg_isready` and `redis-cli PING` before database and queue tests.
+- Status: fixed
+
+## 2026-10-02: V2 policy tests exposed stale database and fixture assumptions
+
+- Symptom: The old map trigger rejected approved topic keys, a fixed test cutoff expired, and a fractional score fixture failed after integer enforcement.
+- Expected: Fresh migrated PostgreSQL accepts the approved definition and time-independent fixtures exercise integer scoring.
+- Root cause layer: architecture and verification
+- Harness fix: Add forward migration 0047 for the versioned map; use a rolling future cutoff and integer fixture score.
+- Regression check: Apply all migrations to a fresh local database, then run the activation integration, migrated repository, and queue tests.
+- Status: fixed
+
+## 2026-10-02: Scoring prompt omitted approved topic meaning and examples
+
+- Symptom: The approved policy payload contained canonical meanings and reviewed examples, but the model received only instructions and anchors.
+- Expected: The active scoring call supplies the applicable approved rubric, meaning, and calibration references with a versioned prompt.
+- Root cause layer: architecture and verification
+- Harness fix: Carry the approved rubric fields through the existing repository port and prompt, and assert their presence in the adapter test.
+- Regression check: Run the OpenAI provider test and the approved-policy model bridge on the checked-in payload.
+- Status: fixed
+
+## 2026-10-02: Legacy model bridge blocked approved scoring verification
+
+- Symptom: The synthetic model bridge stopped at `compose_bundle_belonging` because one model output failed the Bundle composition validator before any approved scoring call ran.
+- Expected: Approved scoring can be checked independently of stochastic legacy Bundle composition.
+- Root cause layer: verification
+- Harness fix: Add an `--approved-only` path to the existing bridge and preserve the legacy path for its own quality checks.
+- Regression check: Run `node --env-file=.env --import tsx scripts/verify-v2-model-bridge.ts --approved-only`; it must report 14 scored approved examples and one unscored outcome.
+- Status: fixed
+
+## 2026-10-02: Package typecheck read stale application declarations
+
+- Symptom: AI and script typechecks did not see newly added rubric fields until the application package was rebuilt.
+- Expected: Dependent packages typecheck against current shared declarations.
+- Root cause layer: workflow
+- Harness fix: Build `@entalent/application` before focused dependent typechecks; the full harness already does this in dependency order.
+- Regression check: Run `pnpm --filter @entalent/application build` before AI and script typechecks, then require both to pass.
+- Status: fixed
+
+## 2026-10-02: Completion report conflated the scoring subtask with full PR scope
+
+- Symptom: `Remaining: 0%` for the local PR #8 scoring Quick Dev task could be read as completion of all Insight Analysis V2 grill decisions.
+- Expected: Completion reporting names the exact approved subtask and keeps the 47-row V2 tracker and deferred reporting decisions separate.
+- Root cause layer: verification and communication
+- Harness fix: Before a full-PR completion claim, compare the live PR diff, Grill Decision Traceability, requirement tracker, and deployed acceptance evidence row by row.
+- Regression check: Do not report full PR completion while tracker rows remain Partial or Deferred, or the implementation exists only as uncommitted local changes.
+- Status: fixed
+
+## 2026-10-02: Policy activation test retained the old future-start assumption
+
+- Symptom: The first focused test run failed after allowing a prepared cycle to activate once its start time passed; its old assertion expected every past start to be rejected.
+- Expected: CLI accepts a started but unfinished cycle for an existing prepared binding, while expired cycles remain rejected and new post-start bindings fail in the database path.
+- Root cause layer: verification
+- Harness fix: Cover both started/unfinished and expired periods in the config test; keep the integration proof for an existing binding and the post-start insert guard.
+- Regression check: `node --import tsx scripts/activate-v2-scoring-policy.test.ts` and `DATABASE_URL=<isolated local PostgreSQL> node --import tsx scripts/activate-v2-scoring-policy.integration.test.ts`.
+- Status: fixed
+
+## 2026-10-02: Nullable legacy score could be read as zero
+
+- Symptom: Migration 0047 allowed a `scored` insight with no score when `working_insight_id` was null; the report selector converted `Number(null)` to zero.
+- Expected: Every scored insight has a finite 0–100 number, while `insufficient_evidence` has no number; historical decimal scores remain readable.
+- Root cause layer: architecture and verification
+- Harness fix: Forward migration 0048 enforces outcome/score consistency for legacy and new rows while retaining historical decimal scores; current and prior selectors exclude null scores. Add a migrated PostgreSQL rejection fixture.
+- Regression check: Apply all migrations to isolated PostgreSQL and run `question-insight.repository.migrated.integration.test.ts` plus the full harness.
 - Status: fixed

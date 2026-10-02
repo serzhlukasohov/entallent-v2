@@ -11,6 +11,7 @@ source_materials:
   - Insight Analysis Pipeline.md
 related_specs:
   - _bmad-output/specs/spec-company-hierarchy-mvp/SPEC.md
+  - _bmad-output/specs/spec-insight-analysis-v2/SCORING-POLICY.md
 ---
 
 # Insight Analysis V2 for Open-Ended Pulse Indices
@@ -45,7 +46,6 @@ This specification replaces the V1 open-ended scoring approach for the scope def
 - final-report privacy thresholds and inference-attack controls;
 - recommendation content and recommendation delivery;
 - the numeric Engagement Index contract;
-- the exact rubric anchors for the twelve questions;
 - long-term retention and deletion policy for original employee conversation messages;
 - customer-facing dashboards;
 - historical score backfill and scoring-policy migration tooling.
@@ -62,6 +62,8 @@ The open-ended MVP backlog contains twelve questions:
 | Belonging | 3 |
 
 Each question has a stable identity within a versioned survey definition. `Growth` is the approved term for V2; the V1 term `Mastery` is not used for these records.
+
+The canonical meanings, all twelve scoring rubrics, approval metadata, and approved calibration examples are defined in [Scoring Policy 1.0.0](SCORING-POLICY.md), approved on 2026-10-01. This topic catalog supersedes the older seeded topic set; changed meanings require versioned question definitions and must not silently inherit historical answers. Supplemental examples explicitly marked Draft are not approved numerical targets.
 
 Engagement is not part of this twelve-question open-ended scoring contract. Its separate numeric contract must be retained or changed through a dedicated decision.
 
@@ -226,9 +228,15 @@ The V1 formula `0.7 × structured polarity + 0.3 × sentiment` is prohibited for
 
 Each question shall receive one evaluation against its question-specific rubric.
 
+The approved rubric catalog is [Scoring Policy 1.0.0](SCORING-POLICY.md). Each rubric has version `1.0.0` and approval date `2026-10-01`.
+
 #### IA-023 — Continuous range
 
 A valid confirmed question score shall be a continuous value in the inclusive range `0–100`.
+
+For MVP, persisted question scores are integers, with every value from `0` through `100` permitted. Anchors `0`, `25`, `50`, `75`, and `100` guide assessment rather than restricting the allowed values. Intermediate scores use confirmed frequency, scope, and impact; confidence does not discount the score. Unknown causes do not prevent scoring a clear condition.
+
+New confirmed information supplements the existing insight, preserving earlier de-identified experience and change history. The current score reflects the latest confirmed condition, not an average of earlier and later conditions. Record employee-attributed causes and link a relevant recommendation when known; temporal coincidence alone does not establish causation. Pending supplements do not change the confirmed score.
 
 #### IA-024 — No score for unavailable meaning
 
@@ -306,7 +314,7 @@ The final analytical record shall be unique for one tenant, employee, Pulse Cycl
 The final record shall contain only the data required for controlled downstream use, including:
 
 - de-identified Question Insight;
-- question score;
+- question score when the confirmed condition is evaluable, otherwise `insufficient_evidence` with no numeric score;
 - scoring and privacy policy versions;
 - confidence and technical version metadata;
 - confirmation and processing timestamps;
@@ -317,9 +325,9 @@ It shall not contain private summary text, raw conversation text, reconstructabl
 
 #### IA-036 — Atomic completion boundary
 
-The system shall durably persist the valid score and privacy-accepted Question Insight before deleting the corresponding non-anonymous analytical derivatives.
+The system shall durably persist the privacy-accepted Question Insight and its valid score, or explicit `insufficient_evidence` outcome with no score, before deleting the corresponding non-anonymous analytical derivatives.
 
-Persistence and purge shall form an idempotent workflow that cannot leave a reportable record without its required score or delete the only usable source before successful completion.
+Persistence and purge shall form an idempotent workflow that cannot leave a reportable record without its required score or explicit unscored outcome, or delete the only usable source before successful completion. Confirmed unscored insights are eligible for qualitative analysis but not numeric aggregation or complete scored-index eligibility.
 
 #### IA-037 — Immediate analytical purge
 
@@ -443,8 +451,8 @@ Index Confirmation Bundle rejected
 
 ## 9. Deferred Decisions Required Before Full Reporting Implementation
 
-- exact question-specific scoring rubrics and calibration fixtures;
-- persisted numeric precision and display rounding;
+- approval of supplemental draft calibration fixtures and automated calibration acceptance criteria (the twelve rubrics and reviewed examples are approved in Scoring Policy 1.0.0);
+- aggregation precision and display rounding (question-level integer precision is approved);
 - complete three-question employee-level Index formula;
 - numeric Engagement Index scale and its relationship to `0–100` reports;
 - intermediate participation threshold;

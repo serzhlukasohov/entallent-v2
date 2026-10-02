@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import {
   conversations, messages, pulseBacklog, surveyDefinitions, surveyQuestions,
   surveyQuestionInsights, surveyQuestionWorkingInsights, surveyScoringPolicies, surveyWindowScoringPolicies,
   surveyWindows, tenants, users,
 } from '@entalent/database';
-import { FinalizeQuestionInsightUseCase, RecoverConfirmedQuestionInsightsUseCase, SelectQuestionInsightInputsUseCase, V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
+import { FinalizeQuestionInsightUseCase, RecoverConfirmedQuestionInsightsUseCase, SelectQuestionInsightInputsUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
 import type { SurveyEvidenceExtractionUseCase, SurveyEvidencePayload } from '@entalent/application';
 import { SurveyEvidenceProcessor } from '../survey-evidence.processor';
 import { QuestionCutoffProcessor } from '../question-cutoff.processor';
@@ -47,7 +47,7 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       tenantId, name: 'Synthetic V2 fixture', version: 'fixture-v2',
     }).returning();
     const questions = await db.insert(surveyQuestions).values(
-      Object.entries(V2_QUESTION_GROUP_BY_STABLE_KEY).map(([stableKey, questionGroup]) => ({
+      Object.entries(LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY).map(([stableKey, questionGroup]) => ({
         surveyDefinitionId: definition!.id,
         stableKey,
         title: stableKey,
@@ -139,7 +139,7 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
     expect(loaded && loaded !== 'already_finalized' ? loaded.sourceMessageIds : [])
       .toContain(externalSourceId);
     const scorer = { scoreConfirmedMeaning: async () => ({
-      score: 37.125, confidence: 0.86, modelId: 'synthetic-model',
+      score: 37, confidence: 0.86, modelId: 'synthetic-model',
       promptVersion: 'synthetic-prompt', direction: 'adverse' as const,
       severity: 'moderate' as const, rootCauseCategory: 'growth' as const,
     }) };
@@ -168,7 +168,12 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       modelId: 'synthetic-model',
       privacyPolicyVersion: 'question-deidentification-v2',
     });
-    expect(Number(final?.score)).toBe(37.125);
+    expect(Number(final?.score)).toBe(37);
+    await db.update(surveyQuestionInsights).set({ rootCauseCategory: 'recognition' })
+      .where(eq(surveyQuestionInsights.id, final!.id));
+    const [recognized] = await db.select({ category: surveyQuestionInsights.rootCauseCategory })
+      .from(surveyQuestionInsights).where(eq(surveyQuestionInsights.id, final!.id));
+    expect(recognized?.category).toBe('recognition');
     expect(JSON.stringify(final)).not.toContain('Project Atlas');
     expect(JSON.stringify(final)).not.toContain('Private working text');
     expect(purged).toMatchObject({
@@ -188,11 +193,11 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       surveyWindowId: window!.id, surveyQuestionId: confirmedQuestion.id,
       questionVersion: confirmedQuestion.version, sourceMessageId: laterMessage!.id,
       meaning: 'Further private growth detail.', sufficientMeaning: true,
-    })).toBe('ignored');
-    const [stillPurged] = await db.select().from(surveyQuestionWorkingInsights)
+    })).toBe('captured');
+    const [reopened] = await db.select().from(surveyQuestionWorkingInsights)
       .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, confirmedQuestion.id));
-    expect(stillPurged?.workingSummary).toBeNull();
-    expect(stillPurged?.confirmedSemanticSummary).toBeNull();
+    expect(reopened?.workingSummary).toBe('Further private growth detail.');
+    expect(reopened?.purgedAt).toBeNull();
 
     const selector = new SelectQuestionInsightInputsUseCase(repository);
     const growthIds = questions.filter((item) => item.questionGroup === 'growth').map((item) => item.id);
@@ -235,6 +240,11 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       privacyPolicyVersion: 'question-deidentification-v1',
       confirmedAt: newMessage!.occurredAt, scoredAt: newMessage!.occurredAt,
     };
+    await expect(db.insert(surveyQuestionInsights).values({
+      ...mismatchedRecord, userId: user!.id, questionGroup: 'purpose',
+      surveyQuestionId: mislabeledQuestion.id, questionVersion: mislabeledQuestion.version,
+      score: null,
+    })).rejects.toThrow('survey_question_insights_score_range');
     await expect(db.insert(surveyQuestionInsights).values({
       ...mismatchedRecord, userId: otherUser!.id,
       surveyQuestionId: mismatchedWindowQuestion.id,
@@ -282,7 +292,7 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       modelId: 'synthetic-model', promptVersion: 'synthetic-prompt', confidence: '0.8',
       privacyPolicyVersion: 'deidentification-v1', confirmedAt, scoredAt: confirmedAt,
     });
-    await insertPriorScore(firstPriorWindow!.id, policy!.version, '37.124',
+    await insertPriorScore(firstPriorWindow!.id, policy!.version, '36.999',
       new Date(firstPriorEnd.getTime() - day));
     const samePolicy = await selector.execute(growthInput);
     expect(samePolicy.questionTrends[0]).toMatchObject({
@@ -394,5 +404,80 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       tenantId, userId: user!.id, surveyWindowId: window!.id,
       surveyQuestionId: lateWorkingQuestion.id,
     })).toBeNull();
+
+    const readySupplement = await repository.findReadyQuestionBundle({ tenantId, userId: user!.id });
+    expect(readySupplement?.questions.map((question) => question.surveyQuestionId))
+      .toEqual([confirmedQuestion.id]);
+    const supplementStatement = 'Current growth opportunities cannot yet be assessed.';
+    const supplementText = `I hear that ${supplementStatement} Is that fair?`;
+    const [supplementPrompt] = await db.insert(messages).values({
+      tenantId, userId: user!.id, conversationId: conversation!.id,
+      direction: 'outbound', senderType: 'agent', text: supplementText,
+      occurredAt: new Date(laterMessage!.occurredAt.getTime() + 1_000),
+    }).returning();
+    const supplementBundleId = await repository.stageQuestionConfirmationBundle({
+      tenantId, userId: user!.id, conversationId: conversation!.id,
+      surveyWindowId: window!.id, questionGroup: 'growth',
+      promptMessageId: supplementPrompt!.id, displayedText: supplementText,
+      components: [{ surveyQuestionId: confirmedQuestion.id,
+        questionVersion: confirmedQuestion.version, statement: supplementStatement,
+        expectedWorkingSummary: reopened!.workingSummary! }],
+    });
+    const sentAt = new Date(laterMessage!.occurredAt.getTime() + 2_000);
+    await db.update(messages).set({ sentAt }).where(eq(messages.id, supplementPrompt!.id));
+    await repository.activateDeliveredQuestionBundle({
+      promptMessageId: supplementPrompt!.id, tenantId, conversationId: conversation!.id, deliveredAt: sentAt,
+    });
+    const [supplementReply] = await db.insert(messages).values({
+      tenantId, userId: user!.id, conversationId: conversation!.id,
+      direction: 'inbound', senderType: 'user', text: 'Yes, that is fair.',
+      occurredAt: new Date(sentAt.getTime() + 1_000),
+    }).returning();
+    expect((await repository.findAwaitingQuestionBundle({
+      tenantId, userId: user!.id, conversationId: conversation!.id,
+      inboundMessageId: supplementReply!.id,
+    }))?.components).toHaveLength(1);
+    expect(await repository.applyQuestionBundleVerdict({
+      tenantId, userId: user!.id, conversationId: conversation!.id,
+      inboundMessageId: supplementReply!.id, bundleId: supplementBundleId,
+      verdict: { kind: 'agree' },
+    })).toBe(true);
+    const unscoredFinalizer = new FinalizeQuestionInsightUseCase(repository, {
+      scoreConfirmedMeaning: async () => ({
+        outcome: 'insufficient_evidence' as const, score: null, confidence: 0.2,
+        modelId: 'synthetic-model', promptVersion: 'synthetic-prompt',
+        direction: 'mixed' as const, severity: 'low' as const, rootCauseCategory: 'growth' as const,
+      }),
+    }, { deidentify: async () => 'Growth opportunities could not be assessed.' });
+    expect(await unscoredFinalizer.execute({
+      tenantId, userId: user!.id, surveyWindowId: window!.id, surveyQuestionId: confirmedQuestion.id,
+    })).toBe('finalized');
+    const history = await db.select().from(surveyQuestionInsights)
+      .where(and(
+        eq(surveyQuestionInsights.surveyQuestionId, confirmedQuestion.id),
+        eq(surveyQuestionInsights.surveyWindowId, window!.id),
+      ));
+    expect(history).toHaveLength(2);
+    expect(history.filter((row) => row.isCurrent)).toMatchObject([{
+      outcome: 'insufficient_evidence', score: null,
+    }]);
+    expect(history.filter((row) => !row.isCurrent)).toHaveLength(1);
+    expect(await repository.findFinalizedQuestions({
+      tenantId, userId: user!.id, surveyWindowId: window!.id,
+      surveyDefinitionId: definition!.id, questionGroup: 'growth',
+    })).toContainEqual(expect.objectContaining({ questionId: confirmedQuestion.id,
+      outcome: 'insufficient_evidence', score: null,
+      deidentifiedSummary: 'Growth opportunities could not be assessed.' }));
+    const unscoredFinal = await selector.execute(growthInput);
+    expect(unscoredFinal.intermediateEligible).toBe(false);
+    expect(unscoredFinal.finalQuestions).toContainEqual(expect.objectContaining({
+      questionId: confirmedQuestion.id, outcome: 'insufficient_evidence', score: null,
+    }));
+    expect(unscoredFinal.questionTrends).not.toContainEqual(expect.objectContaining({
+      questionId: confirmedQuestion.id,
+    }));
+    expect(await selector.execute({ ...growthInput, reportKind: 'intermediate' }))
+      .toEqual({ intermediateEligible: false, intermediateQuestions: [],
+        finalQuestions: [], questionTrends: [] });
   });
 });

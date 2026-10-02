@@ -6,6 +6,7 @@ import {
   surveyAssessments,
   surveyEvidence,
   surveyGroupStates,
+  surveyDefinitions,
   surveyQuestions,
   surveyQuestionConfirmationBundles,
   surveyQuestionInsights,
@@ -35,6 +36,7 @@ import type {
 } from '@entalent/application';
 import {
   hasCompleteV2ScoringPolicy,
+  hasLegacyV2ScoringPolicy,
   isApprovedQuestionRubric,
   validateQuestionBundleVerdict,
   validateQuestionClarificationPrompt,
@@ -571,7 +573,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyQuestionWorkingInsights.surveyWindowId, bundle.surveyWindowId),
         eq(surveyQuestionWorkingInsights.confirmationBundleId, bundle.id),
       )).orderBy(surveyQuestionWorkingInsights.surveyQuestionId).for('update');
-      if (working.length !== 3 || working.some((row) => row.status !== 'pending_confirmation'
+      if (working.length !== components.length || working.some((row) => row.status !== 'pending_confirmation'
         || !components.some((component) => component.surveyQuestionId === row.surveyQuestionId
           && component.questionVersion === row.questionVersion))) {
         throw new Error('v2_confirmation_working_state_stale');
@@ -706,6 +708,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       readyForConfirmation: surveyQuestionWorkingInsights.readyForConfirmation,
       workingSummary: surveyQuestionWorkingInsights.workingSummary,
       purgedAt: surveyQuestionWorkingInsights.purgedAt,
+      finalizedAt: surveyQuestionWorkingInsights.finalizedAt,
     }).from(surveyQuestionWorkingInsights).where(and(
       eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
       eq(surveyQuestionWorkingInsights.userId, input.userId),
@@ -717,17 +720,21 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         .sort((a, b) => a.displayOrder - b.displayOrder);
       if (groupQuestions.length !== 3) continue;
       const rows = groupQuestions.map((question) => byQuestion.get(question.id));
-      if (rows.some((row, index) => !row || row.questionVersion !== groupQuestions[index].version
-        || row.status !== 'collecting' || !row.readyForConfirmation
-        || !row.workingSummary?.trim() || row.purgedAt !== null)) continue;
+      const ready = rows.map((row, index) => ({ row, question: groupQuestions[index]! }))
+        .filter(({ row }) => row?.status === 'collecting' && row.readyForConfirmation
+          && row.workingSummary?.trim() && row.purgedAt === null);
+      if (ready.length === 0 || rows.some((row, index) => !row
+        || row.questionVersion !== groupQuestions[index]!.version
+        || (!ready.some((item) => item.row === row)
+          && !(row.status === 'confirmed' && row.purgedAt && row.finalizedAt)))) continue;
       return {
         ...input,
         surveyWindowId: window.id,
         questionGroup,
-        questions: groupQuestions.map((question, index) => ({
+        questions: ready.map(({ question, row }) => ({
           surveyQuestionId: question.id,
           questionVersion: question.version,
-          workingSummary: rows[index]!.workingSummary!,
+          workingSummary: row!.workingSummary!,
         })),
       };
     }
@@ -747,9 +754,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     }>;
   }): Promise<string> {
     if (!['autonomy', 'growth', 'purpose', 'belonging'].includes(input.questionGroup)
-      || input.components.length !== 3
-      || new Set(input.components.map((component) => component.surveyQuestionId)).size !== 3
-      || new Set(input.components.map((component) => component.statement.trim())).size !== 3
+      || input.components.length < 1 || input.components.length > 3
+      || new Set(input.components.map((component) => component.surveyQuestionId)).size !== input.components.length
+      || new Set(input.components.map((component) => component.statement.trim())).size !== input.components.length
       || !input.displayedText.trim()
       || input.components.some((component) => !component.statement.trim()
         || !input.displayedText.includes(component.statement)
@@ -812,8 +819,8 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyQuestions.questionGroup, input.questionGroup),
           eq(surveyQuestions.responseType, 'open_ended'),
         ));
-      if (questions.length !== 3 || questions.some((question) => !input.components.some(
-        (component) => component.surveyQuestionId === question.id && component.questionVersion === question.version,
+      if (questions.length !== 3 || input.components.some((component) => !questions.some(
+        (question) => component.surveyQuestionId === question.id && component.questionVersion === question.version,
       ))) throw new Error('v2_confirmation_bundle_question_set_mismatch');
 
       const working = await tx.select().from(surveyQuestionWorkingInsights)
@@ -823,12 +830,18 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
           inArray(surveyQuestionWorkingInsights.surveyQuestionId, questions.map((question) => question.id)),
         )).orderBy(surveyQuestionWorkingInsights.surveyQuestionId).for('update');
-      if (working.length !== 3 || working.some((row) => row.status !== 'collecting'
-        || !row.readyForConfirmation
-        || !row.workingSummary?.trim() || row.sourceMessageIds.length === 0 || row.purgedAt !== null
-        || !input.components.some((component) => component.surveyQuestionId === row.surveyQuestionId
-          && component.questionVersion === row.questionVersion
-          && component.expectedWorkingSummary === row.workingSummary))) {
+      const selected = working.filter((row) => input.components.some(
+        (component) => component.surveyQuestionId === row.surveyQuestionId));
+      if (working.length !== 3 || selected.length !== input.components.length
+        || working.some((row) => {
+          const component = input.components.find((item) => item.surveyQuestionId === row.surveyQuestionId);
+          return component
+            ? row.status !== 'collecting' || !row.readyForConfirmation
+              || !row.workingSummary?.trim() || row.sourceMessageIds.length === 0 || row.purgedAt !== null
+              || component.questionVersion !== row.questionVersion
+              || component.expectedWorkingSummary !== row.workingSummary
+            : row.status !== 'confirmed' || !row.purgedAt || !row.finalizedAt;
+        })) {
         throw new Error('v2_confirmation_bundle_working_state_stale');
       }
 
@@ -843,7 +856,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           surveyQuestionId: component.surveyQuestionId,
           questionVersion: component.questionVersion,
           statement: component.statement,
-          sourceMessageIds: working.find((row) => row.surveyQuestionId === component.surveyQuestionId)!.sourceMessageIds,
+          sourceMessageIds: selected.find((row) => row.surveyQuestionId === component.surveyQuestionId)!.sourceMessageIds,
         })),
         promptMessageId: input.promptMessageId,
       }).returning({ id: surveyQuestionConfirmationBundles.id });
@@ -851,7 +864,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         status: 'pending_confirmation',
         confirmationBundleId: bundle.id,
         updatedAt: new Date(),
-      }).where(inArray(surveyQuestionWorkingInsights.id, working.map((row) => row.id)));
+      }).where(inArray(surveyQuestionWorkingInsights.id, selected.map((row) => row.id)));
       return bundle.id;
     });
   }
@@ -891,8 +904,11 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       windowStatus: surveyWindows.status,
       surveyDefinitionId: surveyWindows.surveyDefinitionId,
       rubrics: surveyScoringPolicies.rubrics,
+      policyVersion: surveyScoringPolicies.version,
+      definitionVersion: surveyDefinitions.version,
     }).from(surveyWindowScoringPolicies)
       .innerJoin(surveyWindows, eq(surveyWindows.id, surveyWindowScoringPolicies.surveyWindowId))
+      .innerJoin(surveyDefinitions, eq(surveyDefinitions.id, surveyWindows.surveyDefinitionId))
       .innerJoin(surveyScoringPolicies,
         eq(surveyScoringPolicies.id, surveyWindowScoringPolicies.scoringPolicyId))
       .where(and(
@@ -902,16 +918,35 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyWindows.userId, input.userId),
         eq(surveyScoringPolicies.tenantId, input.tenantId),
       )).limit(1);
-    if (!bound) return 'v1';
+    if (!bound) {
+      const [window] = await this.db.client.select({ definitionVersion: surveyDefinitions.version })
+        .from(surveyWindows)
+        .innerJoin(surveyDefinitions, eq(surveyDefinitions.id, surveyWindows.surveyDefinitionId))
+        .where(and(
+          eq(surveyWindows.id, input.surveyWindowId),
+          eq(surveyWindows.tenantId, input.tenantId),
+          eq(surveyWindows.userId, input.userId),
+        )).limit(1);
+      if (window?.definitionVersion === 'v2-policy-1.0.0') {
+        throw new Error('v2_window_policy_binding_missing');
+      }
+      return 'v1';
+    }
     if (bound.windowStatus !== 'active') throw new Error('v2_survey_window_inactive');
 
     const questions = await this.db.client.select({
       stableKey: surveyQuestions.stableKey,
       responseType: surveyQuestions.responseType,
       questionGroup: surveyQuestions.questionGroup,
+      title: surveyQuestions.title,
+      canonicalMeaning: surveyQuestions.canonicalMeaning,
+      version: surveyQuestions.version,
     }).from(surveyQuestions)
       .where(eq(surveyQuestions.surveyDefinitionId, bound.surveyDefinitionId));
-    if (!hasCompleteV2ScoringPolicy(questions, bound.rubrics)) {
+    if (!(bound.policyVersion === '1.0.0'
+      ? bound.definitionVersion === 'v2-policy-1.0.0'
+        && hasCompleteV2ScoringPolicy(questions, bound.rubrics)
+      : hasLegacyV2ScoringPolicy(questions, bound.rubrics))) {
       throw new Error('v2_scoring_policy_incomplete');
     }
 
@@ -1035,6 +1070,17 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       if (!scope || scope.periodEnd <= new Date() || scope.sourceOccurredAt < scope.periodStart
         || scope.sourceOccurredAt >= scope.periodEnd) return 'ignored';
 
+      const [currentInsight] = await tx.select({ confirmedAt: surveyQuestionInsights.confirmedAt })
+        .from(surveyQuestionInsights).where(and(
+          eq(surveyQuestionInsights.tenantId, input.tenantId),
+          eq(surveyQuestionInsights.userId, input.userId),
+          eq(surveyQuestionInsights.surveyWindowId, input.surveyWindowId),
+          eq(surveyQuestionInsights.surveyQuestionId, input.surveyQuestionId),
+          eq(surveyQuestionInsights.questionVersion, input.questionVersion),
+          eq(surveyQuestionInsights.isCurrent, true),
+        )).limit(1);
+      if (currentInsight && scope.sourceOccurredAt <= currentInsight.confirmedAt) return 'ignored';
+
       const key = and(
         eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
         eq(surveyQuestionWorkingInsights.userId, input.userId),
@@ -1059,10 +1105,11 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         [working] = await tx.select().from(surveyQuestionWorkingInsights)
           .where(key).for('update').limit(1);
       }
-      if (!working || !['collecting', 'reset'].includes(working.status)
+      if (!working || (!['collecting', 'reset'].includes(working.status)
+        && !(working.status === 'confirmed' && working.purgedAt && working.finalizedAt))
         || working.sourceMessageIds.includes(input.sourceMessageId)) return 'ignored';
 
-      const reopened = working.status === 'reset';
+      const reopened = working.status === 'reset' || Boolean(working.purgedAt && working.finalizedAt);
       await tx.update(surveyQuestionWorkingInsights).set({
         status: 'collecting',
         readyForConfirmation: reopened ? input.sufficientMeaning
@@ -1114,6 +1161,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       questionId: surveyQuestionInsights.surveyQuestionId,
       questionVersion: surveyQuestionInsights.questionVersion,
       deidentifiedSummary: surveyQuestionInsights.deidentifiedSummary,
+      outcome: surveyQuestionInsights.outcome,
       score: surveyQuestionInsights.score,
       scoringPolicyVersion: surveyQuestionInsights.scoringPolicyVersion,
       confirmedAt: surveyQuestionInsights.confirmedAt,
@@ -1131,10 +1179,13 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       gte(surveyQuestionInsights.confirmedAt, surveyWindows.periodStart),
       lt(surveyQuestionInsights.confirmedAt, surveyWindows.periodEnd),
       isNull(surveyQuestionInsights.withdrawnAt),
+      eq(surveyQuestionInsights.isCurrent, true),
+      inArray(surveyQuestionInsights.outcome, ['scored', 'insufficient_evidence']),
     ));
     return rows.map((row) => ({
       ...row,
-      score: Number(row.score),
+      outcome: row.outcome as QuestionInsightInputRecord['outcome'],
+      score: row.score === null ? null : Number(row.score),
     }));
   }
 
@@ -1168,6 +1219,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyQuestionInsights.questionGroup, input.questionGroup),
         inArray(surveyQuestionInsights.surveyQuestionId, [...input.questionIds]),
         isNull(surveyQuestionInsights.withdrawnAt),
+        eq(surveyQuestionInsights.isCurrent, true),
+        eq(surveyQuestionInsights.outcome, 'scored'),
+        isNotNull(surveyQuestionInsights.score),
         eq(surveyWindows.tenantId, input.tenantId),
         eq(surveyWindows.userId, input.userId),
         eq(surveyWindows.surveyDefinitionId, input.surveyDefinitionId),
@@ -1208,15 +1262,6 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   async loadConfirmedQuestion(input: {
     tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId: string;
   }): Promise<QuestionFinalizationContext | 'already_finalized' | null> {
-    const [existing] = await this.db.client.select({ id: surveyQuestionInsights.id })
-      .from(surveyQuestionInsights).where(and(
-        eq(surveyQuestionInsights.tenantId, input.tenantId),
-        eq(surveyQuestionInsights.userId, input.userId),
-        eq(surveyQuestionInsights.surveyWindowId, input.surveyWindowId),
-        eq(surveyQuestionInsights.surveyQuestionId, input.surveyQuestionId),
-      )).limit(1);
-    if (existing) return 'already_finalized';
-
     const [row] = await this.db.client.select({
       working: surveyQuestionWorkingInsights,
       window: surveyWindows,
@@ -1240,7 +1285,14 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyWindowScoringPolicies.tenantId, input.tenantId),
         eq(surveyScoringPolicies.tenantId, input.tenantId),
       )).limit(1);
-    if (!row?.working.confirmedSemanticSummary || !row.working.confirmedAt
+    if (!row?.working.confirmedAt) return null;
+    const [existing] = await this.db.client.select({ id: surveyQuestionInsights.id })
+      .from(surveyQuestionInsights).where(and(
+        eq(surveyQuestionInsights.workingInsightId, row.working.id),
+        eq(surveyQuestionInsights.confirmedAt, row.working.confirmedAt),
+      )).limit(1);
+    if (existing) return 'already_finalized';
+    if (!row.working.confirmedSemanticSummary
       || row.working.purgedAt || row.question.version !== row.working.questionVersion
       || row.question.surveyDefinitionId !== row.window.surveyDefinitionId
       || row.working.confirmedAt < row.window.periodStart
@@ -1297,12 +1349,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       if (!working) return 'stale';
 
       const [existing] = await tx.select({ id: surveyQuestionInsights.id })
-        .from(surveyQuestionInsights).where(and(
-          eq(surveyQuestionInsights.tenantId, final.tenantId),
-          eq(surveyQuestionInsights.userId, final.userId),
-          eq(surveyQuestionInsights.surveyWindowId, final.surveyWindowId),
-          eq(surveyQuestionInsights.surveyQuestionId, final.surveyQuestionId),
-          eq(surveyQuestionInsights.questionVersion, final.questionVersion),
+        .from(surveyQuestionInsights)
+        .where(and(
+          eq(surveyQuestionInsights.workingInsightId, working.id),
+          eq(surveyQuestionInsights.confirmedAt, final.confirmedAt),
         )).limit(1);
       if (existing && working.purgedAt) return 'already_finalized';
       if (working.status !== 'confirmed' || !working.confirmedAt
@@ -1311,6 +1361,15 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         || !working.confirmedSemanticSummary || working.purgedAt) return 'stale';
 
       if (!existing) {
+        await tx.update(surveyQuestionInsights).set({ isCurrent: false }).where(and(
+          eq(surveyQuestionInsights.tenantId, final.tenantId),
+          eq(surveyQuestionInsights.userId, final.userId),
+          eq(surveyQuestionInsights.surveyWindowId, final.surveyWindowId),
+          eq(surveyQuestionInsights.surveyDefinitionId, final.surveyDefinitionId),
+          eq(surveyQuestionInsights.surveyQuestionId, final.surveyQuestionId),
+          eq(surveyQuestionInsights.questionVersion, final.questionVersion),
+          eq(surveyQuestionInsights.isCurrent, true),
+        ));
         await tx.insert(surveyQuestionInsights).values({
           tenantId: final.tenantId,
           userId: final.userId,
@@ -1320,7 +1379,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           questionVersion: final.questionVersion,
           questionGroup: final.questionGroup,
           deidentifiedSummary: final.deidentifiedSummary,
-          score: String(final.score),
+          outcome: final.outcome,
+          score: final.score === null ? null : String(final.score),
+          isCurrent: true,
+          workingInsightId: working.id,
           signalDirection: final.signalDirection,
           signalSeverity: final.signalSeverity,
           rootCauseCategory: final.rootCauseCategory,
@@ -1388,7 +1450,7 @@ function parseBundleComponents(
   mode: 'bundle' | 'clarification' = 'bundle',
 ): AwaitingQuestionBundle['components'] {
   if (!Array.isArray(value)
-    || (mode === 'bundle' ? value.length !== 3 : value.length < 1 || value.length > 2)) {
+    || (mode === 'bundle' ? value.length < 1 || value.length > 3 : value.length < 1 || value.length > 2)) {
     throw new Error('v2_confirmation_bundle_components_invalid');
   }
   const components = value.map((raw) => {

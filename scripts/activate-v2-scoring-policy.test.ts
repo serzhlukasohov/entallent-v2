@@ -29,8 +29,22 @@ assert.throws(
   /must exactly match TENANT_ID/,
 );
 assert.throws(
-  () => parseActivateV2ScoringPolicyConfig({ ...valid, SURVEY_PERIOD_START: '2026-01-01T00:00:00Z' }),
-  /future, nonempty Pulse Cycle/,
+  () => parseActivateV2ScoringPolicyConfig({ ...valid,
+    SURVEY_PERIOD_START: '2026-01-01T00:00:00Z', SURVEY_PERIOD_END: '2026-04-01T00:00:00Z',
+  }),
+  /unfinished, nonempty Pulse Cycle/,
+);
+const started = new Date(Date.now() - 86_400_000).toISOString();
+const unfinished = new Date(Date.now() + 86_400_000).toISOString();
+assert.equal(parseActivateV2ScoringPolicyConfig({ ...valid,
+  SURVEY_PERIOD_START: started, SURVEY_PERIOD_END: unfinished,
+}).periodStart.toISOString(), started);
+assert.throws(
+  () => parseActivateV2ScoringPolicyConfig({ ...valid,
+    SURVEY_PERIOD_START: new Date(Date.now() - 172_800_000).toISOString(),
+    SURVEY_PERIOD_END: started,
+  }),
+  /unfinished, nonempty Pulse Cycle/,
 );
 assert.throws(
   () => parseActivateV2ScoringPolicyConfig({ ...valid, SCORING_POLICY_APPROVED_AT: '2031-01-01T00:00:00Z' }),

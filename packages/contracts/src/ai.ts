@@ -241,15 +241,16 @@ export const SurveyEvidenceEvaluationSchema = z.object({
 export type SurveyEvidenceEvaluation = z.infer<typeof SurveyEvidenceEvaluationSchema>;
 
 export const QuestionScoreResponseSchema = z.object({
-  score: z.number().min(0).max(100),
+  outcome: z.enum(['scored', 'insufficient_evidence']),
+  score: z.number().int().min(0).max(100).nullable(),
   confidence: z.number().min(0).max(1),
   direction: z.enum(['adverse', 'mixed', 'favorable']),
   severity: z.enum(['low', 'moderate', 'high']),
   rootCauseCategory: z.enum([
     'workload', 'clarity', 'autonomy', 'growth', 'purpose',
-    'belonging', 'support', 'other',
+    'belonging', 'support', 'recognition', 'other',
   ]),
-}).strict();
+}).strict().refine((value) => (value.outcome === 'scored') === (value.score !== null));
 
 export const QuestionDeidentifiedSummarySchema = z.object({
   summary: z.string().trim().min(1).max(600),

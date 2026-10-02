@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
@@ -190,7 +191,10 @@ export const surveyQuestionInsights = pgTable(
     questionVersion: text('question_version').notNull(),
     questionGroup: text('question_group').notNull(),
     deidentifiedSummary: text('deidentified_summary').notNull(),
-    score: numeric('score').notNull(),
+    outcome: text('outcome').notNull().default('scored'),
+    score: numeric('score'),
+    isCurrent: boolean('is_current').notNull().default(true),
+    workingInsightId: uuid('working_insight_id').references(() => surveyQuestionWorkingInsights.id),
     signalDirection: text('signal_direction').notNull(),
     signalSeverity: text('signal_severity').notNull(),
     rootCauseCategory: text('root_cause_category').notNull(),
@@ -206,14 +210,18 @@ export const surveyQuestionInsights = pgTable(
     withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
   },
   (t) => ({
-    questionScope: unique('survey_question_insights_scope_key').on(
+    workingRevisionUnique: unique('survey_question_insights_working_revision_unique').on(t.workingInsightId, t.confirmedAt),
+    currentScope: uniqueIndex('survey_question_insights_current_scope_key').on(
       t.tenantId, t.userId, t.surveyWindowId, t.surveyDefinitionId, t.surveyQuestionId, t.questionVersion,
-    ),
+    ).where(sql`${t.isCurrent} = true`),
     windowGroupIdx: index('survey_question_insights_window_group_idx').on(t.tenantId, t.surveyWindowId, t.questionGroup),
-    scoreRange: check('survey_question_insights_score_range', sql`${t.score} >= 0 AND ${t.score} <= 100`),
+    scoreRange: check('survey_question_insights_score_range', sql`(
+      ${t.outcome} = 'scored' AND ${t.score} IS NOT NULL AND ${t.score} >= 0 AND ${t.score} <= 100
+      AND (${t.workingInsightId} IS NULL OR mod(${t.score}, 1) = 0)
+    ) OR (${t.outcome} = 'insufficient_evidence' AND ${t.workingInsightId} IS NOT NULL AND ${t.score} IS NULL)`),
     signalDirectionValid: check('survey_question_insights_direction_check', sql`${t.signalDirection} IN ('adverse', 'mixed', 'favorable')`),
     signalSeverityValid: check('survey_question_insights_severity_check', sql`${t.signalSeverity} IN ('low', 'moderate', 'high')`),
-    rootCauseCategoryValid: check('survey_question_insights_category_check', sql`${t.rootCauseCategory} IN ('workload', 'clarity', 'autonomy', 'growth', 'purpose', 'belonging', 'support', 'other')`),
+    rootCauseCategoryValid: check('survey_question_insights_category_check', sql`${t.rootCauseCategory} IN ('workload', 'clarity', 'autonomy', 'growth', 'purpose', 'belonging', 'support', 'recognition', 'other')`),
     confidenceRange: check('survey_question_insights_confidence_range', sql`${t.confidence} >= 0 AND ${t.confidence} <= 1`),
     summaryNotBlank: check('survey_question_insights_summary_not_blank', sql`btrim(${t.deidentifiedSummary}) <> ''`),
     versionsNotBlank: check(

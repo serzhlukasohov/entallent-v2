@@ -6,7 +6,8 @@ export function validateQuestionBundleVerdict(
   questionIds: readonly string[],
 ): QuestionBundleVerdict {
   if (!value || typeof value !== 'object' || Array.isArray(value)
-    || questionIds.length !== 3 || new Set(questionIds).size !== 3) {
+    || questionIds.length < 1 || questionIds.length > 3
+    || new Set(questionIds).size !== questionIds.length) {
     throw new Error('v2_confirmation_verdict_invalid');
   }
   const draft = value as Record<string, unknown>;
@@ -30,7 +31,7 @@ export function validateQuestionBundleVerdict(
     throw new Error('v2_confirmation_verdict_invalid');
   }
   const allIds = [...acceptedQuestionIds, ...disputedQuestionIds, ...declinedQuestionIds] as string[];
-  if (allIds.length !== 3 || new Set(allIds).size !== 3
+  if (allIds.length !== questionIds.length || new Set(allIds).size !== questionIds.length
     || allIds.some((id) => !questionIds.includes(id))) {
     throw new Error('v2_confirmation_verdict_invalid');
   }

@@ -5,6 +5,9 @@ export interface ApprovedQuestionRubric {
   version: string;
   instructions: string;
   anchors: ReadonlyArray<{ score: number; description: string }>;
+  title?: string;
+  canonicalMeaning?: string;
+  approvedExamples?: ReadonlyArray<{ score: number; text: string }>;
 }
 
 export interface QuestionFinalizationContext {
@@ -28,10 +31,11 @@ export interface QuestionFinalizationContext {
 export type SafeSignalDirection = 'adverse' | 'mixed' | 'favorable';
 export type SafeSignalSeverity = 'low' | 'moderate' | 'high';
 export type SafeRootCauseCategory =
-  | 'workload' | 'clarity' | 'autonomy' | 'growth' | 'purpose' | 'belonging' | 'support' | 'other';
+  | 'workload' | 'clarity' | 'autonomy' | 'growth' | 'purpose' | 'belonging' | 'support' | 'recognition' | 'other';
 
 export interface QuestionScoreResult {
-  score: number;
+  outcome?: 'scored' | 'insufficient_evidence';
+  score: number | null;
   confidence: number;
   modelId: string;
   promptVersion: string;
@@ -62,7 +66,8 @@ export interface FinalQuestionInsight {
   questionVersion: string;
   questionGroup: string;
   deidentifiedSummary: string;
-  score: number;
+  outcome: 'scored' | 'insufficient_evidence';
+  score: number | null;
   signalDirection: SafeSignalDirection;
   signalSeverity: SafeSignalSeverity;
   rootCauseCategory: SafeRootCauseCategory;
@@ -193,6 +198,7 @@ export class FinalizeQuestionInsightUseCase {
       questionVersion: context.questionVersion,
       questionGroup: context.questionGroup,
       deidentifiedSummary: acceptedSummary,
+      outcome: assessment.outcome ?? 'scored',
       score: assessment.score,
       signalDirection: assessment.direction,
       signalSeverity: assessment.severity,
@@ -211,12 +217,14 @@ export class FinalizeQuestionInsightUseCase {
 }
 
 function isValidAssessment(value: QuestionScoreResult): boolean {
-  return Number.isFinite(value.score) && value.score >= 0 && value.score <= 100
+  return ((value.outcome ?? 'scored') === 'scored'
+    ? Number.isInteger(value.score) && value.score !== null && value.score >= 0 && value.score <= 100
+    : value.outcome === 'insufficient_evidence' && value.score === null)
     && Number.isFinite(value.confidence) && value.confidence >= 0 && value.confidence <= 1
     && !!value.modelId.trim() && !!value.promptVersion.trim()
     && ['adverse', 'mixed', 'favorable'].includes(value.direction)
     && ['low', 'moderate', 'high'].includes(value.severity)
-    && ['workload', 'clarity', 'autonomy', 'growth', 'purpose', 'belonging', 'support', 'other']
+    && ['workload', 'clarity', 'autonomy', 'growth', 'purpose', 'belonging', 'support', 'recognition', 'other']
       .includes(value.rootCauseCategory);
 }
 

@@ -90,7 +90,8 @@ export type { ApprovedQuestionRubric, QuestionFinalizationContext, QuestionScore
 export { SelectQuestionInsightInputsUseCase } from './use-cases/select-question-insight-inputs.use-case';
 export type { QuestionInsightInputRecord, PriorQuestionScoreRecord, QuestionInsightTrend, QuestionInsightInputRepositoryPort, QuestionInsightInputSelection } from './use-cases/select-question-insight-inputs.use-case';
 export { resolveQuestionBundle, clarifyQuestion, declineQuestion, cutOffQuestions, hasCompleteIndexInput } from './utils/question-insight-lifecycle';
-export { hasCompleteV2ScoringPolicy, isApprovedQuestionRubric, V2_QUESTION_GROUP_BY_STABLE_KEY } from './utils/question-scoring-policy';
+export { hasCompleteV2ScoringPolicy, hasLegacyV2ScoringPolicy, isApprovedQuestionRubric,
+  V2_QUESTION_GROUP_BY_STABLE_KEY, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY } from './utils/question-scoring-policy';
 export type { QuestionInsightState, QuestionInsightStatus, QuestionTransition, ConfirmedQuestionScore } from './utils/question-insight-lifecycle';
 export type { CloseSurveyReportingCycleResult } from './use-cases/close-survey-reporting-cycle.use-case';
 export { ExpireQuestionInsightsAtCutoffUseCase } from './use-cases/expire-question-insights-at-cutoff.use-case';

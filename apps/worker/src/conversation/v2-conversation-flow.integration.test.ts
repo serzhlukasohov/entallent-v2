@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Queue, QueueEvents, Worker, type Job } from 'bullmq';
 import { eq } from 'drizzle-orm';
@@ -15,7 +17,7 @@ import {
 import {
   ConversationOrchestrator, ExpireQuestionInsightsAtCutoffUseCase, FEATURE_FLAGS,
   FinalizeQuestionInsightUseCase, RecoverConfirmedQuestionInsightsUseCase, SelectQuestionInsightInputsUseCase,
-  SurveyEvidenceExtractionUseCase, V2_QUESTION_GROUP_BY_STABLE_KEY, type SurveyEvidencePayload,
+  SurveyEvidenceExtractionUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY, type SurveyEvidencePayload,
 } from '@entalent/application';
 import { ConversationProcessor, type ConversationJob } from './conversation.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -29,6 +31,10 @@ import { DatabaseService } from '../database/database.service';
 const databaseUrl = process.env['DATABASE_URL'];
 const redisUrl = process.env['REDIS_URL'];
 const enabled = process.env['V2_CONVERSATION_QUEUE_TEST'] === '1';
+const approvedRubrics = JSON.parse(readFileSync(resolve(__dirname,
+  '../../../../scripts/data/v2-scoring-policy-1.0.0.json'), 'utf8')) as Record<string, {
+  title: string; canonicalMeaning: string; questionGroup: string; version: string;
+}>;
 
 describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL', () => {
   const client = databaseUrl ? createDbClient(databaseUrl) : null;
@@ -57,13 +63,18 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
 
   it.each([
     { verdictKind: 'agree', questionGroup: 'autonomy' },
+    { verdictKind: 'agree', questionGroup: 'autonomy', approvedPolicy: true },
     { verdictKind: 'partial', questionGroup: 'autonomy' },
     { verdictKind: 'partial_unrelated', questionGroup: 'autonomy' },
     { verdictKind: 'decline', questionGroup: 'autonomy' },
     { verdictKind: 'reject', questionGroup: 'autonomy' },
     { verdictKind: 'agree', questionGroup: 'belonging' },
+    { verdictKind: 'agree', questionGroup: 'belonging', approvedPolicy: true },
     { verdictKind: 'agree', questionGroup: 'growth' },
+    { verdictKind: 'agree', questionGroup: 'growth', approvedPolicy: true },
+    { verdictKind: 'agree', questionGroup: 'growth', approvedPolicy: true, insufficientEvidence: true },
     { verdictKind: 'agree', questionGroup: 'purpose' },
+    { verdictKind: 'agree', questionGroup: 'purpose', approvedPolicy: true },
     { verdictKind: 'agree', questionGroup: 'autonomy', afterCutoff: true },
     { verdictKind: 'agree', questionGroup: 'autonomy', afterCutoff: true, missedEnqueue: true },
     { verdictKind: 'agree', questionGroup: 'autonomy', afterCutoff: true,
@@ -78,9 +89,12 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     { verdictKind: 'reject', questionGroup: 'autonomy', afterVerdictBeforeOutboundError: true },
     { verdictKind: 'partial', questionGroup: 'autonomy', clarificationBeforeOutboundError: true },
   ] as const)(
-    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError',
+    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies approvedPolicy=$approvedPolicy insufficientEvidence=$insufficientEvidence afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError',
     async (scenario) => {
     const { verdictKind, questionGroup } = scenario;
+    const approvedPolicy = 'approvedPolicy' in scenario && scenario.approvedPolicy === true;
+    const insufficientEvidence = 'insufficientEvidence' in scenario
+      && scenario.insufficientEvidence === true;
     const afterCutoff = 'afterCutoff' in scenario && scenario.afterCutoff === true;
     const missedEnqueue = 'missedEnqueue' in scenario && scenario.missedEnqueue === true;
     const lateApiReceipt = 'lateApiReceipt' in scenario && scenario.lateApiReceipt === true;
@@ -107,21 +121,28 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       tenantId, preferredName: 'Other', timezone: 'UTC', locale: 'en',
     }).returning();
     const [definition] = await db.insert(surveyDefinitions).values({
-      tenantId, name: 'Synthetic V2 queue fixture', version: `fixture-${randomUUID()}`,
+      tenantId, name: 'Synthetic V2 queue fixture',
+      version: approvedPolicy ? 'v2-policy-1.0.0' : `fixture-${randomUUID()}`,
     }).returning();
+    const topicMap = approvedPolicy
+      ? Object.fromEntries(Object.entries(approvedRubrics).map(([key, rubric]) => [key, rubric.questionGroup]))
+      : LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY;
     const questions = await db.insert(surveyQuestions).values(
-      Object.entries(V2_QUESTION_GROUP_BY_STABLE_KEY).map(([stableKey, questionGroup], index) => ({
+      Object.entries(topicMap).map(([stableKey, questionGroup], index) => ({
         surveyDefinitionId: definition!.id, stableKey,
-        title: stableKey, canonicalMeaning: `Synthetic ${stableKey}`,
-        dimension: questionGroup, questionGroup, version: 'v2', displayOrder: index,
+        title: approvedPolicy ? approvedRubrics[stableKey]!.title : stableKey,
+        canonicalMeaning: approvedPolicy ? approvedRubrics[stableKey]!.canonicalMeaning : `Synthetic ${stableKey}`,
+        dimension: questionGroup, questionGroup,
+        version: approvedPolicy ? approvedRubrics[stableKey]!.version : 'v2', displayOrder: index,
       })),
     ).returning();
     const rubric = { version: 'synthetic-queue-v1', instructions: 'Synthetic test only.', anchors: [
       { score: 0, description: 'Low' }, { score: 100, description: 'High' },
     ] };
     const [policy] = await db.insert(surveyScoringPolicies).values({
-      tenantId, version: 'synthetic-queue-v1',
-      rubrics: Object.fromEntries(questions.map((question) => [question.stableKey, rubric])),
+      tenantId, version: approvedPolicy ? '1.0.0' : 'synthetic-queue-v1',
+      rubrics: approvedPolicy ? approvedRubrics
+        : Object.fromEntries(questions.map((question) => [question.stableKey, rubric])),
       approvedAt: new Date(),
     }).returning();
     const now = Date.now();
@@ -148,7 +169,28 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       metadata: { reportingDisclosureVersion: 'reporting-disclosure-v1' },
       occurredAt: new Date(now - 120_000), sentAt: new Date(now - 119_000),
     });
-    const examples = {
+    const examples = approvedPolicy ? {
+      autonomy: {
+        inbound: 'I choose my methods, my ideas influence decisions, and I know what results are expected.',
+        statements: ['You choose how to do your work.', 'Your ideas influence decisions.',
+          'You understand the expected results.'],
+      },
+      belonging: {
+        inbound: 'I feel included, I can raise concerns safely, and my manager helps with blockers.',
+        statements: ['You feel included in the team.', 'You feel safe raising concerns.',
+          'Your manager helps with work blockers.'],
+      },
+      growth: {
+        inbound: 'My work builds useful skills, feedback helps me improve, and I can access future opportunities.',
+        statements: ['Your work builds useful skills.', 'Feedback helps you improve.',
+          'You can access future growth opportunities.'],
+      },
+      purpose: {
+        inbound: 'My work matters to me, I see its contribution, and my good work is noticed.',
+        statements: ['Your work feels meaningful.', 'You see how it contributes to others.',
+          'Your good work is noticed.'],
+      },
+    }[questionGroup] : {
       autonomy: {
         inbound: 'I choose methods, set priorities, and can raise concerns.',
         statements: ['You can choose methods.', 'You set priorities.', 'You can raise concerns.'],
@@ -190,6 +232,12 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     const questionRepo = new QuestionInsightRepository(transactionDb!, {
       findCurrentHierarchyIdentifiers: async () => [],
     } as never);
+    if (approvedPolicy) {
+      expect(questions).toHaveLength(12);
+      expect(policy!.version).toBe('1.0.0');
+      expect(await questionRepo.getWindowMode({ tenantId, userId, surveyWindowId: window!.id }))
+        .toBe('v2');
+    }
     const surveyEvidenceRepo = new SurveyRepository(transactionDb!, {} as never, {
       findTeamByMemberId: async () => null,
     } as never);
@@ -324,10 +372,15 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       {} as never, repo, { activateDeliveredConfirmation: async () => undefined } as never,
       questionRepo,
     );
-    const scoreConfirmedMeaning = vi.fn(async () => ({
-        score: 62.5, confidence: 0.8, modelId: 'synthetic-model',
+    const scoreConfirmedMeaning = vi.fn(async ({ questionId }: { questionId: string }) => ({
+        outcome: insufficientEvidence && questionId === groupQuestions[1]!.id
+          ? 'insufficient_evidence' as const : 'scored' as const,
+        score: insufficientEvidence && questionId === groupQuestions[1]!.id ? null : 63,
+        confidence: 0.8, modelId: 'synthetic-model',
         promptVersion: 'synthetic-prompt', direction: 'favorable' as const,
-        severity: 'low' as const, rootCauseCategory: questionGroup,
+        severity: 'low' as const,
+        rootCauseCategory: groupQuestions.find((question) => question.id === questionId)?.stableKey
+          === 'purpose_recognition' ? 'recognition' as const : questionGroup,
     }));
     const finalizer = new FinalizeQuestionInsightUseCase(questionRepo, {
       scoreConfirmedMeaning,
@@ -851,18 +904,39 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       const finalRows = await db.select().from(surveyQuestionInsights)
         .where(eq(surveyQuestionInsights.surveyWindowId, window!.id));
       expect(finalRows).toHaveLength(verdictKind === 'decline' ? 2 : 3);
-      expect(finalRows.every((row) => Number(row.score) === 62.5)).toBe(true);
+      expect(finalRows.filter((row) => row.outcome === 'scored')
+        .every((row) => Number(row.score) === 63)).toBe(true);
+      if (insufficientEvidence) {
+        const unscored = finalRows.find((row) => row.surveyQuestionId === groupQuestions[1]!.id);
+        expect(unscored).toMatchObject({ outcome: 'insufficient_evidence', score: null });
+        expect(unscored!.deidentifiedSummary).not.toBe('');
+      }
+      if (approvedPolicy) expect(finalRows.every((row) => row.scoringPolicyVersion === '1.0.0'
+        && row.questionRubricVersion === '1.0.0')).toBe(true);
+      if (approvedPolicy && questionGroup === 'purpose') {
+        expect(finalRows.filter((row) => row.rootCauseCategory === 'recognition')).toHaveLength(1);
+      }
       expect(scoreConfirmedMeaning).toHaveBeenCalledTimes(verdictKind === 'decline' ? 2 : 3);
       const reportInputs = afterCutoff
         ? await selectReportInputs('final', new Date(window!.periodEnd.getTime() + 1))
         : await selectReportInputs();
-      expect(reportInputs.intermediateEligible).toBe(verdictKind !== 'decline');
+      expect(reportInputs.intermediateEligible).toBe(verdictKind !== 'decline' && !insufficientEvidence);
       expect(reportInputs.finalQuestions.map((row) => row.questionId)).toEqual(
         afterCutoff ? groupQuestions.map((question) => question.id) : []);
       expect(reportInputs.intermediateQuestions.map((row) => row.questionId)).toEqual(
-        verdictKind === 'decline' || afterCutoff ? [] : groupQuestions.map((question) => question.id));
-      expect(reportInputs.questionTrends).toHaveLength(verdictKind === 'decline' ? 0 : 3);
+        verdictKind === 'decline' || afterCutoff || insufficientEvidence
+          ? [] : groupQuestions.map((question) => question.id));
+      expect(reportInputs.questionTrends).toHaveLength(verdictKind === 'decline' || insufficientEvidence
+        ? 0 : 3);
       expect(reportInputs).not.toHaveProperty('indexScore');
+      if (insufficientEvidence) {
+        const finalInputs = await selectReportInputs('final', new Date(window!.periodEnd.getTime() + 1));
+        expect(finalInputs.finalQuestions).toHaveLength(3);
+        expect(finalInputs.finalQuestions.find((row) => row.questionId === groupQuestions[1]!.id))
+          .toMatchObject({ outcome: 'insufficient_evidence', score: null });
+        expect(finalInputs.questionTrends).toHaveLength(2);
+        expect(finalInputs).not.toHaveProperty('indexScore');
+      }
       if (verdictKind === 'decline') {
         const [declineReply] = await db.select().from(messages)
           .where(eq(messages.id, sentJobs[2]!.data.messageId));

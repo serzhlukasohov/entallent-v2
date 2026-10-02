@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import {
-  createDbClient, surveyCycleScoringPolicies, surveyQuestions, surveyScoringPolicies,
+  createDbClient, surveyCycleScoringPolicies, surveyDefinitions, surveyQuestions, surveyScoringPolicies,
   surveyWindowScoringPolicies, surveyWindows,
 } from '@entalent/database';
 import { hasCompleteV2ScoringPolicy } from '@entalent/application';
@@ -36,8 +35,8 @@ export function parseActivateV2ScoringPolicyConfig(env: NodeJS.ProcessEnv): Acti
   const periodStart = parseInstant(required(env, 'SURVEY_PERIOD_START'), 'SURVEY_PERIOD_START');
   const periodEnd = parseInstant(required(env, 'SURVEY_PERIOD_END'), 'SURVEY_PERIOD_END');
   const approvedAt = parseInstant(required(env, 'SCORING_POLICY_APPROVED_AT'), 'SCORING_POLICY_APPROVED_AT');
-  if (periodEnd <= periodStart || periodStart <= new Date()) {
-    throw new Error('V2 scoring policy activation requires a future, nonempty Pulse Cycle');
+  if (periodEnd <= periodStart || periodEnd <= new Date()) {
+    throw new Error('V2 scoring policy activation requires an unfinished, nonempty Pulse Cycle');
   }
   if (approvedAt > new Date()) throw new Error('SCORING_POLICY_APPROVED_AT cannot be in the future');
   return {
@@ -50,7 +49,7 @@ export function parseActivateV2ScoringPolicyConfig(env: NodeJS.ProcessEnv): Acti
 export async function activateV2ScoringPolicy(config: ActivateV2ScoringPolicyConfig): Promise<{
   policyId: string;
   cycleId: string;
-  status: 'activated' | 'already_active';
+  status: 'prepared' | 'activated' | 'already_active';
   boundWindowCount: number;
   rubricsSha256: string;
 }> {
@@ -60,19 +59,28 @@ export async function activateV2ScoringPolicy(config: ActivateV2ScoringPolicyCon
   const client = createDbClient(config.databaseUrl);
   try {
     const result = await client.db.transaction(async (tx) => {
+      const [definition] = await tx.select().from(surveyDefinitions)
+        .where(eq(surveyDefinitions.id, config.surveyDefinitionId)).limit(1);
+      if (!definition || definition.version !== 'v2-policy-1.0.0'
+        || definition.tenantId !== config.tenantId) {
+        throw new Error('approved_v2_definition_required');
+      }
       const questions = await tx.select({
         stableKey: surveyQuestions.stableKey,
         responseType: surveyQuestions.responseType,
         questionGroup: surveyQuestions.questionGroup,
+        title: surveyQuestions.title,
+        canonicalMeaning: surveyQuestions.canonicalMeaning,
+        version: surveyQuestions.version,
       }).from(surveyQuestions).where(eq(surveyQuestions.surveyDefinitionId, config.surveyDefinitionId));
-      if (!hasCompleteV2ScoringPolicy(questions, rubrics)) {
+      if (config.policyVersion !== '1.0.0' || !hasCompleteV2ScoringPolicy(questions, rubrics)) {
         throw new Error('approved_question_rubrics_incomplete');
       }
       const [existingPolicy] = await tx.select().from(surveyScoringPolicies).where(and(
         eq(surveyScoringPolicies.tenantId, config.tenantId),
         eq(surveyScoringPolicies.version, config.policyVersion),
       )).limit(1);
-      if (existingPolicy && !isDeepStrictEqual(existingPolicy.rubrics, rubrics)) {
+      if (existingPolicy && !hasCompleteV2ScoringPolicy(questions, existingPolicy.rubrics)) {
         throw new Error('scoring_policy_version_content_mismatch');
       }
       const policy = existingPolicy ?? (await tx.insert(surveyScoringPolicies).values({
@@ -90,13 +98,33 @@ export async function activateV2ScoringPolicy(config: ActivateV2ScoringPolicyCon
       if (existingCycle && existingCycle.scoringPolicyId !== policy.id) {
         throw new Error('cycle_scoring_policy_conflict');
       }
+      const activationDue = Date.now() >= config.periodStart.getTime();
+      if (!existingCycle && activationDue) throw new Error('cycle_activation_after_start');
+      if (existingCycle && activationDue) {
+        const [conflict] = await tx.select({ id: surveyDefinitions.id }).from(surveyDefinitions)
+          .where(and(
+            eq(surveyDefinitions.tenantId, config.tenantId),
+            eq(surveyDefinitions.active, true),
+            ne(surveyDefinitions.id, config.surveyDefinitionId),
+          )).limit(1);
+        if (conflict) throw new Error('v2_active_definition_conflict');
+      }
+      // The database requires an active definition while binding a future cycle.
+      // Restore its inactive state before commit, then activate on a retry at period start.
+      if (!existingCycle && !definition.active) await tx.update(surveyDefinitions).set({ active: true })
+        .where(eq(surveyDefinitions.id, config.surveyDefinitionId));
       const cycle = existingCycle ?? (await tx.insert(surveyCycleScoringPolicies).values({
         tenantId: config.tenantId, surveyDefinitionId: config.surveyDefinitionId,
         periodStart: config.periodStart, periodEnd: config.periodEnd,
         scoringPolicyId: policy.id,
       }).returning())[0]!;
+      if (!existingCycle && !definition.active) await tx.update(surveyDefinitions).set({ active: false })
+        .where(eq(surveyDefinitions.id, config.surveyDefinitionId));
+      if (existingCycle && activationDue && !definition.active) await tx.update(surveyDefinitions).set({ active: true })
+        .where(eq(surveyDefinitions.id, config.surveyDefinitionId));
       return { policyId: policy.id, cycleId: cycle.id,
-        status: existingCycle ? 'already_active' as const : 'activated' as const };
+        status: activationDue ? (definition.active ? 'already_active' as const : 'activated' as const)
+          : (definition.active ? 'already_active' as const : 'prepared' as const) };
     });
     const [count] = await client.db.select({ value: sql<number>`count(*)::int` })
       .from(surveyWindowScoringPolicies)

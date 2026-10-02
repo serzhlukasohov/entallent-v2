@@ -34,7 +34,7 @@ function setup(overrides: Partial<QuestionFinalizationContext> = {}) {
     scoreConfirmedMeaning: vi.fn().mockImplementation(async () => {
       calls.push('score');
       return {
-        score: 37.125, confidence: 0.86, modelId: 'model-v2', promptVersion: 'score-v2',
+        score: 37, confidence: 0.86, modelId: 'model-v2', promptVersion: 'score-v2',
         direction: 'adverse', severity: 'high', rootCauseCategory: 'growth',
       };
     }),
@@ -89,7 +89,7 @@ describe('FinalizeQuestionInsightUseCase', () => {
       scoringPolicyVersion: 'company-v2',
     }));
     expect(repository.persistFinalAndPurge).toHaveBeenCalledWith(expect.objectContaining({ final: expect.objectContaining({
-      deidentifiedSummary: 'Growth opportunity was delayed.', score: 37.125,
+      deidentifiedSummary: 'Growth opportunity was delayed.', score: 37,
       questionRubricVersion: 'growth-q1-v1', scoringPolicyVersion: 'company-v2',
       signalDirection: 'adverse', signalSeverity: 'high', rootCauseCategory: 'growth',
     }) }));
@@ -97,6 +97,17 @@ describe('FinalizeQuestionInsightUseCase', () => {
     expect(JSON.stringify(persisted)).not.toContain('Mira');
     expect(JSON.stringify(persisted)).not.toContain('Project Atlas');
     expect(JSON.stringify(persisted)).not.toContain('sourceMessageIds');
+  });
+
+  it('persists a recognition category for a confirmed recognition meaning', async () => {
+    const { repository, scorer, useCase, input } = setup({ questionGroup: 'purpose' });
+    vi.mocked(scorer.scoreConfirmedMeaning).mockResolvedValueOnce({
+      score: 15, confidence: 0.8, modelId: 'model-v2', promptVersion: 'score-v2',
+      direction: 'adverse', severity: 'high', rootCauseCategory: 'recognition',
+    });
+    expect(await useCase.execute(input)).toBe('finalized');
+    expect(vi.mocked(repository.persistFinalAndPurge).mock.calls[0][0].final.rootCauseCategory)
+      .toBe('recognition');
   });
 
   it('fails closed without an approved question rubric', async () => {
@@ -157,6 +168,31 @@ describe('FinalizeQuestionInsightUseCase', () => {
     });
     await expect(useCase.execute(input)).rejects.toThrow('question_score_invalid');
     expect(deidentifier.deidentify).not.toHaveBeenCalled();
+    expect(repository.persistFinalAndPurge).not.toHaveBeenCalled();
+  });
+
+  it('persists a confirmed unevaluable meaning without a numeric score', async () => {
+    const { repository, scorer, useCase, input } = setup({
+      confirmedSemanticSummary: 'The employee could not assess current manager support.',
+      knownIdentifiers: [], sourceMessageIds: [],
+    });
+    vi.mocked(scorer.scoreConfirmedMeaning).mockResolvedValueOnce({
+      outcome: 'insufficient_evidence', score: null, confidence: 0.2,
+      modelId: 'model-v2', promptVersion: 'score-v2',
+      direction: 'mixed', severity: 'low', rootCauseCategory: 'support',
+    });
+    expect(await useCase.execute(input)).toBe('finalized');
+    expect(vi.mocked(repository.persistFinalAndPurge).mock.calls[0]?.[0].final)
+      .toEqual(expect.objectContaining({ outcome: 'insufficient_evidence', score: null }));
+  });
+
+  it('rejects fractional scores', async () => {
+    const { repository, scorer, useCase, input } = setup();
+    vi.mocked(scorer.scoreConfirmedMeaning).mockResolvedValueOnce({
+      score: 37.125, confidence: 0.86, modelId: 'model-v2', promptVersion: 'score-v2',
+      direction: 'adverse', severity: 'high', rootCauseCategory: 'growth',
+    });
+    await expect(useCase.execute(input)).rejects.toThrow('question_score_invalid');
     expect(repository.persistFinalAndPurge).not.toHaveBeenCalled();
   });
 
@@ -315,7 +351,7 @@ describe('FinalizeQuestionInsightUseCase', () => {
     expect(deidentifier.deidentify).toHaveBeenCalledTimes(2);
     const persisted = vi.mocked(repository.persistFinalAndPurge).mock.calls[0][0].final;
     expect(persisted.deidentifiedSummary).toBe('Growth opportunities were limited.');
-    expect(persisted.score).toBe(37.125);
+    expect(persisted.score).toBe(37);
     expect(JSON.stringify(persisted)).not.toContain(candidate);
   });
 

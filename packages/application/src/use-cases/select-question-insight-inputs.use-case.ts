@@ -3,7 +3,8 @@ export interface QuestionInsightInputRecord {
   questionId: string;
   questionVersion: string;
   deidentifiedSummary: string;
-  score: number;
+  outcome: 'scored' | 'insufficient_evidence';
+  score: number | null;
   scoringPolicyVersion: string;
   confirmedAt: Date;
 }
@@ -95,7 +96,9 @@ export class SelectQuestionInsightInputsUseCase {
     if (selected.length !== new Set(selected.map((row) => row.questionId)).size
       || selected.some((row) => !row.questionVersion.trim()
         || !row.deidentifiedSummary.trim() || !row.scoringPolicyVersion.trim()
-        || !Number.isFinite(row.score) || row.score < 0 || row.score > 100
+        || (row.outcome === 'scored'
+          ? !Number.isFinite(row.score) || row.score === null || row.score < 0 || row.score > 100
+          : row.outcome !== 'insufficient_evidence' || row.score !== null)
         || !Number.isFinite(row.confirmedAt.getTime())
         || row.confirmedAt < period.periodStart || row.confirmedAt >= period.periodEnd)) {
       throw new Error('question_insight_input_invalid_record');
@@ -109,14 +112,16 @@ export class SelectQuestionInsightInputsUseCase {
       const row = byQuestion.get(id);
       return row ? [row] : [];
     });
-    const intermediateEligible = availableQuestions.length === 3;
+    const intermediateEligible = availableQuestions.length === 3
+      && availableQuestions.every((row) => row.outcome === 'scored');
     const selectedQuestions = input.reportKind === 'final' || intermediateEligible
       ? availableQuestions : [];
-    const prior = selectedQuestions.length > 0
+    const scoredQuestions = selectedQuestions.filter((row) => row.outcome === 'scored');
+    const prior = scoredQuestions.length > 0
       ? await this.repository.findPriorFinalizedQuestionScores({ ...input,
-        questionIds: selectedQuestions.map((row) => row.questionId) })
+        questionIds: scoredQuestions.map((row) => row.questionId) })
       : [];
-    const questionTrends = selectedQuestions.map((current) => compareQuestionTrend(current,
+    const questionTrends = scoredQuestions.map((current) => compareQuestionTrend(current,
       prior.filter((row) => row.questionId === current.questionId)));
     return {
       intermediateEligible,
@@ -150,7 +155,7 @@ function compareQuestionTrend(
   if (previous.scoringPolicyVersion !== current.scoringPolicyVersion) {
     return baseline('policy_version_changed');
   }
-  const delta = current.score - previous.score;
+  const delta = current.score! - previous.score;
   return {
     questionId: current.questionId,
     direction: delta > 0 ? 'improving' : delta < 0 ? 'declining' : 'stable',

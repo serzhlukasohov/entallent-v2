@@ -12,6 +12,11 @@ const valid = {
 };
 
 describe('validateQuestionBundleComposition', () => {
+  it('accepts a single later topic supplement with one exact displayed statement', () => {
+    const draft = { text: 'You have more room to decide now. Is that fair?',
+      statements: [{ surveyQuestionId: ids[0]!, statement: 'You have more room to decide now.' }] };
+    expect(validateQuestionBundleComposition(draft, [ids[0]!])).toEqual(draft);
+  });
   it('accepts one natural message with an exact statement-to-question mapping', () => {
     expect(validateQuestionBundleComposition(valid, ids)).toEqual(valid);
   });

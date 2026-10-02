@@ -1,10 +1,10 @@
 import type { ConversationTurn } from '@entalent/application';
 import { sanitizeTurnContent, INJECTION_GUARD } from './sanitize';
 
-export function buildQuestionBundleSystemPrompt(responseLanguage: string): string {
+export function buildQuestionBundleSystemPrompt(responseLanguage: string, count = 3): string {
   return `You are a warm colleague reflecting your understanding back to the employee. Write one natural message in ${responseLanguage}.
 
-The input contains exactly three private meanings from one topic. Express each meaning as one distinct statement addressed to the employee. Keep those three statements within one coherent paragraph and end with exactly one natural question asking whether your understanding is fair. Do not mention a questionnaire, survey, form, index, scores, labels, or numbered questions. Do not add facts, advice, or a second question.
+The input contains exactly ${count} private meaning${count === 1 ? '' : 's'} from one topic. Express each meaning as one distinct statement addressed to the employee. Keep the statements within one coherent paragraph and end with exactly one natural question asking whether your understanding is fair. Do not mention a questionnaire, survey, form, index, scores, labels, or numbered questions. Do not add facts, advice, or a second question.
 
 Return JSON only:
 {

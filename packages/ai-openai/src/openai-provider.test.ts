@@ -49,6 +49,8 @@ describe('OpenAiProvider V2 question finalization', () => {
     semanticSummary: 'Manager Mira moved my Project Atlas review.',
     rubric: {
       version: 'synthetic-rubric-v1', instructions: 'Assess growth opportunity.',
+      title: 'Growth opportunity', canonicalMeaning: 'Access to meaningful development.',
+      approvedExamples: [{ score: 65, text: 'Useful opportunities exist, with some constraints.' }],
       anchors: [
         { score: 0, description: 'No opportunity.' },
         { score: 100, description: 'Strong opportunity.' },
@@ -59,19 +61,21 @@ describe('OpenAiProvider V2 question finalization', () => {
 
   it('scores the confirmed meaning once against its rubric with model provenance', async () => {
     createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      score: 37.125, confidence: 0.86, direction: 'adverse', severity: 'moderate',
+      outcome: 'scored', score: 37, confidence: 0.86, direction: 'adverse', severity: 'moderate',
       rootCauseCategory: 'growth',
     }) } }] });
     const result = await makeProvider().scoreConfirmedMeaning(scoreInput);
 
     expect(result).toMatchObject({
-      score: 37.125, confidence: 0.86, modelId: 'gpt-test',
-      promptVersion: 'question-score-v2-1', rootCauseCategory: 'growth',
+      outcome: 'scored', score: 37, confidence: 0.86, modelId: 'gpt-test',
+      promptVersion: 'question-score-v2-4', rootCauseCategory: 'growth',
     });
     expect(createMock).toHaveBeenCalledOnce();
     const request = createMock.mock.calls[0]?.[0];
     expect(request.messages[1].content).toContain(scoreInput.semanticSummary);
     expect(request.messages[1].content).toContain(scoreInput.rubric.instructions);
+    expect(request.messages[1].content).toContain(scoreInput.rubric.canonicalMeaning);
+    expect(request.messages[1].content).toContain(scoreInput.rubric.approvedExamples[0]?.text);
     expect(request.temperature).toBe(0);
   });
 
@@ -81,6 +85,15 @@ describe('OpenAiProvider V2 question finalization', () => {
       rootCauseCategory: 'growth',
     }) } }] });
     await expect(makeProvider().scoreConfirmedMeaning(scoreInput)).rejects.toThrow();
+  });
+
+  it('accepts recognition as a scored root-cause category', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      outcome: 'scored', score: 15, confidence: 0.8, direction: 'adverse', severity: 'high',
+      rootCauseCategory: 'recognition',
+    }) } }] });
+    const result = await makeProvider().scoreConfirmedMeaning(scoreInput);
+    expect(result.rootCauseCategory).toBe('recognition');
   });
 
   it('requests stricter de-identification on a retry and parses only the safe candidate', async () => {

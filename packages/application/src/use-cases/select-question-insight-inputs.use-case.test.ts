@@ -21,6 +21,7 @@ function question(questionId: string): QuestionInsightInputRecord {
     questionId,
     questionVersion: 'v2',
     deidentifiedSummary: `Generalized ${questionId} signal`,
+    outcome: 'scored',
     score: 72,
     scoringPolicyVersion: 'policy-1',
     confirmedAt: new Date('2026-09-28T00:00:00Z'),
@@ -50,7 +51,8 @@ function selector(rows: QuestionInsightInputRecord[], prior: PriorQuestionScoreR
       return rows;
     },
     findPriorFinalizedQuestionScores: async (scope) => {
-      expect([...scope.questionIds].sort()).toEqual(rows.map((row) => row.questionId).sort());
+      expect([...scope.questionIds].sort()).toEqual(rows.filter((row) => row.outcome === 'scored')
+        .map((row) => row.questionId).sort());
       return prior;
     },
   });
@@ -87,6 +89,22 @@ describe('SelectQuestionInsightInputsUseCase', () => {
     });
   });
 
+  it('includes confirmed unscored meaning only in qualitative final input', async () => {
+    const unscored = { ...question('q2'), outcome: 'insufficient_evidence' as const,
+      score: null, deidentifiedSummary: 'Insufficient detail to assess autonomy.' };
+    const rows = [question('q1'), unscored, question('q3')];
+    const final = await selector(rows, [previous('q1', 65), previous('q2', 80),
+      previous('q3', 65)]).execute(input);
+    expect(final.intermediateEligible).toBe(false);
+    expect(final.finalQuestions).toEqual(rows);
+    expect(final.questionTrends.map((trend) => trend.questionId)).toEqual(['q1', 'q3']);
+    const intermediate = await selector(rows).execute({
+      ...input, reportKind: 'intermediate', now: new Date('2026-09-30T00:00:00Z'),
+    });
+    expect(intermediate).toEqual({ intermediateEligible: false, intermediateQuestions: [],
+      finalQuestions: [], questionTrends: [] });
+  });
+
   it('does not supply partial intermediate input or any final input before cutoff', async () => {
     const partial = await selector([question('q1'), question('q2')]).execute({
       ...input, reportKind: 'intermediate', now: new Date('2026-09-30T00:00:00Z'),
@@ -109,6 +127,10 @@ describe('SelectQuestionInsightInputsUseCase', () => {
       .rejects.toThrow('question_insight_input_invalid_record');
     await expect(selector([{ ...question('q1'), score: -1 }]).execute(input))
       .rejects.toThrow('question_insight_input_invalid_record');
+    await expect(selector([{ ...question('q1'), score: null }]).execute(input))
+      .rejects.toThrow('question_insight_input_invalid_record');
+    await expect(selector([{ ...question('q1'), outcome: 'insufficient_evidence', score: 0 }])
+      .execute(input)).rejects.toThrow('question_insight_input_invalid_record');
     await expect(selector([question('q1'), { ...question('q2'), scoringPolicyVersion: 'policy-2' }]).execute(input))
       .rejects.toThrow('question_insight_input_mixed_scoring_policy');
   });
