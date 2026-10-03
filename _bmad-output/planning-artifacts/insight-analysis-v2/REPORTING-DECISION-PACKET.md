@@ -9,6 +9,12 @@ Date: 2026-10-03. Scope: complete the V2 report consumer without routing V2 insi
 - REQ-024, REQ-028, and REQ-029 require a frozen direct-team roster, at least five distinct contributors, `max(5, ceil(0.8 * roster))` complete contributors for an intermediate Index, and at least five eligible contributors for a final Index. Existing snapshot delivery rules prevent duplicate or ambiguous Slack sends. Manager of Managers roll-up is disabled for MVP.
 - The current V2 selector returns only finalized, de-identified question inputs and trends. The mounted report consumer still reads V1 group states; a V2 cohort is quarantined from that path.
 
+## Verified implementation boundary
+
+- `SelectQuestionInsightInputsUseCase` selects one employee's three required questions within a V2 window. It does not aggregate a frozen team roster or produce a manager report.
+- `SurveyRepository.findReportingCohortsReadyForFinalReports` excludes V2-bound cycles, so the current cycle-close job schedules only V1 final reports. A V2 final report needs its own enqueue path and consumer.
+- `GroupReportProcessor` and `GroupReportSnapshotRepository` currently send and snapshot V1 group-state results. The V2 consumer must use finalized question inputs and preserve the existing target recheck, immutable snapshot, and `delivery_unknown` safeguards.
+
 ## Decisions needed before a V2 manager report
 
 | Decision | Proposed MVP rule for approval | Alternative requiring an explicit rule |
