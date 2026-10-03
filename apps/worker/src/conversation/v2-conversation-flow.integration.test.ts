@@ -385,6 +385,10 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     const finalizer = new FinalizeQuestionInsightUseCase(questionRepo, {
       scoreConfirmedMeaning,
     }, { deidentify: async () => 'Generalized work experience is favorable.' });
+    const fixtureRecovery = new RecoverConfirmedQuestionInsightsUseCase({
+      listPendingConfirmedUsers: async () => (await questionRepo.listPendingConfirmedUsers())
+        .filter((pending) => pending.tenantId === tenantId),
+    }, finalizer);
     const selectReportInputs = (reportKind: 'intermediate' | 'final' = 'intermediate',
       reportNow = new Date()) => new SelectQuestionInsightInputsUseCase(questionRepo).execute({
       tenantId, userId, surveyWindowId: window!.id,
@@ -531,7 +535,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       if (missedEnqueue) {
         const cutoffProcessor = new QuestionCutoffProcessor(
           new ExpireQuestionInsightsAtCutoffUseCase(surveyEvidenceRepo),
-          new RecoverConfirmedQuestionInsightsUseCase(questionRepo, finalizer),
+          fixtureRecovery,
           {} as never, surveyEvidenceRepo, conversationQueue,
         );
         await cutoffProcessor.process({ name: 'cutoff' } as Job);
@@ -567,7 +571,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
           .map((reply) => reply.messageId)).toContain(thirdInbound!.id);
         const cutoffProcessor = new QuestionCutoffProcessor(
           new ExpireQuestionInsightsAtCutoffUseCase(surveyEvidenceRepo),
-          new RecoverConfirmedQuestionInsightsUseCase(questionRepo, finalizer),
+          fixtureRecovery,
           {} as never, surveyEvidenceRepo, conversationQueue, repo, messageQueue,
         );
         await cutoffProcessor.process({ name: 'cutoff' } as Job);
@@ -709,7 +713,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
         expect((await conversationQueue.getJob(thirdJob!.id!))?.attemptsMade).toBe(1);
         const cutoffProcessor = new QuestionCutoffProcessor(
           new ExpireQuestionInsightsAtCutoffUseCase(surveyEvidenceRepo),
-          new RecoverConfirmedQuestionInsightsUseCase(questionRepo, finalizer),
+          fixtureRecovery,
           {} as never, surveyEvidenceRepo, conversationQueue,
         );
         await cutoffProcessor.process({ name: 'cutoff' } as Job);
@@ -856,7 +860,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
             await cutoffEvents.waitUntilReady();
             const cutoffProcessor = new QuestionCutoffProcessor(
               new ExpireQuestionInsightsAtCutoffUseCase(surveyEvidenceRepo),
-              new RecoverConfirmedQuestionInsightsUseCase(questionRepo, finalizer),
+              fixtureRecovery,
               cutoffQueue,
               { findUndispatchedTimelyQuestionReplies: async () => [],
                 findQueuedTimelyQuestionRepliesWithoutReceipt: async () => [] } as never,

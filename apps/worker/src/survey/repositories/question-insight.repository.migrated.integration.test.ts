@@ -377,7 +377,10 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
     expect(twoQuestionPartial.finalQuestions.map((item) => item.questionId))
       .toEqual(growthIds.slice(0, 2));
     expect(twoQuestionPartial).not.toHaveProperty('indexScore');
-    const recovery = new RecoverConfirmedQuestionInsightsUseCase(repository, finalizer);
+    const recovery = new RecoverConfirmedQuestionInsightsUseCase({
+      listPendingConfirmedUsers: async () => (await repository.listPendingConfirmedUsers())
+        .filter((user) => user.tenantId === tenantId),
+    }, finalizer);
     const lifecycle = new QuestionCutoffProcessor(
       { execute: async () => ({ tenantsProcessed: 0, expiredQuestionCount: 0 }) } as never,
       recovery,
