@@ -135,6 +135,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         )).limit(1);
       if (!prompt) throw new Error('v2_clarification_prompt_scope_mismatch');
       clarificationPromptSentAt = prompt.sentAt;
+      if (clarificationPromptSentAt && inbound.occurredAt <= clarificationPromptSentAt) return null;
     }
     return {
       workingInsightId: row.workingInsightId,

@@ -404,6 +404,8 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       where id = ${disputed!.workingInsightId}`).toMatchObject([{ status: 'pending_clarification' }]);
     await client`update messages set sent_at = '2026-09-28T18:08:30Z'
       where id = ${clarificationPromptId}`;
+    expect(await repository.findPendingQuestionClarification({ tenantId, userId, conversationId,
+      inboundMessageId: growthInboundId })).toBeNull();
     expect(await repository.findPendingQuestionClarification({ tenantId, userId, conversationId, inboundMessageId: clarificationInboundId }))
       .toMatchObject({ clarificationPromptSentAt: new Date('2026-09-28T18:08:30Z') });
     await client`update messages set deleted_at = '2026-09-28T18:09:00Z'

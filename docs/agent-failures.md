@@ -25,6 +25,24 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: Run `survey.repository.test.ts` and `scripts/activate-v2-scoring-policy.integration.test.ts` on migrated PostgreSQL.
 - Status: fixed
 
+## 2026-10-03: Delayed inbound was routed to a later clarification
+
+- Symptom: A pending clarification lookup returned an inbound sent before the clarification prompt, so the orchestrator skipped normal survey handling without interpreting a clarification verdict.
+- Expected: Only an inbound after the delivered prompt can enter that clarification path.
+- Root cause layer: architecture and verification
+- Harness fix: Compare the inbound timestamp with the delivered clarification prompt timestamp in the repository lookup; keep the no-prompt path for the immediate partial verdict.
+- Regression check: Run `question-insight.repository.bundle.integration.test.ts` against isolated PostgreSQL and assert a pre-prompt inbound returns no pending clarification.
+- Status: fixed
+
+## 2026-10-03: One failed dispatch recovery can starve later intents
+
+- Symptom: The five-minute recovery scanner catches failures only after all dispatch scans, so the same failing intent can prevent later intents from being scanned on every run.
+- Expected: A bad intent is reported without blocking independent recovery work.
+- Root cause layer: architecture and verification
+- Harness fix: Isolate each recovery item or scan while retaining an aggregate safe failure result.
+- Regression check: Inject a failure in the first recoverable dispatch and assert a later valid dispatch still queues.
+- Status: open
+
 ## 2026-10-02: Unbound V2 window could enter the V1 evidence path
 
 - Symptom: With an active approved V2 definition but no open reporting cohort, window creation could make a team-only window without a policy binding; `getWindowMode` then returned `v1` for that V2 definition.
