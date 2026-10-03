@@ -905,7 +905,13 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
         .where(eq(surveyQuestionInsights.surveyWindowId, window!.id));
       expect(finalRows).toHaveLength(verdictKind === 'decline' ? 2 : 3);
       expect(finalRows.filter((row) => row.outcome === 'scored')
-        .every((row) => Number(row.score) === 63)).toBe(true);
+        .map((row) => ({ questionId: row.surveyQuestionId, score: Number(row.score) }))
+        .sort((left, right) => left.questionId.localeCompare(right.questionId)))
+        .toEqual(groupQuestions.filter((question) => verdictKind !== 'decline'
+          || question.id !== groupQuestions[1]!.id)
+          .filter((question) => !insufficientEvidence || question.id !== groupQuestions[1]!.id)
+          .map((question) => ({ questionId: question.id, score: 63 }))
+          .sort((left, right) => left.questionId.localeCompare(right.questionId)));
       if (insufficientEvidence) {
         const unscored = finalRows.find((row) => row.surveyQuestionId === groupQuestions[1]!.id);
         expect(unscored).toMatchObject({ outcome: 'insufficient_evidence', score: null });

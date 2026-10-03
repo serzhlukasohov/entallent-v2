@@ -43,6 +43,15 @@ Use this file to turn agent misses into harness improvements.
 - Regression check: Inject a failure in the first recoverable dispatch and assert a later valid dispatch still queues.
 - Status: fixed
 
+## 2026-10-03: Full CI V2 score assertion failed once without values
+
+- Symptom: The full CI harness failed one approved-policy Autonomy BullMQ case because its scored-row predicate returned false; an isolated 26-case run and the same CI commit's rerun passed.
+- Expected: The full suite is stable, and any score mismatch reports the question ID and observed value.
+- Root cause layer: verification (underlying intermittent cause unconfirmed)
+- Harness fix: Assert exact scored question IDs and values so a recurrence exposes the mismatched row; retain the full CI gate.
+- Regression check: Run the opt-in V2 BullMQ suite on migrated isolated PostgreSQL and Redis `/15`, then inspect any repeated CI failure by question ID and score.
+- Status: open
+
 ## 2026-10-02: Unbound V2 window could enter the V1 evidence path
 
 - Symptom: With an active approved V2 definition but no open reporting cohort, window creation could make a team-only window without a policy binding; `getWindowMode` then returned `v1` for that V2 definition.
