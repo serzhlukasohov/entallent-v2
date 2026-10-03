@@ -206,6 +206,44 @@ describe('QuestionCutoffProcessor', () => {
       .toBeLessThan(markCommittedDispatchQueued.mock.invocationCallOrder[0]!);
   });
 
+  it('continues recovery after one dispatch intent fails and reports a safe failure', async () => {
+    const bad = { intentId: 'intent-1', inboundMessageId: 'inbound-1',
+      outboundMessageId: 'outbound-1', tenantId: 'tenant-1', userId: 'user-1',
+      conversationId: 'conversation-1', channelType: 'slack',
+      externalWorkspaceId: 'T1', externalConversationId: 'D1' };
+    const good = { ...bad, intentId: 'intent-2', inboundMessageId: 'inbound-2',
+      outboundMessageId: 'outbound-2' };
+    const send = vi.fn().mockImplementation(async (_name: string, payload: { messageId: string }) => {
+      if (payload.messageId === bad.outboundMessageId) throw new Error('private queue detail');
+    });
+    const mark = vi.fn().mockResolvedValue(undefined);
+    const hydrate = vi.fn().mockResolvedValue(undefined);
+    const processor = new QuestionCutoffProcessor(
+      { execute: async () => ({ tenantsProcessed: 0, expiredQuestionCount: 0, overdueReplyCount: 0 }) } as never,
+      { execute: async () => ({ usersScanned: 0, finalizedQuestionCount: 0, failedUserCount: 0 }) } as never,
+      {} as never,
+      { findUndispatchedTimelyQuestionReplies: async () => [],
+        findQueuedTimelyQuestionRepliesWithoutReceipt: async () => [] } as never,
+      { add: vi.fn() } as never,
+      { findRecoverableMessageSends: async () => [bad, good],
+        countUnresolvedMessageSends: async () => 0,
+        findRecoverableProfileHydrations: async () => [{ intentId: 'profile-1',
+          inboundMessageId: 'inbound-3', tenantId: 'tenant-1', userId: 'user-1',
+          conversationId: 'conversation-1', channelType: 'slack',
+          externalWorkspaceId: 'T1', traceId: 'trace-1' }],
+        findCommittedAdmissionsWithUnqueuedDispatches: async () => [],
+        isUserRuntimeEligible: async () => true, markCommittedDispatchQueued: mark } as never,
+      { add: send } as never,
+      { add: hydrate, getJob: async () => null } as never,
+    );
+
+    await expect(processor.process({ name: 'cutoff' } as never))
+      .rejects.toThrow('v2_question_reply_dispatch_failed');
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(mark).toHaveBeenCalledWith(expect.objectContaining({ inboundMessageId: good.inboundMessageId }));
+    expect(hydrate).toHaveBeenCalledOnce();
+  });
+
   it('requeues a committed turn with an unqueued non-send intent outside a survey window', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-29T01:00:00.000Z'));

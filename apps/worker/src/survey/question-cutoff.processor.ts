@@ -65,23 +65,25 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
         do {
           intents = await this.conversationRepo.findRecoverableMessageSends(scanAt, intentCursor);
           for (const intent of intents) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(intent.tenantId, intent.userId)) continue;
-            await this.messageSendQueue.add('send', {
-              messageId: intent.outboundMessageId,
-              tenantId: intent.tenantId,
-              conversationId: intent.conversationId,
-              channelType: intent.channelType,
-              externalWorkspaceId: intent.externalWorkspaceId,
-              externalChannelId: intent.externalConversationId,
-            }, { jobId: `message-send-recovery-${intent.outboundMessageId}-${recoveryGeneration}` });
-            await this.conversationRepo.markCommittedDispatchQueued({
-              inboundMessageId: intent.inboundMessageId,
-              tenantId: intent.tenantId,
-              userId: intent.userId,
-              conversationId: intent.conversationId,
-              kind: 'message_send',
-            });
-            recoveredSendCount += 1;
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(intent.tenantId, intent.userId)) continue;
+              await this.messageSendQueue.add('send', {
+                messageId: intent.outboundMessageId,
+                tenantId: intent.tenantId,
+                conversationId: intent.conversationId,
+                channelType: intent.channelType,
+                externalWorkspaceId: intent.externalWorkspaceId,
+                externalChannelId: intent.externalConversationId,
+              }, { jobId: `message-send-recovery-${intent.outboundMessageId}-${recoveryGeneration}` });
+              await this.conversationRepo.markCommittedDispatchQueued({
+                inboundMessageId: intent.inboundMessageId,
+                tenantId: intent.tenantId,
+                userId: intent.userId,
+                conversationId: intent.conversationId,
+                kind: 'message_send',
+              });
+              recoveredSendCount += 1;
+            } catch { dispatchFailed = true; }
           }
           intentCursor = intents.at(-1)?.intentId;
         } while (intents.length === 100);
@@ -93,31 +95,33 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
         do {
           actions = await this.conversationRepo.findRecoverableFollowUpExecutions(new Date(), followUpCursor);
           for (const action of actions) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(action.tenantId, action.userId)) continue;
-            const originalId = `follow-up-${action.actionId}-${action.dueAt.getTime()}`;
-            const original = await this.followUpQueue.getJob(originalId);
-            const originalState = await original?.getState();
-            if (originalState === 'active' || originalState === 'waiting'
-              || originalState === 'delayed' || originalState === 'waiting-children') continue;
-            const recoveryId = `follow-up-recovery-${action.actionId}-${action.dueAt.getTime()}`;
-            const recovery = await this.followUpQueue.getJob(recoveryId);
-            const recoveryState = await recovery?.getState();
-            if (recoveryState === 'active' || recoveryState === 'waiting'
-              || recoveryState === 'delayed' || recoveryState === 'waiting-children') continue;
-            await this.followUpQueue.add('execute', {
-              scheduledActionId: action.actionId,
-              tenantId: action.tenantId,
-              userId: action.userId,
-              traceId: `recovery-${action.actionId}`,
-              dueAt: action.dueAt,
-            }, {
-              delay: Math.max(0, action.dueAt.getTime() - Date.now()),
-              jobId: original ? recoveryId : originalId,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1_000 },
-              removeOnComplete: true,
-              removeOnFail: true,
-            });
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(action.tenantId, action.userId)) continue;
+              const originalId = `follow-up-${action.actionId}-${action.dueAt.getTime()}`;
+              const original = await this.followUpQueue.getJob(originalId);
+              const originalState = await original?.getState();
+              if (originalState === 'active' || originalState === 'waiting'
+                || originalState === 'delayed' || originalState === 'waiting-children') continue;
+              const recoveryId = `follow-up-recovery-${action.actionId}-${action.dueAt.getTime()}`;
+              const recovery = await this.followUpQueue.getJob(recoveryId);
+              const recoveryState = await recovery?.getState();
+              if (recoveryState === 'active' || recoveryState === 'waiting'
+                || recoveryState === 'delayed' || recoveryState === 'waiting-children') continue;
+              await this.followUpQueue.add('execute', {
+                scheduledActionId: action.actionId,
+                tenantId: action.tenantId,
+                userId: action.userId,
+                traceId: `recovery-${action.actionId}`,
+                dueAt: action.dueAt,
+              }, {
+                delay: Math.max(0, action.dueAt.getTime() - Date.now()),
+                jobId: original ? recoveryId : originalId,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1_000 },
+                removeOnComplete: true,
+                removeOnFail: true,
+              });
+            } catch { dispatchFailed = true; }
           }
           followUpCursor = actions.at(-1)?.actionId;
         } while (actions.length === 100);
@@ -128,30 +132,32 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
         do {
           reports = await this.conversationRepo.findRecoverableGroupReports(new Date(), reportCursor);
           for (const report of reports) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(report.tenantId, report.userId)) continue;
-            const original = await this.groupReportQueue.getJob(`group-report-${report.sourceGroupStateId}`);
-            const originalState = await original?.getState();
-            if (originalState === 'active' || originalState === 'waiting'
-              || originalState === 'delayed' || originalState === 'waiting-children') continue;
-            const recoveryId = `group-report-recovery-${report.sourceGroupStateId}`;
-            const recovery = await this.groupReportQueue.getJob(recoveryId);
-            const recoveryState = await recovery?.getState();
-            if (recoveryState === 'active' || recoveryState === 'waiting'
-              || recoveryState === 'delayed' || recoveryState === 'waiting-children') continue;
-            await this.groupReportQueue.add('report', {
-              reportingCohortId: report.reportingCohortId,
-              tenantId: report.tenantId,
-              teamId: report.teamId,
-              questionGroup: report.questionGroup,
-              traceId: `group-report-recovery-${report.sourceGroupStateId}`,
-              sourceGroupStateId: report.sourceGroupStateId,
-            }, {
-              jobId: original ? recoveryId : `group-report-${report.sourceGroupStateId}`,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1_000 },
-              removeOnComplete: true,
-              removeOnFail: true,
-            });
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(report.tenantId, report.userId)) continue;
+              const original = await this.groupReportQueue.getJob(`group-report-${report.sourceGroupStateId}`);
+              const originalState = await original?.getState();
+              if (originalState === 'active' || originalState === 'waiting'
+                || originalState === 'delayed' || originalState === 'waiting-children') continue;
+              const recoveryId = `group-report-recovery-${report.sourceGroupStateId}`;
+              const recovery = await this.groupReportQueue.getJob(recoveryId);
+              const recoveryState = await recovery?.getState();
+              if (recoveryState === 'active' || recoveryState === 'waiting'
+                || recoveryState === 'delayed' || recoveryState === 'waiting-children') continue;
+              await this.groupReportQueue.add('report', {
+                reportingCohortId: report.reportingCohortId,
+                tenantId: report.tenantId,
+                teamId: report.teamId,
+                questionGroup: report.questionGroup,
+                traceId: `group-report-recovery-${report.sourceGroupStateId}`,
+                sourceGroupStateId: report.sourceGroupStateId,
+              }, {
+                jobId: original ? recoveryId : `group-report-${report.sourceGroupStateId}`,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1_000 },
+                removeOnComplete: true,
+                removeOnFail: true,
+              });
+            } catch { dispatchFailed = true; }
           }
           reportCursor = reports.at(-1)?.intentId;
         } while (reports.length === 100);
@@ -164,8 +170,10 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
             new Date(), dispatchCursor,
           ) ?? [];
           for (const admission of committed) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(admission.tenantId, admission.userId)) continue;
-            if (!await this.requeueCommittedTurn(admission, recoveryGeneration)) manualRecoveryCount += 1;
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(admission.tenantId, admission.userId)) continue;
+              if (!await this.requeueCommittedTurn(admission, recoveryGeneration)) manualRecoveryCount += 1;
+            } catch { dispatchFailed = true; }
           }
           dispatchCursor = committed.at(-1)?.messageId;
         } while (committed.length === 100);
@@ -176,33 +184,35 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
         do {
           profiles = await this.conversationRepo.findRecoverableProfileHydrations(new Date(), profileCursor);
           for (const profile of profiles) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(profile.tenantId, profile.userId)) continue;
-            const original = await this.profileHydrationQueue.getJob(
-              `profile-hydration-${profile.inboundMessageId}`);
-            const state = await original?.getState();
-            if (state === 'active' || state === 'waiting' || state === 'delayed'
-              || state === 'waiting-children') continue;
-            await this.profileHydrationQueue.add('hydrate', {
-              inboundMessageId: profile.inboundMessageId,
-              tenantId: profile.tenantId,
-              userId: profile.userId,
-              channelType: profile.channelType,
-              externalWorkspaceId: profile.externalWorkspaceId,
-              traceId: profile.traceId,
-            }, {
-              jobId: `profile-hydration-recovery-${profile.inboundMessageId}`,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1_000 },
-              removeOnComplete: true,
-              removeOnFail: true,
-            });
-            await this.conversationRepo.markCommittedDispatchQueued({
-              inboundMessageId: profile.inboundMessageId,
-              tenantId: profile.tenantId,
-              userId: profile.userId,
-              conversationId: profile.conversationId,
-              kind: 'profile_hydration',
-            });
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(profile.tenantId, profile.userId)) continue;
+              const original = await this.profileHydrationQueue.getJob(
+                `profile-hydration-${profile.inboundMessageId}`);
+              const state = await original?.getState();
+              if (state === 'active' || state === 'waiting' || state === 'delayed'
+                || state === 'waiting-children') continue;
+              await this.profileHydrationQueue.add('hydrate', {
+                inboundMessageId: profile.inboundMessageId,
+                tenantId: profile.tenantId,
+                userId: profile.userId,
+                channelType: profile.channelType,
+                externalWorkspaceId: profile.externalWorkspaceId,
+                traceId: profile.traceId,
+              }, {
+                jobId: `profile-hydration-recovery-${profile.inboundMessageId}`,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1_000 },
+                removeOnComplete: true,
+                removeOnFail: true,
+              });
+              await this.conversationRepo.markCommittedDispatchQueued({
+                inboundMessageId: profile.inboundMessageId,
+                tenantId: profile.tenantId,
+                userId: profile.userId,
+                conversationId: profile.conversationId,
+                kind: 'profile_hydration',
+              });
+            } catch { dispatchFailed = true; }
           }
           profileCursor = profiles.at(-1)?.intentId;
         } while (profiles.length === 100);
@@ -213,31 +223,33 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
         do {
           styles = await this.conversationRepo.findRecoverableStyleAnalyses(new Date(), styleCursor);
           for (const style of styles) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(style.tenantId, style.userId)) continue;
-            const original = await this.styleAnalysisQueue.getJob(`style-analysis-${style.inboundMessageId}`);
-            const state = await original?.getState();
-            if (state === 'active' || state === 'waiting' || state === 'delayed'
-              || state === 'waiting-children') continue;
-            await this.styleAnalysisQueue.add('analyze', {
-              inboundMessageId: style.inboundMessageId,
-              conversationId: style.conversationId,
-              tenantId: style.tenantId,
-              userId: style.userId,
-              traceId: style.traceId,
-            }, {
-              jobId: `style-analysis-recovery-${style.inboundMessageId}`,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1_000 },
-              removeOnComplete: true,
-              removeOnFail: true,
-            });
-            await this.conversationRepo.markCommittedDispatchQueued({
-              inboundMessageId: style.inboundMessageId,
-              tenantId: style.tenantId,
-              userId: style.userId,
-              conversationId: style.conversationId,
-              kind: 'style_analysis',
-            });
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(style.tenantId, style.userId)) continue;
+              const original = await this.styleAnalysisQueue.getJob(`style-analysis-${style.inboundMessageId}`);
+              const state = await original?.getState();
+              if (state === 'active' || state === 'waiting' || state === 'delayed'
+                || state === 'waiting-children') continue;
+              await this.styleAnalysisQueue.add('analyze', {
+                inboundMessageId: style.inboundMessageId,
+                conversationId: style.conversationId,
+                tenantId: style.tenantId,
+                userId: style.userId,
+                traceId: style.traceId,
+              }, {
+                jobId: `style-analysis-recovery-${style.inboundMessageId}`,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1_000 },
+                removeOnComplete: true,
+                removeOnFail: true,
+              });
+              await this.conversationRepo.markCommittedDispatchQueued({
+                inboundMessageId: style.inboundMessageId,
+                tenantId: style.tenantId,
+                userId: style.userId,
+                conversationId: style.conversationId,
+                kind: 'style_analysis',
+              });
+            } catch { dispatchFailed = true; }
           }
           styleCursor = styles.at(-1)?.intentId;
         } while (styles.length === 100);
@@ -248,34 +260,36 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
         do {
           memories = await this.conversationRepo.findRecoverableMemoryExtractions(new Date(), memoryCursor);
           for (const memory of memories) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(memory.tenantId, memory.userId)) continue;
-            const original = await this.memoryExtractionQueue.getJob(`memory-extraction-${memory.inboundMessageId}`);
-            const state = await original?.getState();
-            if (state === 'active' || state === 'waiting' || state === 'delayed'
-              || state === 'waiting-children') continue;
-            await this.memoryExtractionQueue.add('extract', {
-              conversationId: memory.conversationId,
-              userId: memory.userId,
-              tenantId: memory.tenantId,
-              inboundMessageId: memory.inboundMessageId,
-              outboundMessageId: memory.outboundMessageId,
-              traceId: memory.traceId,
-              channelType: memory.channelType,
-              externalConversationId: memory.externalConversationId,
-            }, {
-              jobId: `memory-extraction-recovery-${memory.inboundMessageId}`,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1_000 },
-              removeOnComplete: true,
-              removeOnFail: true,
-            });
-            await this.conversationRepo.markCommittedDispatchQueued({
-              inboundMessageId: memory.inboundMessageId,
-              tenantId: memory.tenantId,
-              userId: memory.userId,
-              conversationId: memory.conversationId,
-              kind: 'memory_extraction',
-            });
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(memory.tenantId, memory.userId)) continue;
+              const original = await this.memoryExtractionQueue.getJob(`memory-extraction-${memory.inboundMessageId}`);
+              const state = await original?.getState();
+              if (state === 'active' || state === 'waiting' || state === 'delayed'
+                || state === 'waiting-children') continue;
+              await this.memoryExtractionQueue.add('extract', {
+                conversationId: memory.conversationId,
+                userId: memory.userId,
+                tenantId: memory.tenantId,
+                inboundMessageId: memory.inboundMessageId,
+                outboundMessageId: memory.outboundMessageId,
+                traceId: memory.traceId,
+                channelType: memory.channelType,
+                externalConversationId: memory.externalConversationId,
+              }, {
+                jobId: `memory-extraction-recovery-${memory.inboundMessageId}`,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1_000 },
+                removeOnComplete: true,
+                removeOnFail: true,
+              });
+              await this.conversationRepo.markCommittedDispatchQueued({
+                inboundMessageId: memory.inboundMessageId,
+                tenantId: memory.tenantId,
+                userId: memory.userId,
+                conversationId: memory.conversationId,
+                kind: 'memory_extraction',
+              });
+            } catch { dispatchFailed = true; }
           }
           memoryCursor = memories.at(-1)?.intentId;
         } while (memories.length === 100);
@@ -286,69 +300,75 @@ export class QuestionCutoffProcessor extends WorkerHost implements OnModuleInit 
         do {
           evidenceIntents = await this.conversationRepo.findRecoverableSurveyEvidence(new Date(), evidenceCursor);
           for (const evidence of evidenceIntents) {
-            if (!await this.conversationRepo.isUserRuntimeEligible(evidence.tenantId, evidence.userId)) continue;
-            const original = await this.surveyEvidenceQueue.getJob(`survey-evidence-${evidence.inboundMessageId}`);
-            const state = await original?.getState();
-            if (state === 'active' || state === 'waiting' || state === 'delayed'
-              || state === 'waiting-children') continue;
-            await this.surveyEvidenceQueue.add('evaluate', {
-              conversationId: evidence.conversationId,
-              userId: evidence.userId,
-              tenantId: evidence.tenantId,
-              inboundMessageId: evidence.inboundMessageId,
-              traceId: evidence.traceId,
-            }, {
-              jobId: `survey-evidence-recovery-${evidence.inboundMessageId}`,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1_000 },
-              removeOnComplete: true,
-              removeOnFail: true,
-            });
-            await this.conversationRepo.markCommittedDispatchQueued({
-              inboundMessageId: evidence.inboundMessageId,
-              tenantId: evidence.tenantId,
-              userId: evidence.userId,
-              conversationId: evidence.conversationId,
-              kind: 'survey_evidence',
-            });
+            try {
+              if (!await this.conversationRepo.isUserRuntimeEligible(evidence.tenantId, evidence.userId)) continue;
+              const original = await this.surveyEvidenceQueue.getJob(`survey-evidence-${evidence.inboundMessageId}`);
+              const state = await original?.getState();
+              if (state === 'active' || state === 'waiting' || state === 'delayed'
+                || state === 'waiting-children') continue;
+              await this.surveyEvidenceQueue.add('evaluate', {
+                conversationId: evidence.conversationId,
+                userId: evidence.userId,
+                tenantId: evidence.tenantId,
+                inboundMessageId: evidence.inboundMessageId,
+                traceId: evidence.traceId,
+              }, {
+                jobId: `survey-evidence-recovery-${evidence.inboundMessageId}`,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1_000 },
+                removeOnComplete: true,
+                removeOnFail: true,
+              });
+              await this.conversationRepo.markCommittedDispatchQueued({
+                inboundMessageId: evidence.inboundMessageId,
+                tenantId: evidence.tenantId,
+                userId: evidence.userId,
+                conversationId: evidence.conversationId,
+                kind: 'survey_evidence',
+              });
+            } catch { dispatchFailed = true; }
           }
           evidenceCursor = evidenceIntents.at(-1)?.intentId;
         } while (evidenceIntents.length === 100);
       }
       const pending = await this.surveyRepo.findUndispatchedTimelyQuestionReplies(new Date());
       for (const reply of pending) {
-        await this.conversationQueue.add('process', {
-          ...reply,
-          rapidMessageCoalescing: true,
-        }, { jobId: `conversation-${reply.messageId}` });
-        await this.surveyRepo.markQuestionReplyAdmissionQueued(reply.messageId, reply.tenantId);
+        try {
+          await this.conversationQueue.add('process', {
+            ...reply,
+            rapidMessageCoalescing: true,
+          }, { jobId: `conversation-${reply.messageId}` });
+          await this.surveyRepo.markQuestionReplyAdmissionQueued(reply.messageId, reply.tenantId);
+        } catch { dispatchFailed = true; }
       }
       let queuedCursor: string | undefined;
       let queuedBatch: Awaited<ReturnType<SurveyRepository['findQueuedTimelyQuestionRepliesWithoutReceipt']>>;
       do {
         queuedBatch = await this.surveyRepo.findQueuedTimelyQuestionRepliesWithoutReceipt(new Date(), queuedCursor);
         for (const reply of queuedBatch) {
-          const original = await this.conversationQueue.getJob(`conversation-${reply.messageId}`);
-          if (!original || original.name !== 'process'
-            || original.data.messageId !== reply.messageId
-            || original.data.tenantId !== reply.tenantId
-            || original.data.userId !== reply.userId
-            || original.data.conversationId !== reply.conversationId) {
-            if (!await this.requeueCommittedTurn(reply, recoveryGeneration)) manualRecoveryCount += 1;
-            continue;
-          }
-          const state = await original.getState();
-          if (state !== 'completed') {
-            if (state === 'failed' || state === 'unknown') {
+          try {
+            const original = await this.conversationQueue.getJob(`conversation-${reply.messageId}`);
+            if (!original || original.name !== 'process'
+              || original.data.messageId !== reply.messageId
+              || original.data.tenantId !== reply.tenantId
+              || original.data.userId !== reply.userId
+              || original.data.conversationId !== reply.conversationId) {
               if (!await this.requeueCommittedTurn(reply, recoveryGeneration)) manualRecoveryCount += 1;
+              continue;
             }
-            continue;
-          }
-          await this.conversationQueue.add('receipt-retry', reply, {
-            jobId: `receipt-${reply.messageId}`,
-            attempts: 10,
-            backoff: { type: 'exponential', delay: 1_000 },
-          });
+            const state = await original.getState();
+            if (state !== 'completed') {
+              if (state === 'failed' || state === 'unknown') {
+                if (!await this.requeueCommittedTurn(reply, recoveryGeneration)) manualRecoveryCount += 1;
+              }
+              continue;
+            }
+            await this.conversationQueue.add('receipt-retry', reply, {
+              jobId: `receipt-${reply.messageId}`,
+              attempts: 10,
+              backoff: { type: 'exponential', delay: 1_000 },
+            });
+          } catch { dispatchFailed = true; }
         }
         queuedCursor = queuedBatch.at(-1)?.messageId;
       } while (queuedBatch.length === 100);

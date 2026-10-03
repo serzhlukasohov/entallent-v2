@@ -39,9 +39,9 @@ Use this file to turn agent misses into harness improvements.
 - Symptom: The five-minute recovery scanner catches failures only after all dispatch scans, so the same failing intent can prevent later intents from being scanned on every run.
 - Expected: A bad intent is reported without blocking independent recovery work.
 - Root cause layer: architecture and verification
-- Harness fix: Isolate each recovery item or scan while retaining an aggregate safe failure result.
+- Harness fix: Isolate each recovery item while retaining an aggregate safe failure result.
 - Regression check: Inject a failure in the first recoverable dispatch and assert a later valid dispatch still queues.
-- Status: open
+- Status: fixed
 
 ## 2026-10-02: Unbound V2 window could enter the V1 evidence path
 
