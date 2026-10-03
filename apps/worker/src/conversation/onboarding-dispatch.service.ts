@@ -37,7 +37,7 @@ export class OnboardingDispatchService {
       try {
         await this.dispatchOne(delivery);
         queued++;
-      } catch (error) {
+      } catch {
         failed++;
         await this.db.client.update(orgOnboardingDeliveries).set({
           status: 'failed', attemptCount: sql`${orgOnboardingDeliveries.attemptCount} + 1`,
@@ -46,7 +46,7 @@ export class OnboardingDispatchService {
           eq(orgOnboardingDeliveries.id, delivery.id), eq(orgOnboardingDeliveries.tenantId, delivery.tenantId),
           or(eq(orgOnboardingDeliveries.status, 'pending'), eq(orgOnboardingDeliveries.status, 'failed')),
         ));
-        this.logger.error(`Onboarding preparation failed delivery=${delivery.id}: ${(error as Error).message}`);
+        this.logger.error(`onboarding_preparation_failed delivery=${delivery.id}`);
       }
     }
     return { found: rows.length, queued, failed };

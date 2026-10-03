@@ -22,11 +22,15 @@ export interface RetentionCleanupParams {
 export interface RetentionCleanupResult {
   messagesDeleted: number;
   surveyEvidenceExpired: number;
+  surveyAssessmentsExpired: number;
   memoryItemsExpired: number;
   riskSignalsExpired: number;
   temporaryGroupStatesExpired: number;
   confirmedGroupStatesExpired: number;
   withdrawnGroupStatesExpired: number;
+  workingQuestionInsightsExpired: number;
+  questionBundlesExpired: number;
+  questionInsightsDeleted: number;
   auditLogsDeleted: number;
   reportSnapshotsDeleted: number;
 }

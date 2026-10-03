@@ -14,14 +14,20 @@ export class FollowUpExecutionProcessor extends WorkerHost {
   }
 
   async process(job: Job<FollowUpExecutionPayload>): Promise<void> {
-    const { scheduledActionId, tenantId, userId, traceId } = job.data;
+    const { scheduledActionId, tenantId, userId } = job.data;
 
-    this.logger.log(`Follow-up execution job=${job.id} actionId=${scheduledActionId} traceId=${traceId}`);
+    this.logger.log(`Follow-up execution actionId=${scheduledActionId}`);
 
-    const result = await this.useCase.execute({ scheduledActionId, tenantId, userId });
+    let result: Awaited<ReturnType<FollowUpExecutionUseCase['execute']>>;
+    try {
+      result = await this.useCase.execute({ scheduledActionId, tenantId, userId });
+    } catch {
+      this.logger.error(`Follow-up execution failed actionId=${scheduledActionId}`);
+      throw new Error('follow_up_execution_failed');
+    }
 
     this.logger.log(
-      `Follow-up execution done job=${job.id} decision=${result.decision} reason=${result.reason}`,
+      `Follow-up execution done actionId=${scheduledActionId} decision=${result.decision} reason=${result.reason}`,
     );
   }
 }

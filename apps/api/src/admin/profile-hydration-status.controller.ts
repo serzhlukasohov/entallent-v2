@@ -22,6 +22,7 @@ import {
 import type { Env } from '@entalent/config';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
+import { redisConnectionFromUrl } from './redis-connection';
 
 export interface ChannelAccountHydrationRow {
   userId: string;
@@ -44,12 +45,7 @@ export class ProfileHydrationStatusController implements OnModuleInit, OnModuleD
   ) {}
 
   onModuleInit(): void {
-    const redisUrl = new URL(this.config.get('REDIS_URL', { infer: true }));
-    const connection = {
-      host: redisUrl.hostname,
-      port: Number(redisUrl.port) || 6379,
-      ...(redisUrl.password ? { password: decodeURIComponent(redisUrl.password) } : {}),
-    };
+    const connection = redisConnectionFromUrl(this.config.get('REDIS_URL', { infer: true }));
     this.profileHydrationQueue = new Queue(QUEUE_NAMES.PROFILE_HYDRATION, { connection });
   }
 
@@ -167,8 +163,10 @@ function readProfileHydration(metadata: unknown): {
     attemptCount: readNumber(hydration['attemptCount']),
     lastAttemptAt: readString(hydration['lastAttemptAt']),
     lastSuccessAt: readString(hydration['lastSuccessAt']),
-    lastError: readString(hydration['lastError']),
-    reason: readString(hydration['reason']),
+    lastError: readOperationalCode(hydration['lastError'], [
+      'external_profile_fetch_failed', 'profile_update_failed', 'profile_hydration_failed',
+    ]),
+    reason: readOperationalCode(hydration['reason'], ['external_profile_unavailable']),
   };
 }
 
@@ -177,14 +175,14 @@ function toFailedJob(job: Job): AdminProfileHydrationFailedJob {
   const failedJob: AdminProfileHydrationFailedJob = {
     id: job.id ?? null,
     name: job.name,
-    failedReason: sanitizeOperationalMessage(job.failedReason),
+    failedReason: job.failedReason ? 'profile_hydration_job_failed' : null,
     attemptsMade: job.attemptsMade,
     timestamp: job.timestamp,
     finishedOn: job.finishedOn ?? null,
     data: {},
   };
 
-  for (const field of ['userId', 'tenantId', 'channelType', 'traceId'] as const) {
+  for (const field of ['userId', 'tenantId', 'channelType'] as const) {
     const value = readString(data[field]);
     if (value) failedJob.data[field] = value;
   }
@@ -209,13 +207,8 @@ function hasText(value: string | null): boolean {
   return Boolean(value?.trim());
 }
 
-function sanitizeOperationalMessage(message: string | undefined): string | null {
-  if (!message) return null;
-  return message
-    .split('\n')[0]
-    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, '[redacted-slack-token]')
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
-    .slice(0, 200);
+function readOperationalCode(value: unknown, allowed: readonly string[]): string | null {
+  return typeof value === 'string' && allowed.includes(value) ? value : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

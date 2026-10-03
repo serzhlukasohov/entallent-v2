@@ -48,38 +48,53 @@ describe('RetentionRepository', () => {
     })).resolves.toEqual({
       messagesDeleted: 1,
       surveyEvidenceExpired: 1,
+      surveyAssessmentsExpired: 1,
       memoryItemsExpired: 1,
       riskSignalsExpired: 1,
       temporaryGroupStatesExpired: 1,
       confirmedGroupStatesExpired: 1,
       withdrawnGroupStatesExpired: 1,
+      workingQuestionInsightsExpired: 1,
+      questionBundlesExpired: 1,
+      questionInsightsDeleted: 1,
       auditLogsDeleted: 1,
       reportSnapshotsDeleted: 1,
     });
 
     const queries = execute.mock.calls.map((call) => compileSql(call[0]));
-    expect(queries).toHaveLength(9);
+    expect(queries).toHaveLength(13);
     expect(queries.map((query) => query.sql)).toEqual([
       expect.stringContaining('update messages'),
       expect.stringContaining('update survey_evidence'),
+      expect.stringContaining('update survey_assessments'),
       expect.stringContaining('update memory_items'),
       expect.stringContaining('update risk_signals'),
       expect.stringContaining('update survey_group_states'),
       expect.stringContaining('update survey_group_states'),
       expect.stringContaining('update survey_group_states'),
-      expect.stringContaining('delete from audit_logs'),
+      expect.stringContaining('update survey_question_working_insights'),
+      expect.stringContaining('update survey_question_confirmation_bundles'),
+      expect.stringContaining('delete from survey_question_insights'),
       expect.stringContaining('delete from survey_report_snapshots'),
+      expect.stringContaining('delete from audit_logs'),
     ]);
     for (const query of queries) {
       expect(query.sql).toContain('tenant_id = $');
       expect(query.params).toContain('00000000-0000-0000-0000-000000000001');
     }
-    expect(queries[0].sql).toContain('deleted_at is null');
-    expect(queries[1].sql).toContain('superseded_at is null');
-    expect(queries[2].sql).toContain("status <> 'deleted'");
-    expect(queries[3].sql).toContain("status = 'active'");
-    expect(queries[4].sql).toContain("'in_progress', 'pending_confirmation', 'awaiting_confirmation'");
-    expect(queries[5].sql).toContain("status = 'confirmed'");
-    expect(queries[6].sql).toContain("status = 'withdrawn'");
+    expect(queries[0].sql).toContain("text = '[deleted]'");
+    expect(queries[1].sql).toContain("evidence_summary = '[deleted]'");
+    expect(queries[2].sql).toContain("status = 'suppressed'");
+    expect(queries[3].sql).toContain("content = '[deleted]'");
+    expect(queries[4].sql).toContain('recommended_action = null');
+    expect(queries[5].sql).toContain("'in_progress', 'pending_confirmation', 'awaiting_confirmation'");
+    expect(queries[6].sql).toContain("status = 'confirmed'");
+    expect(queries[7].sql).toContain("status = 'withdrawn'");
+    expect(queries[8].params).toContain('2026-10-11T00:00:00.000Z');
+    expect(queries[8].sql).toContain('source_message_ids = ARRAY[]::uuid[]');
+    expect(queries[9].sql).toContain('components = null');
+    expect(queries[10].sql).toContain('v2.question_insight_withdrawal_retained');
+    expect(queries[10].sql).toContain('processed_at <');
+    expect(queries[12].sql).toContain('created_at <');
   });
 });

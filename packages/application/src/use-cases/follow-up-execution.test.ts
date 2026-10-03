@@ -87,6 +87,10 @@ function makeAi(): AiProviderPort {
     extractMemory: vi.fn(),
     evaluateSurveyEvidence: vi.fn(),
     generateResponse: vi.fn().mockResolvedValue({ text: 'Hey Alice, how is the project going?', followUpQuestion: null }),
+    composeQuestionBundle: vi.fn(),
+    interpretQuestionBundleResponse: vi.fn(),
+    composeQuestionClarification: vi.fn(),
+    interpretQuestionClarificationResponse: vi.fn(),
     generateGroupSummary: vi.fn(),
     generateGroupReport: vi.fn(),
     scoreSentiment: vi.fn(),
@@ -123,6 +127,18 @@ describe('FollowUpExecutionUseCase — policy decisions', () => {
     const uc = new FollowUpExecutionUseCase(makeRepo(null), makeContextPort(makeContext()), makeConversationRepo(), makeOutbox(), makeAi());
     const result = await uc.execute(baseInput);
     expect(result.decision).toBe('skip');
+  });
+
+  it('rejects a queued action for a different employee before model or delivery', async () => {
+    const ai = makeAi();
+    const outbox = makeOutbox();
+    const uc = new FollowUpExecutionUseCase(
+      makeRepo(makeAction({ userId: 'other-user' })), makeContextPort(makeContext()),
+      makeConversationRepo(), outbox, ai,
+    );
+    await expect(uc.execute(baseInput)).rejects.toThrow('follow_up_action_scope_mismatch');
+    expect(ai.generateResponse).not.toHaveBeenCalled();
+    expect(outbox.enqueueMessageSend).not.toHaveBeenCalled();
   });
 
   it('returns skip when action is already sent', async () => {

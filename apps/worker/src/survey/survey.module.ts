@@ -2,7 +2,10 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import {
   GroupReportUseCase,
+  FinalizeQuestionInsightUseCase,
+  RecoverConfirmedQuestionInsightsUseCase,
   OpenSurveyReportingCycleUseCase,
+  ExpireQuestionInsightsAtCutoffUseCase,
   PulseBacklogService,
   SurveyEvidenceExtractionUseCase,
 } from '@entalent/application';
@@ -13,6 +16,9 @@ import { GroupStateRepository } from './repositories/group-state.repository';
 import { TeamRepository } from './repositories/team.repository';
 import { PulseBacklogRepository } from './repositories/pulse-backlog.repository';
 import { GroupReportSnapshotRepository } from './repositories/group-report-snapshot.repository';
+import { QuestionInsightRepository } from './repositories/question-insight.repository';
+import { QuestionCutoffProcessor } from './question-cutoff.processor';
+import { SurveyEvidenceIntentRepository } from './repositories/survey-evidence-intent.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { AiService } from '../conversation/ai.service';
@@ -24,7 +30,13 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     DatabaseModule,
     BullModule.registerQueue(
       { name: QUEUE_NAMES.SURVEY_EVIDENCE },
+      { name: QUEUE_NAMES.SURVEY_CUTOFF },
+      { name: QUEUE_NAMES.CONVERSATION },
+      { name: QUEUE_NAMES.MESSAGE_SEND },
       { name: QUEUE_NAMES.GROUP_REPORT },
+      { name: QUEUE_NAMES.PROFILE_HYDRATION },
+      { name: QUEUE_NAMES.STYLE_ANALYSIS },
+      { name: QUEUE_NAMES.MEMORY_EXTRACTION },
     ),
   ],
   providers: [
@@ -36,6 +48,15 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     SurveyRepository,
     PulseBacklogRepository,
     GroupReportSnapshotRepository,
+    QuestionInsightRepository,
+    SurveyEvidenceIntentRepository,
+    {
+      provide: ExpireQuestionInsightsAtCutoffUseCase,
+      useFactory: (surveyRepo: SurveyRepository) =>
+        new ExpireQuestionInsightsAtCutoffUseCase(surveyRepo),
+      inject: [SurveyRepository],
+    },
+    QuestionCutoffProcessor,
     {
       provide: PulseBacklogService,
       useFactory: (backlogRepo: PulseBacklogRepository, surveyRepo: SurveyRepository) =>
@@ -49,8 +70,23 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         convRepo: ConversationRepository,
         surveyRepo: SurveyRepository,
         pulseBacklogService: PulseBacklogService,
-      ) => new SurveyEvidenceExtractionUseCase(ai, convRepo, surveyRepo, pulseBacklogService),
-      inject: [AiService, ConversationRepository, SurveyRepository, PulseBacklogService],
+        questionInsightRepo: QuestionInsightRepository,
+      ) => new SurveyEvidenceExtractionUseCase(
+        ai, convRepo, surveyRepo, pulseBacklogService, questionInsightRepo,
+      ),
+      inject: [AiService, ConversationRepository, SurveyRepository, PulseBacklogService, QuestionInsightRepository],
+    },
+    {
+      provide: FinalizeQuestionInsightUseCase,
+      useFactory: (questionInsightRepo: QuestionInsightRepository, ai: AiService) =>
+        new FinalizeQuestionInsightUseCase(questionInsightRepo, ai, ai),
+      inject: [QuestionInsightRepository, AiService],
+    },
+    {
+      provide: RecoverConfirmedQuestionInsightsUseCase,
+      useFactory: (questionInsightRepo: QuestionInsightRepository, finalizer: FinalizeQuestionInsightUseCase) =>
+        new RecoverConfirmedQuestionInsightsUseCase(questionInsightRepo, finalizer),
+      inject: [QuestionInsightRepository, FinalizeQuestionInsightUseCase],
     },
     {
       provide: GroupReportUseCase,
@@ -70,6 +106,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
   exports: [
     SurveyRepository,
     GroupStateRepository,
+    QuestionInsightRepository,
     OpenSurveyReportingCycleUseCase,
     PulseBacklogService,
   ],

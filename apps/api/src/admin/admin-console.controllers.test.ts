@@ -32,18 +32,15 @@ describe('admin console MAF-primary regression', () => {
   });
 
   it('lists audit logs and totals for MAF runtime operations', async () => {
+    const select = vi.fn()
+      .mockReturnValueOnce(queryOrderLimitOffset([{
+        id: 'audit-1', tenantId: TENANT_ID,
+        action: 'runtime.maf_primary_attempted', resourceType: 'runtime_attempt',
+      }]))
+      .mockReturnValueOnce(queryWhere([{ total: 1 }]));
     const controller = new AuditLogsController({
       client: {
-        select: vi.fn()
-          .mockReturnValueOnce(queryOrderLimitOffset([
-            {
-              id: 'audit-1',
-              tenantId: TENANT_ID,
-              action: 'runtime.maf_primary_attempted',
-              resourceType: 'runtime_attempt',
-            },
-          ]))
-          .mockReturnValueOnce(queryWhere([{ total: 1 }])),
+        select,
       },
     } as never);
 
@@ -60,35 +57,39 @@ describe('admin console MAF-primary regression', () => {
       ],
       total: 1,
     });
+    const projection = select.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(projection).not.toHaveProperty('actorId');
+    expect(projection).not.toHaveProperty('resourceId');
+    expect(projection).not.toHaveProperty('metadata');
+    expect(projection).not.toHaveProperty('reason');
   });
 
   it('lists LLM/runtime runs and totals for admin inspection', async () => {
+    const select = vi.fn()
+      .mockReturnValueOnce(queryOrderLimit([{
+        id: 'run-1', tenantId: TENANT_ID, taskType: 'conversation', status: 'success',
+      }]))
+      .mockReturnValueOnce(queryWhere([{ total: 1 }]));
     const controller = new LlmRunsController({
       client: {
-        select: vi.fn()
-          .mockReturnValueOnce(queryOrderLimit([
-            {
-              id: 'run-1',
-              tenantId: TENANT_ID,
-              taskType: 'maf_primary_runtime',
-              status: 'success',
-            },
-          ]))
-          .mockReturnValueOnce(queryWhere([{ total: 1 }])),
+        select,
       },
     } as never);
 
-    await expect(controller.list(TENANT_ID, 'maf_primary_runtime')).resolves.toEqual({
+    await expect(controller.list(TENANT_ID, 'conversation')).resolves.toEqual({
       runs: [
         {
           id: 'run-1',
           tenantId: TENANT_ID,
-          taskType: 'maf_primary_runtime',
+          taskType: 'conversation',
           status: 'success',
         },
       ],
       total: 1,
     });
+    const projection = select.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(projection).not.toHaveProperty('userId');
+    expect(projection).not.toHaveProperty('traceId');
   });
 
   it('audits user debug access and returns previews without private risk reasoning', async () => {

@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import Redis from 'ioredis';
+import postgres from 'postgres';
 
 export type HarnessScope = 'docs-only' | 'dashboard' | 'active-typescript' | 'full';
 
@@ -168,8 +170,8 @@ export function writeReceipt(directory: string, receipt: HarnessReceipt): string
 
 export function parsePreflightTargets(env: NodeJS.ProcessEnv): PreflightTarget[] {
   return [
-    parseTarget('postgres', env.DATABASE_URL ?? 'postgresql://localhost:5434/entalent', 5432),
-    parseTarget('redis', env.REDIS_URL ?? 'redis://localhost:6380', 6379),
+    parseTarget('postgres', preflightUrl(env, 'postgres'), 5432),
+    parseTarget('redis', preflightUrl(env, 'redis'), 6379),
   ];
 }
 
@@ -198,6 +200,72 @@ export function probeTcp(target: PreflightTarget, timeoutMs = 1_500): Promise<Pr
     socket.once('error', () => finish('blocked'));
     socket.once('timeout', () => finish('blocked'));
   });
+}
+
+export async function probeProtocol(
+  target: PreflightTarget,
+  rawUrl: string,
+  timeoutMs = 1_500,
+): Promise<PreflightResult> {
+  const result: PreflightResult = {
+    name: target.name,
+    target: `${target.host}:${target.port}`,
+    status: 'blocked',
+  };
+  try {
+    if (target.name === 'redis') {
+      const client = new Redis(rawUrl, {
+        lazyConnect: true,
+        enableReadyCheck: false,
+        connectTimeout: timeoutMs,
+        maxRetriesPerRequest: 1,
+        retryStrategy: () => null,
+      });
+      client.on('error', () => undefined);
+      try {
+        await withPreflightDeadline(async () => {
+          await client.connect();
+          if (await client.ping() !== 'PONG') throw new Error('redis_ping_failed');
+        }, timeoutMs);
+      } finally {
+        client.disconnect();
+      }
+    } else {
+      const client = postgres(rawUrl, { max: 1, connect_timeout: 1 });
+      try {
+        await withPreflightDeadline(async () => {
+          const rows = await client`select 1 as ready`;
+          if (rows[0]?.ready !== 1) throw new Error('postgres_query_failed');
+        }, timeoutMs);
+      } finally {
+        await client.end({ timeout: 0 });
+      }
+    }
+    result.status = 'reachable';
+  } catch {
+    // Never include connection strings or server errors in preflight output.
+  }
+  return result;
+}
+
+async function withPreflightDeadline<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('preflight_timeout')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function preflightUrl(env: NodeJS.ProcessEnv, name: PreflightTarget['name']): string {
+  return name === 'postgres'
+    ? env.DATABASE_URL ?? 'postgresql://localhost:5434/entalent'
+    : env.REDIS_URL ?? 'redis://localhost:6380';
 }
 
 export function validateReadySpec(source: string): ValidationResult {
@@ -456,7 +524,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exitCode = 2;
       return;
     }
-    const results = await Promise.all(parsedTargets.targets.map((target) => probeTcp(target)));
+    const results = await Promise.all(parsedTargets.targets.map((target) =>
+      probeProtocol(target, preflightUrl(process.env, target.name)),
+    ));
     for (const result of results) {
       console.log(`[harness] ${result.name} ${result.target} ${result.status}`);
     }
@@ -571,10 +641,13 @@ export function runNamedCheck(
   );
 }
 
-function buildActiveTestCommands(
+export function buildActiveTestCommands(
   repoRoot: string,
   changedPaths: string[],
+  env: NodeJS.ProcessEnv = process.env,
 ): Array<[string, string[]]> {
+  const databaseMigrationChanged = changedPaths.some((path) =>
+    /^packages\/database\/migrations\/.*\.sql$/.test(path));
   const testPaths = new Set<string>();
   for (const path of changedPaths) {
     const candidates = path.match(/\.(?:test|spec)\.tsx?$/)
@@ -606,6 +679,7 @@ function buildActiveTestCommands(
   }
 
   for (const [packageRoot, targets] of [...packageTests].sort(([a], [b]) => a.localeCompare(b))) {
+    if (packageRoot === 'packages/database' && databaseMigrationChanged) continue;
     const manifest = JSON.parse(
       readFileSync(join(repoRoot, packageRoot, 'package.json'), 'utf8'),
     ) as {
@@ -614,7 +688,16 @@ function buildActiveTestCommands(
     if (typeof manifest.name !== 'string' || !manifest.name) {
       throw new Error(`package name missing: ${packageRoot}/package.json`);
     }
-    commands.push(['pnpm', ['--filter', manifest.name, 'test', ...targets]]);
+    if (packageRoot === 'packages/database') {
+      if (!env.DATABASE_URL) throw new Error('database integration target required');
+      commands.push(['pnpm', ['--filter', manifest.name, 'test:integration', ...targets]]);
+    } else {
+      commands.push(['pnpm', ['--filter', manifest.name, 'test', ...targets]]);
+    }
+  }
+  if (databaseMigrationChanged) {
+    if (!env.DATABASE_URL) throw new Error('database integration target required');
+    commands.push(['pnpm', ['--filter', '@entalent/database', 'test:integration']]);
   }
   return commands;
 }

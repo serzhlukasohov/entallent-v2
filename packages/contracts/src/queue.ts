@@ -2,6 +2,7 @@ export const QUEUE_NAMES = {
   CONVERSATION: 'conversation',
   MEMORY_EXTRACTION: 'memory-extraction',
   SURVEY_EVIDENCE: 'survey-evidence',
+  SURVEY_CUTOFF: 'survey-cutoff',
   RISK_ANALYSIS: 'risk-analysis',
   FOLLOWUP_PLANNING: 'followup-planning',
   FOLLOWUP_EXECUTION: 'followup-execution',

@@ -17,6 +17,36 @@ jobs:
   quality:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: entalent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/entalent_test
+      REDIS_URL: redis://localhost:6379/15
+      OPENAI_API_KEY: sk-test-placeholder
+      FIELD_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      NODE_ENV: test
+      V2_CONVERSATION_QUEUE_TEST: '1'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -34,6 +64,9 @@ jobs:
 
       - name: Build packages
         run: pnpm turbo run build --filter=!@entalent/api --filter=!@entalent/worker
+
+      - name: Run migrations
+        run: pnpm db:migrate
 
       - name: Deterministic harness gate
         env:

@@ -1,9 +1,6 @@
 import type {
-  AdminManagerTeamResponse,
   AdminManagerTrendsResponse,
-  AdminPulseOverviewResponse,
   AdminQueuesResponse,
-  AdminUserInsightsResponse,
 } from '@entalent/contracts';
 
 const API_BASE = process.env.API_INTERNAL_URL ?? 'http://localhost:3000/api/v1';
@@ -59,26 +56,6 @@ export async function postApi<T>(path: string, body: unknown): Promise<T> {
 
 export function fetchAdminQueues(revalidate = 30): Promise<AdminQueuesResponse | null> {
   return fetchApi<AdminQueuesResponse>('/admin/queues', revalidate);
-}
-
-export function fetchAdminManagerTeam(revalidate = 30): Promise<AdminManagerTeamResponse | null> {
-  return fetchApi<AdminManagerTeamResponse>(withTenant('/admin/manager/team'), revalidate);
-}
-
-export function fetchAdminPulseOverview(
-  revalidate = 0,
-): Promise<AdminPulseOverviewResponse | null> {
-  return fetchApi<AdminPulseOverviewResponse>(withTenant('/admin/pulse/overview'), revalidate);
-}
-
-export function fetchAdminUserInsights(
-  userId: string,
-  revalidate = 0,
-): Promise<AdminUserInsightsResponse | null> {
-  return fetchApi<AdminUserInsightsResponse>(
-    `/admin/users/${encodeURIComponent(userId)}/insights`,
-    revalidate,
-  );
 }
 
 export function postAdminUserReset(userId: string): Promise<UserResetResult> {

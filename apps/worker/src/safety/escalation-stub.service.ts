@@ -14,11 +14,7 @@ export class EscalationStubService implements EscalationPort {
   constructor(@Inject(AUDIT_LOG_PORT) private readonly auditLog: AuditLogPort) {}
 
   async raise(event: EscalationEvent): Promise<void> {
-    this.logger.warn(
-      `ESCALATION REQUIRED — severity=${event.severity} type=${event.riskType} userId=${event.userId} [${event.traceId}]`,
-    );
-
-    await this.auditLog.append({
+    const recorded = await this.auditLog.append({
       tenantId: event.tenantId,
       actorType: 'system',
       actorId: 'safety-policy-engine',
@@ -33,6 +29,13 @@ export class EscalationStubService implements EscalationPort {
         details: event.details,
       },
       traceId: event.traceId,
+      idempotencyKey: event.messageIds[0]
+        ? `risk:${event.messageIds[0]}` : undefined,
     });
+    if (recorded) {
+      this.logger.warn(
+        `ESCALATION REQUIRED — severity=${event.severity} type=${event.riskType} userId=${event.userId} [${event.traceId}]`,
+      );
+    }
   }
 }

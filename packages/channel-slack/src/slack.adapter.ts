@@ -40,8 +40,10 @@ export class SlackAdapter implements ChannelAdapterPort {
 
     if (!timestamp || !signature) return false;
 
-    const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 300;
-    if (parseInt(timestamp, 10) < fiveMinutesAgo) return false;
+    if (!/^\d+$/.test(timestamp)) return false;
+    const requestTime = Number(timestamp);
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isSafeInteger(requestTime) || Math.abs(now - requestTime) > 300) return false;
 
     const sigBase = `v0:${timestamp}:${rawBody}`;
     const mySignature =

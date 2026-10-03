@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 import { UserProfileRepository } from './user-profile.repository';
 
 function createDbMock() {
@@ -75,6 +77,9 @@ describe('UserProfileRepository', () => {
     expect(metadataSql).toContain("->'profileHydration'->>'attemptCount'");
     expect(metadataSql).toContain('+ 1');
     expect(metadataSql).toContain('jsonb_strip_nulls');
-    expect(metadataSql).not.toContain('secret-token');
+    const query = new PgDialect().sqlToQuery(payload.profileMetadata as SQL);
+    expect(query.params).toContain('profile_hydration_failed');
+    expect(JSON.stringify(query.params)).not.toContain('Slack timeout');
+    expect(JSON.stringify(query.params)).not.toContain('secret-token');
   });
 });

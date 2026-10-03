@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@entalent/application':
+        specifier: workspace:*
+        version: link:packages/application
+      '@entalent/database':
+        specifier: workspace:*
+        version: link:packages/database
       '@entalent/eslint-config':
         specifier: workspace:*
         version: link:packages/eslint-config
@@ -20,12 +26,24 @@ importers:
       '@swc/core':
         specifier: ^1.10.7
         version: 1.15.43
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
       dotenv-cli:
         specifier: ^7.4.4
         version: 7.4.4
+      drizzle-orm:
+        specifier: ^0.35.0
+        version: 0.35.3(@libsql/client-wasm@0.17.4)(@opentelemetry/api@1.9.1)(@types/react@19.2.17)(postgres@3.4.9)(react@19.2.7)
+      ioredis:
+        specifier: ^5.3.2
+        version: 5.11.1
       nodemon:
         specifier: ^3.1.9
         version: 3.1.14
+      postgres:
+        specifier: ^3.4.4
+        version: 3.4.9
       prettier:
         specifier: ^3.3.3
         version: 3.9.5

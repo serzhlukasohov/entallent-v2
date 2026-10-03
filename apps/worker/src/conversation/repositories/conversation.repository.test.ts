@@ -11,12 +11,13 @@ function createDbMock(rows: unknown[]) {
   const limit = vi.fn().mockResolvedValue(rows);
   const orderBy = vi.fn((..._values: unknown[]) => ({ limit }));
   const where = vi.fn((_value: unknown) => ({ orderBy }));
-  const from = vi.fn(() => ({ where }));
+  const innerJoin = vi.fn((_table: unknown, _on: unknown) => ({ where }));
+  const from = vi.fn(() => ({ where, innerJoin }));
   const select = vi.fn(() => ({ from }));
 
   return {
     client: { select },
-    calls: { select, from, where, orderBy, limit },
+    calls: { select, from, innerJoin, where, orderBy, limit },
   };
 }
 
@@ -62,6 +63,11 @@ describe('ConversationRepository', () => {
 
     const anchorQuery = compileSql(db.calls.where.mock.calls[0]?.[0]);
     const candidateQuery = compileSql(db.calls.where.mock.calls[1]?.[0]);
+    for (const join of db.calls.innerJoin.mock.calls) {
+      const joinSql = compileSql(join[1]).sql;
+      expect(joinSql).toContain('"conversations"."tenant_id" = "messages"."tenant_id"');
+      expect(joinSql).toContain('"conversations"."user_id" = "messages"."user_id"');
+    }
     for (const query of [anchorQuery, candidateQuery]) {
       expect(query.sql).toContain('"messages"."tenant_id"');
       expect(query.sql).toContain('"messages"."user_id"');
@@ -191,7 +197,7 @@ describe('ConversationRepository', () => {
       row('message-b', null),
       row('message-c', '1789078586.984530'),
       row('message-a', '1789078586.984529'),
-    ]);
+    ].map((message) => ({ message })));
     const repository = new ConversationRepository(db as never);
 
     const result = await repository.findRecentMessages('conversation-1', 10);
@@ -205,8 +211,11 @@ describe('ConversationRepository', () => {
     expect(compileSql(db.calls.orderBy.mock.calls[0]?.[2]).sql)
       .toBe('"messages"."id" desc');
     const whereQuery = compileSql(db.calls.where.mock.calls[0]?.[0]);
-    expect(whereQuery.sql).toContain('"messages"."conversation_id"');
+    expect(whereQuery.sql).toContain('"conversations"."id"');
     expect(whereQuery.sql).toContain('"messages"."deleted_at" is null');
+    const joinQuery = compileSql(db.calls.innerJoin.mock.calls[0]?.[1]);
+    expect(joinQuery.sql).toContain('"conversations"."tenant_id" = "messages"."tenant_id"');
+    expect(joinQuery.sql).toContain('"conversations"."user_id" = "messages"."user_id"');
   });
 
   it('loads only an active outbound message in the queued tenant and conversation', async () => {
@@ -373,12 +382,13 @@ function createAdmissionDbMock(
   const where = vi.fn()
     .mockReturnValueOnce({ limit: anchorLimit })
     .mockResolvedValueOnce(candidateRows);
-  const from = vi.fn(() => ({ where }));
+  const innerJoin = vi.fn((_table: unknown, _on: unknown) => ({ where }));
+  const from = vi.fn(() => ({ innerJoin }));
   const select = vi.fn(() => ({ from }));
 
   return {
     client: { client: { select } },
-    calls: { select, from, where, anchorLimit },
+    calls: { select, from, innerJoin, where, anchorLimit },
   };
 }
 

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, jsonb, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, jsonb, timestamp, index, unique } from 'drizzle-orm/pg-core';
 
 // Audit log is append-only — no foreign keys on purpose (records must survive entity deletion)
 export const auditLogs = pgTable(
@@ -14,6 +14,7 @@ export const auditLogs = pgTable(
     reason: text('reason'),
     metadata: jsonb('metadata').notNull().default({}),
     traceId: text('trace_id'),
+    idempotencyKey: text('idempotency_key'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -21,6 +22,7 @@ export const auditLogs = pgTable(
     actorIdx: index('audit_logs_actor_idx').on(t.actorType, t.actorId),
     resourceIdx: index('audit_logs_resource_idx').on(t.resourceType, t.resourceId),
     createdAtIdx: index('audit_logs_created_at_idx').on(t.createdAt),
+    idempotencyKeyUnique: unique('audit_logs_tenant_idempotency_unique').on(t.tenantId, t.idempotencyKey),
   }),
 );
 
