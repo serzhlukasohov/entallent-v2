@@ -40,18 +40,33 @@ describe.runIf(Boolean(databaseUrl))('V2 report snapshots on migrated PostgreSQL
       tenantId, channelType: 'slack', externalWorkspaceId: randomUUID(),
       encryptedCredentials: 'synthetic',
     }).returning();
+    const contributorUserIds = Array.from({ length: 5 }, () => randomUUID());
+    const sourceQuestionInsightIds = Array.from({ length: 15 }, () => randomUUID());
     const input = {
       tenantId, reportingCohortId: cohort!.id, teamId: team!.id,
       questionGroup: 'autonomy', reportKind: 'intermediate' as const,
-      snapshotVersion: 1, managerPayload: { message: 'Safe team aggregate' },
-      contributorUserIds: Array.from({ length: 5 }, () => randomUUID()),
-      sourceQuestionInsightIds: Array.from({ length: 15 }, () => randomUUID()),
+      snapshotVersion: 1, managerPayload: {
+        message: 'Safe team aggregate',
+        sourceQuestionInsightIdsByGroupAndUser: { autonomy: Object.fromEntries(
+          contributorUserIds.map((userId, index) => [userId, sourceQuestionInsightIds.slice(index * 3, index * 3 + 3)]),
+        ) },
+        preSendRecoveryVersion: 1 as const,
+      },
+      contributorUserIds,
+      sourceQuestionInsightIds,
       policyVersion: 'fixture-v1', calculationVersion: 'equal-weight-1.0.0',
       workspaceConnectionId: workspace!.id, managerSlackChannelId: 'D-manager',
     };
     const id = await repo.createPending(input);
     expect(id).toBeTruthy();
     expect(await repo.createPending(input)).toBeNull();
+    const unattempted = { ...input, questionGroup: 'growth' };
+    const unattemptedId = await repo.createPending(unattempted);
+    expect(unattemptedId).toBeTruthy();
+    expect(await repo.cancelStaleUnattempted(unattempted, new Date(Date.now() + 60_000))).toBe(true);
+    expect(await repo.findLatest(unattempted)).toBeNull();
+    await repo.markAttemptStarted(id!, new Date());
+    expect(await repo.cancelStaleUnattempted(input, new Date(Date.now() + 60_000))).toBe(false);
     await repo.markDeliveryUnknown(id!, new Date());
     expect((await repo.findLatest(input))?.status).toBe('delivery_unknown');
     await expect(repo.markDelivered(id!, '123.456', new Date()))

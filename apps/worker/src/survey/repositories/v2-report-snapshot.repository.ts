@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, lt, ne, sql } from 'drizzle-orm';
 import { surveyV2ReportSnapshots } from '@entalent/database';
 import { DatabaseService } from '../../database/database.service';
 
@@ -12,7 +12,11 @@ export interface V2ReportSnapshotInput {
   questionGroup: string;
   reportKind: 'intermediate' | 'final';
   snapshotVersion: number;
-  managerPayload: { message: string };
+  managerPayload: {
+    message: string;
+    sourceQuestionInsightIdsByGroupAndUser: Record<string, Record<string, string[]>>;
+    preSendRecoveryVersion: 1;
+  };
   contributorUserIds: string[];
   sourceQuestionInsightIds: string[];
   policyVersion: string;
@@ -32,6 +36,9 @@ export class V2ReportSnapshotRepository {
       reportKind: surveyV2ReportSnapshots.reportKind,
       contributorUserIds: surveyV2ReportSnapshots.contributorUserIds,
       sourceQuestionInsightIds: surveyV2ReportSnapshots.sourceQuestionInsightIds,
+      managerPayload: surveyV2ReportSnapshots.managerPayload,
+      createdAt: surveyV2ReportSnapshots.createdAt,
+      deliveryAttemptedAt: surveyV2ReportSnapshots.deliveryAttemptedAt,
     }).from(surveyV2ReportSnapshots).where(and(
       eq(surveyV2ReportSnapshots.tenantId, input.tenantId),
       eq(surveyV2ReportSnapshots.reportingCohortId, input.reportingCohortId),
@@ -57,6 +64,34 @@ export class V2ReportSnapshotRepository {
       status: 'pending_delivery' satisfies V2ReportSnapshotStatus,
     }).onConflictDoNothing().returning({ id: surveyV2ReportSnapshots.id });
     return row?.id ?? null;
+  }
+
+  async cancelStaleUnattempted(
+    input: Pick<V2ReportSnapshotInput, 'tenantId' | 'reportingCohortId' | 'questionGroup'>,
+    olderThan: Date,
+  ): Promise<boolean> {
+    const rows = await this.db.client.update(surveyV2ReportSnapshots).set({
+      status: 'cancelled', failureReason: 'v2_report_stale_before_send', statusUpdatedAt: new Date(),
+    }).where(and(
+      eq(surveyV2ReportSnapshots.tenantId, input.tenantId),
+      eq(surveyV2ReportSnapshots.reportingCohortId, input.reportingCohortId),
+      eq(surveyV2ReportSnapshots.questionGroup, input.questionGroup),
+      eq(surveyV2ReportSnapshots.status, 'pending_delivery'),
+      lt(surveyV2ReportSnapshots.createdAt, olderThan),
+      sql`${surveyV2ReportSnapshots.deliveryAttemptedAt} is null`,
+      sql`${surveyV2ReportSnapshots.managerPayload}->>'preSendRecoveryVersion' = '1'`,
+    )).returning({ id: surveyV2ReportSnapshots.id });
+    return rows.length > 0;
+  }
+
+  async markAttemptStarted(id: string, attemptedAt: Date): Promise<void> {
+    const rows = await this.db.client.update(surveyV2ReportSnapshots).set({
+      deliveryAttemptedAt: attemptedAt, statusUpdatedAt: attemptedAt,
+    }).where(and(
+      eq(surveyV2ReportSnapshots.id, id), eq(surveyV2ReportSnapshots.status, 'pending_delivery'),
+      sql`${surveyV2ReportSnapshots.deliveryAttemptedAt} is null`,
+    )).returning({ id: surveyV2ReportSnapshots.id });
+    if (rows.length !== 1) throw new Error('v2_report_snapshot_transition_failed');
   }
 
   async markDelivered(id: string, externalMessageId: string, sentAt: Date): Promise<void> {

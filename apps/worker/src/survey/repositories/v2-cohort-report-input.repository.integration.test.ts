@@ -81,5 +81,11 @@ describe.runIf(Boolean(databaseUrl))('V2 frozen cohort input reader on migrated 
     await db.update(surveyQuestionInsights).set({ withdrawnAt: periodEnd }).where(eq(surveyQuestionInsights.id, rows[0]!.id));
     expect(selectV2CohortReportInputs(await reader.load(input), 'intermediate', periodEnd).reason)
       .toBe('insufficient_contributors');
+    await db.update(surveyQuestionInsights).set({ withdrawnAt: null }).where(eq(surveyQuestionInsights.id, rows[0]!.id));
+    await db.update(users).set({ status: 'deleted', deletedAt: new Date() }).where(eq(users.id, roster[0]!.id));
+    const afterDeletion = await reader.load(input);
+    expect(afterDeletion?.questions.some((row) => row.userId === roster[0]!.id)).toBe(false);
+    expect(selectV2CohortReportInputs(afterDeletion, 'intermediate', periodEnd).reason)
+      .toBe('insufficient_contributors');
   });
 });

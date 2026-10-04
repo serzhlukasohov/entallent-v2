@@ -58,11 +58,11 @@ describe('RetentionRepository', () => {
       questionBundlesExpired: 1,
       questionInsightsDeleted: 1,
       auditLogsDeleted: 1,
-      reportSnapshotsDeleted: 1,
+      reportSnapshotsDeleted: 2,
     });
 
     const queries = execute.mock.calls.map((call) => compileSql(call[0]));
-    expect(queries).toHaveLength(13);
+    expect(queries).toHaveLength(14);
     expect(queries.map((query) => query.sql)).toEqual([
       expect.stringContaining('update messages'),
       expect.stringContaining('update survey_evidence'),
@@ -76,6 +76,7 @@ describe('RetentionRepository', () => {
       expect.stringContaining('update survey_question_confirmation_bundles'),
       expect.stringContaining('delete from survey_question_insights'),
       expect.stringContaining('delete from survey_report_snapshots'),
+      expect.stringContaining('delete from survey_v2_report_snapshots'),
       expect.stringContaining('delete from audit_logs'),
     ]);
     for (const query of queries) {
@@ -96,5 +97,6 @@ describe('RetentionRepository', () => {
     expect(queries[10].sql).toContain('v2.question_insight_withdrawal_retained');
     expect(queries[10].sql).toContain('processed_at <');
     expect(queries[12].sql).toContain('created_at <');
+    expect(queries[13].sql).toContain('created_at <');
   });
 });

@@ -3,12 +3,15 @@ import type {
 } from './select-v2-cohort-report-inputs.use-case';
 
 export const V2_REPORT_CALCULATION_VERSION = 'equal-weight-1.0.0';
+// Set to the reviewed decision packet ID only after Product approval.
+export const V2_REPORT_APPROVED_DECISION_ID: string | null = null;
 
 export interface V2IndexReport {
   questionGroup: string;
   message: string;
   contributorUserIds: string[];
   sourceQuestionInsightIds: string[];
+  sourceQuestionInsightIdsByUser: Record<string, string[]>;
   policyVersion: string;
   calculationVersion: typeof V2_REPORT_CALCULATION_VERSION;
 }
@@ -46,6 +49,9 @@ export function buildV2IndexReport(input: {
     ...questionScores.flatMap((question) => question.rows),
   ].map((row) => [row.id, row])).values()];
   const contributorUserIds = [...new Set(shownRows.map((row) => row.userId))].sort();
+  const sourceQuestionInsightIdsByUser = Object.fromEntries(contributorUserIds.map((userId) => [
+    userId, shownRows.filter((row) => row.userId === userId).map((row) => row.id).sort(),
+  ]));
   const title = questionGroup.charAt(0).toUpperCase() + questionGroup.slice(1);
   const lines = [`${title} team report${reportKind === 'final' ? ' — final' : ''}`];
   if (indexScore !== null) lines.push(`Index: ${indexScore.toFixed(1)}/100 (${indexContributors.length} contributors)`);
@@ -56,6 +62,7 @@ export function buildV2IndexReport(input: {
   return {
     questionGroup, message: lines.join('\n'), contributorUserIds,
     sourceQuestionInsightIds: shownRows.map((row) => row.id).sort(),
+    sourceQuestionInsightIdsByUser,
     policyVersion: scope.policyVersion,
     calculationVersion: V2_REPORT_CALCULATION_VERSION,
   };

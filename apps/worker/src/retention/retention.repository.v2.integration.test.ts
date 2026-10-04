@@ -6,13 +6,81 @@ import {
   surveyAssessments, surveyDefinitions, surveyEvidence,
   surveyQuestionConfirmationBundles, surveyQuestionInsights,
   surveyQuestionWorkingInsights, surveyQuestions, surveyScoringPolicies,
-  surveyWindowScoringPolicies, surveyWindows, tenants, users,
+  surveyWindowScoringPolicies, surveyWindows, surveyReportingCohorts,
+  surveyV2ReportSnapshots, teams, tenants, users,
 } from '@entalent/database';
 import { RetentionRepository } from './retention.repository';
 
 const databaseUrl = process.env['DATABASE_URL'];
 
 describe.skipIf(!databaseUrl)('V2 temporary retention on migrated PostgreSQL', () => {
+  it('expires V2 report provenance by tenant and audit cutoff', async () => {
+    const target = new URL(databaseUrl!);
+    if (!['127.0.0.1', 'localhost'].includes(target.hostname) || !target.port) {
+      throw new Error('isolated_postgres_required');
+    }
+    const client = createDbClient(databaseUrl!);
+    const db = client.db;
+    const [tenant, otherTenant] = await db.insert(tenants).values([
+      { name: `V2 snapshot retention ${randomUUID()}` },
+      { name: `V2 snapshot retention other ${randomUUID()}` },
+    ]).returning();
+    try {
+      const [team, otherTeam] = await db.insert(teams).values([
+        { tenantId: tenant!.id, name: 'Synthetic team' },
+        { tenantId: otherTenant!.id, name: 'Other synthetic team' },
+      ]).returning();
+      const [definition, otherDefinition] = await db.insert(surveyDefinitions).values([
+        { tenantId: tenant!.id, name: 'Synthetic V2', version: randomUUID() },
+        { tenantId: otherTenant!.id, name: 'Synthetic V2', version: randomUUID() },
+      ]).returning();
+      const periodStart = new Date('2026-09-01T00:00:00Z');
+      const periodEnd = new Date('2026-11-01T00:00:00Z');
+      const [cohort, otherCohort] = await db.insert(surveyReportingCohorts).values([
+        { tenantId: tenant!.id, teamId: team!.id, surveyDefinitionId: definition!.id,
+          periodStart, periodEnd, openedAt: periodStart,
+          rosterUserIds: Array.from({ length: 5 }, () => randomUUID()) },
+        { tenantId: otherTenant!.id, teamId: otherTeam!.id,
+          surveyDefinitionId: otherDefinition!.id, periodStart, periodEnd, openedAt: periodStart,
+          rosterUserIds: Array.from({ length: 5 }, () => randomUUID()) },
+      ]).returning();
+      const snapshots = await db.insert(surveyV2ReportSnapshots).values([
+        { tenantId: tenant!.id, reportingCohortId: cohort!.id, teamId: team!.id,
+          questionGroup: 'autonomy', reportKind: 'intermediate', status: 'delivered',
+          managerPayload: { message: 'Old aggregate' }, contributorUserIds: [randomUUID()],
+          sourceQuestionInsightIds: [randomUUID()], policyVersion: 'fixture',
+          calculationVersion: 'fixture', createdAt: new Date('2026-10-01T00:00:00Z') },
+        { tenantId: tenant!.id, reportingCohortId: cohort!.id, teamId: team!.id,
+          questionGroup: 'growth', reportKind: 'intermediate', status: 'delivered',
+          managerPayload: { message: 'Young aggregate' }, contributorUserIds: [randomUUID()],
+          sourceQuestionInsightIds: [randomUUID()], policyVersion: 'fixture',
+          calculationVersion: 'fixture', createdAt: new Date('2026-10-25T00:00:00Z') },
+        { tenantId: otherTenant!.id, reportingCohortId: otherCohort!.id, teamId: otherTeam!.id,
+          questionGroup: 'autonomy', reportKind: 'intermediate', status: 'delivered',
+          managerPayload: { message: 'Other aggregate' }, contributorUserIds: [randomUUID()],
+          sourceQuestionInsightIds: [randomUUID()], policyVersion: 'fixture',
+          calculationVersion: 'fixture', createdAt: new Date('2026-10-01T00:00:00Z') },
+      ]).returning();
+      const repository = new RetentionRepository({ client: db } as never, tenant!.id);
+      const result = await repository.applyRetention({
+        tenantId: tenant!.id, now: new Date('2026-10-31T00:00:00Z'),
+        messagesCutoff: periodStart, memoryCutoff: periodStart,
+        riskSignalCutoff: periodStart, auditLogCutoff: new Date('2026-10-20T00:00:00Z'),
+      });
+      expect(result.reportSnapshotsDeleted).toBe(1);
+      expect(await db.select().from(surveyV2ReportSnapshots)
+        .where(eq(surveyV2ReportSnapshots.id, snapshots[0]!.id))).toHaveLength(0);
+      for (const snapshot of snapshots.slice(1)) {
+        expect(await db.select().from(surveyV2ReportSnapshots)
+          .where(eq(surveyV2ReportSnapshots.id, snapshot.id))).toHaveLength(1);
+      }
+    } finally {
+      await db.delete(tenants).where(eq(tenants.id, tenant!.id));
+      await db.delete(tenants).where(eq(tenants.id, otherTenant!.id));
+      await client.sql.end({ timeout: 2 });
+    }
+  });
+
   it('purges only aged tenant-owned private content and stays idempotent', async () => {
     const target = new URL(databaseUrl!);
     if (!['127.0.0.1', 'localhost'].includes(target.hostname) || !target.port) {

@@ -13,6 +13,7 @@ interface V2ReportJob {
 }
 
 const V2_GROUPS = ['autonomy', 'growth', 'purpose', 'belonging'] as const;
+const FINAL_SETTLEMENT_MS = 15 * 60_000;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -58,7 +59,7 @@ export async function enqueueV2Reports(config: ReturnType<typeof parseV2ReportEn
       config.surveyDefinitionId
         ? eq(surveyReportingCohorts.surveyDefinitionId, config.surveyDefinitionId) : undefined,
       config.reportKind === 'final'
-        ? lte(surveyReportingCohorts.periodEnd, config.now)
+        ? lte(surveyReportingCohorts.periodEnd, new Date(config.now.getTime() - FINAL_SETTLEMENT_MS))
         : and(lte(surveyReportingCohorts.periodStart, config.now), gt(surveyReportingCohorts.periodEnd, config.now)),
     ));
     let enqueued = 0;
@@ -67,9 +68,9 @@ export async function enqueueV2Reports(config: ReturnType<typeof parseV2ReportEn
       for (const questionGroup of groups) {
         const payload: V2ReportJob = { ...row, questionGroup, reportKind: config.reportKind };
         if (queue) {
-          await queue.add(config.reportKind, payload, {
-            jobId: `v2-${config.reportKind}-${row.reportingCohortId}-${questionGroup}`,
-          });
+          // A completed ineligible or disabled attempt must not suppress a later run.
+          // The database snapshot is the delivery idempotency boundary.
+          await queue.add(config.reportKind, payload);
           enqueued++;
         }
       }

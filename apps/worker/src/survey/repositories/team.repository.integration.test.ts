@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import {
   channelAccounts, createDbClient, orgEmployeePlacements, orgTeams, orgUnits,
-  people, tenants, users, type DbClient,
+  people, teamMemberships, teams, tenants, users, type DbClient,
 } from '@entalent/database';
 import { TeamRepository } from './team.repository';
 
@@ -14,6 +14,7 @@ describe.skipIf(!localDatabase)('current hierarchy identifiers on migrated local
   const tenantId = randomUUID();
   const unitId = randomUUID();
   const teamId = randomUUID();
+  const legacyTeamId = randomUUID();
   const managerId = randomUUID();
   const leadId = randomUUID();
   const teamEmployeeId = randomUUID();
@@ -47,6 +48,12 @@ describe.skipIf(!localDatabase)('current hierarchy identifiers on migrated local
     ]);
     await client.db.insert(channelAccounts).values({ tenantId, userId: leadId,
       channelType: 'slack', externalWorkspaceId: 'T-fixture', externalUserId: 'U-LEAD' });
+    await client.db.insert(teams).values({ id: legacyTeamId, tenantId,
+      name: 'V2 fixture', managerSlackUserId: 'D-MANAGER' });
+    await client.db.insert(teamMemberships).values({ teamId: legacyTeamId,
+      userId: managerId, role: 'manager' });
+    await client.db.insert(channelAccounts).values({ tenantId, userId: managerId,
+      channelType: 'slack', externalWorkspaceId: 'T-fixture', externalUserId: 'U-MANAGER' });
   });
 
   afterAll(async () => {
@@ -73,5 +80,16 @@ describe.skipIf(!localDatabase)('current hierarchy identifiers on migrated local
     expect(directIdentifiers).not.toContain('Team Member');
     expect(await repository.findCurrentHierarchyIdentifiers(teamEmployeeId, randomUUID())).toEqual([]);
     expect(await repository.findTeamByMemberId(teamEmployeeId, tenantId)).toBeNull();
+  });
+
+  it('resolves a V2 recipient only while the manager role and Slack link remain active', async () => {
+    expect(await repository.findV2ManagerExternalUserId(legacyTeamId, tenantId, 'T-fixture'))
+      .toBe('U-MANAGER');
+    expect(await repository.findV2ManagerExternalUserId(legacyTeamId, tenantId, 'T-other'))
+      .toBeNull();
+    await client.db.update(users).set({ status: 'deleted', deletedAt: new Date() })
+      .where(eq(users.id, managerId));
+    expect(await repository.findV2ManagerExternalUserId(legacyTeamId, tenantId, 'T-fixture'))
+      .toBeNull();
   });
 });

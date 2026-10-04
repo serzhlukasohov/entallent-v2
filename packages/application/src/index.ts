@@ -119,5 +119,5 @@ export { validateActiveHierarchy, planEmployeeMove, planEmployeeDeactivation, pl
 export type { ActiveHierarchyGraph, ActiveGraphIssue, EmployeeMovePlan, EmployeeDeactivationPlan, PreviousTeamLeadAction, TeamLeadPromotionPlan, PreviousManagerAction, ManagerPromotionPlan, TeamDeactivationPlan, UnitTransferDeactivationPlan } from './hierarchy/active-graph';
 export { selectV2CohortReportInputs } from './use-cases/select-v2-cohort-report-inputs.use-case';
 export type { V2CohortQuestionInput, V2CohortReportScope, V2CohortReportInputSelection } from './use-cases/select-v2-cohort-report-inputs.use-case';
-export { buildV2IndexReport, V2_REPORT_CALCULATION_VERSION } from './use-cases/build-v2-index-report';
+export { buildV2IndexReport, V2_REPORT_CALCULATION_VERSION, V2_REPORT_APPROVED_DECISION_ID } from './use-cases/build-v2-index-report';
 export type { V2IndexReport } from './use-cases/build-v2-index-report';

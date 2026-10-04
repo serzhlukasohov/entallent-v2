@@ -60,6 +60,7 @@ export class RetentionRepository implements RetentionCleanupRepositoryPort {
       questionBundlesExpired,
       questionInsightsDeleted,
       reportSnapshotsDeleted,
+      v2ReportSnapshotsDeleted,
     ] = await Promise.all([
       this.count(sql`
         update messages
@@ -240,6 +241,12 @@ export class RetentionRepository implements RetentionCleanupRepositoryPort {
           and created_at < ${auditLogCutoff}::timestamptz
         returning id
       `),
+      this.count(sql`
+        delete from survey_v2_report_snapshots
+        where tenant_id = ${params.tenantId}::uuid
+          and created_at < ${auditLogCutoff}::timestamptz
+        returning id
+      `),
     ]);
     const auditLogsDeleted = await this.count(sql`
       delete from audit_logs
@@ -261,7 +268,7 @@ export class RetentionRepository implements RetentionCleanupRepositoryPort {
       questionBundlesExpired,
       questionInsightsDeleted,
       auditLogsDeleted,
-      reportSnapshotsDeleted,
+      reportSnapshotsDeleted: reportSnapshotsDeleted + v2ReportSnapshotsDeleted,
     };
   }
 

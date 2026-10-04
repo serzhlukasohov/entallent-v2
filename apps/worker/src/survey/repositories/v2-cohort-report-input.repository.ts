@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import {
   surveyCycleScoringPolicies, surveyDefinitions, surveyQuestionInsights, surveyQuestions,
-  surveyReportingCohorts, surveyScoringPolicies, surveyWindowScoringPolicies, surveyWindows, teams,
+  surveyReportingCohorts, surveyScoringPolicies, surveyWindowScoringPolicies, surveyWindows, teams, users,
 } from '@entalent/database';
 import type { V2CohortReportScope } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
@@ -59,6 +59,10 @@ export class V2CohortReportInputRepository {
       periodStart: surveyWindows.periodStart,
       periodEnd: surveyWindows.periodEnd,
     }).from(surveyWindows)
+      .innerJoin(users, and(
+        eq(users.id, surveyWindows.userId), eq(users.tenantId, input.tenantId),
+        eq(users.status, 'active'), isNull(users.deletedAt),
+      ))
       .leftJoin(surveyWindowScoringPolicies, and(
         eq(surveyWindowScoringPolicies.surveyWindowId, surveyWindows.id),
         eq(surveyWindowScoringPolicies.tenantId, input.tenantId),

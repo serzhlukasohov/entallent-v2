@@ -2,7 +2,8 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
-import { buildV2IndexReport, selectV2CohortReportInputs, V2_REPORT_CALCULATION_VERSION } from '@entalent/application';
+import { buildV2IndexReport, selectV2CohortReportInputs,
+  V2_REPORT_APPROVED_DECISION_ID, V2_REPORT_CALCULATION_VERSION } from '@entalent/application';
 import type { V2IndexReport } from '@entalent/application';
 import { SlackAdapter } from '@entalent/channel-slack';
 import type { OutgoingMessage } from '@entalent/contracts';
@@ -43,7 +44,8 @@ export class V2ReportProcessor extends WorkerHost {
         : !V2_GROUPS.includes(payload.questionGroup as typeof V2_GROUPS[number]))) {
       throw new Error('v2_report_job_invalid_scope');
     }
-    if (this.config.get('V2_REPORT_SEND_TENANT_ID', { infer: true }) !== payload.tenantId
+    if (!V2_REPORT_APPROVED_DECISION_ID
+      || this.config.get('V2_REPORT_SEND_TENANT_ID', { infer: true }) !== payload.tenantId
       || this.config.get('V2_REPORT_SEND_CALCULATION_VERSION', { infer: true }) !== V2_REPORT_CALCULATION_VERSION) {
       this.logger.warn(`V2 report delivery is disabled for tenant=${payload.tenantId}`);
       return;
@@ -51,19 +53,37 @@ export class V2ReportProcessor extends WorkerHost {
     const now = new Date();
     const report = await this.collect(payload, now);
     if (!report) return;
-    const latest = await this.snapshots.findLatest(payload);
+    let latest = await this.snapshots.findLatest(payload);
+    if (latest?.status === 'pending_delivery' && !latest.deliveryAttemptedAt) {
+      const stale = new Date(Date.now() - 15 * 60_000);
+      if (await this.snapshots.cancelStaleUnattempted(payload, stale)) {
+        latest = await this.snapshots.findLatest(payload);
+      }
+    }
     // ponytail: publish only the first intermediate snapshot; add versioned updates if product needs them.
     if (latest) return;
+    if (!(await this.safeAgainstPriorSnapshots(payload, report))) return;
 
     const [team, workspace] = await Promise.all([
       this.teams.findTeamById(payload.teamId, payload.tenantId, payload.reportingCohortId),
       this.workspaces.findFirstByTenant(payload.tenantId, 'slack'),
     ]);
     if (!team?.managerSlackUserId || !workspace) return;
+    const managerUserId = await this.teams.findV2ManagerExternalUserId(
+      payload.teamId, payload.tenantId, workspace.externalWorkspaceId,
+    );
+    if (!managerUserId) return;
+    const adapter = new SlackAdapter({ botToken: workspace.botToken });
+    if (await adapter.openDirectMessage(managerUserId) !== team.managerSlackUserId) return;
     const fresh = await this.collect(payload, new Date());
-    if (!fresh || fresh.fingerprint !== report.fingerprint) return;
+    if (!fresh || fresh.fingerprint !== report.fingerprint
+      || !(await this.safeAgainstPriorSnapshots(payload, fresh))) return;
     const snapshotId = await this.snapshots.createPending({
-      ...payload, snapshotVersion: 1, managerPayload: { message: report.message },
+      ...payload, snapshotVersion: 1, managerPayload: {
+        message: report.message,
+        sourceQuestionInsightIdsByGroupAndUser: report.sourceQuestionInsightIdsByGroupAndUser,
+        preSendRecoveryVersion: 1,
+      },
       contributorUserIds: report.contributorUserIds,
       sourceQuestionInsightIds: report.sourceQuestionInsightIds,
       policyVersion: report.policyVersion,
@@ -73,16 +93,33 @@ export class V2ReportProcessor extends WorkerHost {
     });
     if (!snapshotId) return;
 
-    const [currentTeam, currentWorkspace, currentReport] = await Promise.all([
-      this.teams.findTeamById(payload.teamId, payload.tenantId, payload.reportingCohortId),
-      this.workspaces.findFirstByTenant(payload.tenantId, 'slack'),
-      this.collect(payload, new Date()),
-    ]);
-    if (currentTeam?.managerSlackUserId !== team.managerSlackUserId
-      || currentWorkspace?.id !== workspace.id
-      || currentReport?.fingerprint !== report.fingerprint) {
-      await this.snapshots.markCancelled(snapshotId, 'v2_report_scope_or_target_changed');
-      return;
+    let currentWorkspace: NonNullable<typeof workspace>;
+    try {
+      const [currentTeam, checkedWorkspace, currentReport] = await Promise.all([
+        this.teams.findTeamById(payload.teamId, payload.tenantId, payload.reportingCohortId),
+        this.workspaces.findFirstByTenant(payload.tenantId, 'slack'),
+        this.collect(payload, new Date()),
+      ]);
+      if (currentTeam?.managerSlackUserId !== team.managerSlackUserId
+        || checkedWorkspace?.id !== workspace.id
+        || currentReport?.fingerprint !== report.fingerprint
+        || !currentReport || !(await this.safeAgainstPriorSnapshots(payload, currentReport))) {
+        await this.snapshots.markCancelled(snapshotId, 'v2_report_scope_or_target_changed');
+        return;
+      }
+      const currentManagerUserId = await this.teams.findV2ManagerExternalUserId(
+        payload.teamId, payload.tenantId, checkedWorkspace.externalWorkspaceId,
+      );
+      if (currentManagerUserId !== managerUserId
+        || !currentManagerUserId
+        || await adapter.openDirectMessage(currentManagerUserId) !== currentTeam.managerSlackUserId) {
+        await this.snapshots.markCancelled(snapshotId, 'v2_report_manager_binding_changed');
+        return;
+      }
+      currentWorkspace = checkedWorkspace;
+    } catch (error) {
+      await this.snapshots.markCancelled(snapshotId, 'v2_report_pre_send_check_failed');
+      throw error;
     }
     const outgoing: OutgoingMessage = {
       tenantId: payload.tenantId,
@@ -92,8 +129,8 @@ export class V2ReportProcessor extends WorkerHost {
       externalWorkspaceId: currentWorkspace.externalWorkspaceId,
       externalChannelId: team.managerSlackUserId,
     };
-    const adapter = new SlackAdapter({ botToken: currentWorkspace.botToken });
     const attemptedAt = new Date();
+    await this.snapshots.markAttemptStarted(snapshotId, attemptedAt);
     try {
       const receipt = await adapter.sendMessage(outgoing);
       await this.snapshots.markDelivered(snapshotId, receipt.externalMessageId, receipt.sentAt);
@@ -109,6 +146,7 @@ export class V2ReportProcessor extends WorkerHost {
     sourceQuestionInsightIds: string[];
     policyVersion: string;
     fingerprint: string;
+    sourceQuestionInsightIdsByGroupAndUser: Record<string, Record<string, string[]>>;
   } | null> {
     const groups = payload.reportKind === 'final' ? V2_GROUPS : [payload.questionGroup];
     const reports: V2IndexReport[] = [];
@@ -126,7 +164,8 @@ export class V2ReportProcessor extends WorkerHost {
       const report = buildV2IndexReport({ scope, selection, questionGroup: group, reportKind: payload.reportKind });
       if (report) reports.push(report);
     }
-    if (!reports.length || new Set(reports.map((report) => report.policyVersion)).size !== 1) return null;
+    if (reports.length !== groups.length
+      || new Set(reports.map((report) => report.policyVersion)).size !== 1) return null;
     const contributorUserIds = [...new Set(reports.flatMap((report) => report.contributorUserIds))].sort();
     const sourceQuestionInsightIds = [...new Set(reports.flatMap((report) => report.sourceQuestionInsightIds))].sort();
     const policyVersion = reports[0]!.policyVersion;
@@ -134,6 +173,31 @@ export class V2ReportProcessor extends WorkerHost {
       message: reports.map((report) => report.message).join('\n\n'),
       contributorUserIds, sourceQuestionInsightIds, policyVersion,
       fingerprint: JSON.stringify([contributorUserIds, sourceQuestionInsightIds, policyVersion]),
+      sourceQuestionInsightIdsByGroupAndUser: Object.fromEntries(reports.map((report) => [
+        report.questionGroup, report.sourceQuestionInsightIdsByUser,
+      ])),
     };
+  }
+
+  private async safeAgainstPriorSnapshots(
+    payload: V2ReportJob,
+    report: { sourceQuestionInsightIdsByGroupAndUser: Record<string, Record<string, string[]>> },
+  ): Promise<boolean> {
+    if (payload.reportKind !== 'final') return true;
+    for (const group of V2_GROUPS) {
+      const prior = await this.snapshots.findLatest({ ...payload, questionGroup: group });
+      if (!prior) continue;
+      if (prior.status !== 'delivered') return false;
+      const previous = (prior.managerPayload as {
+        sourceQuestionInsightIdsByGroupAndUser?: Record<string, Record<string, string[]>>;
+      }).sourceQuestionInsightIdsByGroupAndUser?.[group];
+      const current = report.sourceQuestionInsightIdsByGroupAndUser[group];
+      if (!previous || !current) return false;
+      const changedUsers = new Set([...Object.keys(previous), ...Object.keys(current)]);
+      const changedCount = [...changedUsers].filter((userId) =>
+        JSON.stringify(previous[userId] ?? []) !== JSON.stringify(current[userId] ?? [])).length;
+      if (changedCount > 0 && changedCount < 5) return false;
+    }
+    return true;
   }
 }

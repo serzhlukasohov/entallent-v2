@@ -2703,3 +2703,30 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Declare the existing BullMQ version as a root dev dependency and keep the lockfile synchronized.
 - Regression check: Run CI's fresh frozen install and deterministic harness gate on the PR head.
 - Status: fixed
+
+## 2026-10-04: V2 reader fixture duplicated automatic window policy binding
+
+- Symptom: The migrated PostgreSQL test failed on the `survey_window_scoring_policies` primary key after adding explicit fixture bindings.
+- Expected: The fixture should reflect the active migration's automatic binding when a scoped window is inserted.
+- Root cause layer: context and verification
+- Harness fix: Inspect migration `0030` binding triggers before changing the fixture; keep the test on a freshly migrated isolated database.
+- Regression check: Run `v2-cohort-report-input.repository.integration.test.ts` against the complete migration chain.
+- Status: fixed
+
+## 2026-10-04: Fresh worktree lacked built workspace dependencies
+
+- Symptom: The first reflection, script test, and worker typecheck could not resolve `tsx`, database, or contracts from the new checkout.
+- Expected: Development checks should run after a frozen install and workspace package build.
+- Root cause layer: environment
+- Harness fix: Run `pnpm install --frozen-lockfile` and `pnpm build` once in a fresh worktree before focused checks.
+- Regression check: Confirm `node_modules` and package `dist` outputs exist before launching the harness.
+- Status: fixed
+
+## 2026-10-04: V2 retention query changed the exhaustive unit receipt
+
+- Symptom: The first full harness failed because the retention unit test expected only the legacy report snapshot query and count.
+- Expected: A new retention store is reflected in the exhaustive query list and aggregate deletion count.
+- Root cause layer: verification
+- Harness fix: Update the retention unit receipt alongside the V2 snapshot cleanup and retain the migrated database test for behavior.
+- Regression check: Run `retention.repository.test.ts` and `retention.repository.v2.integration.test.ts` before the full harness.
+- Status: fixed
