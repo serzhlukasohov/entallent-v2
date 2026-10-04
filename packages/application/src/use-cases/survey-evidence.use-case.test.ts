@@ -9,7 +9,7 @@ import type { SurveyQuestionRecord, SurveyWindowRecord, SurveyEvidenceRecord } f
 function makeWindow(overrides: Partial<SurveyWindowRecord> = {}): SurveyWindowRecord {
   return {
     id: 'w-1', tenantId: 't-1', userId: 'u-1', surveyDefinitionId: 'def-1',
-    periodType: 'quarter', periodStart: new Date(), periodEnd: new Date(), status: 'active',
+    periodType: 'quarter', periodStart: new Date('2020-01-01'), periodEnd: new Date(Date.now() + 86_400_000), status: 'active',
     ...overrides,
   };
 }
