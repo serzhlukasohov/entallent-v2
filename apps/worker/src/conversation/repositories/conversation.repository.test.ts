@@ -245,6 +245,7 @@ describe('ConversationRepository', () => {
     expect(Object.keys(select.mock.calls[0]![0] as object)).toEqual([
       'userId',
       'text',
+      'metadata',
       'sentAt',
       'externalMessageId',
       'onboardingDeliveryId',

@@ -1,3 +1,4 @@
+import { OnboardingActionSchema } from '@entalent/contracts';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { WebClient } from '@slack/web-api';
 import type { ChannelAdapterPort, UpdateOutgoingMessage } from '@entalent/channel-core';
@@ -65,6 +66,15 @@ export class SlackAdapter implements ChannelAdapterPort {
     const result = await this.webClient.chat.postMessage({
       channel: message.externalChannelId,
       text: message.text,
+      ...(Array.isArray(message.metadata?.['onboardingActions']) ? { blocks: [
+        ...message.text.split('\n\n').map((paragraph) => ({ type: 'section' as const, text: { type: 'plain_text' as const, text: paragraph.slice(0, 3000) } })),
+        { type: 'actions' as const, elements: message.metadata['onboardingActions'].map((raw: unknown) => {
+          const button = raw as { action: string; label: string };
+          const action = OnboardingActionSchema.parse(button.action);
+          return { type: 'button' as const, text: { type: 'plain_text' as const, text: button.label.slice(0, 75) },
+            action_id: `onboarding:${action}`, value: String(message.metadata?.['onboardingVersion']) };
+        }) },
+      ] } : {}),
       ...(message.replyToExternalThreadId
         ? { thread_ts: message.replyToExternalThreadId }
         : {}),
@@ -101,6 +111,15 @@ export class SlackAdapter implements ChannelAdapterPort {
       channel: message.externalMessageId,
       ts: message.externalMessageId,
       text: message.text,
+      ...(Array.isArray(message.metadata?.['onboardingActions']) ? { blocks: [
+        ...message.text.split('\n\n').map((paragraph) => ({ type: 'section' as const, text: { type: 'plain_text' as const, text: paragraph.slice(0, 3000) } })),
+        { type: 'actions' as const, elements: message.metadata['onboardingActions'].map((raw: unknown) => {
+          const button = raw as { action: string; label: string };
+          const action = OnboardingActionSchema.parse(button.action);
+          return { type: 'button' as const, text: { type: 'plain_text' as const, text: button.label.slice(0, 75) },
+            action_id: `onboarding:${action}`, value: String(message.metadata?.['onboardingVersion']) };
+        }) },
+      ] } : {}),
     });
   }
 

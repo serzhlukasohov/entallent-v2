@@ -33,7 +33,7 @@ export class OutboxService implements OutboxPort {
       externalChannelId: payload.externalChannelId,
       text: payload.text,
       replyToExternalThreadId: payload.replyToExternalThreadId,
-    });
+    }, { jobId: payload.messageId });
   }
 
   async enqueueMemoryExtraction(payload: MemoryExtractionPayload): Promise<void> {

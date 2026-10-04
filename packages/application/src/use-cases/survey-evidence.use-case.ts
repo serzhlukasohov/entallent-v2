@@ -36,6 +36,8 @@ export class SurveyEvidenceExtractionUseCase {
   ) {}
 
   async execute(input: SurveyEvidenceExtractionInput): Promise<void> {
+    const conversation = await this.conversationRepo.findById(input.conversationId, input.tenantId);
+    if (conversation?.personalParticipation && conversation.personalParticipation !== 'active') return;
     const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
     if (!window) return;
 
@@ -62,6 +64,8 @@ export class SurveyEvidenceExtractionUseCase {
   async backfill(
     input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
   ): Promise<{ windowsProcessed: number }> {
+    const conversation = await this.conversationRepo.findById(input.conversationId, input.tenantId);
+    if (conversation?.personalParticipation && conversation.personalParticipation !== 'active') return { windowsProcessed: 0 };
     const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
     if (!window) return { windowsProcessed: 0 };
 

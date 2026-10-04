@@ -626,7 +626,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(answer).toContain('confirmed, de-identified, and non-withdrawn');
     expect(answer).toContain('safety checks');
     expect(answer).toContain('product retention rules');
-    expect(answer).toContain('audited internal admin and debugging access');
+    expect(answer).toContain('including administrators and support');
     expect(answer).not.toMatch(/only to reply|depending on (?:the )?setup|human review|model training/);
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
     expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
@@ -1623,24 +1623,24 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     ['en-US', [
       'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
       'goals, tasks, or reminders', 'pulse measurement', 'confirmed, de-identified, and non-withdrawn',
-      'safety checks', 'product retention rules', 'audited internal admin and debugging access',
+      'safety checks', 'product retention rules', 'including administrators and support',
     ], /only to reply|depending on (?:the )?setup|human review|model training/],
     ['ru-RU', [
       'я — ии-помощник, а не человек', 'отвечать в этом разговоре', 'личной памяти',
       'целей, задач или напоминаний', 'измерения пульса команды', 'после подтверждения и обезличивания',
       'если оно не отозвано', 'проверок безопасности', 'правилам хранения продукта',
-      'внутренний административный доступ', 'аудируется',
+      'переписка и персональные ответы никому не показываются', 'администраторов и поддержку',
     ], /только для ответ|в зависимости от настроек|провер(?:ка|яется) человеком|обучени[ея] модел/],
     ['uk-UA', [
       'я — ші-помічник, а не людина', 'відповідати в цій розмові', 'приватної пам’яті',
       'цілей, завдань або нагадувань', 'вимірювання пульсу команди', 'після підтвердження й знеособлення',
       'якщо його не відкликано', 'перевірок безпеки', 'правилами зберігання продукту',
-      'внутрішній адміністративний доступ', 'аудитується',
+      'переписка й особисті відповіді нікому не показуються', 'адміністраторами й підтримкою',
     ], /лише для відпов|залежно від налаштувань|перевір(?:ка|яється) людиною|навчанн[яі] модел/],
     ['fr-FR', [
       'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
       'goals, tasks, or reminders', 'pulse measurement', 'confirmed, de-identified, and non-withdrawn',
-      'safety checks', 'product retention rules', 'audited internal admin and debugging access',
+      'safety checks', 'product retention rules', 'including administrators and support',
     ], /only to reply|depending on (?:the )?setup|human review|model training/],
   ] as const)('localizes the complete CAP-5 policy for %s', async (locale, required, forbidden) => {
     const m = baseMocks();
@@ -4077,19 +4077,19 @@ describe('concise deterministic trust copy', () => {
     {
       locale: 'en-US',
       reporting: [/shown de-identified summary/i, /grants no access/i, /managers\/hr/i, /messages\/answers\/summary\/tasks\/goals\/identity/i, /audited internal access/i, /conversation\/temp.*(?:isn’t|not) reportable/i, /unconfirmed pulse data.*scores\/aggregation\/themes\/recommendations\/reports/i, /confirmed, non-withdrawn summary.*team report/i],
-      dataUse: [/ai, not human/i, /replies, private memory, goals\/tasks\/reminders, pulse measurement, and safety checks/i, /private memory\/unconfirmed data.*not reportable/i, /confirmed, de-identified, non-withdrawn summary.*team reports/i, /retention rules/i, /audited admin\/debug access.*authorized staff/i],
+      dataUse: [/ai, not human/i, /replies, private memory, goals\/tasks\/reminders, pulse measurement, and safety checks/i, /private memory\/unconfirmed data.*not reportable/i, /confirmed, de-identified, non-withdrawn summary.*team reports/i, /retention rules/i, /messages\/answers.*shown to nobody/i],
       pulse: [/no persisted pulse evidence/i, /earlier messages/i, /recent messages may not be evaluated/i, /temporary.*not reportable/i, /confirmed.*de-identified.*team reporting.*not proof of inclusion/i, /withdrawn.*source message not deleted.*past reports unchanged/i],
     },
     {
       locale: 'ru-RU',
       reporting: [/показанн.*обезличенн/i, /доступа не даёт/i, /менеджер.*hr/i, /сообщени.*ответ.*резюме.*задач.*цел.*личност/i, /аудируем.*внутренн.*доступ/i, /разговор\/временные данные не отчётны/i, /неподтверждённ.*оцен.*агрегац.*тем.*рекомендац.*отчёт/i, /подтверждённ.*неотозванн.*командн/i],
-      dataUse: [/ии, не человек/i, /ответ.*приватн.*памят.*цел.*задач.*напоминан.*пульс.*безопасн/i, /память\/неподтверждённ.*не отчётны/i, /подтверждённ.*обезличенн.*неотозванн.*командн/i, /сроки хранения/i, /аудируем.*админ.*отладочн.*доступ.*уполномоченн/i],
+      dataUse: [/ии, не человек/i, /ответ.*приватн.*памят.*цел.*задач.*напоминан.*пульс.*безопасн/i, /память\/неподтверждённ.*не отчётны/i, /подтверждённ.*обезличенн.*неотозванн.*командн/i, /сроки хранения/i, /переписка.*ответы.*никому не показываются/i],
       pulse: [/нет сохранённ.*пульс/i, /предыдущ.*сообщен/i, /последние сообщения могли ещё не быть обработаны/i, /временн.*не подлежит отчётности/i, /подтверждено.*обезличенн.*командн.*не доказывает включение/i, /отозвано.*исходное сообщение не удалено.*прошлые отчёты не меняются/i],
     },
     {
       locale: 'uk-UA',
       reporting: [/показан.*знеособлен/i, /доступу.*не надає/i, /менеджер.*hr/i, /повідомлен.*відповід.*резюме.*завдан.*ціл.*особ/i, /аудитован.*внутрішн.*доступ/i, /розмова\/тимчасові дані не звітні/i, /непідтверджен.*оцін.*агрегац.*тем.*рекомендац.*звіт/i, /підтверджен.*невідкликан.*командн/i],
-      dataUse: [/ші, не людина/i, /відповід.*приватн.*пам’ят.*ціл.*завдан.*нагадуван.*пульс.*безпек/i, /пам’ять\/непідтверджен.*не звітні/i, /підтверджен.*знеособлен.*невідкликан.*командн/i, /строки зберігання/i, /аудитован.*адмін.*налагоджувальн.*доступ.*уповноважен/i],
+      dataUse: [/ші, не людина/i, /відповід.*приватн.*пам’ят.*ціл.*завдан.*нагадуван.*пульс.*безпек/i, /пам’ять\/непідтверджен.*не звітні/i, /підтверджен.*знеособлен.*невідкликан.*командн/i, /строки зберігання/i, /переписка.*відповіді.*нікому не показуються/i],
       pulse: [/немає збережен.*пульс/i, /попередн.*повідомл/i, /останні повідомлення могли ще не бути оброблені/i, /тимчасов.*не придатне для звітності/i, /підтверджено.*знеособлен.*командн.*не доводить включення/i, /відкликано.*вихідне повідомлення не видалено.*минулі звіти не змінюються/i],
     },
   ])('keeps complete concise trust boundaries for $locale', ({ locale, reporting, dataUse, pulse }) => {

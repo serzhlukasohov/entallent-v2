@@ -17,6 +17,14 @@ function fromOnlyQuery(rows: unknown[]) {
 }
 
 describe('PulseOverviewController', () => {
+  it('excludes v2 participants from the identifiable Pulse view before reading their responses', async () => {
+    const select = vi.fn().mockReturnValueOnce(query([{ id: 'user-1', communicationPreferences: {
+      onboarding: { version: 'v2.1', personalParticipation: 'active', managementCompleted: false, reminderQueued: true },
+    } }])).mockReturnValueOnce(query([]));
+    const controller = new PulseOverviewController({ client: { select } } as never, { get: () => true } as never);
+    expect((await controller.getOverview('tenant-1')).employees).toEqual([]);
+    expect(select).toHaveBeenCalledTimes(2);
+  });
   it('refuses named pulse rows when the internal dashboard gate is disabled', async () => {
     const db = {
       client: {

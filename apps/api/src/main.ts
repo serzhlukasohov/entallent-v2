@@ -46,7 +46,13 @@ async function bootstrap(): Promise<void> {
     },
   );
 
-  logger.log('Starting listener', 'Bootstrap');
+  fastify.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' },
+    (req: Record<string, unknown>, body: string, done: (err: Error | null, body?: unknown) => void) => {
+      req['rawBody'] = body;
+      done(null, Object.fromEntries(new URLSearchParams(body)));
+    });
+
+  logger.log('Starting listener' , 'Bootstrap');
   await app.listen(env.API_PORT, '0.0.0.0');
 
   logger.log(`API listening on port ${env.API_PORT}`, 'Bootstrap');

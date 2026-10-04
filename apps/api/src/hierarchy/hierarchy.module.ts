@@ -1,3 +1,4 @@
+import { CompanyOnboardingSettingsService } from './company-onboarding-settings.service';
 import { Module } from '@nestjs/common';
 import { HierarchyDraftService } from './hierarchy-draft.service';
 import { HierarchySlackLinkService } from './hierarchy-slack-link.service';
@@ -15,7 +16,7 @@ import { HierarchyDeactivationService } from './hierarchy-deactivation.service';
 @Module({
   imports: [CompanyAuthModule],
   controllers: [CompanySetupController, CompanySetupUiController],
-  providers: [HierarchyDraftService, HierarchySlackLinkService, SlackDirectoryService, HierarchyRolloutService, CompanySetupReadService, HierarchyMutationService, HierarchyCapabilityService, HierarchyAdvisorScopeService, HierarchyDeactivationService],
+  providers: [CompanyOnboardingSettingsService, HierarchyDraftService, HierarchySlackLinkService, SlackDirectoryService, HierarchyRolloutService, CompanySetupReadService, HierarchyMutationService, HierarchyCapabilityService, HierarchyAdvisorScopeService, HierarchyDeactivationService],
   exports: [HierarchyDraftService, HierarchySlackLinkService, HierarchyRolloutService],
 })
 export class HierarchyModule {}

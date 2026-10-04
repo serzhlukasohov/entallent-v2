@@ -1098,3 +1098,30 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Verify the installed bot token's actual `x-oauth-scopes` and both recipient DM opens before scoped dispatch. Reinstall the app after adding `im:write`, reconcile stored workspace scope metadata with an audit record, and retry only an exact failed intent set with no outbound message or external receipt.
 - Regression check: Production preflight, both `conversations.open` probes, exact retry dry-run, targeted `onboarding-only` job, and receipt readback for the two selected Persons; migrated PostgreSQL retry test rejects an existing outbound message.
 - Status: fixed
+
+## 2026-10-04: Onboarding worktree verification environment and test selection
+
+- Symptom: CodeGraph CLI was unavailable; the desktop pnpm runtime auto-installed dependencies before commands, lacked Node on PATH, and workspace lint could not resolve ESLint. An unfiltered package test also selected archived MAF fixtures.
+- Expected: Isolated onboarding work should run the active deterministic gate without dependency churn or archive execution.
+- Root cause layer: tooling
+- Harness fix: Document the bundled Node and existing eslint-config bin paths and use the changed-path harness instead of unfiltered package tests in docs/onboarding-v2.md.
+- Regression check: `pnpm harness:check -- --base <main-sha>` with the documented runtime environment.
+- Status: fixed
+
+## 2026-10-04: Onboarding privacy copy exceeded existing operational access policy
+
+- Symptom: Approved v2 copy promised no human access while debug and identifiable views could return private employee material. Auto-review rejected disabling whole reporting endpoints as excessive scope.
+- Expected: New onboarding participants receive the approved privacy boundary without disrupting unrelated legacy reporting.
+- Root cause layer: architecture
+- Harness fix: Restrict debug to metadata, deny individual insights, restrict dev inspection, and exclude v2 participants from identifiable views while preserving endpoints. Add view and copy regressions.
+- Regression check: Changed-path API/privacy tests and `pnpm harness:check -- --base <main-sha>`.
+- Status: fixed
+
+## 2026-10-04: Local onboarding integration dependencies unavailable
+
+- Symptom: Named local PostgreSQL and Redis targets failed onboarding preflight.
+- Expected: Both targets are reachable before PostgreSQL/BullMQ onboarding verification.
+- Root cause layer: environment
+- Harness fix: Preserve the named-target preflight requirement and document the mocked Slack integration command in the onboarding runbook.
+- Regression check: `pnpm harness:preflight` followed by the onboarding PostgreSQL/BullMQ integration.
+- Status: open

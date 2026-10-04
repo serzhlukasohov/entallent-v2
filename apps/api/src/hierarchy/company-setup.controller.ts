@@ -1,11 +1,13 @@
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException,
-  Get, Param, ParseUUIDPipe, Post, Req, UnauthorizedException, UnprocessableEntityException,
+  Get, Optional, Param, ParseUUIDPipe, Post, Req, UnauthorizedException, UnprocessableEntityException,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { DraftPersonValidationError, DraftStructureValidationError } from '@entalent/application';
 import { CompanyAdminSessionService } from '../company-auth/company-admin-session.service';
 import { readCookie, SESSION_COOKIE } from '../company-auth/company-auth.controller';
+import { CompanyOnboardingSettingsSchema } from '@entalent/contracts';
+import { CompanyOnboardingSettingsService } from './company-onboarding-settings.service';
 import { CompanySetupReadService } from './company-setup-read.service';
 import {
   HierarchyCsvValidationError, HierarchyDraftReferenceError, HierarchyDraftService,
@@ -30,12 +32,24 @@ export class CompanySetupController {
     private readonly capabilities: HierarchyCapabilityService,
     private readonly advisorScopes: HierarchyAdvisorScopeService,
     private readonly deactivations: HierarchyDeactivationService,
+    @Optional() private readonly onboardingSettings?: CompanyOnboardingSettingsService,
   ) {}
 
   @Get('snapshot')
   async snapshot(@Req() request: FastifyRequest) {
     const session = await this.authorize(request, false);
-    return this.reads.snapshot(session.tenantId);
+    const snapshot = await this.reads.snapshot(session.tenantId);
+    return { ...snapshot, ...(this.onboardingSettings ? { onboardingSettings: await this.onboardingSettings.read(session.tenantId) } : {}) };
+  }
+
+  @Post('onboarding-settings')
+  async saveOnboardingSettings(@Req() request: FastifyRequest, @Body() body: unknown) {
+    const session = await this.authorize(request, true);
+    const parsed = CompanyOnboardingSettingsSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException({ code: 'invalid_onboarding_settings', issues: parsed.error.issues });
+    if (!this.onboardingSettings) throw new Error('onboarding_settings_unavailable');
+    return this.execute(() => this.onboardingSettings!.save(session.tenantId, parsed.data,
+      { type: 'company_admin', personId: session.personId }));
   }
 
   @Post('persons')

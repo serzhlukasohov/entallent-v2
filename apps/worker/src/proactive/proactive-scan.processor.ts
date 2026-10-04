@@ -1,10 +1,11 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
-import { Logger, OnModuleInit } from '@nestjs/common';
+import { Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job, Queue } from 'bullmq';
 import { ProactiveSchedulerUseCase } from '@entalent/application';
 import type { Env } from '@entalent/config';
 import { QUEUE_NAMES } from '../queue/queue.module';
+import { OnboardingFlowService } from '../conversation/onboarding-flow.service';
 import { OnboardingDispatchService } from '../conversation/onboarding-dispatch.service';
 
 export interface ProactiveScanJob {
@@ -25,6 +26,7 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
     @InjectQueue(QUEUE_NAMES.PROACTIVE_SCAN) private readonly queue: Queue<ProactiveScanJob>,
     private readonly config: ConfigService<Env, true>,
     private readonly onboarding: OnboardingDispatchService,
+    @Optional() private readonly onboardingFlow?: OnboardingFlowService,
   ) {
     super();
   }
@@ -55,6 +57,7 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
       return;
     }
     const onboarding = await this.onboarding.dispatchPending(job.data.tenantId);
+    await this.onboardingFlow?.dispatchReminders(job.data.tenantId);
     const result = await this.scheduler.scan({ tenantId: job.data.tenantId });
     this.logger.log(
       `Proactive scan job=${job.id} — onboardingQueued=${onboarding.queued} onboardingFailed=${onboarding.failed} candidates=${result.candidatesFound} enqueued=${result.enqueued} skippedQuietHours=${result.skippedQuietHours}`,

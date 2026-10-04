@@ -27,6 +27,13 @@ table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;
 <button id="sign-in">Continue with SSO</button></section>
 <section id="app" hidden>
 <div class="card"><div class="grid"><div><h2>Setup overview</h2><p id="identity" class="muted"></p><p id="counts"></p></div><div><button id="refresh" class="secondary">Refresh</button><button id="logout" class="secondary">Sign out</button></div></div><p id="status" role="status"></p></div>
+<div class="card"><h2>Agent defaults and working calendar</h2><p>Used for onboarding language and its single reminder after two working days. Personal opt-outs receive no reminder.</p>
+<form id="onboarding-settings-form"><div class="grid">
+<label>Company timezone<input name="timezone" required placeholder="Europe/Warsaw"></label>
+<label>Default agent language<select name="defaultLanguage"><option value="en">English</option><option value="ru">Russian</option><option value="uk">Ukrainian</option></select></label>
+<label>Working days<select name="workingDays" multiple size="7" required><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="7">Sunday</option></select></label>
+<label>Workday starts<input name="workdayStart" type="time" required></label><label>Workday ends<input name="workdayEnd" type="time" required></label>
+</div><button>Save agent defaults</button></form></div>
 <div class="card"><h2>1. Import hierarchy</h2><p>Preview all detectable CSV errors before importing. Import is atomic and appends drafts.</p>
 <label>CSV file<input id="csv-file" type="file" accept=".csv,text/csv"></label><label>CSV content<textarea id="csv" spellcheck="false"></textarea></label>
 <button id="preview">Preview CSV</button><button id="import" disabled>Import drafts</button><div id="preview-result" class="scroll"></div></div>
@@ -168,6 +175,12 @@ function renderDeliveries(data) {
   const units = new Map(data.units.map((unit) => [unit.id, unit]));
   const labels = { pending: 'Queued', sending: 'Sending · verify before retry',
     delivered: 'Delivered', failed: 'Failed · retry scheduled', cancelled: 'Cancelled' };
+  if (snapshot.onboardingSettings) {
+    const form = el('onboarding-settings-form');
+    const settings = snapshot.onboardingSettings;
+    for (const key of ['timezone', 'defaultLanguage', 'workdayStart', 'workdayEnd']) form.elements.namedItem(key).value = settings[key];
+    for (const option of form.elements.namedItem('workingDays').options) option.selected = settings.workingDays.includes(Number(option.value));
+  }
   table(el('onboarding-deliveries'), [['Person', (row) => persons.get(row.personId)?.displayName || row.personId],
     ['Unit', (row) => units.get(row.unitId)?.name || row.unitId],
     ['State', (row) => labels[row.status] || row.status],
@@ -293,6 +306,14 @@ el('sign-in').addEventListener('click', () => {
   const id = value('tenant-id').trim();
   if (!/^[0-9a-f-]{36}$/i.test(id)) { alert('Enter a valid tenant UUID'); return; }
   location.assign('/api/v1/company-auth/start/' + encodeURIComponent(id));
+});
+el('onboarding-settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const body = Object.fromEntries(new FormData(form));
+  body.workingDays = [...form.elements.namedItem('workingDays').selectedOptions].map((option) => Number(option.value));
+  try { await api(base + '/onboarding-settings', 'POST', body); await refresh(); message('Agent defaults saved.'); }
+  catch (error) { message(error.message, true); }
 });
 el('refresh').addEventListener('click', () => run(async () => { await refresh(); message('Hierarchy refreshed.', false); }));
 el('logout').addEventListener('click', () => run(async () => { await api('/api/v1/company-auth/logout', 'POST'); location.reload(); }));

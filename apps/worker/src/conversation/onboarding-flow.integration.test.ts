@@ -87,7 +87,8 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
     expect(queued[0]!.data).toMatchObject({ messageId: deliveryId, tenantId,
       externalWorkspaceId: workspaceId, externalChannelId: dmId });
     const [outbound] = await client.db.select().from(messages).where(eq(messages.id, deliveryId));
-    expect(outbound?.text).toBe('Welcome to enTalent');
+    expect(outbound?.text).toContain('overall picture');
+    expect(outbound?.metadata).toMatchObject({ onboardingVersion: 'v2.1' });
     expect(outbound?.metadata).toMatchObject({ onboardingDeliveryId: deliveryId });
 
     const sender = new MessageSendProcessor(workspace as never, repository,

@@ -103,7 +103,7 @@ function createProcessor(options: {
       checkInUseCase as never,
       llmRunRepo as never,
       db as never,
-      conversationRepo as never,
+       { isPersonalParticipationActive: vi.fn(async () => true), isUserOnboardingEligible: vi.fn(async () => false), ...conversationRepo } as never,
     ),
     orchestrator,
     checkInUseCase,
