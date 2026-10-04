@@ -2766,3 +2766,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Pass the isolated `DATABASE_URL` and Redis `/15` URL to the Git push process so its hook inherits both; keep the hook fail-closed when no database target is supplied.
 - Regression check: Confirm the real push completes its full harness and then verify the remote PR SHA.
 - Status: fixed
+
+## 2026-10-04: Production Slack verification assumed a global bot token
+
+- Symptom: A read-only `conversations.info` check using `SLACK_BOT_TOKEN` from the Railway worker environment returned `not_authed`.
+- Expected: The check uses the same active tenant workspace connection as the worker report processor.
+- Root cause layer: environment and context
+- Harness fix: Resolve and decrypt the active tenant's workspace connection through `WorkspaceConnectionRepository`, then use that token for read-only DM checks; do not assume a global bot token exists.
+- Regression check: After named PostgreSQL/Redis preflight, read the configured DM with `SlackAdapter.getDirectMessageUser` and compare it to the linked active hierarchy manager user ID.
+- Status: fixed
