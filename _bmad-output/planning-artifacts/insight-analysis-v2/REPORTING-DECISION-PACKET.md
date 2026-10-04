@@ -1,6 +1,6 @@
-# Insight Analysis V2 reporting decisions — proposed, not approved
+# Insight Analysis V2 reporting decisions — test-tenant pilot approved
 
-Date: 2026-10-04. Scope: approve the V2 report rules for one five-person test cohort. The V2 consumer is deployed, but this document does not activate reporting or scoring.
+Date: 2026-10-04. Scope: V2 report rules for one five-person test cohort. The user approved this pilot in chat on 2026-10-04; wider rollout remains unapproved.
 
 ## Already binding
 
@@ -38,9 +38,9 @@ Date: 2026-10-04. Scope: approve the V2 report rules for one five-person test co
 
 IA-043 employee export/deletion/self-review remains under its separately deferred privacy contract in `IA-043-EMPLOYEE-RIGHTS-DECISION.md`.
 
-## Test-tenant pilot decision ready for owner approval
+## Approved test-tenant pilot decision
 
-Decision ID: `v2-report-pilot-2026-10-04`. Status: **pending approval**. Scope: the five-person `Test AI Agent` QA cohort and its active manager only. This decision does not authorize a wider tenant rollout.
+Decision ID: `v2-report-pilot-2026-10-04`. Status: **approved for the named pilot on 2026-10-04**. Scope: the five-person `Test AI Agent` QA cohort and its active manager only. This decision does not authorize a wider tenant rollout.
 
 - Calculate a complete employee Index as the arithmetic mean of its three confirmed integer question scores, retaining full precision until display. The team Index is the arithmetic mean of complete employee indices. Display one decimal; never create an employee Index from one or two scores.
 - For a final report, calculate each question mean independently from confirmed scored insights with at least five distinct contributors. A question below five is omitted. A final cycle message requires all four Index groups to have an eligible report; otherwise the entire message is suppressed. No report-level trend or numeric Engagement conversion is included.
@@ -49,12 +49,12 @@ Decision ID: `v2-report-pilot-2026-10-04`. Status: **pending approval**. Scope: 
 - The recipient must remain an active hierarchy manager assigned to an active unit, with a linked account in the same tenant and Slack workspace; the configured team DM must resolve to that account immediately before delivery. V2 provenance follows the existing report audit retention cutoff.
 - Before activation, run the approved 14 reference examples three times on the deployed model configuration. Every output must be contract-valid, each scored result within 10 points of its approved reference, every insufficient-evidence example unscored, and all 12 synthetic low/high pairs correctly ordered. Require no privacy failure in the consent, withdrawal, threshold, target-change, and ambiguous-delivery fixtures. Prior diagnostic runs reportedly met the numerical conditions; repeat and record the results for this decision ID before activation.
 
-Approval changes `V2_REPORT_APPROVED_DECISION_ID` from `null` to this ID in reviewed source and permits the tenant-scoped environment gate. Until then, code cannot send a V2 manager report even if the environment variables are set.
+Approval sets `V2_REPORT_APPROVED_DECISION_ID` to this ID in reviewed source and permits the tenant-scoped environment gate. The gate remains disabled until the reviewed code is released and both production worker variables match the test tenant and calculation version.
 
 ### Production branch-trial evidence, 2026-10-04
 
 PR #7 commit `1359a13` passed both CI jobs. With explicit trial authorization, migrations `0047`–`0050` were applied to `reasonable-adaptation` / `production`: the migration journal advanced from 47 to 51, `survey_v2_report_snapshots` exists, and the question-insight table remained empty. Manual releases of `api` (`477750ad`), `worker` (`8609ee63`), and `dashboard` (`1778b9bf`) from that checkout were `SUCCESS` and `RUNNING`. API health returned `ok`, dashboard `/trends` returned HTTP 200, and filtered deployment error logs had zero rows.
 
-After named production PostgreSQL and Redis preflight, the deployed worker model configuration produced 14/14 exact approved reference scores in each of three runs (42/42 total), with the insufficient-evidence example unscored in each run. The 12 synthetic low/high pairs were correctly ordered (12/12). The full synthetic model bridge passed Bundle composition, partial consent, clarification, source boundary, and direct-identifier privacy cases. The deterministic harness and CI covered withdrawal, threshold, target-change, and ambiguous-delivery fixtures. These are synthetic checks; they do not establish live Slack acceptance or approve this pending decision.
+After named production PostgreSQL and Redis preflight, the deployed worker model configuration produced 14/14 exact approved reference scores in each of three runs (42/42 total), with the insufficient-evidence example unscored in each run. The 12 synthetic low/high pairs were correctly ordered (12/12). The full synthetic model bridge passed Bundle composition, partial consent, clarification, source boundary, and direct-identifier privacy cases. The deterministic harness and CI covered withdrawal, threshold, target-change, and ambiguous-delivery fixtures. These synthetic checks do not establish live Slack acceptance.
 
 A repeat read-only tenant check found one inactive `v2-policy-1.0.0` definition with 12 questions, no unfinished windows, cycle policies, or reporting cohorts, and a QA team with five active, survey-consented, linked members. The configured DM `D0C5MUFTDG8` resolved through the worker's encrypted workspace connection to Slack user `U0C4VG5PK09`, the tenant's active hierarchy manager account. No Slack message was sent in this check.

@@ -3,8 +3,7 @@ import type {
 } from './select-v2-cohort-report-inputs.use-case';
 
 export const V2_REPORT_CALCULATION_VERSION = 'equal-weight-1.0.0';
-// Set to the reviewed decision packet ID only after Product approval.
-export const V2_REPORT_APPROVED_DECISION_ID: string | null = null;
+export const V2_REPORT_APPROVED_DECISION_ID: string | null = 'v2-report-pilot-2026-10-04';
 
 export interface V2IndexReport {
   questionGroup: string;
@@ -16,7 +15,7 @@ export interface V2IndexReport {
   calculationVersion: typeof V2_REPORT_CALCULATION_VERSION;
 }
 
-/** Proposed MVP calculation; keep production delivery disabled until Product approves it. */
+/** Approved only for the named five-person test-tenant pilot. */
 export function buildV2IndexReport(input: {
   scope: V2CohortReportScope;
   selection: V2CohortReportInputSelection;
