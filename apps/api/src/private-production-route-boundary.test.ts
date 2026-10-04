@@ -64,6 +64,7 @@ describe('production API route privacy boundary', () => {
         "GET admin/queues/dead-letter",
         "GET admin/survey/coverage",
         "GET admin/survey/coverage/definitions",
+        "GET admin/v2-pilot",
         "POST admin/queues/dead-letter/:jobId/retry",
         "POST admin/queues/dead-letter/:queueName/:jobId/retry",
         "PUT admin/feature-flags/:key",
