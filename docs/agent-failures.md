@@ -2757,3 +2757,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Narrow the response with a runtime `user` property and string check before using it; build the channel package before the worker gate.
 - Regression check: Run `pnpm --filter @entalent/channel-slack build` and `slack.adapter.test.ts` after changing DM metadata handling.
 - Status: fixed
+
+## 2026-10-04: Full pre-push gate lacked isolated database target
+
+- Symptom: A push from the clean worktree ran the full harness and stopped at `database integration target required`.
+- Expected: The pre-push gate receives the named isolated PostgreSQL and Redis targets used by the focused tests.
+- Root cause layer: environment and workflow
+- Harness fix: Pass the isolated `DATABASE_URL` and Redis `/15` URL to the Git push process so its hook inherits both; keep the hook fail-closed when no database target is supplied.
+- Regression check: Confirm the real push completes its full harness and then verify the remote PR SHA.
+- Status: fixed
