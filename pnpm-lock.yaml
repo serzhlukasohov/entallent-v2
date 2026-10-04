@@ -29,6 +29,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
+      bullmq:
+        specifier: ^5.12.12
+        version: 5.80.5
       dotenv-cli:
         specifier: ^7.4.4
         version: 7.4.4

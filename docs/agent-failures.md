@@ -2694,3 +2694,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Update the exhaustive queue contract fixture together with the queue declaration.
 - Regression check: Run the contracts queue test and full harness after adding a queue name.
 - Status: fixed
+
+## 2026-10-04: Local transitive BullMQ link masked a missing root dependency
+
+- Symptom: PR CI failed while typechecking the new root V2 report CLI because BullMQ was absent from the root package's declared dependencies; local typecheck passed through the existing installation.
+- Expected: A fresh frozen install resolves every direct script import from the package that owns the script.
+- Root cause layer: environment and verification
+- Harness fix: Declare the existing BullMQ version as a root dev dependency and keep the lockfile synchronized.
+- Regression check: Run CI's fresh frozen install and deterministic harness gate on the PR head.
+- Status: fixed
