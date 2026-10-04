@@ -16,6 +16,8 @@
     "activate-v2-scoring-policy.integration.test.ts",
     "verify-v2-model-bridge.ts",
     "redact-retained-message-send-jobs.ts",
-    "redact-retained-message-send-jobs.test.ts"
+    "redact-retained-message-send-jobs.test.ts",
+    "enqueue-v2-reports.ts",
+    "enqueue-v2-reports.test.ts"
   ]
 }

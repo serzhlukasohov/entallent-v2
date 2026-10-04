@@ -20,6 +20,7 @@ export * from './feature-flags';
 export * from './teams';
 export * from './survey-group-states';
 export * from './survey-insight-v2';
+export * from './survey-report-v2';
 export * from './pulse-backlog';
 export * from './user-style-profiles';
 export * from './runtime-attempts';

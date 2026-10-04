@@ -44,6 +44,7 @@ export { QUEUE_NAMES };
       { name: QUEUE_NAMES.MESSAGE_SEND },
       { name: QUEUE_NAMES.PROACTIVE_SCAN },
       { name: QUEUE_NAMES.GROUP_REPORT },
+      { name: QUEUE_NAMES.V2_REPORT },
       { name: QUEUE_NAMES.STYLE_ANALYSIS },
       { name: QUEUE_NAMES.PROFILE_HYDRATION },
     ),

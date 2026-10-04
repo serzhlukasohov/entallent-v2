@@ -14,6 +14,7 @@ describe('queue contract', () => {
       MESSAGE_SEND: 'message-send',
       PROACTIVE_SCAN: 'proactive-scan',
       GROUP_REPORT: 'group-report',
+      V2_REPORT: 'v2-report',
       STYLE_ANALYSIS: 'style-analysis',
       PROFILE_HYDRATION: 'profile-hydration',
     });
@@ -31,6 +32,7 @@ describe('queue contract', () => {
       'message-send',
       'proactive-scan',
       'group-report',
+      'v2-report',
       'style-analysis',
       'profile-hydration',
     ]);

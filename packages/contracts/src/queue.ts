@@ -9,6 +9,7 @@ export const QUEUE_NAMES = {
   MESSAGE_SEND: 'message-send',
   PROACTIVE_SCAN: 'proactive-scan',
   GROUP_REPORT: 'group-report',
+  V2_REPORT: 'v2-report',
   STYLE_ANALYSIS: 'style-analysis',
   PROFILE_HYDRATION: 'profile-hydration',
 } as const;

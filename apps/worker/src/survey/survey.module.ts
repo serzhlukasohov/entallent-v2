@@ -16,6 +16,9 @@ import { GroupStateRepository } from './repositories/group-state.repository';
 import { TeamRepository } from './repositories/team.repository';
 import { PulseBacklogRepository } from './repositories/pulse-backlog.repository';
 import { GroupReportSnapshotRepository } from './repositories/group-report-snapshot.repository';
+import { V2ReportSnapshotRepository } from './repositories/v2-report-snapshot.repository';
+import { V2CohortReportInputRepository } from './repositories/v2-cohort-report-input.repository';
+import { V2ReportProcessor } from './v2-report.processor';
 import { QuestionInsightRepository } from './repositories/question-insight.repository';
 import { QuestionCutoffProcessor } from './question-cutoff.processor';
 import { SurveyEvidenceIntentRepository } from './repositories/survey-evidence-intent.repository';
@@ -34,6 +37,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
       { name: QUEUE_NAMES.CONVERSATION },
       { name: QUEUE_NAMES.MESSAGE_SEND },
       { name: QUEUE_NAMES.GROUP_REPORT },
+      { name: QUEUE_NAMES.V2_REPORT },
       { name: QUEUE_NAMES.PROFILE_HYDRATION },
       { name: QUEUE_NAMES.STYLE_ANALYSIS },
       { name: QUEUE_NAMES.MEMORY_EXTRACTION },
@@ -48,6 +52,8 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     SurveyRepository,
     PulseBacklogRepository,
     GroupReportSnapshotRepository,
+    V2ReportSnapshotRepository,
+    V2CohortReportInputRepository,
     QuestionInsightRepository,
     SurveyEvidenceIntentRepository,
     {
@@ -102,6 +108,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     },
     SurveyEvidenceProcessor,
     GroupReportProcessor,
+    V2ReportProcessor,
   ],
   exports: [
     SurveyRepository,

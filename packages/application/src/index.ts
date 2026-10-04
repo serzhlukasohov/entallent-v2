@@ -117,3 +117,7 @@ export { isRuntimeEligibleUser } from './hierarchy/runtime-eligibility';
 export type { RuntimeUserState } from './hierarchy/runtime-eligibility';
 export { validateActiveHierarchy, planEmployeeMove, planEmployeeDeactivation, planTeamLeadPromotion, planManagerPromotion, planTeamDeactivation, planUnitTransferDeactivation } from './hierarchy/active-graph';
 export type { ActiveHierarchyGraph, ActiveGraphIssue, EmployeeMovePlan, EmployeeDeactivationPlan, PreviousTeamLeadAction, TeamLeadPromotionPlan, PreviousManagerAction, ManagerPromotionPlan, TeamDeactivationPlan, UnitTransferDeactivationPlan } from './hierarchy/active-graph';
+export { selectV2CohortReportInputs } from './use-cases/select-v2-cohort-report-inputs.use-case';
+export type { V2CohortQuestionInput, V2CohortReportScope, V2CohortReportInputSelection } from './use-cases/select-v2-cohort-report-inputs.use-case';
+export { buildV2IndexReport, V2_REPORT_CALCULATION_VERSION } from './use-cases/build-v2-index-report';
+export type { V2IndexReport } from './use-cases/build-v2-index-report';

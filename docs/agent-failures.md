@@ -2676,3 +2676,21 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: The production test plan records Slack target type and recipient separately; verify both before reporting a delivery blocker or changing the target.
 - Regression check: Trace `GroupReportProcessor` to `SlackAdapter.sendMessage` and check the configured channel with `conversations.info`.
 - Status: fixed
+
+## 2026-10-04: V2 report fixture omitted cycle policy invariants
+
+- Symptom: The first migrated PostgreSQL input-reader fixture failed while seeding a partial policy and manually bound windows.
+- Expected: Synthetic V2 fixtures satisfy the 12-question policy and the database's automatic cycle/window binding rules.
+- Root cause layer: verification
+- Harness fix: Seed all canonical question rubrics and let the existing activation rules bind windows; assert the reader's frozen scope and withdrawal behavior.
+- Regression check: Run the V2 cohort input reader integration test against a freshly migrated isolated PostgreSQL database.
+- Status: fixed
+
+## 2026-10-04: V2 queue addition broke the exhaustive queue contract test
+
+- Symptom: The first full harness failed because the queue name and operational list test still expected only V1 queues.
+- Expected: A new queue is registered consistently in the contract, worker modules, and operational enumeration.
+- Root cause layer: verification
+- Harness fix: Update the exhaustive queue contract fixture together with the queue declaration.
+- Regression check: Run the contracts queue test and full harness after adding a queue name.
+- Status: fixed
