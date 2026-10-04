@@ -651,6 +651,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     });
   }
 
+  async hasReadyQuestionBundle(input: { tenantId: string; userId: string }): Promise<boolean> {
+    return (await this.findReadyQuestionBundle(input)) !== null;
+  }
+
   async findReadyQuestionBundle(input: {
     tenantId: string; userId: string;
   }): Promise<ReadyQuestionBundle | null> {

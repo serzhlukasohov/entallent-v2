@@ -2203,6 +2203,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue(pending),
       stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
       applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2251,6 +2252,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
         .mockResolvedValueOnce(pending).mockResolvedValueOnce(null),
       stageQuestionClarificationPrompt: vi.fn(),
       applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2291,6 +2293,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(null),
       stageQuestionClarificationPrompt: vi.fn(),
       applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2321,6 +2324,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       }),
       stageQuestionClarificationPrompt: vi.fn(),
       applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2356,6 +2360,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
       findAwaitingQuestionBundle: vi.fn().mockResolvedValue(awaiting),
       applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2394,6 +2399,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
       stageQuestionClarificationPrompt: vi.fn(),
       applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2425,6 +2431,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
         })),
       }),
       applyQuestionBundleVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2455,6 +2462,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
       findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
       applyQuestionBundleVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn().mockResolvedValue({
         tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy',
         questions: statements.map((statement) => ({
@@ -2486,7 +2494,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       .toBeLessThan(m.outbox.enqueueMessageSend.mock.invocationCallOrder[0]);
   });
 
-  it('does not surface a V2 bundle before reporting disclosure has been delivered', async () => {
+  it('offers disclosure in the ordinary reply before surfacing a ready V2 bundle', async () => {
     const m = baseMocks();
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
     const questionConfirmationRepo = {
@@ -2496,6 +2504,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
       findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
       applyQuestionBundleVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(true),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
     };
@@ -2505,10 +2514,14 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       undefined, undefined, questionConfirmationRepo,
     );
 
-    await orch.orchestrate(INPUT);
+    const result = await orch.orchestrate(INPUT);
 
+    expect(questionConfirmationRepo.hasReadyQuestionBundle).toHaveBeenCalledWith({ tenantId: 't-1', userId: 'u-1' });
     expect(questionConfirmationRepo.findReadyQuestionBundle).not.toHaveBeenCalled();
     expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+    expect(result.responseText).toContain(getReportingDisclosureText('en'));
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .toHaveProperty('reportingDisclosureVersion', REPORTING_DISCLOSURE_VERSION);
   });
 });
 

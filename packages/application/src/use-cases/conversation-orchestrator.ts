@@ -447,9 +447,9 @@ export class ConversationOrchestrator {
     }
 
     let v2BundleRequest: ReadyQuestionBundle | null = null;
+    let v2ReadyForDisclosure = false;
     if (
       this.questionConfirmationRepo
-      && reportingDisclosureReceipt
       && !closingTurn
       && !pauseTurn
       && !classification.reminderRequest
@@ -463,7 +463,11 @@ export class ConversationOrchestrator {
       && !phaseB.awaitingPresent
       && !confirmationRequest
     ) {
-      v2BundleRequest = await this.questionConfirmationRepo.findReadyQuestionBundle({ tenantId, userId });
+      if (reportingDisclosureReceipt) {
+        v2BundleRequest = await this.questionConfirmationRepo.findReadyQuestionBundle({ tenantId, userId });
+      } else if (!hasCurrentDeliveredDisclosure) {
+        v2ReadyForDisclosure = await this.questionConfirmationRepo.hasReadyQuestionBundle({ tenantId, userId });
+      }
     }
 
     const currentTurnHasTopicAnchor = !!classification.topicAnchor?.trim();
@@ -648,7 +652,7 @@ export class ConversationOrchestrator {
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
       && !pulseCaptureExplanationRequested
-      && (reportingExplanationRequested || phaseB.awaitingPresent);
+      && (reportingExplanationRequested || phaseB.awaitingPresent || v2ReadyForDisclosure);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
       && !risk.surveyMustBeBlocked

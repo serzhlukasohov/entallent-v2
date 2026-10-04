@@ -87,6 +87,9 @@ export interface QuestionConfirmationPort {
   findReadyQuestionBundle(input: {
     tenantId: string; userId: string;
   }): Promise<ReadyQuestionBundle | null>;
+  hasReadyQuestionBundle(input: {
+    tenantId: string; userId: string;
+  }): Promise<boolean>;
   stageQuestionConfirmationBundle(input: {
     tenantId: string;
     userId: string;
