@@ -2730,3 +2730,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Update the retention unit receipt alongside the V2 snapshot cleanup and retain the migrated database test for behavior.
 - Regression check: Run `retention.repository.test.ts` and `retention.repository.v2.integration.test.ts` before the full harness.
 - Status: fixed
+
+## 2026-10-04: Pre-push hook leaked Git repository variables into harness tests
+
+- Symptom: `git push` ran the pre-push harness with Git's `GIT_DIR`; temporary-repository tests then reinitialized the shared repository metadata as bare and the push failed.
+- Expected: The hook runs the same harness as a terminal `pnpm prepush` without changing repository configuration.
+- Root cause layer: tooling
+- Harness fix: Clear Git's repository-local environment variables in `.githooks/pre-push` before invoking pnpm; restore `core.bare=false` in the shared repository.
+- Regression check: Run the hook through a real push after an independent successful `pnpm prepush`, then verify `git status` in both worktrees and the remote PR head.
+- Status: fixed
