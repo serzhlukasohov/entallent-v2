@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const slack = vi.hoisted(() => ({ sendMessage: vi.fn(), openDirectMessage: vi.fn() }));
+const slack = vi.hoisted(() => ({ sendMessage: vi.fn(), getDirectMessageUser: vi.fn() }));
 vi.mock('@entalent/channel-slack', () => ({
-  SlackAdapter: class { sendMessage = slack.sendMessage; openDirectMessage = slack.openDirectMessage; },
+  SlackAdapter: class { sendMessage = slack.sendMessage; getDirectMessageUser = slack.getDirectMessageUser; },
 }));
 vi.mock('@entalent/application', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@entalent/application')>();
@@ -42,7 +42,9 @@ function setup(enabled = true) {
   };
   const teams = {
     findTeamById: vi.fn().mockResolvedValue({ managerSlackUserId: 'D-manager' }),
-    findV2ManagerExternalUserIds: vi.fn().mockResolvedValue(['U-manager']),
+    isV2ManagerExternalUserId: vi.fn().mockImplementation(
+      async (_tenantId: string, _workspaceId: string, userId: string) => userId === 'U-manager',
+    ),
   };
   const workspaces = { findFirstByTenant: vi.fn().mockResolvedValue({
     id: 'workspace-1', externalWorkspaceId: 'T-workspace', botToken: 'test-token',
@@ -57,7 +59,7 @@ function setup(enabled = true) {
 
 beforeEach(() => {
   slack.sendMessage.mockReset();
-  slack.openDirectMessage.mockReset().mockResolvedValue('D-manager');
+  slack.getDirectMessageUser.mockReset().mockResolvedValue('U-manager');
 });
 
 describe('V2ReportProcessor', () => {
@@ -92,7 +94,7 @@ describe('V2ReportProcessor', () => {
 
   it('does not send to a stale or unlinked manager DM', async () => {
     const { processor, snapshots } = setup();
-    slack.openDirectMessage.mockResolvedValueOnce('D-other');
+    slack.getDirectMessageUser.mockResolvedValueOnce('U-other');
     await processor.process(job);
     expect(snapshots.createPending).not.toHaveBeenCalled();
     expect(slack.sendMessage).not.toHaveBeenCalled();

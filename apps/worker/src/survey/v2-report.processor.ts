@@ -70,10 +70,10 @@ export class V2ReportProcessor extends WorkerHost {
     ]);
     if (!team?.managerSlackUserId || !workspace) return;
     const adapter = new SlackAdapter({ botToken: workspace.botToken });
-    const managerUserId = await this.resolveManagerForDm(
-      payload.tenantId, workspace.externalWorkspaceId, team.managerSlackUserId, adapter,
-    );
-    if (!managerUserId) return;
+    const managerUserId = await adapter.getDirectMessageUser(team.managerSlackUserId);
+    if (!managerUserId || !(await this.teams.isV2ManagerExternalUserId(
+      payload.tenantId, workspace.externalWorkspaceId, managerUserId,
+    ))) return;
     const fresh = await this.collect(payload, new Date());
     if (!fresh || fresh.fingerprint !== report.fingerprint
       || !(await this.safeAgainstPriorSnapshots(payload, fresh))) return;
@@ -106,11 +106,12 @@ export class V2ReportProcessor extends WorkerHost {
         await this.snapshots.markCancelled(snapshotId, 'v2_report_scope_or_target_changed');
         return;
       }
-      const currentManagerUserId = await this.resolveManagerForDm(
-        payload.tenantId, checkedWorkspace.externalWorkspaceId, currentTeam.managerSlackUserId, adapter,
-      );
+      const currentManagerUserId = await adapter.getDirectMessageUser(currentTeam.managerSlackUserId);
       if (currentManagerUserId !== managerUserId
-        || !currentManagerUserId) {
+        || !currentManagerUserId
+        || !(await this.teams.isV2ManagerExternalUserId(
+          payload.tenantId, checkedWorkspace.externalWorkspaceId, currentManagerUserId,
+        ))) {
         await this.snapshots.markCancelled(snapshotId, 'v2_report_manager_binding_changed');
         return;
       }
@@ -199,17 +200,4 @@ export class V2ReportProcessor extends WorkerHost {
     return true;
   }
 
-  private async resolveManagerForDm(
-    tenantId: string, workspaceId: string, dmChannelId: string,
-    adapter: SlackAdapter,
-  ): Promise<string | null> {
-    const candidates = await this.teams.findV2ManagerExternalUserIds(tenantId, workspaceId);
-    let match: string | null = null;
-    for (const userId of candidates) {
-      if (await adapter.openDirectMessage(userId) !== dmChannelId) continue;
-      if (match) return null;
-      match = userId;
-    }
-    return match;
-  }
 }

@@ -87,3 +87,21 @@ describe('SlackAdapter.openDirectMessage', () => {
     await assert.rejects(adapter.openDirectMessage('U123'), /missing channel/);
   });
 });
+
+describe('SlackAdapter.getDirectMessageUser', () => {
+  it('reads the owner of an existing DM without opening a new channel', async () => {
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', { conversations: {
+      info: async () => ({ ok: true, channel: { id: 'D123', is_im: true, user: 'U123' } }),
+    } });
+    assert.equal(await adapter.getDirectMessageUser('D123'), 'U123');
+  });
+
+  it('rejects a channel that is not the requested DM', async () => {
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', { conversations: {
+      info: async () => ({ ok: true, channel: { id: 'C123', is_im: false, user: 'U123' } }),
+    } });
+    assert.equal(await adapter.getDirectMessageUser('D123'), null);
+  });
+});

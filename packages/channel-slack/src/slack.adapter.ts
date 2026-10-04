@@ -96,6 +96,15 @@ export class SlackAdapter implements ChannelAdapterPort {
     return channelId;
   }
 
+  async getDirectMessageUser(channelId: string): Promise<string | null> {
+    if (!this.webClient) throw new Error('SlackAdapter: botToken is required for getDirectMessageUser');
+    const result = await this.webClient.conversations.info({ channel: channelId });
+    const channel = result.channel;
+    return result.ok && channel?.id === channelId && channel.is_im
+      && 'user' in channel && typeof channel.user === 'string'
+      ? channel.user : null;
+  }
+
   async updateMessage(message: UpdateOutgoingMessage): Promise<void> {
     if (!this.webClient) throw new Error('SlackAdapter: botToken is required for updateMessage');
 

@@ -23,10 +23,10 @@ type TeamInfo = {
 export class TeamRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  async findV2ManagerExternalUserIds(
-    tenantId: string, externalWorkspaceId: string,
-  ): Promise<string[]> {
-    const rows = await this.db.client.select({ externalUserId: channelAccounts.externalUserId })
+  async isV2ManagerExternalUserId(
+    tenantId: string, externalWorkspaceId: string, externalUserId: string,
+  ): Promise<boolean> {
+    const rows = await this.db.client.select({ id: people.id })
       .from(people)
       .innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, tenantId)))
       .innerJoin(orgUnits, and(
@@ -41,8 +41,9 @@ export class TeamRepository {
         eq(people.lifecycleStatus, 'active'), eq(users.status, 'active'), isNull(users.deletedAt),
         eq(channelAccounts.channelType, 'slack'), eq(channelAccounts.linkStatus, 'linked'),
         eq(channelAccounts.externalWorkspaceId, externalWorkspaceId),
-      ));
-    return [...new Set(rows.map((row) => row.externalUserId))].sort();
+        eq(channelAccounts.externalUserId, externalUserId),
+      )).limit(1);
+    return rows.length === 1;
   }
 
   async findCurrentHierarchyIdentifiers(userId: string, tenantId: string): Promise<string[]> {

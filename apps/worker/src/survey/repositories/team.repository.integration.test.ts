@@ -81,13 +81,15 @@ describe.skipIf(!localDatabase)('current hierarchy identifiers on migrated local
   });
 
   it('resolves a V2 recipient only while the manager role and Slack link remain active', async () => {
-    expect(await repository.findV2ManagerExternalUserIds(tenantId, 'T-fixture'))
-      .toEqual(['U-MANAGER']);
-    expect(await repository.findV2ManagerExternalUserIds(tenantId, 'T-other'))
-      .toEqual([]);
+    expect(await repository.isV2ManagerExternalUserId(tenantId, 'T-fixture', 'U-MANAGER'))
+      .toBe(true);
+    expect(await repository.isV2ManagerExternalUserId(tenantId, 'T-other', 'U-MANAGER'))
+      .toBe(false);
+    expect(await repository.isV2ManagerExternalUserId(tenantId, 'T-fixture', 'U-LEAD'))
+      .toBe(false);
     await client.db.update(users).set({ status: 'deleted', deletedAt: new Date() })
       .where(eq(users.id, managerId));
-    expect(await repository.findV2ManagerExternalUserIds(tenantId, 'T-fixture'))
-      .toEqual([]);
+    expect(await repository.isV2ManagerExternalUserId(tenantId, 'T-fixture', 'U-MANAGER'))
+      .toBe(false);
   });
 });

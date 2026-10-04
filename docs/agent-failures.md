@@ -2748,3 +2748,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Resolve active `people` managers assigned to active units, then match each linked account's DM to the configured team target; test that deleting the manager removes eligibility.
 - Regression check: Run the manager repository integration and processor tests, then compare candidate and DM match counts on the named test tenant after PostgreSQL/Redis preflight.
 - Status: fixed
+
+## 2026-10-04: Slack DM metadata type omitted the user field
+
+- Symptom: The channel adapter DTS build rejected direct access to `conversations.info` channel `user` despite the runtime DM response containing it.
+- Expected: A recipient check can read the existing DM owner and still compile against the installed Slack SDK types.
+- Root cause layer: verification and tooling
+- Harness fix: Narrow the response with a runtime `user` property and string check before using it; build the channel package before the worker gate.
+- Regression check: Run `pnpm --filter @entalent/channel-slack build` and `slack.adapter.test.ts` after changing DM metadata handling.
+- Status: fixed
