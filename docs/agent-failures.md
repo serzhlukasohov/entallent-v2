@@ -2658,3 +2658,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Forward migration 0048 enforces outcome/score consistency for legacy and new rows while retaining historical decimal scores; current and prior selectors exclude null scores. Add a migrated PostgreSQL rejection fixture.
 - Regression check: Apply all migrations to isolated PostgreSQL and run `question-insight.repository.migrated.integration.test.ts` plus the full harness.
 - Status: fixed
+
+## 2026-10-04: Asked for production test-tenant details available through read-only access
+
+- Symptom: The agent asked the user for the test tenant UUID and Slack participant inventory before checking Railway's existing production variables and tenant-scoped database records.
+- Expected: Discover available tenant, roster, workspace, and policy state through read-only checks first; ask only for authorization that cannot be inferred from configuration.
+- Root cause layer: workflow and context
+- Harness fix: Before requesting production fixture identifiers, run named-target preflight and inspect tenant-scoped metadata without printing credentials or message content. Keep message sends and scoring activation behind their own authorization boundary.
+- Regression check: Confirm the production `DEFAULT_TENANT_ID` against `tenants`, frozen roster, linked accounts, active windows, and V2 policy counts before asking for missing fixture details.
+- Status: fixed
