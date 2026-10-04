@@ -11,6 +11,8 @@ import { FeatureFlagsController } from './feature-flags.controller';
 import { ManagerTrendsController } from './manager-trends.controller';
 import { ProfileHydrationStatusController } from './profile-hydration-status.controller';
 import { ManagerDashboardReadModel } from './manager-dashboard.read-model';
+import { V2PilotController } from './v2-pilot.controller';
+import { V2PilotReadModel } from './v2-pilot.read-model';
 
 @Module({
   imports: [DatabaseModule, AuditModule],
@@ -23,7 +25,8 @@ import { ManagerDashboardReadModel } from './manager-dashboard.read-model';
     FeatureFlagsController,
     ManagerTrendsController,
     ProfileHydrationStatusController,
+    V2PilotController,
   ],
-  providers: [ApiKeyGuard, ManagerDashboardReadModel],
+  providers: [ApiKeyGuard, ManagerDashboardReadModel, V2PilotReadModel],
 })
 export class AdminModule {}
