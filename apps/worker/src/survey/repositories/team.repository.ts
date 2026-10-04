@@ -23,23 +23,26 @@ type TeamInfo = {
 export class TeamRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  async findV2ManagerExternalUserId(
-    teamId: string, tenantId: string, externalWorkspaceId: string,
-  ): Promise<string | null> {
+  async findV2ManagerExternalUserIds(
+    tenantId: string, externalWorkspaceId: string,
+  ): Promise<string[]> {
     const rows = await this.db.client.select({ externalUserId: channelAccounts.externalUserId })
-      .from(teamMemberships)
-      .innerJoin(teams, and(eq(teams.id, teamMemberships.teamId), eq(teams.tenantId, tenantId)))
-      .innerJoin(users, and(eq(users.id, teamMemberships.userId), eq(users.tenantId, tenantId)))
+      .from(people)
+      .innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, tenantId)))
+      .innerJoin(orgUnits, and(
+        eq(orgUnits.managerPersonId, people.id), eq(orgUnits.tenantId, tenantId),
+        eq(orgUnits.lifecycleStatus, 'active'),
+      ))
       .innerJoin(channelAccounts, and(
         eq(channelAccounts.userId, users.id), eq(channelAccounts.tenantId, tenantId),
       ))
       .where(and(
-        eq(teamMemberships.teamId, teamId), eq(teamMemberships.role, 'manager'),
-        isNull(teamMemberships.leftAt), eq(users.status, 'active'), isNull(users.deletedAt),
+        eq(people.tenantId, tenantId), eq(people.primaryRole, 'manager'),
+        eq(people.lifecycleStatus, 'active'), eq(users.status, 'active'), isNull(users.deletedAt),
         eq(channelAccounts.channelType, 'slack'), eq(channelAccounts.linkStatus, 'linked'),
         eq(channelAccounts.externalWorkspaceId, externalWorkspaceId),
-      )).limit(2);
-    return rows.length === 1 ? rows[0]!.externalUserId : null;
+      ));
+    return [...new Set(rows.map((row) => row.externalUserId))].sort();
   }
 
   async findCurrentHierarchyIdentifiers(userId: string, tenantId: string): Promise<string[]> {

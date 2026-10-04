@@ -2739,3 +2739,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Clear Git's repository-local environment variables in `.githooks/pre-push` before invoking pnpm; restore `core.bare=false` in the shared repository.
 - Regression check: Run the hook through a real push after an independent successful `pnpm prepush`, then verify `git status` in both worktrees and the remote PR head.
 - Status: fixed
+
+## 2026-10-04: V2 manager pre-send check used the wrong role store
+
+- Symptom: Production read-only inspection found zero legacy `team_memberships` manager rows for the QA team, so the new recipient gate would suppress its valid manager DM.
+- Expected: The recipient gate uses the active company hierarchy manager role, linked Slack account, and the team's configured DM channel.
+- Root cause layer: architecture and context
+- Harness fix: Resolve active `people` managers assigned to active units, then match each linked account's DM to the configured team target; test that deleting the manager removes eligibility.
+- Regression check: Run the manager repository integration and processor tests, then compare candidate and DM match counts on the named test tenant after PostgreSQL/Redis preflight.
+- Status: fixed

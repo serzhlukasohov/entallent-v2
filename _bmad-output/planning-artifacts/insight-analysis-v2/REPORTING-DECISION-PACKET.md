@@ -37,3 +37,16 @@ Date: 2026-10-03. Scope: complete the V2 report consumer without routing V2 insi
 5. Real model calibration, de-identification, and deployed Slack/role checks pass against the approved thresholds before production activation.
 
 IA-043 employee export/deletion/self-review remains under its separately deferred privacy contract in `IA-043-EMPLOYEE-RIGHTS-DECISION.md`.
+
+## Test-tenant pilot decision ready for owner approval
+
+Decision ID: `v2-report-pilot-2026-10-04`. Status: **pending approval**. Scope: the five-person `Test AI Agent` QA cohort and its active manager only. This decision does not authorize a wider tenant rollout.
+
+- Calculate a complete employee Index as the arithmetic mean of its three confirmed integer question scores, retaining full precision until display. The team Index is the arithmetic mean of complete employee indices. Display one decimal; never create an employee Index from one or two scores.
+- For a final report, calculate each question mean independently from confirmed scored insights with at least five distinct contributors. A question below five is omitted. A final cycle message requires all four Index groups to have an eligible report; otherwise the entire message is suppressed. No report-level trend or numeric Engagement conversion is included.
+- Manager text contains only Index or question aggregates, contributor counts, and a fixed team-level discussion action. It contains no employee names, quotes, de-identified summaries, individual scores, or generated recommendation text.
+- The first intermediate snapshot is immutable. A final message is suppressed if any prior Index delivery is unresolved or if an Index changed for only one to four contributors. A changed Index requires at least five changed contributors. A completed enqueue job can be retried, while the database snapshot prevents duplicate delivery.
+- The recipient must remain an active hierarchy manager assigned to an active unit, with a linked account in the same tenant and Slack workspace; opening that account's DM must resolve to the configured team channel immediately before delivery. V2 provenance follows the existing report audit retention cutoff.
+- Before activation, run the approved 14 reference examples three times on the deployed model configuration. Every output must be contract-valid, each scored result within 10 points of its approved reference, every insufficient-evidence example unscored, and all 12 synthetic low/high pairs correctly ordered. Require no privacy failure in the consent, withdrawal, threshold, target-change, and ambiguous-delivery fixtures. Prior diagnostic runs reportedly met the numerical conditions; repeat and record the results for this decision ID before activation.
+
+Approval changes `V2_REPORT_APPROVED_DECISION_ID` from `null` to this ID in reviewed source and permits the tenant-scoped environment gate. Until then, code cannot send a V2 manager report even if the environment variables are set.

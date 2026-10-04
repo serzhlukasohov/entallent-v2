@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import {
   channelAccounts, createDbClient, orgEmployeePlacements, orgTeams, orgUnits,
-  people, teamMemberships, teams, tenants, users, type DbClient,
+  people, teams, tenants, users, type DbClient,
 } from '@entalent/database';
 import { TeamRepository } from './team.repository';
 
@@ -50,8 +50,6 @@ describe.skipIf(!localDatabase)('current hierarchy identifiers on migrated local
       channelType: 'slack', externalWorkspaceId: 'T-fixture', externalUserId: 'U-LEAD' });
     await client.db.insert(teams).values({ id: legacyTeamId, tenantId,
       name: 'V2 fixture', managerSlackUserId: 'D-MANAGER' });
-    await client.db.insert(teamMemberships).values({ teamId: legacyTeamId,
-      userId: managerId, role: 'manager' });
     await client.db.insert(channelAccounts).values({ tenantId, userId: managerId,
       channelType: 'slack', externalWorkspaceId: 'T-fixture', externalUserId: 'U-MANAGER' });
   });
@@ -83,13 +81,13 @@ describe.skipIf(!localDatabase)('current hierarchy identifiers on migrated local
   });
 
   it('resolves a V2 recipient only while the manager role and Slack link remain active', async () => {
-    expect(await repository.findV2ManagerExternalUserId(legacyTeamId, tenantId, 'T-fixture'))
-      .toBe('U-MANAGER');
-    expect(await repository.findV2ManagerExternalUserId(legacyTeamId, tenantId, 'T-other'))
-      .toBeNull();
+    expect(await repository.findV2ManagerExternalUserIds(tenantId, 'T-fixture'))
+      .toEqual(['U-MANAGER']);
+    expect(await repository.findV2ManagerExternalUserIds(tenantId, 'T-other'))
+      .toEqual([]);
     await client.db.update(users).set({ status: 'deleted', deletedAt: new Date() })
       .where(eq(users.id, managerId));
-    expect(await repository.findV2ManagerExternalUserId(legacyTeamId, tenantId, 'T-fixture'))
-      .toBeNull();
+    expect(await repository.findV2ManagerExternalUserIds(tenantId, 'T-fixture'))
+      .toEqual([]);
   });
 });

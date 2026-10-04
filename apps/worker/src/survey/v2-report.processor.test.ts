@@ -42,7 +42,7 @@ function setup(enabled = true) {
   };
   const teams = {
     findTeamById: vi.fn().mockResolvedValue({ managerSlackUserId: 'D-manager' }),
-    findV2ManagerExternalUserId: vi.fn().mockResolvedValue('U-manager'),
+    findV2ManagerExternalUserIds: vi.fn().mockResolvedValue(['U-manager']),
   };
   const workspaces = { findFirstByTenant: vi.fn().mockResolvedValue({
     id: 'workspace-1', externalWorkspaceId: 'T-workspace', botToken: 'test-token',

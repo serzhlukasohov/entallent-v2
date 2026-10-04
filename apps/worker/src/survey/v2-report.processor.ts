@@ -69,12 +69,11 @@ export class V2ReportProcessor extends WorkerHost {
       this.workspaces.findFirstByTenant(payload.tenantId, 'slack'),
     ]);
     if (!team?.managerSlackUserId || !workspace) return;
-    const managerUserId = await this.teams.findV2ManagerExternalUserId(
-      payload.teamId, payload.tenantId, workspace.externalWorkspaceId,
+    const adapter = new SlackAdapter({ botToken: workspace.botToken });
+    const managerUserId = await this.resolveManagerForDm(
+      payload.tenantId, workspace.externalWorkspaceId, team.managerSlackUserId, adapter,
     );
     if (!managerUserId) return;
-    const adapter = new SlackAdapter({ botToken: workspace.botToken });
-    if (await adapter.openDirectMessage(managerUserId) !== team.managerSlackUserId) return;
     const fresh = await this.collect(payload, new Date());
     if (!fresh || fresh.fingerprint !== report.fingerprint
       || !(await this.safeAgainstPriorSnapshots(payload, fresh))) return;
@@ -107,12 +106,11 @@ export class V2ReportProcessor extends WorkerHost {
         await this.snapshots.markCancelled(snapshotId, 'v2_report_scope_or_target_changed');
         return;
       }
-      const currentManagerUserId = await this.teams.findV2ManagerExternalUserId(
-        payload.teamId, payload.tenantId, checkedWorkspace.externalWorkspaceId,
+      const currentManagerUserId = await this.resolveManagerForDm(
+        payload.tenantId, checkedWorkspace.externalWorkspaceId, currentTeam.managerSlackUserId, adapter,
       );
       if (currentManagerUserId !== managerUserId
-        || !currentManagerUserId
-        || await adapter.openDirectMessage(currentManagerUserId) !== currentTeam.managerSlackUserId) {
+        || !currentManagerUserId) {
         await this.snapshots.markCancelled(snapshotId, 'v2_report_manager_binding_changed');
         return;
       }
@@ -199,5 +197,19 @@ export class V2ReportProcessor extends WorkerHost {
       if (changedCount > 0 && changedCount < 5) return false;
     }
     return true;
+  }
+
+  private async resolveManagerForDm(
+    tenantId: string, workspaceId: string, dmChannelId: string,
+    adapter: SlackAdapter,
+  ): Promise<string | null> {
+    const candidates = await this.teams.findV2ManagerExternalUserIds(tenantId, workspaceId);
+    let match: string | null = null;
+    for (const userId of candidates) {
+      if (await adapter.openDirectMessage(userId) !== dmChannelId) continue;
+      if (match) return null;
+      match = userId;
+    }
+    return match;
   }
 }
