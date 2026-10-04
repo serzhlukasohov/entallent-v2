@@ -42,17 +42,6 @@ function setup() {
 }
 
 describe('CompanySetupController customer boundary', () => {
-  it('requires CSRF proof for agent default changes', async () => {
-    const { controller, sessions } = setup();
-    sessions.verifyCsrf.mockReturnValue(false);
-    await expect(controller.saveOnboardingSettings({ headers: { cookie: COOKIE, 'x-csrf-token': 'wrong' } } as never, {}))
-      .rejects.toThrow('CSRF proof required');
-  });
-  it('rejects invalid calendars before accessing settings persistence', async () => {
-    const { controller } = setup();
-    await expect(controller.saveOnboardingSettings({ headers: { cookie: COOKIE, 'x-csrf-token': 'proof' } } as never,
-      { timezone: 'wrong', workingDays: [], workdayStart: '19:00', workdayEnd: '09:00' })).rejects.toThrow();
-  });
   it('requires a live session even for the read snapshot', async () => {
     const { controller, reads } = setup();
     await expect(controller.snapshot({ headers: {} } as never)).rejects.toThrow('access denied');

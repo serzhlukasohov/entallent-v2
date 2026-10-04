@@ -1,6 +1,3 @@
-import { onboardingCopy } from '../onboarding/onboarding-copy';
-import { onboardingButtons, ONBOARDING_VERSION } from '../onboarding/onboarding';
-import type { PrimaryOrgRole } from '../hierarchy/draft-person';
 import type { ReplyStrategy } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
@@ -30,7 +27,6 @@ export interface ProactiveCheckInInput {
   pulseConfig?: ProactivePulseConfig;
   /** Stable outbound ID for a rollout first contact. Repeated calls reuse the persisted text. */
   onboardingMessageId?: string;
-  onboardingRole?: PrimaryOrgRole;
   /** Non-Pulse organizational roles still receive first contact without Pulse disclosure. */
   pulseEnabled?: boolean;
 }
@@ -77,19 +73,6 @@ export class ProactiveCheckInUseCase {
         await this.enqueue(input, conversation.channelType, existing.id, existing.text);
         return { outboundMessageId: existing.id, responseText: existing.text, probeQuestionId: null };
       }
-    }
-
-    if (input.onboardingMessageId && input.onboardingRole) {
-      const text = onboardingCopy(input.onboardingRole, conversation.userLocale);
-      const outbound = await this.conversationRepo.saveMessage({ id: input.onboardingMessageId,
-        conversationId, tenantId, userId, direction: 'outbound', text, occurredAt: new Date(), traceId: input.traceId,
-        messageType: 'proactive_check_in', metadata: { onboardingDeliveryId: input.onboardingMessageId,
-          onboardingVersion: ONBOARDING_VERSION, onboardingControl: true,
-          onboardingActions: onboardingButtons(input.onboardingRole, conversation.userLocale),
-          ...(input.pulseEnabled !== false ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION } : {}),
-        } });
-      await this.enqueue(input, conversation.channelType, outbound.id, outbound.text);
-      return { outboundMessageId: outbound.id, responseText: outbound.text, probeQuestionId: null };
     }
 
     const dbMessages = await this.conversationRepo.findRecentMessages(conversationId, 10);

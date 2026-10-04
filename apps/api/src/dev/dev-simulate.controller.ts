@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Controller, Post, Get, Body, Param, HttpCode, Logger, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Post, Get, Body, Param, HttpCode, Logger, Query, UseGuards } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
@@ -172,21 +172,12 @@ export class DevSimulateController {
     return { conversationId, userId };
   }
 
-  private async assertSyntheticUser(userId: string): Promise<void> {
-    const rows = await this.db.client.select({ channelType: conversations.channelType }).from(conversations)
-      .where(eq(conversations.userId, userId));
-    if (rows.length === 0 || rows.some((row) => row.channelType !== 'dev')) throw new ForbiddenException('Employee data is private');
-  }
-
   /** Returns all messages in a conversation, newest last. */
   @Get('conversation/:conversationId/messages')
   async getMessages(
     @Param('conversationId') conversationId: string,
     @Query('after') afterMessageId?: string,
   ) {
-    const [conversation] = await this.db.client.select({ channelType: conversations.channelType }).from(conversations)
-      .where(eq(conversations.id, conversationId)).limit(1);
-    if (conversation?.channelType !== 'dev') throw new ForbiddenException('Employee conversations are private');
     const rows = await this.db.client
       .select({
         id: messages.id,
@@ -211,7 +202,6 @@ export class DevSimulateController {
   /** Returns active memory items for a user — what the AI remembers about them. */
   @Get('user/:userId/memory')
   async getMemory(@Param('userId') userId: string) {
-    await this.assertSyntheticUser(userId);
     const items = await this.db.client
       .select({
         id: memoryItems.id,
@@ -234,7 +224,6 @@ export class DevSimulateController {
   /** Returns scheduled follow-up actions for a user. */
   @Get('user/:userId/scheduled-actions')
   async getScheduledActions(@Param('userId') userId: string) {
-    await this.assertSyntheticUser(userId);
     const actions = await this.db.client
       .select({
         id: scheduledActions.id,
@@ -254,7 +243,6 @@ export class DevSimulateController {
   /** Returns survey evidence collected for a user across all windows. */
   @Get('user/:userId/survey-state')
   async getSurveyState(@Param('userId') userId: string) {
-    await this.assertSyntheticUser(userId);
     const rows = await this.db.client
       .select({
         id: surveyEvidence.id,

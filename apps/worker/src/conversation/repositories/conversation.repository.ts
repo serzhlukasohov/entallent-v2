@@ -1,4 +1,3 @@
-import { readOnboardingState } from '@entalent/application';
 import { Injectable } from '@nestjs/common';
 import { eq, and, desc, gte, isNotNull, isNull, lt, lte, ne, sql } from 'drizzle-orm';
 import { channelAccounts, conversations, messages, orgOnboardingDeliveries, people, users } from '@entalent/database';
@@ -27,20 +26,6 @@ export class ConversationRepository implements ConversationRepositoryPort {
       .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)))
       .limit(1);
     return row ? isRuntimeEligibleUser(row) : false;
-  }
-
-  async isOnboardingReminderAllowed(tenantId: string, userId: string): Promise<boolean> {
-    const [row] = await this.db.client.select({ preferences: users.communicationPreferences }).from(users)
-      .where(and(eq(users.id, userId), eq(users.tenantId, tenantId))).limit(1);
-    const state = readOnboardingState(row?.preferences);
-    return !!state && state.personalParticipation === 'undecided' && !state.managementCompleted;
-  }
-
-  async isPersonalParticipationActive(tenantId: string, userId: string): Promise<boolean> {
-    const [row] = await this.db.client.select({ preferences: users.communicationPreferences }).from(users)
-      .where(and(eq(users.id, userId), eq(users.tenantId, tenantId))).limit(1);
-    const state = readOnboardingState(row?.preferences);
-    return !!row && (!state || state.personalParticipation === 'active');
   }
 
   async findOnboardingDelivery(messageId: string, tenantId: string, userId: string): Promise<{
@@ -104,14 +89,11 @@ export class ConversationRepository implements ConversationRepositoryPort {
         activeTopic: conversations.activeTopic,
         userDisplayName: users.preferredName,
         userLocale: users.locale,
-        communicationPreferences: users.communicationPreferences,
-        pulseParticipant: people.pulseParticipant,
         userTimezone: users.timezone,
         userTimezoneUpdatedAt: users.timezoneUpdatedAt,
       })
       .from(conversations)
       .leftJoin(users, eq(conversations.userId, users.id))
-      .leftJoin(people, and(eq(people.id, users.id), eq(people.tenantId, users.tenantId)))
       .where(and(eq(conversations.id, id), eq(conversations.tenantId, tenantId)))
       .limit(1);
 
@@ -127,7 +109,6 @@ export class ConversationRepository implements ConversationRepositoryPort {
       activeTopic: toConversationActiveTopic(row.activeTopic),
       userDisplayName: row.userDisplayName ?? undefined,
       userLocale: row.userLocale ?? undefined,
-      personalParticipation: readOnboardingState(row.communicationPreferences)?.personalParticipation ?? (row.pulseParticipant === false ? 'declined' : undefined),
       userTimezone: row.userTimezone ?? undefined,
       userTimezoneUpdatedAt: row.userTimezoneUpdatedAt ?? undefined,
     };
@@ -297,7 +278,6 @@ export class ConversationRepository implements ConversationRepositoryPort {
     sentAt: Date | null;
     externalMessageId: string | null;
     onboardingDeliveryId: string | null;
-    metadata?: Record<string, unknown>;
     channelType: string;
     externalConversationId: string;
   } | null> {
@@ -305,7 +285,6 @@ export class ConversationRepository implements ConversationRepositoryPort {
       .select({
         userId: messages.userId,
         text: messages.text,
-        metadata: messages.metadata,
         sentAt: messages.sentAt,
         externalMessageId: messages.externalMessageId,
         onboardingDeliveryId: sql<string | null>`${messages.metadata}->>'onboardingDeliveryId'`,
@@ -329,7 +308,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         isNull(messages.deletedAt),
       ))
       .limit(1);
-    return row ? { ...row, metadata: row.metadata as Record<string, unknown> } : null;
+    return row ?? null;
   }
 
   async findLatestDeliveredReportingDisclosure(

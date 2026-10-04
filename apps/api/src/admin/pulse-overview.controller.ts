@@ -1,4 +1,3 @@
-import { readOnboardingState } from '@entalent/application';
 import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, eq, isNull } from 'drizzle-orm';
@@ -49,7 +48,7 @@ export class PulseOverviewController {
 
     const [userRows, channelAccountRows] = await Promise.all([
       this.db.client
-        .select({ id: users.id, preferredName: users.preferredName, communicationPreferences: users.communicationPreferences })
+        .select({ id: users.id, preferredName: users.preferredName })
         .from(users)
         .where(
           and(
@@ -66,7 +65,7 @@ export class PulseOverviewController {
           eq(channelAccounts.linkStatus, 'linked'))),
     ]);
 
-    const teamUsers = attachTeamDisplayNames(userRows.filter((user) => !readOnboardingState(user.communicationPreferences)), channelAccountRows);
+    const teamUsers = attachTeamDisplayNames(userRows, channelAccountRows);
 
     if (!teamUsers.length) {
       return {

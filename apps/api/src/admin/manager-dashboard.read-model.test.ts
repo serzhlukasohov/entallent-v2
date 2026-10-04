@@ -136,15 +136,6 @@ describe('manager dashboard read model boundary', () => {
     });
   });
 
-  it('keeps v2 participants out of identifiable employee insight views', async () => {
-    const select = vi.fn().mockReturnValueOnce(queryRows([{ id: 'person-1', preferredName: 'Alex', communicationPreferences: {
-      onboarding: { version: 'v2.1', personalParticipation: 'active', managementCompleted: false, reminderQueued: true },
-    } }])).mockReturnValueOnce(queryRows([]));
-    const readModel = new ManagerDashboardReadModel({ client: { select } } as never, { get: vi.fn() } as never);
-    expect((await readModel.getTeamOverview(TENANT_ID)).employees).toEqual([]);
-    expect(select).toHaveBeenCalledTimes(2);
-  });
-
   it('short-circuits team detail queries when the tenant has no active users', async () => {
     const client = {
       select: vi

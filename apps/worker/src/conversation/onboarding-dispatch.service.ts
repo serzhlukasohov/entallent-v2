@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { and, eq, lt, or, sql } from 'drizzle-orm';
 import { ProactiveCheckInUseCase } from '@entalent/application';
 import { SlackAdapter } from '@entalent/channel-slack';
@@ -6,7 +6,6 @@ import {
   channelAccounts, conversations, orgOnboardingDeliveries, people, users,
 } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
-import { OnboardingFlowService } from './onboarding-flow.service';
 import { WorkspaceConnectionRepository } from './repositories/workspace-connection.repository';
 
 const RETRY_AFTER_MS = 60 * 60 * 1000;
@@ -19,7 +18,6 @@ export class OnboardingDispatchService {
     private readonly db: DatabaseService,
     private readonly workspaceRepo: WorkspaceConnectionRepository,
     private readonly checkIn: ProactiveCheckInUseCase,
-    @Optional() private readonly flow?: OnboardingFlowService,
   ) {}
 
   async dispatchPending(tenantId?: string, unitId?: string): Promise<{ found: number; queued: number; failed: number }> {
@@ -58,8 +56,6 @@ export class OnboardingDispatchService {
     const [person] = await this.db.client.select({
       lifecycleStatus: people.lifecycleStatus,
       pulseParticipant: people.pulseParticipant,
-      primaryRole: people.primaryRole,
-      locale: users.locale,
       userStatus: users.status,
       deletedAt: users.deletedAt,
     }).from(people).innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, people.tenantId)))
@@ -102,13 +98,11 @@ export class OnboardingDispatchService {
       await this.db.client.update(orgOnboardingDeliveries).set({ status: 'pending', updatedAt: new Date() })
         .where(and(eq(orgOnboardingDeliveries.id, delivery.id), eq(orgOnboardingDeliveries.status, 'failed')));
     }
-    await this.flow?.initialize(delivery.tenantId, delivery.personId);
     await this.checkIn.execute({
       tenantId: delivery.tenantId, userId: delivery.personId,
       conversationId: conversation.id, externalWorkspaceId: delivery.externalWorkspaceId,
       externalConversationId: dmChannelId, traceId: `onboarding:${delivery.id}`,
       onboardingMessageId: delivery.id, pulseEnabled: person.pulseParticipant,
-      onboardingRole: person.primaryRole as import('@entalent/application').PrimaryOrgRole,
     });
   }
 }

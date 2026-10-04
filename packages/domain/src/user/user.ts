@@ -1,7 +1,7 @@
 import { TenantIsolationError, UserDeletedError } from '../errors';
 
 export type UserStatus = 'active' | 'inactive' | 'deleted';
-export type OnboardingStatus = 'pending' | 'in_progress' | 'completed' | 'deferred' | 'declined';
+export type OnboardingStatus = 'pending' | 'in_progress' | 'completed';
 export type ConsentState = {
   platformTermsAccepted: boolean;
   platformTermsAcceptedAt?: Date;

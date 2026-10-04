@@ -48,7 +48,7 @@ describe('IngestionService.findOrCreateUser', () => {
 
   it('reuses a provisioned Person and excludes draft or non-participant Persons from runtime', async () => {
     const linked = setup(active);
-    await expect(linked.service.findOrCreateUser(params)).resolves.toEqual({ userId: 'person-1', runtimeEligible: true, onboardingEligible: true });
+    await expect(linked.service.findOrCreateUser(params)).resolves.toEqual({ userId: 'person-1', runtimeEligible: true });
     expect(linked.writes).toEqual([]);
 
     for (const account of [
@@ -57,14 +57,14 @@ describe('IngestionService.findOrCreateUser', () => {
       { ...active, personLifecycle: 'inactive' },
     ]) {
       const pending = setup(account);
-      await expect(pending.service.findOrCreateUser(params)).resolves.toEqual({ userId: 'person-1', runtimeEligible: false, onboardingEligible: account.userStatus === 'active' && account.personLifecycle === 'active' });
+      await expect(pending.service.findOrCreateUser(params)).resolves.toEqual({ userId: 'person-1', runtimeEligible: false });
       expect(pending.writes).toEqual([]);
     }
   });
 
   it('keeps active legacy users eligible while rejecting a cross-tenant account', async () => {
     await expect(setup({ ...active, personLifecycle: null, pulseParticipant: null })
-      .service.findOrCreateUser(params)).resolves.toEqual({ userId: 'person-1', runtimeEligible: true, onboardingEligible: false });
+      .service.findOrCreateUser(params)).resolves.toEqual({ userId: 'person-1', runtimeEligible: true });
     await expect(setup({ ...active, accountTenantId: 'tenant-2' })
       .service.findOrCreateUser(params)).rejects.toThrow('channel_account_tenant_mismatch');
   });
@@ -72,7 +72,7 @@ describe('IngestionService.findOrCreateUser', () => {
   it('reserves an unlinked Slack account without admitting runtime or creating a fallback user', async () => {
     const reserved = setup({ ...active, linkStatus: 'unlinked' });
     await expect(reserved.service.findOrCreateUser(params))
-      .resolves.toEqual({ userId: 'person-1', runtimeEligible: false, onboardingEligible: false });
+      .resolves.toEqual({ userId: 'person-1', runtimeEligible: false });
     expect(reserved.writes).toEqual([]);
   });
 

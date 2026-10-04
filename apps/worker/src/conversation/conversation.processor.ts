@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger, OnApplicationShutdown, Optional } from '@nestjs/common';
+import { Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import {
@@ -11,7 +11,6 @@ import { tenants } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
-import { OnboardingFlowService } from './onboarding-flow.service';
 import { ConversationRepository } from './repositories/conversation.repository';
 
 export type ConversationJob = {
@@ -25,7 +24,6 @@ export type ConversationJob = {
   externalConversationId: string;
   traceId: string;
   rapidMessageCoalescing?: true;
-  onboardingAction?: { action: import('@entalent/contracts').OnboardingAction; parentMessageTs: string };
 };
 
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;
@@ -43,7 +41,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly llmRunRepo: LlmRunRepository,
     private readonly db: DatabaseService,
     private readonly conversationRepo: ConversationRepository,
-    @Optional() private readonly onboarding?: OnboardingFlowService,
   ) {
     super();
   }
@@ -70,7 +67,6 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         this.logger.log(`Skipping check-in for inactive runtime user ${job.data.userId}`);
         return;
       }
-      if (!await this.conversationRepo.isPersonalParticipationActive(job.data.tenantId, job.data.userId)) return;
       const [tenantRow] = await this.db.client
         .select({ policy: tenants.proactiveMessagingPolicy })
         .from(tenants)
@@ -89,7 +85,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
 
       const result = await this.checkInUseCase.execute({ ...job.data, pulseConfig });
       this.logger.log(
-        `Check-in job ${job.id} done — probe=${result.probeQuestionId ?? 'none'} outbound=${result.outboundMessageId}`,
+        `Check-in job ${job.id} done — probe=${result.probeQuestionId ?? 'none'} text="${result.responseText.slice(0, 60)}"`,
       );
     } catch (err) {
       this.logger.error(`Check-in job ${job.id} failed: ${(err as Error).message}`, (err as Error).stack);
@@ -103,10 +99,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       conversationId: job.data.conversationId,
     });
 
-    if (await this.onboarding?.handleInbound(job.data)) return;
-
-    if (!await this.conversationRepo.isUserRuntimeEligible(job.data.tenantId, job.data.userId) &&
-        !await this.conversationRepo.isUserOnboardingEligible(job.data.tenantId, job.data.userId, job.data.externalWorkspaceId)) {
+    if (!await this.conversationRepo.isUserRuntimeEligible(job.data.tenantId, job.data.userId)) {
       this.logger.log(`Skipping conversation job for inactive runtime user ${job.data.userId}`);
       return;
     }

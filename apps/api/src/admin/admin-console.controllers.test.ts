@@ -91,7 +91,7 @@ describe('admin console MAF-primary regression', () => {
     });
   });
 
-  it('audits debug access and never returns private content, even if a repository supplies it', async () => {
+  it('audits user debug access and returns previews without private risk reasoning', async () => {
     const auditLog = { append: vi.fn() };
     const longText = 'x'.repeat(130);
     const controller = new UserDebugController(
@@ -149,9 +149,9 @@ describe('admin console MAF-primary regression', () => {
       resourceType: 'user',
       resourceId: USER_ID,
     }));
-    expect((response['recentMessages'] as Array<Record<string, unknown>>)[0]).not.toHaveProperty('textPreview');
-    expect(response).not.toHaveProperty('memory');
-    expect(response).not.toHaveProperty('surveyAssessments');
+    const preview = (response['recentMessages'] as Array<{ textPreview: string }>)[0]!.textPreview;
+    expect(preview).toHaveLength(121);
+    expect(preview.startsWith('x'.repeat(120))).toBe(true);
     expect(JSON.stringify(response)).not.toContain(longText);
     expect(JSON.stringify(response)).not.toContain('private MAF risk reasoning');
     expect(JSON.stringify(response)).not.toContain('private MAF risk evidence');

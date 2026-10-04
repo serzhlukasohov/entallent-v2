@@ -1,4 +1,3 @@
-import { normalizeOnboardingAction } from './slack-onboarding-action';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -27,9 +26,6 @@ export class SlackIngestService {
   ) {}
 
   async processBody(body: Record<string, unknown>): Promise<void> {
-    const onboarding = normalizeOnboardingAction(body);
-    if (body.type === 'block_actions' && !onboarding) return;
-    if (onboarding) body = onboarding.body;
     const eventId = body['event_id'] as string | undefined;
     if (eventId && !(await this.idempotency.isNew(eventId))) {
       this.logger.debug(`Duplicate Slack event — skipping: ${eventId}`);
@@ -55,13 +51,13 @@ export class SlackIngestService {
       const requestId = randomUUID();
       const traceId = randomUUID();
 
-      const { userId, runtimeEligible, onboardingEligible } = await this.ingestion.findOrCreateUser({
+      const { userId, runtimeEligible } = await this.ingestion.findOrCreateUser({
         tenantId: workspaceIdentity.tenantId,
         channelType: 'slack',
         externalWorkspaceId: payload.externalWorkspaceId,
         externalUserId: payload.externalUserId,
       });
-      if (!runtimeEligible && !onboardingEligible) {
+      if (!runtimeEligible) {
         this.logger.debug(`Inbound Slack user is not active for runtime: ${userId}`);
         continue;
       }
@@ -96,7 +92,7 @@ export class SlackIngestService {
           externalWorkspaceId: payload.externalWorkspaceId,
           externalConversationId: payload.externalConversationId,
           traceId,
-          ...(onboarding ? { onboardingAction: { action: onboarding.action, parentMessageTs: onboarding.parentMessageTs } } : { rapidMessageCoalescing: true as const }),
+          rapidMessageCoalescing: true,
         },
         { delay: CONVERSATION_DELAY_MS },
       );

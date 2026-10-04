@@ -57,8 +57,6 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
         ON wc.tenant_id = u.tenant_id AND wc.channel_type = c.channel_type AND wc.status = 'active'
       WHERE u.status = 'active'
         AND u.proactive_messaging_enabled = true
-        AND (NOT EXISTS (SELECT 1 FROM org_onboarding_deliveries od WHERE od.person_id = u.id AND od.tenant_id = u.tenant_id)
-          OR u.communication_preferences->'onboarding'->>'personalParticipation' = 'active')
         ${tenantFilter}
         AND NOT EXISTS (
           SELECT 1 FROM messages m

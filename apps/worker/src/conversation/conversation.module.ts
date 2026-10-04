@@ -9,7 +9,6 @@ import { AiService } from './ai.service';
 import { ConversationProcessor } from './conversation.processor';
 import { LlmRunRepository } from './llm-run.repository';
 import { OutboxService } from './outbox.service';
-import { OnboardingFlowService } from './onboarding-flow.service';
 import { OnboardingDispatchService } from './onboarding-dispatch.service';
 import { ConversationRepository } from './repositories/conversation.repository';
 import { WorkspaceConnectionRepository } from './repositories/workspace-connection.repository';
@@ -50,7 +49,6 @@ import { SurveyModule } from '../survey/survey.module';
     ConversationRepository,
     WorkspaceConnectionRepository,
     OnboardingDispatchService,
-    OnboardingFlowService,
     OutboxService,
     ScheduledActionRepository,
     {
@@ -126,6 +124,6 @@ import { SurveyModule } from '../survey/survey.module';
     ConversationProcessor,
     LlmRunRepository,
   ],
-  exports: [OnboardingDispatchService, OnboardingFlowService],
+  exports: [OnboardingDispatchService],
 })
 export class ConversationModule {}

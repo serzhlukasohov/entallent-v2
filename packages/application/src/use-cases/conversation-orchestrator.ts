@@ -144,7 +144,7 @@ export class ConversationOrchestrator {
 
     // Classification and enrichment reads are independent. Goal reads degrade to no goals;
     // relevance is decided later, after safety and confirmation state are known.
-    const [rawClassification, [memoryEnabled, surveyFlagEnabled], speculativeMemory, profile, activeGoals] = await Promise.all([
+    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile, activeGoals] = await Promise.all([
       this.aiProvider.classifySituation(turns, {
         userName,
         now: currentTurnAt,
@@ -165,8 +165,6 @@ export class ConversationOrchestrator {
         ? this.goalRepo.findActiveByUser(userId, tenantId).catch(() => [])
         : Promise.resolve([]),
     ]);
-
-    const surveyEnabled = surveyFlagEnabled && (conversation.personalParticipation === undefined || conversation.personalParticipation === 'active');
 
     // Safety is too important to hinge on one model field. Intents that already route to
     // sensitive/crisis mode force the safety pass deterministically, even if the classifier

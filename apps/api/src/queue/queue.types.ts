@@ -9,7 +9,6 @@ export type ConversationJob = {
   externalConversationId: string;
   traceId: string;
   rapidMessageCoalescing?: true;
-  onboardingAction?: { action: import('@entalent/contracts').OnboardingAction; parentMessageTs: string };
 };
 
 export type MessageSendJob = {

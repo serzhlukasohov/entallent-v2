@@ -63,7 +63,7 @@ export class IngestionService implements IngestionRepositoryPort {
     externalWorkspaceId: string;
     externalUserId: string;
     displayName?: string;
-  }): Promise<{ userId: string; runtimeEligible: boolean; onboardingEligible?: boolean }> {
+  }): Promise<{ userId: string; runtimeEligible: boolean }> {
     const profileFacts = resolveExternalProfileFacts({
       externalUserId: params.externalUserId,
       displayName: params.displayName,
@@ -99,7 +99,7 @@ export class IngestionService implements IngestionRepositoryPort {
   private async findAccount(
     tx: Transaction,
     params: { tenantId: string; channelType: string; externalWorkspaceId: string; externalUserId: string },
-  ): Promise<{ userId: string; runtimeEligible: boolean; onboardingEligible?: boolean } | null> {
+  ): Promise<{ userId: string; runtimeEligible: boolean } | null> {
     const [account] = await tx.select({
       userId: channelAccounts.userId,
       accountTenantId: channelAccounts.tenantId,
@@ -123,7 +123,6 @@ export class IngestionService implements IngestionRepositoryPort {
     }
     return {
       userId: account.userId,
-      onboardingEligible: account.linkStatus === 'linked' && account.userStatus === 'active' && account.deletedAt === null && account.personLifecycle === 'active',
       runtimeEligible: account.linkStatus === 'linked' && isRuntimeEligibleUser(account),
     };
   }

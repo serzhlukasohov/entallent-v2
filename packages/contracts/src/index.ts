@@ -1,5 +1,4 @@
 export * from './channel';
-export * from './onboarding';
 export * from './events';
 export * from './ai';
 export * from './runtime-contract';

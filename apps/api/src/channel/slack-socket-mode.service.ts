@@ -37,13 +37,6 @@ export class SlackSocketModeService implements OnModuleInit, OnModuleDestroy {
       });
     });
 
-    this.client.on('block_actions', async ({ ack, body }) => {
-      await ack();
-      this.pipeline.processBody(body as Record<string, unknown>).catch((err: unknown) => {
-        this.logger.error('Socket Mode onboarding action failed', err);
-      });
-    });
-
     this.client.start().catch((err: unknown) => {
       this.logger.error('Failed to start Socket Mode client', err);
     });

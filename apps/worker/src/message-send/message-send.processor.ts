@@ -53,12 +53,9 @@ export class MessageSendProcessor extends WorkerHost {
     if (onboarding && onboarding.externalWorkspaceId !== externalWorkspaceId) {
       throw new Error(`Onboarding workspace mismatch: ${messageId}`);
     }
-    const onboardingControl = persisted.metadata?.['onboardingControl'] === true;
-    if (persisted.metadata?.['onboardingReminder'] === true && !await this.conversationRepo.isOnboardingReminderAllowed(tenantId, persisted.userId)) return;
-    const eligible = onboarding || onboardingControl
+    const eligible = onboarding
       ? await this.conversationRepo.isUserOnboardingEligible(tenantId, persisted.userId, externalWorkspaceId)
-      : await this.conversationRepo.isUserRuntimeEligible(tenantId, persisted.userId) ||
-        await this.conversationRepo.isUserOnboardingEligible?.(tenantId, persisted.userId, externalWorkspaceId);
+      : await this.conversationRepo.isUserRuntimeEligible(tenantId, persisted.userId);
     if (!eligible) {
       this.logger.warn(`Skipping outbound delivery for inactive runtime user ${persisted.userId}`);
       return;
@@ -103,7 +100,6 @@ export class MessageSendProcessor extends WorkerHost {
       externalWorkspaceId,
       externalChannelId,
       replyToExternalThreadId,
-      metadata: persisted.metadata,
     };
 
     if (channelType === 'slack') {

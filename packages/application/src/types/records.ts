@@ -15,7 +15,6 @@ export interface ConversationRecord {
   status: string;
   userDisplayName?: string;
   userLocale?: string;
-  personalParticipation?: 'undecided' | 'active' | 'declined';
   /** IANA timezone of the conversation's user, if known */
   userTimezone?: string;
   userTimezoneUpdatedAt?: Date;

@@ -1,4 +1,3 @@
-import { readOnboardingState } from '@entalent/application';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
@@ -42,7 +41,7 @@ export class ManagerDashboardReadModel {
     const input = resolveManagerTeamInput(tenantId);
     const [userRows, channelAccountRows] = await Promise.all([
       this.db.client
-        .select({ id: users.id, preferredName: users.preferredName, communicationPreferences: users.communicationPreferences })
+        .select({ id: users.id, preferredName: users.preferredName })
         .from(users)
         .where(and(eq(users.tenantId, input.tenantId), eq(users.status, 'active'),
           isNull(users.deletedAt), eligiblePulsePersonOrLegacy(users.id, users.tenantId))),
@@ -53,7 +52,7 @@ export class ManagerDashboardReadModel {
           eq(channelAccounts.linkStatus, 'linked'))),
     ]);
 
-    const teamUsers = attachTeamDisplayNames(userRows.filter((user) => !readOnboardingState(user.communicationPreferences)), channelAccountRows);
+    const teamUsers = attachTeamDisplayNames(userRows, channelAccountRows);
 
     if (!teamUsers.length) {
       return buildEmptyTeamOverview(input.tenantId);
