@@ -2667,3 +2667,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Before requesting production fixture identifiers, run named-target preflight and inspect tenant-scoped metadata without printing credentials or message content. Keep message sends and scoring activation behind their own authorization boundary.
 - Regression check: Confirm the production `DEFAULT_TENANT_ID` against `tenants`, frozen roster, linked accounts, active windows, and V2 policy counts before asking for missing fixture details.
 - Status: fixed
+
+## 2026-10-04: Mistook a valid manager DM channel for an invalid Slack user
+
+- Symptom: The test-tenant inventory reported `manager_slack_user_id` as invalid because Slack `users.info` returned `user_not_found`.
+- Expected: Follow the report sender's actual `externalChannelId` use and validate a `D…` value with `conversations.info`; reserve `users.info` for `U…` IDs.
+- Root cause layer: verification
+- Harness fix: The production test plan records Slack target type and recipient separately; verify both before reporting a delivery blocker or changing the target.
+- Regression check: Trace `GroupReportProcessor` to `SlackAdapter.sendMessage` and check the configured channel with `conversations.info`.
+- Status: fixed
