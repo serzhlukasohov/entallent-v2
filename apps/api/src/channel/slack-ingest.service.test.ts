@@ -17,12 +17,18 @@ describe('SlackIngestService rapid-message admission', () => {
         externalMessageId: '1789078586.984529',
         occurredAt: new Date(1_789_078_586_984),
       }),
+      expect.objectContaining({
+        eventId: 'event-1', externalWorkspaceId: 'T1', externalConversationId: 'D1',
+      }),
     );
     expect(ingestion.saveInboundMessage).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         externalMessageId: '1789078588.641019',
         occurredAt: new Date(1_789_078_588_641),
+      }),
+      expect.objectContaining({
+        eventId: 'event-2', externalWorkspaceId: 'T1', externalConversationId: 'D1',
       }),
     );
     expect(queue.add).toHaveBeenNthCalledWith(
@@ -33,7 +39,7 @@ describe('SlackIngestService rapid-message admission', () => {
         messageId: 'message-1',
         rapidMessageCoalescing: true,
       }),
-      { delay: 2_000 },
+      { delay: 2_000, jobId: 'conversation-message-1' },
     );
     expect(ingestion.saveInboundMessage.mock.invocationCallOrder[0])
       .toBeLessThan(queue.add.mock.invocationCallOrder[0]!);
@@ -47,8 +53,20 @@ describe('SlackIngestService rapid-message admission', () => {
         messageId: 'message-2',
         rapidMessageCoalescing: true,
       }),
-      { delay: 2_000 },
+      { delay: 2_000, jobId: 'conversation-message-2' },
     );
+    expect(ingestion.markConversationJobQueued).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves the durable admission pending when Redis rejects the job', async () => {
+    const { service, ingestion, queue } = createService(['message-1']);
+    queue.add.mockRejectedValueOnce(new Error('redis unavailable'));
+
+    await expect(service.processBody(slackMessage('event-1', '1789078586.984529', 'yes')))
+      .rejects.toThrow('redis unavailable');
+
+    expect(ingestion.saveInboundMessage).toHaveBeenCalledOnce();
+    expect(ingestion.markConversationJobQueued).not.toHaveBeenCalled();
   });
 
   it('keeps Slack replay idempotency ahead of persistence and admission', async () => {
@@ -84,6 +102,7 @@ function createService(messageIds: string[]) {
     findOrCreateUser: vi.fn().mockResolvedValue({ userId: 'user-1', runtimeEligible: true }),
     findOrCreateConversation: vi.fn().mockResolvedValue({ conversationId: 'conversation-1' }),
     saveInboundMessage: vi.fn(),
+    markConversationJobQueued: vi.fn().mockResolvedValue(undefined),
   };
   for (const messageId of messageIds) {
     ingestion.saveInboundMessage.mockResolvedValueOnce({ messageId });

@@ -38,7 +38,13 @@ export class AuditLogsController {
 
     const [rows, [{ total }]] = await Promise.all([
       this.db.client
-        .select()
+        .select({
+          id: auditLogs.id,
+          tenantId: auditLogs.tenantId,
+          action: auditLogs.action,
+          resourceType: auditLogs.resourceType,
+          createdAt: auditLogs.createdAt,
+        })
         .from(auditLogs)
         .where(where)
         .orderBy(desc(auditLogs.createdAt))

@@ -33,7 +33,7 @@ export class SlackExternalProfileAdapter implements ExternalProfilePort {
       return await adapter.getUserProfile(account.externalWorkspaceId, account.externalUserId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`fetchProfile failed for user=${userId}: ${message}`);
+      this.logger.warn(`external_profile_fetch_failed user=${userId}`);
       if (isNonRetryableSlackProfileError(message)) {
         return null;
       }

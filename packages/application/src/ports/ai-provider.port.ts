@@ -11,6 +11,12 @@ import type {
   ObservedStyle,
 } from '@entalent/contracts';
 import type { SurveyResponseType } from '../types/records';
+import type {
+  AwaitingQuestionBundle,
+  PendingQuestionClarification,
+  QuestionBundleVerdict,
+  QuestionClarificationVerdict,
+} from './question-confirmation.port';
 
 export interface ConversationTurn {
   role: 'user' | 'assistant';
@@ -46,6 +52,15 @@ export interface SurveyQuestionForEvaluation {
   negativeIndicators: string[];
   contraindications: string[];
   responseType?: SurveyResponseType;
+}
+
+export interface SurveyEvidenceEvaluationOptions {
+  focusLatestEmployeeMessage?: boolean;
+}
+
+export interface QuestionBundleComposition {
+  text: string;
+  statements: Array<{ surveyQuestionId: string; statement: string }>;
 }
 
 export interface ReplyPlan {
@@ -171,6 +186,7 @@ export interface AiProviderPort {
   evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: SurveyEvidenceEvaluationOptions,
   ): Promise<SurveyEvidenceEvaluation>;
 
   generateResponse(
@@ -178,6 +194,28 @@ export interface AiProviderPort {
     strategy: ReplyStrategy,
     context: ResponseContext,
   ): Promise<GeneratedResponse>;
+
+  composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+  ): Promise<QuestionBundleComposition>;
+
+  interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict>;
+
+  composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string>;
+
+  interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict>;
 
   generateGroupSummary(
     summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,

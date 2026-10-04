@@ -41,6 +41,8 @@ const envSchema = z.object({
   ADMIN_API_KEY: z.string().optional(), // Required in production; protects admin + sensitive user endpoints
   INTERNAL_SERVICE_AUTH_SECRET: z.string().min(32).optional(), // Shared HMAC secret for scoped Python-to-TypeScript service credentials
   DEFAULT_TENANT_ID: z.string().uuid().optional(), // Dev convenience — used when tenant context is not derived from auth
+  V2_REPORT_SEND_TENANT_ID: z.string().uuid().optional(),
+  V2_REPORT_SEND_CALCULATION_VERSION: z.string().optional(),
   INTERNAL_DASHBOARD_ENABLED: z
     .string()
     .default('false')

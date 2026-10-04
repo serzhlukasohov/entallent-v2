@@ -12,6 +12,27 @@ export interface ProfileHydrationAccountScope {
   externalUserId?: string;
 }
 
+export interface CommittedProfileHydrationInput {
+  inboundMessageId: string;
+  userId: string;
+  tenantId: string;
+  channelType: string;
+  externalWorkspaceId?: string;
+}
+
+export interface CommittedProfileHydrationRepositoryPort extends UserProfileRepositoryPort {
+  isCommittedHydrationComplete(input: CommittedProfileHydrationInput): Promise<boolean>;
+  completeCommittedHydration(
+    input: CommittedProfileHydrationInput,
+    profile: {
+      externalUserId?: string;
+      displayName?: string;
+      timezone?: string;
+    } | null,
+    occurredAt: Date,
+  ): Promise<void>;
+}
+
 export interface UserProfileRepositoryPort {
   updateTimezone(userId: string, tenantId: string, timezone: string): Promise<void>;
   updateProfile(

@@ -4,6 +4,7 @@ import { MemoryExtractionUseCase } from '@entalent/application';
 import { MemoryExtractionProcessor } from './memory-extraction.processor';
 import { MemoryRepository } from './repositories/memory.repository';
 import { GoalRepository } from './repositories/goal.repository';
+import { MemoryExtractionIntentRepository } from './repositories/memory-extraction-intent.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { AiService } from '../conversation/ai.service';
 import { DatabaseModule } from '../database/database.module';
@@ -21,6 +22,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     ConversationRepository,
     MemoryRepository,
     GoalRepository,
+    MemoryExtractionIntentRepository,
     {
       provide: MemoryExtractionUseCase,
       useFactory: (

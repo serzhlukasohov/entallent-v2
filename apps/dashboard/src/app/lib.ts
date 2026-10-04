@@ -1,9 +1,7 @@
 import type {
-  AdminManagerTeamResponse,
   AdminManagerTrendsResponse,
-  AdminPulseOverviewResponse,
   AdminQueuesResponse,
-  AdminUserInsightsResponse,
+  AdminV2PilotResponse,
 } from '@entalent/contracts';
 
 const API_BASE = process.env.API_INTERNAL_URL ?? 'http://localhost:3000/api/v1';
@@ -61,24 +59,15 @@ export function fetchAdminQueues(revalidate = 30): Promise<AdminQueuesResponse |
   return fetchApi<AdminQueuesResponse>('/admin/queues', revalidate);
 }
 
-export function fetchAdminManagerTeam(revalidate = 30): Promise<AdminManagerTeamResponse | null> {
-  return fetchApi<AdminManagerTeamResponse>(withTenant('/admin/manager/team'), revalidate);
-}
-
-export function fetchAdminPulseOverview(
-  revalidate = 0,
-): Promise<AdminPulseOverviewResponse | null> {
-  return fetchApi<AdminPulseOverviewResponse>(withTenant('/admin/pulse/overview'), revalidate);
-}
-
-export function fetchAdminUserInsights(
-  userId: string,
-  revalidate = 0,
-): Promise<AdminUserInsightsResponse | null> {
-  return fetchApi<AdminUserInsightsResponse>(
-    `/admin/users/${encodeURIComponent(userId)}/insights`,
-    revalidate,
-  );
+export function fetchAdminV2Pilot(): Promise<AdminV2PilotResponse | null> {
+  // Temporary QA view: only the approved Test AI Agent tenant and its two
+  // frozen test cohorts are visible on the public dashboard.
+  if (TENANT_ID !== '7d1e0163-6d53-4713-bd24-254690cc5090') return Promise.resolve(null);
+  const query = new URLSearchParams({
+    tenantId: TENANT_ID,
+    cohortIds: 'eb12c97a-b298-4694-918f-1d9a971bc504,4a8b471b-94a7-4528-aa2d-5feaf02138ac',
+  });
+  return fetchApi<AdminV2PilotResponse>(`/admin/v2-pilot?${query}`, 0);
 }
 
 export function postAdminUserReset(userId: string): Promise<UserResetResult> {

@@ -32,6 +32,34 @@ function createTeamRepo(managerSlackUserId = 'manager-1') {
 }
 
 describe('GroupReportProcessor', () => {
+  it('records completion only after a scoped report job finishes', async () => {
+    const useCase = { execute: vi.fn().mockResolvedValue({
+      shouldSend: false, managerSlackUserId: null, message: '',
+      teamScore: 0, confirmedCount: 4,
+    }) };
+    const completeGroupReportIntent = vi.fn().mockResolvedValue(undefined);
+    const processor = new GroupReportProcessor(
+      useCase as never, { findFirstByTenant: vi.fn() } as never,
+      createSnapshotRepo() as never, createTeamRepo() as never,
+      { completeGroupReportIntent } as never,
+    );
+    await processor.process({ id: 'job-1', data: {
+      reportingCohortId: 'cohort-1', tenantId: 'tenant-1', teamId: 'team-1',
+      questionGroup: 'growth', traceId: 'trace-1', sourceGroupStateId: 'state-1',
+    } } as never);
+    expect(completeGroupReportIntent).toHaveBeenCalledWith({
+      sourceGroupStateId: 'state-1', reportingCohortId: 'cohort-1',
+      tenantId: 'tenant-1', teamId: 'team-1', questionGroup: 'growth',
+    });
+
+    useCase.execute.mockRejectedValueOnce(new Error('private model error'));
+    await expect(processor.process({ id: 'job-2', data: {
+      reportingCohortId: 'cohort-1', tenantId: 'tenant-1', teamId: 'team-1',
+      questionGroup: 'growth', traceId: 'trace-2', sourceGroupStateId: 'state-2',
+    } } as never)).rejects.toThrow('private model error');
+    expect(completeGroupReportIntent).toHaveBeenCalledOnce();
+  });
+
   it('passes the canonical cohort scope to the report use case', async () => {
     const useCase = {
       execute: vi.fn().mockResolvedValue({
@@ -184,7 +212,8 @@ describe('GroupReportProcessor', () => {
   });
 
   it('marks an in-flight Slack exception as delivery_unknown', async () => {
-    slack.sendMessage.mockRejectedValue(new Error('timeout'));
+    const privateMarker = 'private employee content';
+    slack.sendMessage.mockRejectedValue(new Error(privateMarker));
     const useCase = {
       execute: vi.fn().mockResolvedValue({
         shouldSend: true,
@@ -205,28 +234,42 @@ describe('GroupReportProcessor', () => {
       }),
     };
     const snapshotRepo = createSnapshotRepo();
-    snapshotRepo.findLatestNonCancelledSnapshot.mockResolvedValue(null);
+    snapshotRepo.findLatestNonCancelledSnapshot
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({
+        snapshotVersion: 1, status: 'delivery_unknown', reportKind: 'intermediate',
+        contributorUserIds: ['user-1', 'user-2', 'user-3', 'user-4', 'user-5'],
+        sourceGroupStateIds: ['state-1', 'state-2', 'state-3', 'state-4', 'state-5'],
+      });
     snapshotRepo.createPendingSnapshot.mockResolvedValueOnce('snapshot-1');
+    const completeGroupReportIntent = vi.fn().mockResolvedValue(undefined);
     const processor = new GroupReportProcessor(
       useCase as never,
       workspaceRepo as never,
       snapshotRepo as never,
       createTeamRepo() as never,
+      { completeGroupReportIntent } as never,
     );
 
-    await processor.process({ id: 'job-1', data: {
+    const job = { id: 'job-1', data: {
       reportingCohortId: 'cohort-1',
       tenantId: 'tenant-1',
       teamId: 'team-1',
       questionGroup: 'growth',
       traceId: 'trace-1',
-    } } as never);
+      sourceGroupStateId: 'state-1',
+    } };
+    await processor.process(job as never);
+    await processor.process({ ...job, id: 'retry' } as never);
 
     expect(snapshotRepo.markDeliveryUnknown).toHaveBeenCalledWith(
       'snapshot-1',
-      'timeout',
+      'group_report_delivery_unknown',
       expect.any(Date),
     );
+    expect(JSON.stringify(snapshotRepo.markDeliveryUnknown.mock.calls)).not.toContain(privateMarker);
+    expect(slack.sendMessage).toHaveBeenCalledOnce();
+    expect(completeGroupReportIntent).toHaveBeenCalledTimes(2);
   });
 
   it('cancels a pending snapshot when the manager binding changes before delivery', async () => {

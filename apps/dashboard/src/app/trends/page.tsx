@@ -24,6 +24,10 @@ export default async function TrendsPage() {
         <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
           Failed to load data. Check TENANT_ID and ADMIN_API_KEY.
         </div>
+      ) : data.suppressed ? (
+        <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
+          Trends are hidden because a group has fewer than five employees.
+        </div>
       ) : (
         <div
           style={{

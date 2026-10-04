@@ -42,3 +42,10 @@ export const messages = pgTable(
 
 export type DbMessage = typeof messages.$inferSelect;
 export type DbNewMessage = typeof messages.$inferInsert;
+
+// A content-free receipt lets cutoff distinguish queued employee turns from
+// completed conversation jobs without retaining temporary question text.
+export const conversationJobReceipts = pgTable('conversation_job_receipts', {
+  messageId: uuid('message_id').primaryKey().references(() => messages.id, { onDelete: 'cascade' }),
+  processedAt: timestamp('processed_at', { withTimezone: true }).notNull().defaultNow(),
+});

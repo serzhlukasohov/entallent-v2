@@ -28,6 +28,7 @@ export interface AdminQuestionSentiment {
 export interface AdminManagerTrendsResponse {
   rangeStart: string;
   rangeEnd: string;
+  suppressed: boolean;
   engagement: AdminEngagementPoint[];
   signalCapture: AdminSignalPoint[];
   coverageFunnel: Record<string, number>;

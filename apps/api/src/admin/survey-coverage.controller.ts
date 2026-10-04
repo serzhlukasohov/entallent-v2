@@ -1,6 +1,6 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
-import { surveyAssessments, surveyQuestions, surveyWindows } from '@entalent/database';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
+import { surveyAssessments, surveyDefinitions, surveyQuestions, surveyWindows, users } from '@entalent/database';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseService } from '../database/database.service';
 
@@ -27,10 +27,12 @@ export class SurveyCoverageController {
     @Query('tenantId') tenantId?: string,
   ): Promise<{
     questions: QuestionCoverage[];
-    cohortSize: number;
+    cohortSize: number | null;
     note?: string;
   }> {
-    const tenantFilter = tenantId ? eq(surveyWindows.tenantId, tenantId) : undefined;
+    if (!tenantId?.trim()) {
+      throw new BadRequestException('tenantId query param is required');
+    }
 
     const rows = await this.db.client
       .select({
@@ -43,10 +45,24 @@ export class SurveyCoverageController {
         userId: surveyWindows.userId,
       })
       .from(surveyAssessments)
-      .innerJoin(surveyQuestions, eq(surveyAssessments.surveyQuestionId, surveyQuestions.id))
       .innerJoin(surveyWindows, eq(surveyAssessments.surveyWindowId, surveyWindows.id))
+      .innerJoin(users, and(eq(users.id, surveyWindows.userId), eq(users.tenantId, surveyWindows.tenantId)))
+      .innerJoin(surveyQuestions, and(
+        eq(surveyAssessments.surveyQuestionId, surveyQuestions.id),
+        eq(surveyQuestions.surveyDefinitionId, surveyWindows.surveyDefinitionId),
+      ))
+      .innerJoin(surveyDefinitions, and(
+        eq(surveyDefinitions.id, surveyWindows.surveyDefinitionId),
+        or(isNull(surveyDefinitions.tenantId), eq(surveyDefinitions.tenantId, surveyWindows.tenantId)),
+      ))
       .where(
-        and(eq(surveyWindows.status, 'active'), tenantFilter),
+        and(
+          eq(surveyWindows.status, 'active'),
+          eq(surveyWindows.tenantId, tenantId),
+          sql`NOT EXISTS (SELECT 1 FROM survey_window_scoring_policies v2
+            WHERE v2.survey_window_id = ${surveyWindows.id}
+              AND v2.tenant_id = ${surveyWindows.tenantId})`,
+        ),
       );
 
     // Count distinct users across all questions (overall cohort)
@@ -70,13 +86,27 @@ export class SurveyCoverageController {
       // Skip questions with fewer than MIN_COHORT_SIZE unique users
       if (totalUsers < MIN_COHORT_SIZE) continue;
 
+      const usersByStatus = new Map<string, Set<string>>();
+      const scoredUsers = new Set<string>();
+      for (const row of questionRows) {
+        const statusUsers = usersByStatus.get(row.status) ?? new Set<string>();
+        statusUsers.add(row.userId);
+        usersByStatus.set(row.status, statusUsers);
+        if (row.score !== null) scoredUsers.add(row.userId);
+      }
+      // Every displayed status and score must represent a full cohort.
+      if ([...usersByStatus.values()].some((members) => members.size < MIN_COHORT_SIZE)
+        || (scoredUsers.size > 0 && scoredUsers.size < MIN_COHORT_SIZE)) continue;
+
       const first = questionRows[0];
       const statusDistribution: Record<string, number> = {};
       let scoreSum = 0;
       let scoreCount = 0;
 
+      for (const [status, members] of usersByStatus) {
+        statusDistribution[status] = members.size;
+      }
       for (const row of questionRows) {
-        statusDistribution[row.status] = (statusDistribution[row.status] ?? 0) + 1;
         if (row.score !== null) {
           scoreSum += Number(row.score);
           scoreCount++;
@@ -101,10 +131,10 @@ export class SurveyCoverageController {
 
     return {
       questions,
-      cohortSize,
+      cohortSize: cohortSize < MIN_COHORT_SIZE ? null : cohortSize,
       note:
         cohortSize < MIN_COHORT_SIZE
-          ? `Cohort size (${cohortSize}) is below the minimum threshold (${MIN_COHORT_SIZE}). No data shown.`
+          ? `Cohort is below the minimum threshold (${MIN_COHORT_SIZE}). No data shown.`
           : undefined,
     };
   }
@@ -126,40 +156,4 @@ export class SurveyCoverageController {
     return { definitions: defs };
   }
 
-  @Get('windows')
-  async getWindows(
-    @Query('tenantId') tenantId?: string,
-    @Query('status') status?: string,
-  ): Promise<{ windows: unknown[]; total: number }> {
-    const conditions = [
-      tenantId ? eq(surveyWindows.tenantId, tenantId) : undefined,
-      status ? eq(surveyWindows.status, status) : undefined,
-    ].filter(Boolean);
-
-    const where =
-      conditions.length > 0 ? and(...(conditions as Parameters<typeof and>)) : undefined;
-
-    const [rows, [{ total }]] = await Promise.all([
-      this.db.client
-        .select({
-          id: surveyWindows.id,
-          tenantId: surveyWindows.tenantId,
-          userId: surveyWindows.userId,
-          periodType: surveyWindows.periodType,
-          periodStart: surveyWindows.periodStart,
-          periodEnd: surveyWindows.periodEnd,
-          status: surveyWindows.status,
-          coverage: surveyWindows.coverage,
-        })
-        .from(surveyWindows)
-        .where(where)
-        .limit(100),
-      this.db.client
-        .select({ total: sql<number>`count(*)::int` })
-        .from(surveyWindows)
-        .where(where),
-    ]);
-
-    return { windows: rows, total };
-  }
 }

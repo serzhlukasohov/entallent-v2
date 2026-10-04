@@ -64,6 +64,21 @@ describe('FollowUpSchedulerUseCase', () => {
     expect(outbox.enqueueFollowUpExecution).toHaveBeenCalledOnce();
   });
 
+  it('stages a follow-up without dispatching before its transaction commits', async () => {
+    const repo = makeActionRepo();
+    const outbox = makeOutbox();
+    const useCase = new FollowUpSchedulerUseCase(repo, outbox);
+
+    const staged = await useCase.stage({ ...baseInput, candidates: [makeCandidate()] });
+
+    expect(staged).toEqual([expect.objectContaining({
+      scheduledActionId: 'action-1', tenantId: 't-1', userId: 'u-1',
+    })]);
+    expect(outbox.enqueueFollowUpExecution).not.toHaveBeenCalled();
+    await useCase.dispatch(staged[0]!);
+    expect(outbox.enqueueFollowUpExecution).toHaveBeenCalledWith(staged[0]);
+  });
+
   it('skips candidates below MIN_CONFIDENCE (0.6)', async () => {
     const repo = makeActionRepo();
     const outbox = makeOutbox();

@@ -15,6 +15,11 @@ import {
   type ScheduledActionRepositoryPort,
   type SurveyRepositoryPort,
   type SurveyQuestionForEvaluation,
+  type QuestionBundleComposition,
+  type AwaitingQuestionBundle,
+  type QuestionBundleVerdict,
+  type PendingQuestionClarification,
+  type QuestionClarificationVerdict,
   type StyleProfileRecord,
 } from '@entalent/application';
 import type {
@@ -136,7 +141,11 @@ export class CoachHarness {
       ai,
       this.outbox,
       this.memoryRepo,
-      options.surveyRepo,
+      options.surveyRepo ?? {
+        findPulseCaptureForConversation: async () => [],
+        findAwaitingConfirmationGroups: async () => [],
+        findPendingConfirmationGroups: async () => [],
+      } as unknown as SurveyRepositoryPort,
       undefined,
       this.escalation,
       undefined,
@@ -212,8 +221,9 @@ class RecordingAiProvider implements AiProviderPort {
   evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: Parameters<AiProviderPort['evaluateSurveyEvidence']>[2],
   ): Promise<SurveyEvidenceEvaluation> {
-    return this.delegate.evaluateSurveyEvidence(turns, questions);
+    return this.delegate.evaluateSurveyEvidence(turns, questions, options);
   }
 
   async generateResponse(
@@ -223,6 +233,36 @@ class RecordingAiProvider implements AiProviderPort {
   ): Promise<GeneratedResponse> {
     this.generateCalls.push({ turns, strategy, context });
     return this.delegate.generateResponse(turns, strategy, context);
+  }
+
+  composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+  ): Promise<QuestionBundleComposition> {
+    return this.delegate.composeQuestionBundle(turns, questions, responseLanguage);
+  }
+
+  interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict> {
+    return this.delegate.interpretQuestionBundleResponse(turns, bundle);
+  }
+
+  composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string> {
+    return this.delegate.composeQuestionClarification(turns, clarification, responseLanguage);
+  }
+
+  interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict> {
+    return this.delegate.interpretQuestionClarificationResponse(turns, clarification);
   }
 
   generateGroupSummary(

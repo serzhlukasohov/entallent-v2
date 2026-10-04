@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ExternalProfilePort } from '../ports/external-profile.port';
-import type { UserProfileRepositoryPort } from '../ports/user-profile.repository.port';
+import type { CommittedProfileHydrationRepositoryPort, UserProfileRepositoryPort } from '../ports/user-profile.repository.port';
 import { ProfileHydrationUseCase } from './profile-hydration.use-case';
 
 const INPUT = {
@@ -89,7 +89,7 @@ describe('ProfileHydrationUseCase', () => {
       'slack',
       expect.objectContaining({
         status: 'failed',
-        error: 'Slack timeout',
+        error: 'external_profile_fetch_failed',
         occurredAt: expect.any(Date),
       }),
       { externalWorkspaceId: 'ws-1' },
@@ -157,5 +157,38 @@ describe('ProfileHydrationUseCase', () => {
     await expect(new ProfileHydrationUseCase(ext, repo).execute(INPUT)).rejects.toThrow(
       'Slack timeout',
     );
+  });
+
+  it('records a terminal missing profile for a committed turn without updating user facts', async () => {
+    const ext: ExternalProfilePort = {
+      fetchProfile: vi.fn().mockResolvedValue(null), fetchTimezone: vi.fn(),
+    };
+    const repo: CommittedProfileHydrationRepositoryPort = {
+      updateTimezone: vi.fn(), updateProfile: vi.fn(),
+      recordProfileHydrationOutcome: vi.fn(),
+      isCommittedHydrationComplete: vi.fn().mockResolvedValue(false),
+      completeCommittedHydration: vi.fn().mockResolvedValue(undefined),
+    };
+    await new ProfileHydrationUseCase(ext, repo).execute({ ...INPUT, inboundMessageId: 'm-1' });
+    expect(repo.completeCommittedHydration).toHaveBeenCalledWith(
+      expect.objectContaining({ inboundMessageId: 'm-1', userId: INPUT.userId }),
+      null, expect.any(Date),
+    );
+    expect(repo.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it('skips external profile fetch after a committed completion receipt', async () => {
+    const ext: ExternalProfilePort = {
+      fetchProfile: vi.fn(), fetchTimezone: vi.fn(),
+    };
+    const repo: CommittedProfileHydrationRepositoryPort = {
+      updateTimezone: vi.fn(), updateProfile: vi.fn(),
+      recordProfileHydrationOutcome: vi.fn(),
+      isCommittedHydrationComplete: vi.fn().mockResolvedValue(true),
+      completeCommittedHydration: vi.fn(),
+    };
+    await new ProfileHydrationUseCase(ext, repo).execute({ ...INPUT, inboundMessageId: 'm-1' });
+    expect(ext.fetchProfile).not.toHaveBeenCalled();
+    expect(repo.completeCommittedHydration).not.toHaveBeenCalled();
   });
 });

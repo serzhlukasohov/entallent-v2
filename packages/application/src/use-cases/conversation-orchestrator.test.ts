@@ -17,7 +17,7 @@ const CAP8_SOURCE_ID = '11111111-1111-4111-8111-111111111111';
 
 function baseMocks() {
   const conversationRepo = {
-    findById: vi.fn().mockResolvedValue({ id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC' }),
+    findById: vi.fn().mockResolvedValue({ id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC' }),
     findRecentMessages: vi.fn().mockResolvedValue([
       { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'hey', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
     ]),
@@ -26,7 +26,7 @@ function baseMocks() {
       version: REPORTING_DISCLOSURE_VERSION,
       shownAt: new Date('2026-09-03T09:00:00.000Z'),
     }),
-    saveMessage: vi.fn().mockResolvedValue({ id: 'out-1' }),
+    saveMessage: vi.fn().mockImplementation(async (params: { text: string }) => ({ ...params, id: 'out-1' })),
     updateActiveTopic: vi.fn().mockResolvedValue(undefined),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -180,10 +180,131 @@ function orchestratorWithGoals(
 }
 
 describe('ConversationOrchestrator reporting disclosure gate', () => {
+  it('does not queue profile hydration when response preparation fails', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      externalConversationId: 'ec', userDisplayName: null, userLocale: 'en', userTimezone: 'UTC',
+    });
+    m.aiProvider.generateResponse.mockRejectedValue(new Error('synthetic_model_failure'));
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow('synthetic_model_failure');
+
+    expect(m.outbox.enqueueProfileHydration).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('commits and dispatches profile hydration with the source inbound', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      externalConversationId: 'ec', userDisplayName: null, userLocale: 'en', userTimezone: 'UTC',
+    });
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue([
+      'message_send', 'profile_hydration',
+    ]);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(m.conversationRepo.recordCommittedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      inboundMessageId: 'm-1',
+      dispatchKinds: expect.arrayContaining(['profile_hydration']),
+    }));
+    expect(m.outbox.enqueueProfileHydration).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'u-1', tenantId: 't-1', inboundMessageId: 'm-1',
+    }));
+    expect(m.conversationRepo.markCommittedDispatchQueued).toHaveBeenCalledWith(expect.objectContaining({
+      inboundMessageId: 'm-1', kind: 'profile_hydration',
+    }));
+  });
+
+  it('does not persist or queue a reminder when response preparation fails', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
+      urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
+      reasoningSummary: 'test', reminderRequest: {
+        intent: 'send the report', dueAt: '2026-09-04T09:00:00.000Z',
+      }, dialogueAct: 'request', latestUserSubstance: 'remind me', topicAnchor: null,
+    });
+    m.aiProvider.generateResponse.mockRejectedValue(new Error('synthetic_model_failure'));
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow('synthetic_model_failure');
+
+    expect(m.scheduledActionRepo.save).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueFollowUpExecution).not.toHaveBeenCalled();
+  });
+
+  it('persists a reminder with the committed turn and queues its scoped action', async () => {
+    const m = baseMocks();
+    const dueAt = new Date(Date.now() + 86_400_000);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
+      urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
+      reasoningSummary: 'test', reminderRequest: {
+        intent: 'send the report', dueAt: dueAt.toISOString(),
+      }, dialogueAct: 'request', latestUserSubstance: 'remind me', topicAnchor: null,
+    });
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.findUnqueuedCommittedFollowUps = vi.fn().mockResolvedValue([{
+      scheduledActionId: 'reminder-1', dueAt,
+    }]);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(m.conversationRepo.recordCommittedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      followUpActions: [{ id: 'reminder-1', dueAt }],
+    }));
+    expect(m.outbox.enqueueFollowUpExecution).toHaveBeenCalledWith(expect.objectContaining({
+      scheduledActionId: 'reminder-1', tenantId: 't-1', userId: 'u-1',
+    }));
+    expect(m.conversationRepo.markCommittedDispatchQueued).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'follow_up_execution', targetId: 'reminder-1',
+    }));
+  });
+
+  it('records enabled dispatch intents and marks each accepted enqueue', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue([
+      'message_send', 'memory_extraction', 'style_analysis', 'survey_evidence',
+    ]);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(m.conversationRepo.recordCommittedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      inboundMessageId: 'm-1', outboundMessageId: 'out-1',
+      dispatchKinds: ['message_send', 'memory_extraction', 'style_analysis', 'survey_evidence'],
+    }));
+    expect(m.conversationRepo.markCommittedDispatchQueued.mock.calls.map((call: Array<{kind: string}>) => call[0].kind))
+      .toEqual(['message_send', 'memory_extraction', 'style_analysis', 'survey_evidence']);
+  });
+
+  it('resumes an already dispatched turn without a model call or duplicate enqueue', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue({
+      id: 'out-1', ...OWNERSHIP, direction: 'outbound', text: 'stored reply',
+    });
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue([]);
+
+    expect(await makeOrchestrator(m).resumeCommittedTurn(INPUT)).toBe(true);
+    expect(m.aiProvider.classifySituation).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueMessageSend).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
   it('rejects a conversation owned by another user before reading disclosure proof', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-other', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-other', channelType: 'slack', externalConversationId: 'ec',
     });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -194,8 +315,26 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.conversationRepo.findRecentMessages).not.toHaveBeenCalled();
   });
 
+  it('rejects a queue destination that differs from the stored conversation before side effects', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      externalConversationId: 'stored-channel', userDisplayName: null, userTimezone: null,
+    });
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT))
+      .rejects.toThrow('Conversation destination mismatch');
+    expect(m.conversationRepo.findRecentMessages).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueProfileHydration).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueMessageSend).not.toHaveBeenCalled();
+  });
+
   it('rejects a confirming message outside the conversation ownership before reading disclosure proof', async () => {
     const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
+      userDisplayName: null, userTimezone: null,
+    });
     m.conversationRepo.findRecentMessages.mockResolvedValue([
       {
         id: 'm-1',
@@ -213,6 +352,28 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     await expect(orch.orchestrate(INPUT)).rejects.toThrow('Inbound message ownership mismatch');
     expect(m.conversationRepo.findLatestDeliveredReportingDisclosure).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueProfileHydration).not.toHaveBeenCalled();
+  });
+
+  it('processes a delayed inbound from source-bound history after newer messages arrive', async () => {
+    const m = baseMocks();
+    const inbound = {
+      id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'hey',
+      occurredAt: INBOUND_OCCURRED_AT, metadata: undefined,
+    };
+    m.conversationRepo.findRecentMessages.mockResolvedValue(
+      Array.from({ length: 20 }, (_, index) => ({
+        ...inbound, id: `newer-${index}`, text: 'newer',
+      })),
+    );
+    m.conversationRepo.findMessagesThrough = vi.fn().mockResolvedValue([inbound]);
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT)).resolves.toBeDefined();
+    expect(m.conversationRepo.findMessagesThrough).toHaveBeenCalledWith({
+      conversationId: 'c-1', tenantId: 't-1', userId: 'u-1',
+      inboundMessageId: 'm-1', limit: 20,
+    });
+    expect(m.conversationRepo.findRecentMessages).not.toHaveBeenCalled();
   });
 
   it('keeps a fresh first safe turn free of reporting disclosure', async () => {
@@ -236,6 +397,10 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     });
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('reportingDisclosureVersion');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0]).toMatchObject({
+      id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f-]{27}$/),
+      metadata: { sourceInboundMessageId: INPUT.messageId },
+    });
   });
 
   it('keeps a chatbot consultation free of reporting disclosure when survey pacing is ready', async () => {
@@ -371,7 +536,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', userDisplayName: 'Sam', userLocale: 'ru', userTimezone: 'UTC',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec', userDisplayName: 'Sam', userLocale: 'ru', userTimezone: 'UTC',
     });
     m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([
       {
@@ -469,7 +634,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
   it('answers a reporting explanation request deterministically without confirming or probing', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'ru', userTimezone: 'UTC',
     });
     m.conversationRepo.findRecentMessages.mockResolvedValue([
@@ -1208,8 +1373,8 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       ];
     });
     m.conversationRepo.saveMessage
-      .mockResolvedValueOnce({ id: 'out-initial' })
-      .mockResolvedValueOnce({ id: 'out-followup' });
+      .mockImplementationOnce(async (params: { text: string }) => ({ ...params, id: 'out-initial' }))
+      .mockImplementationOnce(async (params: { text: string }) => ({ ...params, id: 'out-followup' }));
     m.aiProvider.classifySituation
       .mockResolvedValueOnce({
         primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
@@ -1645,7 +1810,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
   ] as const)('localizes the complete CAP-5 policy for %s', async (locale, required, forbidden) => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: locale, userTimezone: 'UTC',
     });
     m.aiProvider.classifySituation.mockResolvedValue({
@@ -2007,6 +2172,356 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
     expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversationOrchestrator V2 question confirmation', () => {
+  it('asks one focused clarification after a partial reply and stages its prompt before delivery', async () => {
+    const m = baseMocks();
+    const clarificationText = 'What did I miss about your freedom to choose?';
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({
+      kind: 'partial', acceptedQuestionIds: ['q-a'], disputedQuestionIds: ['q-b'], declinedQuestionIds: ['q-c'],
+    });
+    m.aiProvider.composeQuestionClarification = vi.fn().mockResolvedValue(clarificationText);
+    const pending = {
+      workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionGroup: 'autonomy',
+      workingSummary: 'Can choose tasks.', disputedStatement: 'You can choose tasks.',
+      clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+    };
+    const questionConfirmationRepo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue({
+        id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+        questionGroup: 'autonomy', displayedText: 'Is that fair?',
+        components: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId) => ({
+          surveyQuestionId, questionVersion: 'v2', statement: surveyQuestionId,
+        })),
+      }),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue(pending),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(clarificationText);
+    expect(questionConfirmationRepo.previewPendingQuestionClarificationAfterBundleVerdict)
+      .toHaveBeenCalledWith({
+        tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', inboundMessageId: 'm-1',
+        bundleId: 'bundle-1', disputedQuestionIds: ['q-b'],
+      });
+    expect(questionConfirmationRepo.stageQuestionClarificationPrompt).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1',
+      workingInsightId: 'working-b', promptMessageId: 'out-1', displayedText: clarificationText,
+    });
+    expect(questionConfirmationRepo.stageQuestionClarificationPrompt.mock.invocationCallOrder[0])
+      .toBeLessThan(m.outbox.enqueueMessageSend.mock.invocationCallOrder[0]);
+    expect(m.aiProvider.composeQuestionClarification.mock.invocationCallOrder[0])
+      .toBeLessThan(questionConfirmationRepo.applyQuestionBundleVerdict.mock.invocationCallOrder[0]);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it('confirms a substantive clarification without a second complete bundle', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({
+      kind: 'clarified', correctedSummary: 'I can decide my work methods, but not my priorities.',
+    });
+    const pending = {
+      workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionGroup: 'autonomy',
+      workingSummary: 'I choose all my work.', disputedStatement: 'You choose your work.',
+      clarificationPromptMessageId: 'clarify-out',
+      clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+    };
+    const questionConfirmationRepo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn(),
+      findPendingQuestionClarification: vi.fn()
+        .mockResolvedValueOnce(pending).mockResolvedValueOnce(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(questionConfirmationRepo.findPendingQuestionClarification).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', inboundMessageId: 'm-1',
+    });
+    expect(questionConfirmationRepo.applyQuestionClarificationVerdict).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1',
+      workingInsightId: 'working-b', inboundMessageId: 'm-1',
+      verdict: { kind: 'clarified', correctedSummary: 'I can decide my work methods, but not my priorities.' },
+    });
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+  });
+
+  it('does not commit a clarification verdict when response generation fails', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'declined' });
+    m.aiProvider.generateResponse = vi.fn().mockRejectedValue(new Error('response_generation_failed'));
+    const questionConfirmationRepo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn(),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue({
+        workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+        surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionGroup: 'autonomy',
+        workingSummary: 'I choose all my work.', disputedStatement: 'You choose your work.',
+        clarificationPromptMessageId: 'clarify-out',
+        clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+      }),
+      previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('response_generation_failed');
+    expect(questionConfirmationRepo.applyQuestionClarificationVerdict).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unrelated reply after clarification pending without scoring or decline', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'unrelated' });
+    const questionConfirmationRepo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn(),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue({
+        workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+        surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionGroup: 'autonomy',
+        workingSummary: 'I choose all my work.', disputedStatement: 'You choose your work.',
+        clarificationPromptMessageId: 'clarify-out',
+        clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+      }),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(questionConfirmationRepo.applyQuestionClarificationVerdict).not.toHaveBeenCalled();
+    expect(questionConfirmationRepo.stageQuestionClarificationPrompt).not.toHaveBeenCalled();
+    expect(questionConfirmationRepo.findReadyQuestionBundle).not.toHaveBeenCalled();
+  });
+
+  it('applies an unqualified agreement to the exact delivered bundle', async () => {
+    const m = baseMocks();
+    const components = [
+      { surveyQuestionId: 'q-a', questionVersion: 'v2', statement: 'You choose methods.' },
+      { surveyQuestionId: 'q-b', questionVersion: 'v2', statement: 'You set priorities.' },
+      { surveyQuestionId: 'q-c', questionVersion: 'v2', statement: 'You raise concerns.' },
+    ];
+    const awaiting = {
+      id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+      questionGroup: 'autonomy', displayedText: 'Is that fair?', components,
+    };
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'agree' });
+    const questionConfirmationRepo = {
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(awaiting),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.interpretQuestionBundleResponse).toHaveBeenCalledWith(
+      expect.any(Array), awaiting,
+    );
+    expect(questionConfirmationRepo.applyQuestionBundleVerdict).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1',
+      inboundMessageId: 'm-1', bundleId: 'bundle-1', verdict: { kind: 'agree' },
+    });
+    expect(questionConfirmationRepo.findReadyQuestionBundle).not.toHaveBeenCalled();
+  });
+
+  it('does not commit a prepared Bundle verdict when response generation fails', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'agree' });
+    m.aiProvider.generateResponse = vi.fn().mockRejectedValue(new Error('response_generation_failed'));
+    const questionConfirmationRepo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue({
+        id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+        questionGroup: 'autonomy', displayedText: 'Is that fair?',
+        components: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId) => ({
+          surveyQuestionId, questionVersion: 'v2', statement: surveyQuestionId,
+        })),
+      }),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('response_generation_failed');
+    expect(questionConfirmationRepo.applyQuestionBundleVerdict).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueMessageSend).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unrelated reply from changing question state', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'unrelated' });
+    const questionConfirmationRepo = {
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue({
+        id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+        questionGroup: 'autonomy', displayedText: 'Is that fair?',
+        components: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId) => ({
+          surveyQuestionId, questionVersion: 'v2', statement: surveyQuestionId,
+        })),
+      }),
+      applyQuestionBundleVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(questionConfirmationRepo.applyQuestionBundleVerdict).not.toHaveBeenCalled();
+  });
+
+  it('stages one natural three-question bundle before queueing its delivery', async () => {
+    const m = baseMocks();
+    const statements = [
+      { surveyQuestionId: 'q-a', statement: 'You can choose your methods.' },
+      { surveyQuestionId: 'q-b', statement: 'You can set priorities.' },
+      { surveyQuestionId: 'q-c', statement: 'You can challenge decisions.' },
+    ];
+    const text = `I hear that ${statements.map((item) => item.statement).join(' ')} Is that fair?`;
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({ text, statements });
+    const questionConfirmationRepo = {
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue({
+        tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy',
+        questions: statements.map((statement) => ({
+          surveyQuestionId: statement.surveyQuestionId,
+          questionVersion: 'v2',
+          workingSummary: statement.statement,
+        })),
+      }),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue('bundle-1'),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(text);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', surveyWindowId: 'w-v2',
+      questionGroup: 'autonomy', promptMessageId: 'out-1', displayedText: text,
+      components: statements.map((statement) => ({
+        ...statement, questionVersion: 'v2', expectedWorkingSummary: statement.statement,
+      })),
+    });
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle.mock.invocationCallOrder[0])
+      .toBeLessThan(m.outbox.enqueueMessageSend.mock.invocationCallOrder[0]);
+  });
+
+  it('offers disclosure in the ordinary reply before surfacing a ready V2 bundle', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    const questionConfirmationRepo = {
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(true),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(questionConfirmationRepo.hasReadyQuestionBundle).toHaveBeenCalledWith({ tenantId: 't-1', userId: 'u-1' });
+    expect(questionConfirmationRepo.findReadyQuestionBundle).not.toHaveBeenCalled();
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+    expect(result.responseText).toContain(getReportingDisclosureText('en'));
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .toHaveProperty('reportingDisclosureVersion', REPORTING_DISCLOSURE_VERSION);
   });
 });
 
@@ -2638,7 +3153,7 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
   it('rejects a queue user that does not own the conversation', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-other', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-other', channelType: 'slack', externalConversationId: 'ec',
     });
 
     await expect(orchestratorWithGoals(m).orchestrate(INPUT))
@@ -2652,7 +3167,7 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
       id: 'c-1',
       tenantId: 't-1',
       userId: 'u-1',
-      channelType: 'slack',
+      channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam',
       userLocale: 'en',
       userTimezone: 'UTC',
@@ -2682,7 +3197,7 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
   it('does not treat a whitespace-variant anchor as exact persisted re-entry', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
     });
     m.aiProvider.classifySituation.mockResolvedValue({
@@ -2710,7 +3225,7 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
       { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'roadmap update', occurredAt: inboundAt },
     ]);
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
     });
     m.aiProvider.classifySituation.mockResolvedValue({
@@ -2743,7 +3258,7 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
   it('preserves a stored thread on acknowledgement without grounding it', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
     });
     m.aiProvider.classifySituation.mockResolvedValue({
@@ -2762,7 +3277,7 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
   it('parks a stored thread on closing without grounding it', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
       activeTopic: { ...parkedTopic, status: 'active' },
     });
@@ -2867,7 +3382,7 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
   it('treats secondary safety intent as authoritative and clears continuity and goals', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC', activeTopic: parkedTopic,
     });
     m.aiProvider.classifySituation.mockResolvedValue({
@@ -3078,7 +3593,7 @@ describe('ConversationOrchestrator language policy', () => {
       id: 'c-1',
       tenantId: 't-1',
       userId: 'u-1',
-      channelType: 'slack',
+      channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam',
       userLocale: 'uk',
       userTimezone: 'UTC',
@@ -3107,7 +3622,7 @@ describe('ConversationOrchestrator language policy', () => {
       id: 'c-1',
       tenantId: 't-1',
       userId: 'u-1',
-      channelType: 'slack',
+      channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam',
       userLocale: 'pt-BR',
       userTimezone: 'UTC',
@@ -3135,7 +3650,7 @@ describe('ConversationOrchestrator language policy', () => {
       id: 'c-1',
       tenantId: 't-1',
       userId: 'u-1',
-      channelType: 'slack',
+      channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam',
       userLocale: '123',
       userTimezone: 'UTC',
@@ -3159,6 +3674,61 @@ describe('ConversationOrchestrator language policy', () => {
 });
 
 describe('ConversationOrchestrator group confirmation — interpret (Phase B)', () => {
+  it('does not confirm or queue a V1 group report when response preparation fails', async () => {
+    const m = baseMocks();
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([{
+      id: 'group-state-1', surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1',
+      questionGroup: 'growth', confirmationSummary: 'The exact shown summary.',
+      confirmationPromptMessageId: 'out-confirmation-1',
+      deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
+    }]);
+    m.surveyRepo.findTeamByMemberId.mockResolvedValue({
+      teamId: 'team-1', reportingCohortId: 'cohort-1',
+    });
+    m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict: 'agree' });
+    m.aiProvider.generateResponse.mockRejectedValue(new Error('synthetic_model_failure'));
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow('synthetic_model_failure');
+
+    expect(m.surveyRepo.confirmGroupState).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
+  });
+
+  it.each(['correct', 'exclude'] as const)(
+    'does not apply a V1 %s verdict when response preparation fails', async (verdict) => {
+      const m = baseMocks();
+      m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([{
+        id: 'group-state-1', surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1',
+        questionGroup: 'growth', confirmationSummary: 'The exact shown summary.',
+        confirmationPromptMessageId: 'out-confirmation-1',
+        deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
+      }]);
+      m.aiProvider.interpretConfirmationResponse.mockResolvedValue({ verdict });
+      m.aiProvider.generateResponse.mockRejectedValue(new Error('synthetic_model_failure'));
+
+      await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow('synthetic_model_failure');
+
+      expect(m.surveyRepo.transitionAwaitingGroupState).not.toHaveBeenCalled();
+      expect(m.surveyRepo.withdrawGroupState).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not reset a V1 awaiting group before a failed response', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+    m.surveyRepo.findAwaitingConfirmationGroups.mockResolvedValue([{
+      id: 'group-state-1', surveyWindowId: 'w-1', userId: 'u-1', tenantId: 't-1',
+      questionGroup: 'growth', confirmationSummary: 'The exact shown summary.',
+      confirmationPromptMessageId: 'out-confirmation-1',
+      deidentificationDecision: ACCEPTED_DEIDENTIFICATION,
+    }]);
+    m.aiProvider.generateResponse.mockRejectedValue(new Error('synthetic_model_failure'));
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow('synthetic_model_failure');
+
+    expect(m.surveyRepo.transitionAwaitingGroupState).not.toHaveBeenCalled();
+  });
+
   it('agree → confirms group and enqueues report', async () => {
     const m = baseMocks();
     m.aiProvider.classifySituation.mockResolvedValue({
@@ -3335,7 +3905,7 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
       undefined, undefined, m.featureFlags, undefined, undefined,
     );
 
-    await orch.orchestrate(INPUT);
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('v1_group_state_stale');
 
     expect(m.surveyRepo.confirmGroupState).toHaveBeenCalledWith(
       expect.objectContaining({ expectedConfirmationSummary: 'Summary A' }),
@@ -3360,15 +3930,11 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
       undefined, undefined, m.featureFlags, undefined, undefined,
     );
 
-    await orch.orchestrate(INPUT);
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('v1_group_state_stale');
 
     expect(m.surveyRepo.confirmGroupState).toHaveBeenCalled();
     expect(m.outbox.enqueueGroupReport).not.toHaveBeenCalled();
-    const strategyArg = m.aiProvider.generateResponse.mock.calls[0][1];
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.topicConfirmed).toBeUndefined();
-    expect(strategyArg.includeFollowUpQuestion).toBe(true);
-    expect(ctxArg.replyPlan.questionPolicy.maxQuestions).toBe(1);
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
   });
 
   it('computes engagement from three distinct stored assessment scores', async () => {
@@ -3533,6 +4099,40 @@ describe('ConversationOrchestrator group confirmation — interpret (Phase B)', 
   });
 });
 
+describe('ConversationOrchestrator safety source identity', () => {
+  it('persists a risk signal against the exact inbound even when response generation fails', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'potential_crisis', secondaryIntents: [], emotionalState: ['unsafe'],
+      urgency: 'critical', confidence: 0.95, surveyAllowed: false,
+      requiresSafetyCheck: true, reasoningSummary: 'synthetic', reminderRequest: null,
+      dialogueAct: 'emotional_disclosure', latestUserSubstance: 'unsafe', topicAnchor: null,
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'potential_self_harm', severity: 'critical', confidence: 0.95,
+      immediateResponseRequired: true, surveyMustBeBlocked: true,
+      proactiveMessagesMustBePaused: true, escalationRecommended: true,
+      reasoningSummary: 'synthetic',
+    });
+    m.aiProvider.generateResponse.mockRejectedValue(new Error('synthetic_model_failure'));
+    const riskRepo = {
+      save: vi.fn(), saveOnceForSource: vi.fn().mockResolvedValue({ id: 'signal-1' }),
+    };
+    const orchestrator = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, undefined,
+      riskRepo as never, undefined, m.featureFlags,
+    );
+
+    await expect(orchestrator.orchestrate(INPUT)).rejects.toThrow('synthetic_model_failure');
+
+    expect(riskRepo.saveOnceForSource).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 't-1', userId: 'u-1', sourceMessageId: 'm-1',
+      evidenceMessageIds: ['m-1'], type: 'potential_self_harm',
+    }));
+    expect(riskRepo.save).not.toHaveBeenCalled();
+  });
+});
+
 describe('ConversationOrchestrator style adaptation — structural verbosity', () => {
   const profile = (verbosity: number, weight: number) => ({
     findByUser: vi.fn().mockResolvedValue({
@@ -3644,6 +4244,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
     await orch.orchestrate(INPUT);
     expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
       metadata: {
+        sourceInboundMessageId: INPUT.messageId,
         measurementVersion: 'ts-conversation-decision-v1',
         dialogueAct: 'new_substance',
         responseMove: 'address_new_substance',
@@ -3745,6 +4346,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
       'memoryGrounding',
       'replyShape',
       'responseMove',
+      'sourceInboundMessageId',
     ]);
     expect(JSON.stringify(metadata)).not.toContain('Private Project Atlas concern');
     expect(JSON.stringify(metadata)).not.toContain('test-only classifier output');
@@ -4142,7 +4744,7 @@ describe('ConversationOrchestrator local time', () => {
   it('marks session start and omits localTime when tz is unknown', async () => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userTimezone: undefined,
     });
     const orch = new ConversationOrchestrator(
@@ -4205,7 +4807,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
       const m = baseMocks();
       m.conversationRepo.findRecentMessages.mockResolvedValue(history());
       m.conversationRepo.findById.mockResolvedValue({
-        id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+        id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
         userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
         activeTopic: {
           summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
@@ -4227,7 +4829,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue(history());
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
       activeTopic: {
         summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
@@ -4253,7 +4855,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue(history());
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
       activeTopic: {
         summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
@@ -4271,7 +4873,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue(history());
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
       activeTopic: {
         summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
@@ -4444,7 +5046,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
       messages[2]!.text = 'The payment exception forced me to reconstruct the whole flow.';
       m.conversationRepo.findRecentMessages.mockResolvedValue(messages);
       m.conversationRepo.findById.mockResolvedValue({
-        id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+        id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
         userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
         activeTopic: {
           summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
@@ -4472,7 +5074,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
     messages[2]!.text = 'The hiring plan is now blocked on finance.';
     m.conversationRepo.findRecentMessages.mockResolvedValue(messages);
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
       activeTopic: {
         summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
@@ -4515,7 +5117,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
       '  prior one  ', 'prior two', 'prior three', 'prior four', 'prior five', 'prior six', '', 42,
     ]));
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
       activeTopic: {
         summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',
@@ -4538,7 +5140,7 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue(history(['prior one', 'prior two']));
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
       userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
       activeTopic: {
         summary: 'interruption', status: 'active', startedAt: '2026-09-03T09:58:00.000Z',

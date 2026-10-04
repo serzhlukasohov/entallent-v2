@@ -42,7 +42,6 @@ export interface AdminProfileHydrationFailedJob {
     userId?: string;
     tenantId?: string;
     channelType?: string;
-    traceId?: string;
   };
 }
 

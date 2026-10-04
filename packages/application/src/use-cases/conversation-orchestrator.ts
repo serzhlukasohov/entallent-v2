@@ -7,10 +7,18 @@ import {
   type ConversationMode,
 } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
-import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
+import type { ConversationDispatchKind, ConversationRepositoryPort } from '../ports/conversation.repository.port';
+import type { ConversationUnitOfWorkPort } from '../ports/conversation-unit-of-work.port';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
-import type { RiskSignalRepositoryPort } from '../ports/risk-signal.repository.port';
+import type {
+  QuestionConfirmationPort,
+  QuestionBundleVerdict,
+  QuestionClarificationVerdict,
+  ReadyQuestionBundle,
+  PendingQuestionClarification,
+} from '../ports/question-confirmation.port';
+import type { SourceIdempotentRiskSignalRepositoryPort } from '../ports/risk-signal.repository.port';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
 import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
@@ -32,6 +40,10 @@ import type {
   SurveyQuestionRecord,
 } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
+import { validateQuestionBundleComposition } from '../utils/question-bundle-composition';
+import { validateQuestionBundleVerdict } from '../utils/question-bundle-verdict';
+import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
+import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isSessionStart } from '../utils/session';
 import { resolveLanguagePolicy } from '../utils/language-policy';
@@ -60,6 +72,24 @@ export type OrchestrateResult = ProcessMessageResult;
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
 
+type PreparedBundlePhase = {
+  confirmedGroup: string | false;
+  awaitingPresent: boolean;
+  commitLegacy?: () => Promise<LegacyGroupReportIntent | null>;
+  verdictProposal?: {
+    bundleId: string;
+    verdict: Exclude<QuestionBundleVerdict, { kind: 'unrelated' }>;
+  };
+  nextClarification?: PendingQuestionClarification | null;
+};
+
+type LegacyGroupReportIntent = {
+  groupStateId?: string;
+  reportingCohortId: string;
+  teamId: string;
+  questionGroup: string;
+};
+
 export class ConversationOrchestrator {
   constructor(
     private readonly conversationRepo: ConversationRepositoryPort,
@@ -67,14 +97,35 @@ export class ConversationOrchestrator {
     private readonly outbox: OutboxPort,
     private readonly memoryRepo?: MemoryRepositoryPort,
     private readonly surveyRepo?: SurveyRepositoryPort,
-    private readonly riskSignalRepo?: RiskSignalRepositoryPort,
+    private readonly riskSignalRepo?: SourceIdempotentRiskSignalRepositoryPort,
     private readonly escalation?: EscalationPort,
     private readonly featureFlags?: FeatureFlagPort,
     private readonly scheduledActionRepo?: ScheduledActionRepositoryPort,
     private readonly pulseBacklogService?: PulseBacklogService,
     private readonly styleProfileRepo?: StyleProfileRepositoryPort,
     private readonly goalRepo?: GoalRepositoryPort,
+    private readonly questionConfirmationRepo?: QuestionConfirmationPort,
+    private readonly unitOfWork?: ConversationUnitOfWorkPort,
   ) {}
+
+  async resumeCommittedTurn(input: OrchestrateInput): Promise<boolean> {
+    const outbound = await this.conversationRepo.findCommittedTurnForInbound?.({
+      inboundMessageId: input.messageId,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      externalWorkspaceId: input.externalWorkspaceId,
+      externalConversationId: input.externalConversationId,
+    });
+    if (!outbound) return false;
+    const conversation = await this.conversationRepo.findById(input.conversationId, input.tenantId);
+    if (!conversation || conversation.userId !== input.userId
+      || conversation.externalConversationId !== input.externalConversationId) {
+      throw new Error('conversation_committed_turn_destination_mismatch');
+    }
+    await this.dispatchCommittedTurn(input, conversation.channelType, outbound, ['message_send']);
+    return true;
+  }
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
     const { conversationId, tenantId, userId, externalWorkspaceId, externalConversationId } =
@@ -85,22 +136,19 @@ export class ConversationOrchestrator {
     if (conversation.tenantId !== tenantId || conversation.userId !== userId) {
       throw new Error(`Conversation ownership mismatch: ${conversationId}`);
     }
-
-    const displayNameMissing = !conversation.userDisplayName;
-    const tzMissing = !conversation.userTimezone;
-    const tzStale = !!conversation.userTimezoneUpdatedAt &&
-      Date.now() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000;
-    if (displayNameMissing || tzMissing || tzStale) {
-      await this.outbox.enqueueProfileHydration({
-        userId,
-        tenantId,
-        channelType: conversation.channelType,
-        externalWorkspaceId,
-        traceId: input.traceId,
-      });
+    if (conversation.externalConversationId !== externalConversationId) {
+      throw new Error(`Conversation destination mismatch: ${conversationId}`);
     }
 
-    const recentMessages = await this.conversationRepo.findRecentMessages(conversationId, 20);
+    const recentMessages = this.conversationRepo.findMessagesThrough
+      ? await this.conversationRepo.findMessagesThrough({
+        conversationId,
+        tenantId,
+        userId,
+        inboundMessageId: input.messageId,
+        limit: 20,
+      })
+      : await this.conversationRepo.findRecentMessages(conversationId, 20);
     const inboundMessageIndex = recentMessages.findIndex(
       (message) =>
         message.id === input.messageId
@@ -112,6 +160,12 @@ export class ConversationOrchestrator {
     if (inboundMessageIndex < 0) {
       throw new Error(`Inbound message ownership mismatch: ${input.messageId}`);
     }
+
+    const displayNameMissing = !conversation.userDisplayName;
+    const tzMissing = !conversation.userTimezone;
+    const tzStale = !!conversation.userTimezoneUpdatedAt &&
+      Date.now() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000;
+    const profileHydrationNeeded = displayNameMissing || tzMissing || tzStale;
 
     const dbMessages = recentMessages.slice(0, inboundMessageIndex + 1);
     const inboundMessage = dbMessages[inboundMessageIndex];
@@ -283,9 +337,73 @@ export class ConversationOrchestrator {
       speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
     ]);
 
+    const appliedQuestionVerdict = await this.questionConfirmationRepo
+      ?.findAppliedQuestionVerdictForInbound?.({
+        tenantId, userId, conversationId, inboundMessageId: input.messageId,
+      }) ?? null;
+
     // ── Group confirmation interpretation (Phase B) ─────────────────────────
     // Safety classification must resolve before any survey state can change.
-    const phaseB = this.surveyRepo && surveyEnabled
+    const v2PhaseB: PreparedBundlePhase = appliedQuestionVerdict?.kind === 'bundle'
+      ? {
+          confirmedGroup: appliedQuestionVerdict.verdictKind === 'agree'
+            ? appliedQuestionVerdict.questionGroup : false as string | false,
+          awaitingPresent: true,
+        }
+      : this.questionConfirmationRepo && surveyEnabled
+      && classification.surveyAllowed && !risk.surveyMustBeBlocked
+      && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested
+      ? await this.handleAwaitingQuestionBundle(turns, input, reportingDisclosureReceipt)
+      : { confirmedGroup: false as string | false, awaitingPresent: false };
+    let pendingClarification: PendingQuestionClarification | null = v2PhaseB.nextClarification ?? null;
+    let clarificationWasPresent = appliedQuestionVerdict?.kind === 'clarification'
+      || pendingClarification !== null;
+    let clarificationVerdictProposal: {
+      workingInsightId: string;
+      verdict: Exclude<QuestionClarificationVerdict, { kind: 'unrelated' }>;
+    } | null = null;
+    if (!clarificationWasPresent && this.questionConfirmationRepo && surveyEnabled
+      && classification.surveyAllowed && !risk.surveyMustBeBlocked
+      && !dataUseExplanationRequested && !pulseCaptureExplanationRequested) {
+      pendingClarification = await this.questionConfirmationRepo.findPendingQuestionClarification({
+        tenantId, userId, conversationId, inboundMessageId: input.messageId,
+      });
+      clarificationWasPresent = pendingClarification !== null;
+      if (pendingClarification?.clarificationPromptMessageId
+        && pendingClarification.clarificationPromptSentAt
+        && pendingClarification.clarificationPromptSentAt < inboundMessage.occurredAt
+        && reportingDisclosureReceipt) {
+        const clarificationVerdict = validateQuestionClarificationVerdict(
+          await this.aiProvider.interpretQuestionClarificationResponse(turns, pendingClarification),
+        );
+        if (clarificationVerdict.kind !== 'unrelated') {
+          clarificationVerdictProposal = {
+            workingInsightId: pendingClarification.workingInsightId,
+            verdict: clarificationVerdict,
+          };
+          pendingClarification = await this.questionConfirmationRepo
+            .previewPendingQuestionClarificationAfterVerdict?.({
+              tenantId, userId, conversationId,
+              workingInsightId: clarificationVerdictProposal.workingInsightId,
+            }) ?? null;
+        }
+      }
+    }
+    const clarificationRequest = pendingClarification
+      && !pendingClarification.clarificationPromptMessageId
+      && reportingDisclosureReceipt
+      && !closingTurn
+      && !pauseTurn
+      && !classification.reminderRequest
+      && !reportingExplanationRequested
+      ? pendingClarification
+      : null;
+    const phaseB: PreparedBundlePhase = v2PhaseB.awaitingPresent
+      ? v2PhaseB
+      : clarificationWasPresent
+        ? { confirmedGroup: false as string | false, awaitingPresent: true }
+      : this.surveyRepo && surveyEnabled
       && classification.surveyAllowed && !risk.surveyMustBeBlocked
       && !dataUseExplanationRequested
       && !pulseCaptureExplanationRequested
@@ -328,13 +446,37 @@ export class ConversationOrchestrator {
       }
     }
 
+    let v2BundleRequest: ReadyQuestionBundle | null = null;
+    let v2ReadyForDisclosure = false;
+    if (
+      this.questionConfirmationRepo
+      && !closingTurn
+      && !pauseTurn
+      && !classification.reminderRequest
+      && surveyEnabled
+      && classification.surveyAllowed
+      && !risk.surveyMustBeBlocked
+      && !reportingExplanationRequested
+      && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested
+      && !confirmationHandled
+      && !phaseB.awaitingPresent
+      && !confirmationRequest
+    ) {
+      if (reportingDisclosureReceipt) {
+        v2BundleRequest = await this.questionConfirmationRepo.findReadyQuestionBundle({ tenantId, userId });
+      } else if (!hasCurrentDeliveredDisclosure) {
+        v2ReadyForDisclosure = await this.questionConfirmationRepo.hasReadyQuestionBundle({ tenantId, userId });
+      }
+    }
+
     const currentTurnHasTopicAnchor = !!classification.topicAnchor?.trim();
     const safetyTurn = classification.requiresSafetyCheck || risk.severity !== 'none';
     const continuity = resolveContinuity({
       classification,
       activeTopic: conversation.activeTopic,
       safetyTurn,
-      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
       now: currentTurnAt,
     });
     const continuityDecision = continuity.decision;
@@ -343,7 +485,7 @@ export class ConversationOrchestrator {
     const relevantGoal = selectRelevantGoal(activeGoals, {
       classification,
       risk,
-      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
     });
     const goalDecision: {
       selected: boolean;
@@ -372,9 +514,10 @@ export class ConversationOrchestrator {
 
     // Persist risk signal when a real risk is detected
     if (risk.riskType && risk.severity !== 'none' && this.riskSignalRepo) {
-      await this.riskSignalRepo.save({
+      await this.riskSignalRepo.saveOnceForSource({
         tenantId,
         userId,
+        sourceMessageId: input.messageId,
         type: risk.riskType,
         severity: risk.severity,
         confidence: risk.confidence,
@@ -401,43 +544,17 @@ export class ConversationOrchestrator {
     // confirm it in this same reply. The reminder fires later via the follow-up queue.
     let reminderConfirmation: { intent: string; dueAt: string } | undefined;
     const reminder = classification.reminderRequest;
+    let reminderToSchedule: { intent: string; dueAt: Date; dedupKey: string } | null = null;
     if (reminder && this.scheduledActionRepo) {
       const dueAt = parseReminderDueAt(reminder.dueAt);
       if (dueAt) {
         const dedupKey = `${userId}:user_reminder:${slugify(reminder.intent)}:${dueAt.getTime()}`;
-        const alreadyScheduled = await this.scheduledActionRepo.existsByDeduplicationKey(dedupKey);
-        if (!alreadyScheduled) {
-          const action = await this.scheduledActionRepo.save({
-            tenantId,
-            userId,
-            conversationId,
-            type: 'user_reminder',
-            intent: reminder.intent,
-            context: {
-              channelType: conversation.channelType,
-              externalConversationId,
-              reminderIntent: reminder.intent,
-            },
-            reason: 'Employee explicitly asked to be reminded',
-            dueAt,
-            timezone: userTimezone ?? 'UTC',
-            cancellationConditions: [],
-            deduplicationKey: dedupKey,
-            sourceMessageIds: [input.messageId],
-          });
-          await this.outbox.enqueueFollowUpExecution({
-            scheduledActionId: action.id,
-            tenantId,
-            userId,
-            traceId: `reminder-${action.id}`,
-            dueAt,
-          });
-        }
+        reminderToSchedule = { intent: reminder.intent, dueAt, dedupKey };
         reminderConfirmation = { intent: reminder.intent, dueAt: dueAt.toISOString() };
       }
     }
 
-    const baseStrategy = confirmationRequest
+    const baseStrategy = confirmationRequest || v2BundleRequest || clarificationRequest
       ? { mode: 'confirmation' as const, tone: 'warm' as const, includeFollowUpQuestion: false, maxResponseLength: 'medium' as const, forbiddenPatterns: [] }
       : buildReplyStrategy(classification, risk, probeQuestion?.id);
     const probeStrategy = probeQuestion && baseStrategy.mode !== 'crisis' && baseStrategy.mode !== 'sensitive'
@@ -472,7 +589,8 @@ export class ConversationOrchestrator {
     const carryResolvedDetails = continuesResolvedThread
       && !safetyTurn
       && !phaseB.awaitingPresent
-      && confirmationRequest === undefined;
+      && confirmationRequest === undefined
+      && v2BundleRequest === null;
     const replacedResolvedThread = classification.dialogueAct !== 'acknowledgement'
       && continuityDecision.action === 'replace';
     const classifiedResolvedDetails = normalizeResolvedDetails(classification.resolvedDetails);
@@ -490,7 +608,7 @@ export class ConversationOrchestrator {
         : [],
     };
 
-    let replyPlan = confirmationRequest
+    let replyPlan = confirmationRequest || v2BundleRequest || clarificationRequest
       ? undefined
       : buildReplyPlan({
           classification: replyPlanClassification,
@@ -506,6 +624,24 @@ export class ConversationOrchestrator {
       ? null
       : probeQuestion;
     const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
+    const clarificationText = clarificationRequest
+      ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
+          turns, clarificationRequest, languagePolicy.responseLanguage,
+        ))
+      : null;
+    const v2Composition = v2BundleRequest
+      ? validateQuestionBundleComposition(
+          await this.aiProvider.composeQuestionBundle(
+            turns,
+            v2BundleRequest.questions.map((question) => ({
+              surveyQuestionId: question.surveyQuestionId,
+              workingSummary: question.workingSummary,
+            })),
+            languagePolicy.responseLanguage,
+          ),
+          v2BundleRequest.questions.map((question) => question.surveyQuestionId),
+        )
+      : null;
     const shouldOfferReportingDisclosure =
       this.surveyRepo !== undefined
       && surveyEnabled
@@ -516,7 +652,7 @@ export class ConversationOrchestrator {
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
       && !pulseCaptureExplanationRequested
-      && (reportingExplanationRequested || phaseB.awaitingPresent);
+      && (reportingExplanationRequested || phaseB.awaitingPresent || v2ReadyForDisclosure);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
       && !risk.surveyMustBeBlocked
@@ -568,7 +704,11 @@ export class ConversationOrchestrator {
           ? ' Добре, я нагадаю про це.'
           : " I'll remind you as requested."
       : '';
-    let generated = canAnswerPulseCaptureExplanation
+    let generated = clarificationText
+      ? { text: clarificationText, confidence: 1, containsSurveyProbe: false }
+      : v2Composition
+      ? { text: v2Composition.text, confidence: 1, containsSurveyProbe: false }
+      : canAnswerPulseCaptureExplanation
       ? {
           text: `${getPulseCaptureExplanationText(
             pulseCapture,
@@ -724,116 +864,285 @@ export class ConversationOrchestrator {
       && !pauseTurn
       && generated.containsSurveyProbe === true;
 
-    if (continuity.activeTopicUpdate) {
-      await this.conversationRepo.updateActiveTopic(
+    let scheduledReminder: { id: string; dueAt: Date } | null = null;
+    let legacyGroupReport: LegacyGroupReportIntent | null = null;
+    const persistPreparedTurn = async () => {
+      const committed = await this.conversationRepo.findCommittedTurnForInbound?.({
+        inboundMessageId: input.messageId, tenantId, userId, conversationId,
+        externalWorkspaceId, externalConversationId,
+      });
+      if (committed) return committed;
+      legacyGroupReport = await phaseB.commitLegacy?.() ?? null;
+      if (v2PhaseB.verdictProposal && this.questionConfirmationRepo) {
+        const applied = await this.questionConfirmationRepo.applyQuestionBundleVerdict({
+          tenantId, userId, conversationId, inboundMessageId: input.messageId,
+          ...v2PhaseB.verdictProposal,
+        });
+        if (!applied) throw new Error('v2_confirmation_bundle_stale');
+      }
+      if (clarificationVerdictProposal && this.questionConfirmationRepo) {
+        const applied = await this.questionConfirmationRepo.applyQuestionClarificationVerdict({
+          tenantId, userId, conversationId, inboundMessageId: input.messageId,
+          ...clarificationVerdictProposal,
+        });
+        if (!applied) throw new Error('v2_clarification_state_stale');
+      }
+
+      if (continuity.activeTopicUpdate) {
+        await this.conversationRepo.updateActiveTopic(
+          conversationId,
+          tenantId,
+          userId,
+          continuity.activeTopicUpdate,
+        );
+      }
+
+      const outbound = await this.conversationRepo.saveMessage({
+        id: conversationOutboundMessageId(input.messageId),
         conversationId,
         tenantId,
         userId,
-        continuity.activeTopicUpdate,
-      );
-    }
-
-    const outbound = await this.conversationRepo.saveMessage({
-      conversationId,
-      tenantId,
-      userId,
-      direction: 'outbound',
-      text: responseText,
-      occurredAt: new Date(),
-      traceId: input.traceId,
-      metadata: {
-        ...conversationDecisionMetadata({
-          replyPlan,
-          responseText,
-          confirmationRequest: confirmationRequest !== undefined,
-          conciseSession,
-          languagePolicy,
-          isSessionStart: sessionStart,
-          containsSurveyProbe,
-          surveyProbeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId : undefined,
-          continuityDecision,
-          goalDecision,
-        }),
-        ...(shouldAppendReportingDisclosure
-          ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
+        direction: 'outbound',
+        text: responseText,
+        occurredAt: new Date(),
+        traceId: input.traceId,
+        metadata: {
+          sourceInboundMessageId: input.messageId,
+          ...conversationDecisionMetadata({
+            replyPlan,
+            responseText,
+            confirmationRequest: confirmationRequest !== undefined,
+            conciseSession,
+            languagePolicy,
+            isSessionStart: sessionStart,
+            containsSurveyProbe,
+            surveyProbeQuestionId: containsSurveyProbe ? generated.surveyProbeQuestionId : undefined,
+            continuityDecision,
+            goalDecision,
+          }),
+          ...(shouldAppendReportingDisclosure
+            ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
+              : {}),
+          ...(confirmationSummary
+            ? {
+                confirmationSummary,
+                confirmationSourceMessageIds: [...new Set(
+                  confirmationRequest?.evidence.flatMap((item) => item.sourceMessageIds ?? []) ?? [],
+                )],
+              }
             : {}),
-        ...(confirmationSummary
-          ? {
-              confirmationSummary,
-              confirmationSourceMessageIds: [...new Set(
-                confirmationRequest?.evidence.flatMap((item) => item.sourceMessageIds ?? []) ?? [],
-              )],
-            }
-          : {}),
-        ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
-          ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
-          : {}),
-        ...(deidentificationDecision ? { deidentificationDecision } : {}),
-      },
-    });
-
-    if (surfacedGroup && this.surveyRepo) {
-      if (!deidentificationDecision) {
-        throw new Error(`Confirmation candidate lacks accepted de-identification: ${surfacedGroup.questionGroup}`);
-      }
-      const staged = await this.surveyRepo.stageGroupConfirmation({
-        surveyWindowId: surfacedGroup.surveyWindowId,
-        conversationId,
-        userId: surfacedGroup.userId,
-        tenantId: surfacedGroup.tenantId,
-        questionGroup: surfacedGroup.questionGroup,
-        expectedUpdatedAt: surfacedGroup.updatedAt,
-        confirmationPromptMessageId: outbound.id,
-        deidentificationDecision,
+          ...(v2Composition ? { v2ConfirmationBundle: true } : {}),
+          ...(clarificationText ? { v2ClarificationPrompt: true } : {}),
+          ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
+            ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
+            : {}),
+          ...(deidentificationDecision ? { deidentificationDecision } : {}),
+        },
       });
-      if (!staged) {
-        throw new Error(`Confirmation candidate became stale: ${surfacedGroup.questionGroup}`);
+
+      if (surfacedGroup && this.surveyRepo) {
+        if (!deidentificationDecision) {
+          throw new Error(`Confirmation candidate lacks accepted de-identification: ${surfacedGroup.questionGroup}`);
+        }
+        const staged = await this.surveyRepo.stageGroupConfirmation({
+          surveyWindowId: surfacedGroup.surveyWindowId,
+          conversationId,
+          userId: surfacedGroup.userId,
+          tenantId: surfacedGroup.tenantId,
+          questionGroup: surfacedGroup.questionGroup,
+          expectedUpdatedAt: surfacedGroup.updatedAt,
+          confirmationPromptMessageId: outbound.id,
+          deidentificationDecision,
+        });
+        if (!staged) {
+          throw new Error(`Confirmation candidate became stale: ${surfacedGroup.questionGroup}`);
+        }
       }
-    }
 
-    await this.outbox.enqueueMessageSend({
-      messageId: outbound.id,
-      tenantId,
-      conversationId,
-      channelType: conversation.channelType,
-      externalWorkspaceId,
-      externalChannelId: externalConversationId,
-      text: responseText,
-    });
+      if (v2BundleRequest && v2Composition && this.questionConfirmationRepo) {
+        await this.questionConfirmationRepo.stageQuestionConfirmationBundle({
+          tenantId,
+          userId,
+          conversationId,
+          surveyWindowId: v2BundleRequest.surveyWindowId,
+          questionGroup: v2BundleRequest.questionGroup,
+          promptMessageId: outbound.id,
+          displayedText: responseText,
+          components: v2Composition.statements.map((statement) => ({
+            surveyQuestionId: statement.surveyQuestionId,
+            questionVersion: v2BundleRequest.questions.find(
+              (question) => question.surveyQuestionId === statement.surveyQuestionId,
+            )!.questionVersion,
+            statement: statement.statement,
+            expectedWorkingSummary: v2BundleRequest.questions.find(
+              (question) => question.surveyQuestionId === statement.surveyQuestionId,
+            )!.workingSummary,
+          })),
+        });
+      }
+      if (clarificationRequest && clarificationText && this.questionConfirmationRepo) {
+        const staged = await this.questionConfirmationRepo.stageQuestionClarificationPrompt({
+          tenantId, userId, conversationId,
+          workingInsightId: clarificationRequest.workingInsightId,
+          promptMessageId: outbound.id,
+          displayedText: responseText,
+        });
+        if (!staged) throw new Error('v2_clarification_prompt_state_stale');
+      }
 
-    if (memoryEnabled) await this.outbox.enqueueMemoryExtraction({
-      conversationId,
-      userId,
-      tenantId,
-      inboundMessageId: input.messageId,
-      outboundMessageId: outbound.id,
-      traceId: input.traceId,
-      channelType: conversation.channelType,
-      externalConversationId: externalConversationId,
-    });
+      if (reminderToSchedule && this.scheduledActionRepo
+        && !await this.scheduledActionRepo.existsByDeduplicationKey(reminderToSchedule.dedupKey)) {
+        const action = await this.scheduledActionRepo.save({
+          tenantId, userId, conversationId,
+          type: 'user_reminder', intent: reminderToSchedule.intent,
+          context: {
+            channelType: conversation.channelType, externalConversationId,
+            reminderIntent: reminderToSchedule.intent,
+          },
+          reason: 'Employee explicitly asked to be reminded',
+          dueAt: reminderToSchedule.dueAt,
+          timezone: userTimezone ?? 'UTC', cancellationConditions: [],
+          deduplicationKey: reminderToSchedule.dedupKey,
+          sourceMessageIds: [input.messageId],
+        });
+        scheduledReminder = { id: action.id, dueAt: reminderToSchedule.dueAt };
+      }
 
-    if (memoryEnabled) await this.outbox.enqueueStyleAnalysis({
-      conversationId,
-      userId,
-      tenantId,
-      traceId: input.traceId,
-    });
+      await this.conversationRepo.recordCommittedTurn?.({
+        inboundMessageId: input.messageId,
+        outboundMessageId: outbound.id,
+        tenantId, userId, conversationId,
+        dispatchKinds: [
+          'message_send',
+          ...(memoryEnabled ? ['memory_extraction', 'style_analysis'] as const : []),
+          ...(surveyEnabled && !pulseCaptureExplanationRequested ? ['survey_evidence'] as const : []),
+          ...(profileHydrationNeeded ? ['profile_hydration'] as const : []),
+        ],
+        followUpActions: scheduledReminder ? [scheduledReminder] : [],
+        groupReportStateIds: legacyGroupReport?.groupStateId
+          ? [legacyGroupReport.groupStateId] : [],
+      });
 
-    if (surveyEnabled && !pulseCaptureExplanationRequested) await this.outbox.enqueueSurveyEvidence({
-      conversationId,
-      userId,
-      tenantId,
-      inboundMessageId: input.messageId,
-      traceId: input.traceId,
-    });
+      return outbound;
+    };
+    const outbound = this.unitOfWork
+      ? await this.unitOfWork.run(persistPreparedTurn)
+      : await persistPreparedTurn();
+    const committedResponseText = outbound.text;
+    await this.dispatchCommittedTurn(input, conversation.channelType, outbound, [
+      'message_send',
+      ...(memoryEnabled ? ['memory_extraction', 'style_analysis'] as const : []),
+      ...(surveyEnabled && !pulseCaptureExplanationRequested ? ['survey_evidence'] as const : []),
+      ...(profileHydrationNeeded ? ['profile_hydration'] as const : []),
+    ], scheduledReminder ? [scheduledReminder] : [],
+    legacyGroupReport ? [legacyGroupReport] : []);
 
     return {
       outboundMessageId: outbound.id,
-      responseText,
+      responseText: committedResponseText,
       mode: strategy.mode,
       classification,
       risk,
     };
+  }
+
+  private async dispatchCommittedTurn(
+    input: OrchestrateInput,
+    channelType: string,
+    outbound: MessageRecord,
+    fallbackKinds: ConversationDispatchKind[],
+    fallbackFollowUps: Array<{ id: string; dueAt: Date }> = [],
+    fallbackGroupReports: LegacyGroupReportIntent[] = [],
+  ): Promise<void> {
+    const scope = {
+      inboundMessageId: input.messageId,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+    };
+    const pending = await this.conversationRepo.findUnqueuedCommittedDispatchKinds?.(scope)
+      ?? fallbackKinds;
+    for (const kind of pending) {
+      if (kind === 'message_send') {
+        await this.outbox.enqueueMessageSend({
+          messageId: outbound.id,
+          tenantId: input.tenantId,
+          conversationId: input.conversationId,
+          channelType,
+          externalWorkspaceId: input.externalWorkspaceId,
+          externalChannelId: input.externalConversationId,
+          text: outbound.text,
+        });
+      } else if (kind === 'memory_extraction') {
+        await this.outbox.enqueueMemoryExtraction({
+          conversationId: input.conversationId,
+          userId: input.userId,
+          tenantId: input.tenantId,
+          inboundMessageId: input.messageId,
+          outboundMessageId: outbound.id,
+          traceId: input.traceId,
+          channelType,
+          externalConversationId: input.externalConversationId,
+        });
+      } else if (kind === 'style_analysis') {
+        await this.outbox.enqueueStyleAnalysis({
+          conversationId: input.conversationId,
+          userId: input.userId,
+          tenantId: input.tenantId,
+          inboundMessageId: input.messageId,
+          traceId: input.traceId,
+        });
+      } else if (kind === 'survey_evidence') {
+        await this.outbox.enqueueSurveyEvidence({
+          conversationId: input.conversationId,
+          userId: input.userId,
+          tenantId: input.tenantId,
+          inboundMessageId: input.messageId,
+          traceId: input.traceId,
+        });
+      } else if (kind === 'profile_hydration') {
+        await this.outbox.enqueueProfileHydration({
+          userId: input.userId,
+          tenantId: input.tenantId,
+          channelType,
+          externalWorkspaceId: input.externalWorkspaceId,
+          traceId: input.traceId,
+          inboundMessageId: input.messageId,
+        });
+      }
+      await this.conversationRepo.markCommittedDispatchQueued?.({ ...scope, kind });
+    }
+    const followUps = await this.conversationRepo.findUnqueuedCommittedFollowUps?.(scope)
+      ?? fallbackFollowUps.map((action) => ({ scheduledActionId: action.id, dueAt: action.dueAt }));
+    for (const action of followUps) {
+      await this.outbox.enqueueFollowUpExecution({
+        scheduledActionId: action.scheduledActionId,
+        tenantId: input.tenantId,
+        userId: input.userId,
+        traceId: `reminder-${action.scheduledActionId}`,
+        dueAt: action.dueAt,
+      });
+      await this.conversationRepo.markCommittedDispatchQueued?.({
+        ...scope, kind: 'follow_up_execution', targetId: action.scheduledActionId,
+      });
+    }
+    const groupReports = await this.conversationRepo.findUnqueuedCommittedGroupReports?.(scope)
+      ?? fallbackGroupReports;
+    for (const report of groupReports) {
+      await this.outbox.enqueueGroupReport({
+        reportingCohortId: report.reportingCohortId,
+        tenantId: input.tenantId,
+        teamId: report.teamId,
+        questionGroup: report.questionGroup,
+        traceId: `group-report-${report.reportingCohortId}-${report.questionGroup}`,
+        sourceGroupStateId: report.groupStateId,
+      });
+      if (report.groupStateId) {
+        await this.conversationRepo.markCommittedDispatchQueued?.({
+          ...scope, kind: 'group_report', targetId: report.groupStateId,
+        });
+      }
+    }
   }
 
   /**
@@ -843,12 +1152,50 @@ export class ConversationOrchestrator {
    * confirmation) and `confirmedGroup` (the group name on agreement, so the reply
    * can acknowledge and move on; otherwise false).
    */
+  private async handleAwaitingQuestionBundle(
+    turns: ConversationTurn[],
+    input: OrchestrateInput,
+    reportingDisclosureReceipt: ReportingDisclosureReceiptRecord | null,
+  ): Promise<PreparedBundlePhase> {
+    if (!this.questionConfirmationRepo) return { confirmedGroup: false, awaitingPresent: false };
+    const awaiting = await this.questionConfirmationRepo.findAwaitingQuestionBundle({
+      tenantId: input.tenantId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      inboundMessageId: input.messageId,
+    });
+    if (!awaiting) return { confirmedGroup: false, awaitingPresent: false };
+    if (!reportingDisclosureReceipt) return { confirmedGroup: false, awaitingPresent: true };
+
+    const verdict = validateQuestionBundleVerdict(
+      await this.aiProvider.interpretQuestionBundleResponse(turns, awaiting),
+      awaiting.components.map((component) => component.surveyQuestionId),
+    );
+    if (verdict.kind === 'unrelated') return { confirmedGroup: false, awaitingPresent: true };
+    const nextClarification = verdict.kind === 'partial' && verdict.disputedQuestionIds.length > 0
+      ? await this.questionConfirmationRepo.previewPendingQuestionClarificationAfterBundleVerdict?.({
+        tenantId: input.tenantId,
+        userId: input.userId,
+        conversationId: input.conversationId,
+        inboundMessageId: input.messageId,
+        bundleId: awaiting.id,
+        disputedQuestionIds: verdict.disputedQuestionIds,
+      }) ?? null
+      : null;
+    return {
+      confirmedGroup: verdict.kind === 'agree' ? awaiting.questionGroup : false,
+      awaitingPresent: true,
+      verdictProposal: { bundleId: awaiting.id, verdict },
+      nextClarification,
+    };
+  }
+
   private async handleAwaitingConfirmation(
     turns: ConversationTurn[],
     input: OrchestrateInput,
     reportingDisclosureReceipt: ReportingDisclosureReceiptRecord | null,
     confirmingMessageOccurredAt?: Date,
-  ): Promise<{ confirmedGroup: string | false; awaitingPresent: boolean }> {
+  ): Promise<PreparedBundlePhase> {
     if (!this.surveyRepo || !this.outbox) return { confirmedGroup: false, awaitingPresent: false };
     const surveyRepo = this.surveyRepo;
 
@@ -859,35 +1206,46 @@ export class ConversationOrchestrator {
     );
     if (awaiting.length === 0) return { confirmedGroup: false, awaitingPresent: false };
     if (!reportingDisclosureReceipt || !confirmingMessageOccurredAt) {
-      await Promise.all(
-        awaiting.map((group) =>
-          surveyRepo.transitionAwaitingGroupState({
-            surveyWindowId: group.surveyWindowId,
-            userId: group.userId,
-            tenantId: group.tenantId,
-            questionGroup: group.questionGroup,
-            confirmationPromptMessageId: group.confirmationPromptMessageId!,
-            status: 'pending_confirmation',
-          }),
-        ),
-      );
-      return { confirmedGroup: false, awaitingPresent: true };
+      return {
+        confirmedGroup: false, awaitingPresent: true,
+        commitLegacy: async () => {
+          const transitioned = await Promise.all(awaiting.map((group) =>
+            surveyRepo.transitionAwaitingGroupState({
+              surveyWindowId: group.surveyWindowId,
+              userId: group.userId,
+              tenantId: group.tenantId,
+              questionGroup: group.questionGroup,
+              confirmationPromptMessageId: group.confirmationPromptMessageId!,
+              status: 'pending_confirmation',
+            }),
+          ));
+          if (transitioned.some((done) => !done)) throw new Error('v1_group_state_stale');
+          return null;
+        },
+      };
     }
 
     const group = awaiting[0];
     if (!group.confirmationSummary || !group.confirmationPromptMessageId) {
       return { confirmedGroup: false, awaitingPresent: true };
     }
-    if (!isAcceptedDeidentificationDecision(group.deidentificationDecision)) {
-      await surveyRepo.transitionAwaitingGroupState({
-        surveyWindowId: group.surveyWindowId,
-        userId: group.userId,
-        tenantId: group.tenantId,
-        questionGroup: group.questionGroup,
-        confirmationPromptMessageId: group.confirmationPromptMessageId,
-        status: 'pending_confirmation',
-      });
-      return { confirmedGroup: false, awaitingPresent: true };
+    const acceptedDecision = group.deidentificationDecision;
+    if (!isAcceptedDeidentificationDecision(acceptedDecision)) {
+      return {
+        confirmedGroup: false, awaitingPresent: true,
+        commitLegacy: async () => {
+          const transitioned = await surveyRepo.transitionAwaitingGroupState({
+            surveyWindowId: group.surveyWindowId,
+            userId: group.userId,
+            tenantId: group.tenantId,
+            questionGroup: group.questionGroup,
+            confirmationPromptMessageId: group.confirmationPromptMessageId!,
+            status: 'pending_confirmation',
+          });
+          if (!transitioned) throw new Error('v1_group_state_stale');
+          return null;
+        },
+      };
     }
 
     const verdict = await this.aiProvider.interpretConfirmationResponse(turns, group.confirmationSummary);
@@ -895,67 +1253,77 @@ export class ConversationOrchestrator {
     if (verdict.verdict === 'unclear') return { confirmedGroup: false, awaitingPresent: true };
 
     if (verdict.verdict === 'exclude') {
-      await surveyRepo.withdrawGroupState({
-        surveyWindowId: group.surveyWindowId,
-        userId: group.userId,
-        tenantId: group.tenantId,
-        questionGroup: group.questionGroup,
-        confirmationPromptMessageId: group.confirmationPromptMessageId,
-        conversationId: input.conversationId,
-        withdrawalMessageId: input.messageId,
-        withdrawnAt: confirmingMessageOccurredAt,
-      });
-      return { confirmedGroup: false, awaitingPresent: true };
+      return {
+        confirmedGroup: false, awaitingPresent: true,
+        commitLegacy: async () => {
+          const withdrawn = await surveyRepo.withdrawGroupState({
+            surveyWindowId: group.surveyWindowId,
+            userId: group.userId,
+            tenantId: group.tenantId,
+            questionGroup: group.questionGroup,
+            confirmationPromptMessageId: group.confirmationPromptMessageId!,
+            conversationId: input.conversationId,
+            withdrawalMessageId: input.messageId,
+            withdrawnAt: confirmingMessageOccurredAt,
+          });
+          if (!withdrawn) throw new Error('v1_group_state_stale');
+          return null;
+        },
+      };
     }
 
     if (verdict.verdict === 'correct') {
-      await surveyRepo.transitionAwaitingGroupState({
-        surveyWindowId: group.surveyWindowId,
-        userId: group.userId,
-        tenantId: group.tenantId,
-        questionGroup: group.questionGroup,
-        confirmationPromptMessageId: group.confirmationPromptMessageId,
-        status: 'in_progress',
-        conversationId: input.conversationId,
-        responseMessageId: input.messageId,
-        responseOccurredAt: confirmingMessageOccurredAt,
-      });
-      return { confirmedGroup: false, awaitingPresent: true };
+      return {
+        confirmedGroup: false, awaitingPresent: true,
+        commitLegacy: async () => {
+          const corrected = await surveyRepo.transitionAwaitingGroupState({
+            surveyWindowId: group.surveyWindowId,
+            userId: group.userId,
+            tenantId: group.tenantId,
+            questionGroup: group.questionGroup,
+            confirmationPromptMessageId: group.confirmationPromptMessageId!,
+            status: 'in_progress',
+            conversationId: input.conversationId,
+            responseMessageId: input.messageId,
+            responseOccurredAt: confirmingMessageOccurredAt,
+          });
+          if (!corrected) throw new Error('v1_group_state_stale');
+          return null;
+        },
+      };
     }
 
     // verdict === 'agree' → compute score, confirm, trigger report
     const employeeScore = await this.computeGroupScore(group.surveyWindowId, group.questionGroup, input.userId);
 
-    const confirmed = await surveyRepo.confirmGroupState({
-      surveyWindowId: group.surveyWindowId,
-      conversationId: input.conversationId,
-      userId: group.userId,
-      tenantId: group.tenantId,
-      questionGroup: group.questionGroup,
-      confirmationPromptMessageId: group.confirmationPromptMessageId,
-      expectedConfirmationSummary: group.confirmationSummary,
-      employeeScore,
-      confirmedAt: confirmingMessageOccurredAt,
-      reportingDisclosureVersion: reportingDisclosureReceipt.version,
-      reportingDisclosureShownAt: reportingDisclosureReceipt.shownAt,
-      confirmationMessageId: input.messageId,
-      deidentificationDecision: group.deidentificationDecision,
-    });
-
-    if (!confirmed) return { confirmedGroup: false, awaitingPresent: true };
-
     const team = await surveyRepo.findTeamByMemberId(input.userId, input.tenantId, group.surveyWindowId);
-    if (team?.reportingCohortId) {
-      await this.outbox.enqueueGroupReport({
-        reportingCohortId: team.reportingCohortId,
-        tenantId: input.tenantId,
-        teamId: team.teamId,
-        questionGroup: group.questionGroup,
-        traceId: `group-report-${team.reportingCohortId}-${group.questionGroup}`,
-      });
-    }
-
-    return { confirmedGroup: group.questionGroup, awaitingPresent: true };
+    return {
+      confirmedGroup: group.questionGroup, awaitingPresent: true,
+      commitLegacy: async () => {
+        const confirmed = await surveyRepo.confirmGroupState({
+          surveyWindowId: group.surveyWindowId,
+          conversationId: input.conversationId,
+          userId: group.userId,
+          tenantId: group.tenantId,
+          questionGroup: group.questionGroup,
+          confirmationPromptMessageId: group.confirmationPromptMessageId!,
+          expectedConfirmationSummary: group.confirmationSummary!,
+          employeeScore,
+          confirmedAt: confirmingMessageOccurredAt,
+          reportingDisclosureVersion: reportingDisclosureReceipt.version,
+          reportingDisclosureShownAt: reportingDisclosureReceipt.shownAt,
+          confirmationMessageId: input.messageId,
+          deidentificationDecision: acceptedDecision,
+        });
+        if (!confirmed) throw new Error('v1_group_state_stale');
+        return team?.reportingCohortId ? {
+          groupStateId: group.id,
+          reportingCohortId: team.reportingCohortId,
+          teamId: team.teamId,
+          questionGroup: group.questionGroup,
+        } : null;
+      },
+    };
   }
 
   /**
