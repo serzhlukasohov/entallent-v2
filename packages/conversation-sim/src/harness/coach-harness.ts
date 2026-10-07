@@ -261,7 +261,7 @@ class RecordingAiProvider implements AiProviderPort {
 }
 
 /** Mirrors `AiService` in the worker so simulations exercise the shipped provider setup. */
-function createLiveProvider(): AiProviderPort {
+export function createLiveProvider(): AiProviderPort {
   const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
   if (azureEndpoint) {
     return new OpenAiProvider({
