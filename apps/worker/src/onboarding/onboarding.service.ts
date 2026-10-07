@@ -93,7 +93,9 @@ export class OnboardingService implements OnboardingTurnPort {
         return { result: { changed: false, effects: [], state: row.state }, dueAt: null, version: row.version,
           role: 'employee', introChannelId: row.introChannelId, introActionsMessageTs: row.introActionsMessageTs };
       }
-      const { next, effects } = decideOnboarding(row.state, event);
+      const decided = decideOnboarding(row.state, event);
+      const { effects } = decided;
+      let next = decided.next;
       if (effects.length === 0 && sameState(row.state, next)) {
         return { result: { changed: false, effects, state: next }, dueAt: null, version: row.version,
           role: 'employee', introChannelId: row.introChannelId, introActionsMessageTs: row.introActionsMessageTs };
@@ -103,7 +105,13 @@ export class OnboardingService implements OnboardingTurnPort {
       for (const effect of effects) {
         if (effect.type !== 'schedule_reminder') continue;
         const calendar = await tx.getCalendar(tenantId);
-        if (!calendar) throw new Error('onboarding_work_calendar_missing');
+        if (!calendar) {
+          // Q18 blocks rollout without a calendar; dispatch holds intros, so this is a defence only.
+          // Keep the decision but never store 'scheduled' without a due time.
+          this.logger.error(`onboarding_work_calendar_missing tenant=${tenantId} person=${personId}: reminder not scheduled`);
+          next = { ...next, reminderStatus: 'none' };
+          continue;
+        }
         dueAt = reminderDueAt(effect.originAt, calendar, person.timezone ?? calendar.timezone);
       }
       await tx.updateState(row.id, next, {

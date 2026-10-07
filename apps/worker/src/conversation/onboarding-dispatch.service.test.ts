@@ -51,4 +51,25 @@ describe('OnboardingDispatchService', () => {
       conversation: { id: 'conversation-1', channelType: 'slack', externalConversationId: 'D123', externalWorkspaceId: 'T123' },
     });
   });
+
+  it('logs held deliveries in tenants without a work calendar once per tick and sends nothing (Q18)', async () => {
+    const from = vi.fn().mockImplementation((table: unknown) => {
+      if (table === orgOnboardingDeliveries) return { where: () => ({ orderBy: () => ({ limit: async () => [] }) }) };
+      throw new Error('unexpected table');
+    });
+    const execute = vi.fn()
+      .mockResolvedValueOnce([{ held: 3, tenants: 2 }])
+      .mockResolvedValue([]);
+    const sendIntro = vi.fn();
+    const service = new OnboardingDispatchService(
+      { client: { select: vi.fn().mockReturnValue({ from }), execute } } as never, {} as never, { sendIntro } as never,
+    );
+    const warn = vi.spyOn((service as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
+      .mockImplementation(() => undefined);
+
+    expect(await service.dispatchPending()).toEqual({ found: 0, queued: 0, failed: 0 });
+    expect(sendIntro).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain('3 onboarding deliveries held');
+  });
 });

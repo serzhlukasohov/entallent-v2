@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { introMessages } from '@entalent/application';
 import { channelAccounts, conversations, createDbClient, messages, orgOnboardingDeliveries,
-  orgUnits, people, tenants, users, type DbClient } from '@entalent/database';
+  orgUnits, people, tenants, tenantWorkCalendars, users, type DbClient } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { MessageSendProcessor, type MessageSendJob } from '../message-send/message-send.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -75,6 +75,13 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
 
     expect(await dispatcher.dispatchPending(tenantId, randomUUID())).toEqual({ found: 0, queued: 0, failed: 0 });
     expect(slack.openDirectMessage).not.toHaveBeenCalled();
+    // Without a work calendar the delivery is held (Q18): nothing is sent and it stays pending.
+    expect(await dispatcher.dispatchPending(tenantId)).toEqual({ found: 0, queued: 0, failed: 0 });
+    expect(slack.openDirectMessage).not.toHaveBeenCalled();
+    const [held] = await client.db.select().from(orgOnboardingDeliveries).where(eq(orgOnboardingDeliveries.id, deliveryId));
+    expect(held).toMatchObject({ status: 'pending', attemptCount: 0 });
+    await client.db.insert(tenantWorkCalendars).values({ tenantId, timezone: 'Europe/Kyiv', workingDays: [1, 2, 3, 4, 5],
+      workStart: '09:00', workEnd: '18:00', updatedBy: 'test' });
     expect(await dispatcher.dispatchPending(tenantId)).toEqual({ found: 1, queued: 1, failed: 0 });
     expect(slack.openDirectMessage).toHaveBeenCalledWith('U-LEADER');
 

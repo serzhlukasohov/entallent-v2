@@ -30,7 +30,10 @@ export class OnboardingDispatchService {
         eq(orgOnboardingDeliveries.status, 'pending'),
         and(eq(orgOnboardingDeliveries.status, 'failed'), lt(orgOnboardingDeliveries.lastAttemptAt, retryBefore)),
       ),
+      // Q18: no intro (and so no buttons whose reminder cannot be scheduled) before the calendar exists.
+      sql`EXISTS (SELECT 1 FROM tenant_work_calendars wc WHERE wc.tenant_id = ${orgOnboardingDeliveries.tenantId})`,
     )).orderBy(orgOnboardingDeliveries.createdAt).limit(25);
+    await this.logHeldWithoutCalendar(tenantId, unitId);
 
     let queued = 0;
     let failed = 0;
@@ -52,6 +55,25 @@ export class OnboardingDispatchService {
     }
     await this.recoverStrandedTrustMessages(tenantId);
     return { found: rows.length, queued, failed };
+  }
+
+  /** Deliveries in tenants without a work calendar stay pending untouched; one log line per tick. Never throws. */
+  private async logHeldWithoutCalendar(tenantId?: string, unitId?: string): Promise<void> {
+    try {
+      const [row] = (await this.db.client.execute(sql`
+        SELECT count(*)::int AS held, count(DISTINCT d.tenant_id)::int AS tenants
+        FROM org_onboarding_deliveries d
+        WHERE d.status IN ('pending', 'failed')
+          AND NOT EXISTS (SELECT 1 FROM tenant_work_calendars wc WHERE wc.tenant_id = d.tenant_id)
+          ${tenantId ? sql`AND d.tenant_id = ${tenantId}` : sql``}
+          ${unitId ? sql`AND d.unit_id = ${unitId}` : sql``}
+      `)) as unknown as Array<{ held: number; tenants: number }>;
+      if (row && Number(row.held) > 0) {
+        this.logger.warn(`${row.held} onboarding deliveries held: ${row.tenants} tenant(s) have no work calendar (Q18)`);
+      }
+    } catch (error) {
+      this.logger.error(`Held onboarding delivery check failed: ${(error as Error).message}`);
+    }
   }
 
   /**

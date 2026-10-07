@@ -76,9 +76,23 @@ describe('OnboardingService.apply', () => {
     expect(a.effects.scheduleReminder).toHaveBeenCalledWith({ tenantId: T, personId: P, dueAt: dueA });
   });
 
-  it('throws without a calendar and writes nothing', async () => {
+  it('without a calendar logs, schedules nothing, and still advances the state with reminderStatus none (Q18)', async () => {
     const h = harness({ state: { introStatus: 'pending' }, calendar: null });
-    await expect(h.service.apply(T, P, { type: 'intro_delivered', at })).rejects.toThrow(/calendar/);
+    const error = vi.spyOn((h.service as unknown as { logger: { error: (m: string) => void } }).logger, 'error')
+      .mockImplementation(() => undefined);
+    const r = await h.service.apply(T, P, { type: 'intro_delivered', at });
+    expect(r.changed).toBe(true);
+    expect(r.state).toMatchObject({ introStatus: 'delivered', buttonsActive: true, reminderStatus: 'none' });
+    expect(h.tx.updateState).toHaveBeenCalledWith('row1', expect.objectContaining({ reminderStatus: 'none' }), {});
+    expect(h.effects.scheduleReminder).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('onboarding_work_calendar_missing'));
+  });
+
+  it('a Later without a calendar is still accepted but leaves no scheduled reminder', async () => {
+    const h = harness({ state: { introStatus: 'delivered', buttonsActive: true }, calendar: null });
+    vi.spyOn((h.service as unknown as { logger: { error: (m: string) => void } }).logger, 'error').mockImplementation(() => undefined);
+    const r = await h.service.apply(T, P, { type: 'action', action: 'later', source: 'button', at });
+    expect(r.state).toMatchObject({ participation: 'deferred', reminderStatus: 'none' });
     expect(h.effects.scheduleReminder).not.toHaveBeenCalled();
   });
 

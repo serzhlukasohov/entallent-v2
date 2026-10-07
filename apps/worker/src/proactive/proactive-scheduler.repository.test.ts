@@ -3,7 +3,7 @@ import { join } from 'path';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { conversations, createDbClient, people, tenants, users, type DbClient } from '@entalent/database';
+import { conversations, createDbClient, onboardingStates, people, tenants, users, type DbClient } from '@entalent/database';
 import { ProactiveSchedulerRepository } from './proactive-scheduler.repository';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -14,6 +14,8 @@ describe.skipIf(!localDatabase)('ProactiveSchedulerRepository Pulse gating (Post
   const managerId = randomUUID();
   const employeeId = randomUUID();
   const legacyUserId = randomUUID();
+  const deferredId = randomUUID();
+  const activeId = randomUUID();
   let client: DbClient;
 
   beforeAll(async () => {
@@ -28,6 +30,16 @@ describe.skipIf(!localDatabase)('ProactiveSchedulerRepository Pulse gating (Post
     // A user without a people row (dev/legacy) is not gated by Pulse participation.
     await client.db.insert(users).values({ id: legacyUserId, tenantId, status: 'active', proactiveMessagingEnabled: true });
     for (const id of [managerId, employeeId, legacyUserId]) {
+      await client.db.insert(conversations).values({ tenantId, userId: id, channelType: 'dev', externalConversationId: `dev-${id}` });
+    }
+    // Pulse employees with onboarding state: only 'active' participation may be contacted proactively.
+    for (const [id, participation] of [[deferredId, 'deferred'], [activeId, 'active']] as const) {
+      await client.db.insert(users).values({ id, tenantId, status: 'active', proactiveMessagingEnabled: true });
+      await client.db.insert(people).values({ id, tenantId, customerEmployeeId: id.slice(0, 8),
+        workEmail: `${id}@fixture.test`, displayName: participation, primaryRole: 'employee', pulseParticipant: true,
+        lifecycleStatus: 'active' });
+      await client.db.insert(onboardingStates).values({ tenantId, personId: id, track: 'employee',
+        introStatus: participation === 'active' ? 'completed' : 'delivered', participation });
       await client.db.insert(conversations).values({ tenantId, userId: id, channelType: 'dev', externalConversationId: `dev-${id}` });
     }
   });
@@ -46,6 +58,15 @@ describe.skipIf(!localDatabase)('ProactiveSchedulerRepository Pulse gating (Post
     expect(ids).not.toContain(managerId);
     expect(ids).toContain(employeeId);
     expect(ids).toContain(legacyUserId);
+  });
+
+  it('requires onboarding participation active when a state row exists, regardless of the users flag', async () => {
+    const repo = new ProactiveSchedulerRepository({ client: client.db } as never);
+    const ids = (await repo.findCheckInCandidates({ tenantId, minSilenceDays: 1, minCheckInGapDays: 1, limit: 50 } as never))
+      .map((c) => c.userId);
+    expect(ids).not.toContain(deferredId);
+    expect(ids).toContain(activeId);
+    expect(ids).toContain(employeeId); // no onboarding_states row
   });
 });
 

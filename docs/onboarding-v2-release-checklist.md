@@ -10,6 +10,8 @@ Local implementation only. Nothing here has been deployed, and no Railway or Sla
 ## Database
 
 - [ ] Migration `0026` is applied to the target database before the API/worker are deployed.
+- [ ] Pre-deploy: no `pending`/`failed` `org_onboarding_deliveries` in tenants without a work calendar (the worker holds them and logs `onboarding deliveries held` every tick until the calendar is configured):
+  `SELECT d.tenant_id, d.status, count(*) FROM org_onboarding_deliveries d WHERE d.status IN ('pending','failed') AND NOT EXISTS (SELECT 1 FROM tenant_work_calendars wc WHERE wc.tenant_id = d.tenant_id) GROUP BY 1, 2;` returns no rows.
 
 ## Operator steps
 
