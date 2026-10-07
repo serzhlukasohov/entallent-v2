@@ -75,6 +75,7 @@ table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;
 <button id="rollout-preview" class="secondary">Check readiness</button><button id="rollout" disabled>Activate selected Units</button><div id="rollout-result" class="scroll"></div></div>
 <div class="card"><h2>Work calendar</h2><p id="work-calendar" class="muted"></p></div>
 <div class="card"><h2>First-contact delivery</h2><p>Pending and failed messages are retried by the worker. A message left in sending needs delivery verification before any manual retry.</p><div id="onboarding-deliveries" class="scroll"></div></div>
+<div class="card"><h2>Onboarding progress</h2><p class="muted">Aggregate counts per Unit. Groups under 5 people are hidden.</p><div id="onboarding-summary" class="scroll"></div></div>
 <div class="card"><h2>Current hierarchy</h2><div id="hierarchy" class="scroll"></div></div>
 </section></main><script src="/api/v1/company-setup/ui.js" defer></script></body></html>`;
 
@@ -182,6 +183,12 @@ function renderDeliveries(data) {
     ['Last attempt', (row) => row.lastAttemptAt ? new Date(row.lastAttemptAt).toLocaleString() : '—'],
     ['Delivered', (row) => row.deliveredAt ? new Date(row.deliveredAt).toLocaleString() : '—']], data.deliveries);
 }
+function renderOnboardingSummary(data) {
+  const units = new Map(data.units.map((unit) => [unit.id, unit]));
+  table(el('onboarding-summary'), [['Unit', (row) => units.get(row.unitId)?.name || row.unitId],
+    ['Onboarding', (row) => row.suppressed ? 'Hidden for groups under 5 people'
+      : 'Onboarding: ' + row.delivered + ' delivered, ' + row.completed + ' completed, ' + row.inProgress + ' in progress']], data.onboardingSummary);
+}
 async function refresh() {
   snapshot = await api(base + '/snapshot');
   previewedRollout = null; el('rollout').disabled = true;
@@ -230,6 +237,7 @@ async function refresh() {
   renderHierarchy(snapshot);
   renderCalendar(snapshot);
   renderDeliveries(snapshot);
+  renderOnboardingSummary(snapshot);
 }
 function loadEditDraft(kind) {
   if (!snapshot) return;
