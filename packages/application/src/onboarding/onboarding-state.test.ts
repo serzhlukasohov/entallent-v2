@@ -210,7 +210,7 @@ describe('stale clicks and button lifecycle (Q6, Q24, Q8)', () => {
   });
   it('management got it with completed intro but fresh buttons acknowledges once (Q8)', () => {
     const done = act(delivered('hr'), 'got_it').next;
-    const redelivered = decideOnboarding(done, { type: 'intro_delivered', at: t1 }).next;
+    const redelivered = decideOnboarding(done, { type: 'intro_delivered', at: t1, roleChange: true }).next;
     expect(redelivered.buttonsActive).toBe(true);
     const r = act(redelivered, 'got_it');
     expect(r.effects).toEqual([
@@ -232,7 +232,7 @@ describe('stale clicks and button lifecycle (Q6, Q24, Q8)', () => {
   it('active employee -> team lead -> intro_delivered -> got_it acknowledges once and sets managementAckAt (Q8)', () => {
     const active = act(delivered('employee'), 'start').next;
     const changed = decideOnboarding(active, { type: 'role_changed', from: 'employee', to: 'team_lead', at: t1 }).next;
-    const redelivered = decideOnboarding(changed, { type: 'intro_delivered', at: t1 });
+    const redelivered = decideOnboarding(changed, { type: 'intro_delivered', at: t1, roleChange: true });
     expect(redelivered.effects).toEqual([]);
     expect(redelivered.next).toMatchObject({ buttonsActive: true, reminderStatus: active.reminderStatus });
     const r = act(redelivered.next, 'got_it');
@@ -246,7 +246,7 @@ describe('stale clicks and button lifecycle (Q6, Q24, Q8)', () => {
   it('active team lead with fresh intro buttons: start removes buttons and starts conversation', () => {
     const active = act(delivered('employee'), 'start').next;
     const changed = decideOnboarding(active, { type: 'role_changed', from: 'employee', to: 'team_lead', at: t1 }).next;
-    const fresh = decideOnboarding(changed, { type: 'intro_delivered', at: t1 }).next;
+    const fresh = decideOnboarding(changed, { type: 'intro_delivered', at: t1, roleChange: true }).next;
     const r = act(fresh, 'start');
     expect(r.effects).toEqual([
       { type: 'remove_buttons', replacement: 'started' },
@@ -254,5 +254,30 @@ describe('stale clicks and button lifecycle (Q6, Q24, Q8)', () => {
     ]);
     expect(r.next.buttonsActive).toBe(false);
     expect(act(r.next, 'start').effects).toEqual([]);
+  });
+  it('the first intro trust arriving after a text start does not re-arm buttons', () => {
+    const active = act(initialOnboardingState('employee'), 'start', 'text').next;
+    expect(active).toMatchObject({ participation: 'active', introStatus: 'completed', buttonsActive: false });
+    const r = decideOnboarding(active, { type: 'intro_delivered', at: t1 });
+    expect(r.effects).toEqual([]);
+    expect(r.next).toEqual(active);
+  });
+  it('a role-change intro on a non-pending state arms the buttons', () => {
+    const active = act(delivered('employee'), 'start').next;
+    const changed = decideOnboarding(active, { type: 'role_changed', from: 'employee', to: 'team_lead', at: t1 }).next;
+    expect(decideOnboarding(changed, { type: 'intro_delivered', at: t1, roleChange: true }).next.buttonsActive).toBe(true);
+    expect(decideOnboarding(changed, { type: 'intro_delivered', at: t1 }).next.buttonsActive).toBe(false);
+  });
+  it.each(['button', 'text'] as const)('active team lead with armed buttons: %s Later removes buttons and says the intro is complete', (source) => {
+    const active = act(delivered('employee'), 'start').next;
+    const changed = decideOnboarding(active, { type: 'role_changed', from: 'employee', to: 'team_lead', at: t1 }).next;
+    const armed = decideOnboarding(changed, { type: 'intro_delivered', at: t1, roleChange: true }).next;
+    const r = act(armed, 'later', source);
+    expect(r.effects).toEqual([
+      { type: 'remove_buttons', replacement: 'already_complete' },
+      { type: 'acknowledge', key: 'already_complete' },
+    ]);
+    expect(r.next).toEqual({ ...armed, buttonsActive: false });
+    expect(act(r.next, 'later', 'button').effects).toEqual([{ type: 'acknowledge', key: 'already_complete' }]);
   });
 });

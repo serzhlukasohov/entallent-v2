@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PrimaryOrgRole } from '../hierarchy/draft-person';
-import { ACK_COPY, EMPTY_BACKLOG_OPENER, STARTED_REPLACEMENT, introMessages, reminderCopy } from './onboarding-copy';
+import { ACK_COPY, BUTTON_REPLACEMENT_SHORT, EMPTY_BACKLOG_OPENER, STARTED_REPLACEMENT, introMessages, reminderCopy } from './onboarding-copy';
 
 const ROLES: PrimaryOrgRole[] = ['employee', 'team_lead', 'manager', 'hr', 'hrbp', 'leadership'];
 
@@ -93,6 +93,17 @@ describe('ACK_COPY', () => {
       already_complete: 'Introduction complete.',
     });
     expect(STARTED_REPLACEMENT).toBe("Let's talk.");
+  });
+  it('short button replacements for text choices are verbatim from Q24', () => {
+    expect(BUTTON_REPLACEMENT_SHORT).toEqual({
+      later_before_reminder: "We'll talk later.",
+      later_after_reminder: "We'll talk later.",
+      decline: "I won't start conversations unless you message me first.",
+      got_it_team_lead: 'Introduction complete.',
+      got_it_management: 'Introduction complete.',
+      already_complete: 'Introduction complete.',
+      started: "Let's talk.",
+    });
   });
 });
 

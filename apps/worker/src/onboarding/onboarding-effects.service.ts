@@ -45,7 +45,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
   }
 
   /** Rewrites the intro message without buttons. Failures are logged, never thrown (the state change is already committed). */
-  async replaceIntroActions(input: { tenantId: string; personId: string; channelId: string; messageTs: string; text: string }): Promise<void> {
+  async replaceIntroActions(input: { tenantId: string; personId: string; channelId: string; messageTs: string; text: string }): Promise<boolean> {
     try {
       const account = await this.workspaceRepo.findSlackAccountByUserId(input.personId, input.tenantId);
       const connection = account
@@ -53,7 +53,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
         : null;
       if (!connection) {
         this.logger.warn(`No Slack workspace connection to replace intro actions person=${input.personId}`);
-        return;
+        return false;
       }
       await new SlackAdapter({ botToken: connection.botToken }).updateMessage({
         tenantId: input.tenantId,
@@ -61,8 +61,10 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
         externalMessageId: input.messageTs,
         text: input.text,
       });
+      return true;
     } catch (error) {
       this.logger.error(`replaceIntroActions failed person=${input.personId}: ${(error as Error).message}`);
+      return false;
     }
   }
 
@@ -112,7 +114,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       return;
     }
     await this.intro.sendIntro({
-      tenantId: input.tenantId, personId: input.personId, role: input.role, version: input.version,
+      tenantId: input.tenantId, personId: input.personId, role: input.role, version: input.version, roleChange: true,
       conversation: {
         id: target.conversationId, channelType: target.channelType,
         externalConversationId: target.externalConversationId, externalWorkspaceId: target.externalWorkspaceId,

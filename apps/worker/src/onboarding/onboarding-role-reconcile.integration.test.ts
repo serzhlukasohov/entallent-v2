@@ -20,7 +20,7 @@ describe.skipIf(!localDatabase)('OnboardingRoleReconcileService against PostgreS
   let service: OnboardingRoleReconcileService;
   const effects = {
     scheduleReminder: vi.fn().mockResolvedValue(undefined),
-    replaceIntroActions: vi.fn().mockResolvedValue(undefined),
+    replaceIntroActions: vi.fn().mockResolvedValue(true),
     sendAcknowledgement: vi.fn().mockResolvedValue(undefined),
     startConversation: vi.fn().mockResolvedValue(undefined),
     sendRoleIntro: vi.fn().mockResolvedValue(undefined),

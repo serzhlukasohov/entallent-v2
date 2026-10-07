@@ -23,7 +23,8 @@ export interface OnboardingState {
 }
 
 export type OnboardingEvent =
-  | { type: 'intro_delivered'; at: Date }
+  /** `roleChange`: the delivered buttons belong to a role-change intro (the only re-arm of a non-pending state). */
+  | { type: 'intro_delivered'; at: Date; roleChange?: boolean }
   | { type: 'action'; action: OnboardingAction; source: 'button' | 'text'; at: Date }
   | { type: 'substantive_turn'; at: Date }
   | { type: 'stop_requested'; at: Date }
@@ -89,7 +90,10 @@ function decline(s: OnboardingState, at: Date): { next: OnboardingState; effects
 export function decideOnboarding(s: OnboardingState, e: OnboardingEvent): { next: OnboardingState; effects: OnboardingEffect[] } {
   switch (e.type) {
     case 'intro_delivered': {
-      if (s.introStatus !== 'pending') return { next: { ...s, buttonsActive: true }, effects: [] };
+      if (s.introStatus !== 'pending') {
+        // A late first-intro trust (e.g. after a text start) must not re-arm buttons for a choice already made.
+        return e.roleChange ? { next: { ...s, buttonsActive: true }, effects: [] } : { next: s, effects: [] };
+      }
       if (!personal(s)) return { next: { ...s, introStatus: 'delivered', buttonsActive: true }, effects: [] };
       return {
         next: { ...s, introStatus: 'delivered', buttonsActive: true, reminderStatus: 'scheduled', reminderOriginAt: e.at },
@@ -161,7 +165,16 @@ function decideAction(s: OnboardingState, action: OnboardingAction, source: 'but
     case 'decline':
       return decline(s, at);
     case 'later': {
-      if (s.participation === 'active') return { next: s, effects: [{ type: 'acknowledge', key: 'already_complete' }] as OnboardingEffect[] };
+      if (s.participation === 'active') {
+        if (!s.buttonsActive) return { next: s, effects: [{ type: 'acknowledge', key: 'already_complete' }] as OnboardingEffect[] };
+        return {
+          next: { ...s, buttonsActive: false },
+          effects: [
+            { type: 'remove_buttons', replacement: 'already_complete' },
+            { type: 'acknowledge', key: 'already_complete' },
+          ] as OnboardingEffect[],
+        };
+      }
       if (stale) return { next: s, effects: [] as OnboardingEffect[] };
       if (s.participation === 'declined') {
         return { next: s, effects: [{ type: 'acknowledge', key: 'later_after_reminder' }] as OnboardingEffect[] };

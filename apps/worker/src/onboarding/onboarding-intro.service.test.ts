@@ -94,13 +94,14 @@ describe.skipIf(!localDatabase)('OnboardingIntroService against PostgreSQL', () 
   it('role-change intros without a delivery row key both ids by the supplied version', async () => {
     const personId = await newPerson('manager');
     await useConversation(personId);
-    const r = await service.sendIntro({ tenantId, personId, role: 'manager', version: 3, conversation: convo() });
+    const r = await service.sendIntro({ tenantId, personId, role: 'manager', version: 3, roleChange: true, conversation: convo() });
     expect(r).toEqual({
       introMessageId: stableId('onb-intro', personId, '3', 'intro'),
       trustMessageId: stableId('onb-intro', personId, '3', 'trust'),
     });
     const [trust] = await client.db.select().from(messages).where(eq(messages.id, r.trustMessageId));
-    expect(trust!.metadata).toMatchObject({ onboardingActions: [{ actionId: 'onboarding:got_it', label: 'Got It', value: 'got_it' }] });
+    expect(trust!.metadata).toMatchObject({ onboardingRoleChange: true,
+      onboardingActions: [{ actionId: 'onboarding:got_it', label: 'Got It', value: 'got_it' }] });
   });
 
   it('enqueues the trust message once after the intro, and not when it was already sent', async () => {

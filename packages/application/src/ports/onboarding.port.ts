@@ -18,7 +18,8 @@ export interface OnboardingApplyResult {
 /** Post-commit side effects of onboarding transitions. Implementations must be idempotent per dedupeKey. */
 export interface OnboardingEffectsPort {
   scheduleReminder(input: { tenantId: string; personId: string; dueAt: Date }): Promise<void>;
-  replaceIntroActions(input: { tenantId: string; personId: string; channelId: string; messageTs: string; text: string }): Promise<void>;
+  /** Rewrites the intro message without buttons; resolves true only when the message was actually edited. Never throws. */
+  replaceIntroActions(input: { tenantId: string; personId: string; channelId: string; messageTs: string; text: string }): Promise<boolean>;
   sendAcknowledgement(input: { tenantId: string; personId: string; text: string; dedupeKey: string }): Promise<void>;
   startConversation(input: { tenantId: string; personId: string; dedupeKey: string }): Promise<void>;
   /** Role-change introduction (full approved copy of `role`); `version` is the committed state version that keys its message ids. */

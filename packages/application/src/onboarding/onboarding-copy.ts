@@ -74,6 +74,20 @@ export const ACK_COPY: Record<AckKey, string> = {
 
 export const STARTED_REPLACEMENT = "Let's talk.";
 
+/**
+ * Short button replacements from Q24, used when a text reply made the choice (Emma's reply already carries
+ * the G2 acknowledgement). Button clicks replace the buttons with ACK_COPY instead.
+ */
+export const BUTTON_REPLACEMENT_SHORT: Record<AckKey | 'started', string> = {
+  later_before_reminder: "We'll talk later.",
+  later_after_reminder: "We'll talk later.",
+  decline: "I won't start conversations unless you message me first.",
+  got_it_team_lead: 'Introduction complete.',
+  got_it_management: 'Introduction complete.',
+  already_complete: 'Introduction complete.',
+  started: STARTED_REPLACEMENT,
+};
+
 const REMINDER_COPY = {
   employee: "Hi! Just checking in — would you like to talk? You can share what's on your mind, or we can start with how things are going at work. No pressure — you can come back anytime. I won't send another onboarding reminder.",
   team_lead: "Hi! Would you like to finish our introduction? We can start a conversation about how things are going for you at work, or you can acknowledge the introduction for now. I won't send another onboarding reminder.",

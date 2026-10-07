@@ -35,7 +35,7 @@ describe('OnboardingEffectsService', () => {
     const { service, intro } = build(db);
     await service.sendRoleIntro({ tenantId: 't', personId: 'p', role: 'team_lead', version: 7 });
     expect(intro.sendIntro).toHaveBeenCalledWith({
-      tenantId: 't', personId: 'p', role: 'team_lead', version: 7,
+      tenantId: 't', personId: 'p', role: 'team_lead', version: 7, roleChange: true,
       conversation: { id: 'c1', channelType: 'slack', externalConversationId: 'D1', externalWorkspaceId: 'W1' },
     });
   });
@@ -104,7 +104,7 @@ describe('OnboardingEffectsService', () => {
         findSlackAccountByUserId: vi.fn().mockResolvedValue({ externalWorkspaceId: 'W1', externalUserId: 'U1' }),
         findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'xoxb' }),
       };
-      await build({}, repo).service.replaceIntroActions(input);
+      await expect(build({}, repo).service.replaceIntroActions(input)).resolves.toBe(true);
       expect(repo.findByExternalWorkspace).toHaveBeenCalledWith('slack', 'W1', 't');
       expect(slack.updateMessage).toHaveBeenCalledWith({
         tenantId: 't', externalChannelId: 'D1', externalMessageId: '10.5', text: 'Body\n\n_Done_',
@@ -117,13 +117,13 @@ describe('OnboardingEffectsService', () => {
         findSlackAccountByUserId: vi.fn().mockResolvedValue({ externalWorkspaceId: 'W1', externalUserId: 'U1' }),
         findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'xoxb' }),
       };
-      await expect(build({}, repo).service.replaceIntroActions(input)).resolves.toBeUndefined();
+      await expect(build({}, repo).service.replaceIntroActions(input)).resolves.toBe(false);
     });
 
     it('does nothing when no workspace connection exists', async () => {
       slack.updateMessage.mockReset();
       const repo = { findSlackAccountByUserId: vi.fn().mockResolvedValue(null), findByExternalWorkspace: vi.fn() };
-      await build({}, repo).service.replaceIntroActions(input);
+      await expect(build({}, repo).service.replaceIntroActions(input)).resolves.toBe(false);
       expect(slack.updateMessage).not.toHaveBeenCalled();
     });
   });

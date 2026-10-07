@@ -89,6 +89,7 @@ export class MessageSendProcessor extends WorkerHost {
       if (persisted.externalMessageId && this.introActions(persisted.metadata)) {
         await this.onboardingService.recordIntroDelivered(
           tenantId, persisted.userId, externalChannelId, persisted.externalMessageId, persisted.sentAt,
+          this.isRoleChangeIntro(persisted.metadata),
         );
       }
       await this.chainTrustMessage(job.data, persisted.metadata);
@@ -152,6 +153,7 @@ export class MessageSendProcessor extends WorkerHost {
       if (this.introActions(persisted.metadata)) {
         await this.onboardingService.recordIntroDelivered(
           tenantId, persisted.userId, externalChannelId, result.externalMessageId, result.sentAt,
+          this.isRoleChangeIntro(persisted.metadata),
         );
       }
 
@@ -182,6 +184,10 @@ export class MessageSendProcessor extends WorkerHost {
   /** The trust half of an onboarding intro carries the buttons; its delivery moves onboarding forward. */
   private introActions(metadata: unknown): OutgoingMessage['actions'] {
     return asRecord(metadata)['onboardingIntroPart'] === 'trust' ? this.messageActions(metadata) : undefined;
+  }
+
+  private isRoleChangeIntro(metadata: unknown): boolean {
+    return asRecord(metadata)['onboardingRoleChange'] === true;
   }
 
   private async recordDelivery(

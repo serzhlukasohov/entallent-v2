@@ -417,8 +417,15 @@ describe('onboarding intro buttons', () => {
     await processor.process({ data: slackJob() } as Job<MessageSendJob>);
 
     expect(slack.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ actions }));
-    expect(onboarding.recordIntroDelivered).toHaveBeenCalledWith('tenant-1', 'lead-1', 'channel-1', '1788430496.000200', sentAt);
+    expect(onboarding.recordIntroDelivered).toHaveBeenCalledWith('tenant-1', 'lead-1', 'channel-1', '1788430496.000200', sentAt, false);
     expect(calls).toEqual(['sendMessage', 'intro_delivered']);
+  });
+
+  it('passes the role-change marker of the trust message through to intro delivery', async () => {
+    slack.sendMessage.mockResolvedValue({ externalMessageId: '1788430496.000300', sentAt });
+    const { processor, onboarding } = build({ onboardingIntroPart: 'trust', onboardingRoleChange: true, onboardingActions: actions });
+    await processor.process({ data: slackJob() } as Job<MessageSendJob>);
+    expect(onboarding.recordIntroDelivered).toHaveBeenCalledWith('tenant-1', 'lead-1', 'channel-1', '1788430496.000300', sentAt, true);
   });
 
   it('does not apply intro delivery when Slack fails', async () => {

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
-  ACK_COPY, STARTED_REPLACEMENT, decideOnboarding, introMessages, reminderDueAt,
+  ACK_COPY, BUTTON_REPLACEMENT_SHORT, STARTED_REPLACEMENT, decideOnboarding, introMessages, reminderDueAt,
   type OnboardingApplyResult, type OnboardingEffect, type OnboardingEffectsPort, type OnboardingEvent,
   type OnboardingState, type OnboardingTurnPort,
 } from '@entalent/application';
@@ -24,6 +24,8 @@ function sameState(a: OnboardingState, b: OnboardingState): boolean {
 function isTurnOriginated(e: OnboardingEvent): boolean {
   return (e.type === 'action' && e.source === 'text') || e.type === 'stop_requested' || e.type === 'substantive_turn';
 }
+
+const isButtonClick = (e: OnboardingEvent): boolean => e.type === 'action' && e.source === 'button';
 
 const names = (s: OnboardingState) => ({
   introStatus: s.introStatus, participation: s.participation, reminderStatus: s.reminderStatus,
@@ -56,11 +58,13 @@ export class OnboardingService implements OnboardingTurnPort {
    * The intro message carrying the buttons was delivered. Under the row lock: ignore a replay of the
    * recorded message or an older one (Slack ts compared numerically); otherwise store its location and
    * apply `intro_delivered` in the same transaction, so a retried job cannot re-arm answered buttons.
+   * Only a role-change intro (`roleChange`) re-arms the buttons of a state whose intro is no longer pending.
    */
   recordIntroDelivered(
-    tenantId: string, personId: string, channelId: string, messageTs: string, at: Date,
+    tenantId: string, personId: string, channelId: string, messageTs: string, at: Date, roleChange = false,
   ): Promise<OnboardingApplyResult> {
-    return this.apply(tenantId, personId, { type: 'intro_delivered', at }, async (tx, row) => {
+    const event: OnboardingEvent = roleChange ? { type: 'intro_delivered', at, roleChange: true } : { type: 'intro_delivered', at };
+    return this.apply(tenantId, personId, event, async (tx, row) => {
       if (row.introActionsMessageTs === messageTs && row.introChannelId === channelId) return false;
       if (row.introActionsMessageTs && row.introChannelId === channelId
         && Number(row.introActionsMessageTs) > Number(messageTs)) return false;
@@ -150,13 +154,16 @@ export class OnboardingService implements OnboardingTurnPort {
   }
 
   private async runEffects(tenantId: string, personId: string, event: OnboardingEvent, c: Committed): Promise<void> {
+    // Set when a button click's buttons were replaced by the acknowledgement itself (Q24 + G2).
+    const run = { ackInReplacement: false };
     for (const effect of c.result.effects) {
-      await this.safely(effect, () => this.runEffect(tenantId, personId, event, c, effect));
+      await this.safely(effect, () => this.runEffect(tenantId, personId, event, c, effect, run));
     }
   }
 
   private async runEffect(
     tenantId: string, personId: string, event: OnboardingEvent, c: Committed, effect: OnboardingEffect,
+    run: { ackInReplacement: boolean },
   ): Promise<void> {
     switch (effect.type) {
       case 'schedule_reminder':
@@ -164,16 +171,24 @@ export class OnboardingService implements OnboardingTurnPort {
         return;
       case 'remove_buttons': {
         if (!c.introChannelId || !c.introActionsMessageTs) return;
-        const copy = effect.replacement === 'started' ? STARTED_REPLACEMENT : ACK_COPY[effect.replacement];
-        await this.effects.replaceIntroActions({
+        // Button click: the buttons become the G2 acknowledgement. Text choice: Emma's reply is the G2
+        // acknowledgement, so the buttons become the short Q24 phrase.
+        const button = isButtonClick(event);
+        const copy = effect.replacement === 'started'
+          ? (button ? STARTED_REPLACEMENT : BUTTON_REPLACEMENT_SHORT.started)
+          : (button ? ACK_COPY[effect.replacement] : BUTTON_REPLACEMENT_SHORT[effect.replacement]);
+        const replaced = await this.effects.replaceIntroActions({
           tenantId, personId, channelId: c.introChannelId, messageTs: c.introActionsMessageTs,
           text: `${introMessages(c.role).trust}\n\n_${copy}_`,
         });
+        if (button && replaced && effect.replacement !== 'started') run.ackInReplacement = true;
         return;
       }
       case 'acknowledge':
         // Turn-originated events are answered by the orchestrator via result.replyAck.
         if (isTurnOriginated(event)) return;
+        // The edited buttons already show this acknowledgement; a second message would duplicate it.
+        if (run.ackInReplacement) return;
         await this.effects.sendAcknowledgement({
           tenantId, personId, text: ACK_COPY[effect.key], dedupeKey: `${personId}:ack:${effect.key}:${c.version}`,
         });

@@ -30,6 +30,8 @@ export interface SendIntroInput {
    * version of the state they just wrote. Defaults to the current version of the person's state row.
    */
   version?: number;
+  /** Role-change intro: its trust message is marked so its delivery may re-arm buttons on a non-pending state. */
+  roleChange?: boolean;
 }
 
 export interface SendIntroResult {
@@ -80,6 +82,7 @@ export class OnboardingIntroService {
     };
     const trustMetadata = {
       onboardingIntroPart: 'trust',
+      ...(input.roleChange ? { onboardingRoleChange: true } : {}),
       onboardingActions: copy.actions.map((a) => ({
         actionId: `onboarding:${a.action}`, label: a.label, value: a.action,
       })),
