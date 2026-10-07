@@ -931,3 +931,26 @@ describe('buildRespondSystemPrompt onboarding clarification', () => {
     expect(prompt).not.toContain('Onboarding clarification');
   });
 });
+
+describe('buildRespondSystemPrompt onboarding start opener', () => {
+  const opener: ReplyStrategy = { mode: 'proactive_follow_up', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] };
+  const probeQuestion = { id: 'q-7', probeStrategies: ['how clear priorities feel'] };
+
+  it('tells the model the employee just agreed to start, without a re-introduction, keeping the probe plumbing', () => {
+    const prompt = buildRespondSystemPrompt(opener, context({
+      userName: 'Sam',
+      proactiveCheckIn: { probeQuestion, afterUserStart: true },
+    }));
+    expect(prompt).toContain('just agreed to start the conversation');
+    expect(prompt).toContain('Do not introduce yourself again');
+    expect(prompt).toContain('how clear priorities feel');
+    expect(prompt).toContain('"surveyProbeQuestionId": "q-7"');
+    expect(prompt).not.toContain('has not messaged you');
+  });
+
+  it('keeps the agent-first check-in wording for ordinary proactive check-ins', () => {
+    const prompt = buildRespondSystemPrompt(opener, context({ userName: 'Sam', proactiveCheckIn: { probeQuestion } }));
+    expect(prompt).toContain('has not messaged you');
+    expect(prompt).not.toContain('just agreed to start the conversation');
+  });
+});

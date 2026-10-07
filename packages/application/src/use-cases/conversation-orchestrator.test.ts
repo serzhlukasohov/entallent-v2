@@ -4582,11 +4582,14 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
     state: OnboardingState | null;
     applyResult?: Partial<OnboardingApplyResult>;
     backlogQuestion?: { id: string; probeStrategies: string[]; responseType?: string } | null;
+    surveyReady?: boolean;
   }) {
     const m = baseMocks();
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: opts.text, occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
-    ]);
+    m.conversationRepo.findRecentMessages.mockResolvedValue(
+      opts.surveyReady
+        ? d05ReadyHistory(opts.text)
+        : [{ id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: opts.text, occurredAt: INBOUND_OCCURRED_AT, metadata: undefined }],
+    );
     m.aiProvider.classifySituation.mockResolvedValue({
       ...BASE_CLASSIFICATION,
       latestUserSubstance: opts.signal?.substantive ? opts.text : null,
@@ -4802,6 +4805,60 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
     expect(m.aiProvider.generateResponse.mock.calls[0][1].onboardingClarify).toBe(true);
   });
 
+  it('a failing onboarding context read degrades to a normal reply without onboarding', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: 'later', signal: { intent: 'later', substantive: false }, state: onboardingState('employee'),
+    });
+    onboardingTurn.contextFor.mockRejectedValue(new Error('db down'));
+    const result = await orch.orchestrate(INPUT);
+    expect(m.aiProvider.classifySituation.mock.calls[0][1]).not.toHaveProperty('onboarding');
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(result.responseText).toBe('reply');
+    expect(m.outbox.enqueueSurveyEvidence).toHaveBeenCalled();
+  });
+
+  it('a failing onboarding apply degrades to a normal reply with no ack and the pre-turn evidence gate', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: "I'm swamped, let's do it later", signal: { intent: 'later', substantive: false }, state: onboardingState('employee'),
+    });
+    onboardingTurn.applyTurnEvent.mockRejectedValue(new Error('lock timeout'));
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledTimes(1);
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.responseText).toBe('reply');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].messageType).toBeUndefined();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('declined user with an explicit text start resumes through a text start action (Q2, Q5, Q6)', async () => {
+    const state = onboardingState('employee', { participation: 'declined', buttonsActive: false, reminderStatus: 'cancelled' });
+    const { orch, onboardingTurn } = setup({
+      text: "ok, let's talk after all",
+      signal: { intent: 'start', substantive: false },
+      state,
+      applyResult: {
+        effects: [{ type: 'set_proactive', enabled: true }, { type: 'start_conversation' }],
+        state: { ...state, participation: 'active', introStatus: 'completed' }, replyStart: true,
+      },
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', {
+      type: 'action', action: 'start', source: 'text', at: INBOUND_OCCURRED_AT,
+    });
+    expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+  });
+
+  it('active user with an ambiguous reply → clarify, no state change (Q2, Q4)', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: 'maybe I should stop this',
+      signal: { intent: 'ambiguous', substantive: false },
+      state: onboardingState('employee', { participation: 'active', introStatus: 'completed', buttonsActive: false }),
+    });
+    await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].onboardingClarify).toBe(true);
+  });
+
   describe('text start', () => {
     const startedState = (s: OnboardingState): OnboardingState => ({ ...s, participation: 'active', introStatus: 'completed', buttonsActive: false });
 
@@ -4826,6 +4883,7 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
       expect(strategy).toMatchObject({ mode: 'proactive_follow_up', includeFollowUpQuestion: true });
       expect(context.proactiveCheckIn).toEqual({
         probeQuestion: { id: 'q-7', probeStrategies: ['how clear priorities feel'], responseType: 'open_ended' },
+        afterUserStart: true,
       });
       expect(context.surveyProbeQuestion).toBeUndefined();
       expect(result.responseText).toBe('Great. How clear do your priorities feel this week?');
@@ -4870,6 +4928,7 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
     it('a start that carries the user\'s own topic answers that topic, not a backlog question (Q25)', async () => {
       const state = onboardingState('employee');
       const { m, orch, pulseBacklogService } = setup({
+        surveyReady: true,
         text: "sure, let's talk — my lead keeps changing priorities",
         signal: { intent: 'start', substantive: true },
         state,
@@ -4879,6 +4938,7 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
       const result = await orch.orchestrate(INPUT);
       expect(pulseBacklogService.getNextProbeQuestion).not.toHaveBeenCalled();
       expect(m.aiProvider.generateResponse.mock.calls[0][2].proactiveCheckIn).toBeUndefined();
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].surveyProbeQuestion).toBeUndefined();
       expect(result.responseText).toBe('reply');
       expect(m.outbox.enqueueSurveyEvidence).toHaveBeenCalledTimes(1);
     });

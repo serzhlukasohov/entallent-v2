@@ -59,15 +59,24 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
 
   const checkInProbe = context.proactiveCheckIn?.probeQuestion;
   const numericCheckInProbe = checkInProbe?.responseType === 'numeric_0_10';
-  const checkInHint = context.proactiveCheckIn
-    ? `\nYou are writing FIRST — ${context.userName} has not messaged you. This is a light, human check-in, like a colleague pinging someone they genuinely like.
+  const checkInOpening = context.proactiveCheckIn?.afterUserStart
+    ? `\n${context.userName} just agreed to start the conversation after your introduction. Open it now.
+
+How to open:
+- Do not introduce yourself again and do not repeat the introduction; they already know who you are.
+- Briefly acknowledge that you're starting, then go straight to the topic below as one natural question.
+- 1-2 sentences, one question at most. Casual register.
+- Never sound like a survey or a wellness bot doing rounds.`
+    : `\nYou are writing FIRST — ${context.userName} has not messaged you. This is a light, human check-in, like a colleague pinging someone they genuinely like.
 
 How to open:
 - If you know things about them (see memory above), pick ONE concrete thread from their work life and start there. "How did the release end up going?" lands; "How's it going?" does not.
 - If you know NOTHING about them yet (no memory, no history), this is your first contact: say hi, one short line about who you are (someone they can talk to about work — informally, no titles), and one easy, low-stakes question like how their week is going. Nothing deeper. First contact earns trust; it does not mine for data.
 - 1-2 sentences, one question at most. Casual register.
 - Never announce the check-in ("just wanted to see how you're doing", "it's been a while") and never sound like a wellness bot doing rounds.
-- Never use assessment vocabulary: "priorities", "outcomes", "expectations", "goals" have no place in an opener.${checkInProbe ? numericCheckInProbe ? `
+- Never use assessment vocabulary: "priorities", "outcomes", "expectations", "goals" have no place in an opener.`;
+  const checkInHint = context.proactiveCheckIn
+    ? `${checkInOpening}${checkInProbe ? numericCheckInProbe ? `
 
 Ask exactly ONE direct question that requests an explicit rating from 0 to 10 for this topic:
 ${checkInProbe.probeStrategies.map(s => `• ${s}`).join('\n')}

@@ -12,7 +12,8 @@ const CLARIFY: SignalOutcome = { kind: 'clarify' };
 /**
  * Maps the classifier's onboarding reading of a user turn to an onboarding event. The classifier only
  * labels meaning; every participation decision is made here and in `decideOnboarding` (Q2, Q2a, Q2b,
- * Q3, Q4, Q15, A2). A later/decline/stop choice that arrives with substance is clarified, not applied.
+ * Q3, Q4, Q15, A2). A later/decline choice that arrives with substance is clarified, not applied;
+ * an active participant's explicit stop request always applies (Q4).
  */
 export function interpretOnboardingSignal(
   state: OnboardingState,
@@ -33,10 +34,10 @@ export function interpretOnboardingSignal(
 
   switch (state.participation) {
     case 'active':
-      if (intent === 'stop_participation' || intent === 'decline') {
-        return substantive ? CLARIFY : { kind: 'event', event: { type: 'stop_requested', at } };
-      }
-      return NONE;
+      // A clear request to stop applies even inside a substantive turn (Q4).
+      if (intent === 'stop_participation') return { kind: 'event', event: { type: 'stop_requested', at } };
+      if (intent === 'decline') return substantive ? CLARIFY : { kind: 'event', event: { type: 'stop_requested', at } };
+      return intent === 'ambiguous' ? CLARIFY : NONE;
 
     case 'undecided':
     case 'deferred':

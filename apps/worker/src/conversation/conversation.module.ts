@@ -1,5 +1,5 @@
 import { BullModule } from '@nestjs/bullmq';
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import {
   ConversationOrchestrator,
   ProactiveCheckInUseCase,
@@ -29,6 +29,13 @@ import { StyleProfileRepository } from '../style/repositories/style-profile.repo
 import { StyleModule } from '../style/style.module';
 import { SurveyRepository } from '../survey/repositories/survey.repository';
 import { SurveyModule } from '../survey/survey.module';
+
+// Onboarding degradations are logged, never thrown into the reply path.
+const nestOrchestratorLogger = new Logger(ConversationOrchestrator.name);
+const orchestratorLogger = {
+  warn: (message: string, context?: Record<string, unknown>) =>
+    nestOrchestratorLogger.warn(context ? `${message} ${JSON.stringify(context)}` : message),
+};
 
 @Module({
   imports: [
@@ -84,6 +91,7 @@ import { SurveyModule } from '../survey/survey.module';
         styleProfileRepo,
         goalRepo,
         onboardingTurn,
+        orchestratorLogger,
       ),
       inject: [
         ConversationRepository,
@@ -133,3 +141,4 @@ import { SurveyModule } from '../survey/survey.module';
   exports: [OnboardingDispatchService],
 })
 export class ConversationModule {}
+

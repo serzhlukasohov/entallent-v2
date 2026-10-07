@@ -123,6 +123,8 @@ export interface ResponseContext {
   /** Agent-initiated check-in: the agent writes first, optionally steering toward a survey topic */
   proactiveCheckIn?: {
     probeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
+    /** The employee just agreed (by text) to start after the onboarding introduction. */
+    afterUserStart?: boolean;
   };
   /**
    * Set when the employee just confirmed a summary the agent proposed.

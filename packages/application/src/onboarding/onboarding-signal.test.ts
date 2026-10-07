@@ -112,15 +112,19 @@ describe('interpretOnboardingSignal', () => {
     it('decline → stop_requested', () => {
       expect(interpretOnboardingSignal(employee('active'), sig('decline'), AT)).toEqual(STOP);
     });
-    it.each(['end_today_only', 'later', 'none', 'ambiguous', 'start', 'acknowledge'] as const)(
+    it.each(['end_today_only', 'later', 'none', 'start', 'acknowledge'] as const)(
       '%s → none (bug 1.1, Review Focus 2)',
       (intent) => {
         expect(interpretOnboardingSignal(employee('active'), sig(intent), AT)).toEqual(NONE);
         expect(interpretOnboardingSignal(employee('active'), sig(intent, true), AT)).toEqual(NONE);
       },
     );
-    it('stop_participation + substantive → clarify', () => {
-      expect(interpretOnboardingSignal(employee('active'), sig('stop_participation', true), AT)).toEqual(CLARIFY);
+    it('stop_participation + substantive → still stop_requested (Q4)', () => {
+      expect(interpretOnboardingSignal(employee('active'), sig('stop_participation', true), AT)).toEqual(STOP);
+    });
+    it('ambiguous → clarify (Q2, Q4)', () => {
+      expect(interpretOnboardingSignal(employee('active'), sig('ambiguous'), AT)).toEqual(CLARIFY);
+      expect(interpretOnboardingSignal(employee('active'), sig('ambiguous', true), AT)).toEqual(CLARIFY);
     });
   });
 

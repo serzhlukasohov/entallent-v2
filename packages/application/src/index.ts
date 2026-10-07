@@ -30,7 +30,7 @@ export type { ConversationRecord, MessageRecord, ReportingDisclosureReceiptRecor
 export { DEIDENTIFICATION_POLICY_VERSION, evaluateDeidentification, isAcceptedDeidentificationDecision } from './utils/deidentification-policy';
 export type { DeidentificationDecision, DeidentificationRejectionReason, DeidentificationPolicyInput } from './utils/deidentification-policy';
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
-export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
+export type { OrchestrateInput, OrchestrateResult, OrchestratorLogger } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
 export type { AgentRuntimeConfigurationDiagnostic, AgentRuntimeConfigurationDiagnosticRecorder, AgentRuntimeDecision, AgentRuntimeDecisionRecord, AgentRuntimeDecisionSource, AgentRuntimeFallbackExecutor, AgentRuntimeMode, AgentRuntimeModeEvaluationResult, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions, AgentRuntimeShadowCandidateRecord, AgentRuntimeShadowCandidateRecorder } from './use-cases/agent-runtime-router';
 export { MafAgentRuntimeClient, MafAgentRuntimeConfigurationError } from './use-cases/maf-agent-runtime-client';

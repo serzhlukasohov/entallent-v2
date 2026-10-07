@@ -62,6 +62,12 @@ import type { OnboardingState } from '../onboarding/onboarding-state';
 export type OrchestrateInput = ProcessMessageRequest;
 export type OrchestrateResult = ProcessMessageResult;
 
+export interface OrchestratorLogger {
+  warn(message: string, context?: Record<string, unknown>): void;
+}
+
+const SILENT_LOGGER: OrchestratorLogger = { warn: () => undefined };
+
 const TZ_REFRESH_DAYS = 30;
 // Same opener strategy as the proactive check-in path, reused for a text "let's start" (Q25).
 const ONBOARDING_OPENER_STRATEGY: ReplyStrategy = {
@@ -88,6 +94,7 @@ export class ConversationOrchestrator {
     private readonly styleProfileRepo?: StyleProfileRepositoryPort,
     private readonly goalRepo?: GoalRepositoryPort,
     private readonly onboardingTurn?: OnboardingTurnPort,
+    private readonly logger: OrchestratorLogger = SILENT_LOGGER,
   ) {}
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
@@ -155,7 +162,13 @@ export class ConversationOrchestrator {
     const userName = conversation.userDisplayName ?? 'there';
     const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
-    const onboarding = this.onboardingTurn ? await this.onboardingTurn.contextFor(tenantId, userId) : null;
+    // Onboarding is never allowed to break the reply: a failed read means "no onboarding context".
+    const onboarding = this.onboardingTurn
+      ? await this.onboardingTurn.contextFor(tenantId, userId).catch((error: unknown) => {
+          this.logger.warn('onboarding_context_failed', { tenantId, userId, error: errorMessage(error) });
+          return null;
+        })
+      : null;
 
     // Classification and enrichment reads are independent. Goal reads degrade to no goals;
     // relevance is decided later, after safety and confirmation state are known.
@@ -289,6 +302,16 @@ export class ConversationOrchestrator {
     );
     const probePacingAllows = userTurnCount >= 3 && !probedRecently;
 
+    // The classifier only labels onboarding meaning; interpretOnboardingSignal + decideOnboarding decide.
+    const onboardingSignal = onboarding ? classification.onboardingSignal ?? null : null;
+    const onboardingOutcome: SignalOutcome = onboarding
+      ? interpretOnboardingSignal(onboarding.state, onboardingSignal, inboundMessage.occurredAt)
+      : { kind: 'none' };
+    // A text start opens with the backlog (or continues the user's own topic, Q25): no reactive probe.
+    const onboardingStartTurn = onboardingOutcome.kind === 'event'
+      && onboardingOutcome.event.type === 'action'
+      && onboardingOutcome.event.action === 'start';
+
     // Risk check and probe lookup are independent — run in parallel.
     // Probe is fetched speculatively when classify says it's allowed; discarded if risk blocks it.
     const speculativeProbeAllowed =
@@ -299,7 +322,8 @@ export class ConversationOrchestrator {
       && classification.surveyAllowed
       && !reportingExplanationRequested
       && !dataUseExplanationRequested
-      && !pulseCaptureExplanationRequested;
+      && !pulseCaptureExplanationRequested
+      && !onboardingStartTurn;
     const [risk, speculativeProbe] = await Promise.all([
       classification.requiresSafetyCheck
         ? this.aiProvider.detectRisk(turns, { userName })
@@ -308,14 +332,15 @@ export class ConversationOrchestrator {
     ]);
 
     // ── Onboarding text equivalents ─────────────────────────────────────────
-    // The classifier only labels meaning; interpretOnboardingSignal + decideOnboarding decide.
     // The event is applied even on a safety turn, but a safety turn always keeps its own reply.
-    const onboardingSignal = onboarding ? classification.onboardingSignal ?? null : null;
-    const onboardingOutcome: SignalOutcome = onboarding
-      ? interpretOnboardingSignal(onboarding.state, onboardingSignal, inboundMessage.occurredAt)
-      : { kind: 'none' };
+    // A failed apply is treated as no state change: normal reply, no ack or opener.
     const onboardingResult: OnboardingApplyResult | null = onboardingOutcome.kind === 'event' && this.onboardingTurn
-      ? await this.onboardingTurn.applyTurnEvent(tenantId, userId, onboardingOutcome.event)
+      ? await this.onboardingTurn.applyTurnEvent(tenantId, userId, onboardingOutcome.event).catch((error: unknown) => {
+          this.logger.warn('onboarding_apply_failed', {
+            tenantId, userId, event: onboardingOutcome.event.type, error: errorMessage(error),
+          });
+          return null;
+        })
       : null;
     const onboardingState: OnboardingState | null = onboardingResult?.state ?? onboarding?.state ?? null;
     const onboardingSafetyTurn = classification.requiresSafetyCheck || risk.severity !== 'none';
@@ -1153,6 +1178,7 @@ export class ConversationOrchestrator {
           probeStrategies: question.probeStrategies,
           ...(question.responseType ? { responseType: question.responseType } : {}),
         },
+        afterUserStart: true,
       },
     });
     return { generated, probeQuestionId: question.id };
@@ -1455,6 +1481,10 @@ function safeDefault(): RiskDetection {
 }
 
 /** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function describeLocalTime(timezone: string | undefined | null): string | undefined {
   if (!timezone) return undefined;
   try {
