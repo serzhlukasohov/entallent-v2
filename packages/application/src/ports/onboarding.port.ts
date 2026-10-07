@@ -7,6 +7,11 @@ export interface OnboardingApplyResult {
   state: OnboardingState | null;
   /** Acknowledgement text the orchestrator must send as its reply (turn-originated events only). */
   replyAck?: string;
+  /**
+   * Turn-originated start: the orchestrator's reply opens the conversation (first backlog topic or the
+   * approved empty-backlog opener); no separate conversation is started.
+   */
+  replyStart?: boolean;
 }
 
 /** Post-commit side effects of onboarding transitions. Implementations must be idempotent per dedupeKey. */

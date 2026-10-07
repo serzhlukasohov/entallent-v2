@@ -128,6 +128,22 @@ describe('OnboardingService.apply', () => {
     expect((await b.service.apply(T, P, { type: 'action', action: 'decline', source: 'button', at })).replyAck).toBeUndefined();
   });
 
+  it('a text start returns replyStart and does not start a separate conversation', async () => {
+    const h = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
+    const r = await h.service.apply(T, P, { type: 'action', action: 'start', source: 'text', at });
+    expect(r.replyStart).toBe(true);
+    expect(r.state?.participation).toBe('active');
+    expect(h.effects.startConversation).not.toHaveBeenCalled();
+    expect(h.effects.replaceIntroActions).toHaveBeenCalledTimes(1);
+  });
+
+  it('a button start starts the conversation and omits replyStart', async () => {
+    const h = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
+    const r = await h.service.apply(T, P, { type: 'action', action: 'start', source: 'button', at });
+    expect(r.replyStart).toBeUndefined();
+    expect(h.effects.startConversation).toHaveBeenCalledTimes(1);
+  });
+
   it('start dedupeKey uses the post-commit version', async () => {
     const h = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
     await h.service.apply(T, P, { type: 'action', action: 'start', source: 'button', at });

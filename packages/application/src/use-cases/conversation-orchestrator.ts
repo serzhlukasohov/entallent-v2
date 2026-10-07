@@ -5,6 +5,7 @@ import {
   type RiskDetection,
   type ReplyStrategy,
   type ConversationMode,
+  type GeneratedResponse,
 } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
@@ -53,11 +54,23 @@ import type {
   ProcessMessageRequest,
   ProcessMessageResult,
 } from '../ports/agent-runtime.port';
+import type { OnboardingApplyResult, OnboardingTurnPort } from '../ports/onboarding.port';
+import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
+import { interpretOnboardingSignal, type SignalOutcome } from '../onboarding/onboarding-signal';
+import type { OnboardingState } from '../onboarding/onboarding-state';
 
 export type OrchestrateInput = ProcessMessageRequest;
 export type OrchestrateResult = ProcessMessageResult;
 
 const TZ_REFRESH_DAYS = 30;
+// Same opener strategy as the proactive check-in path, reused for a text "let's start" (Q25).
+const ONBOARDING_OPENER_STRATEGY: ReplyStrategy = {
+  mode: 'proactive_follow_up',
+  tone: 'warm',
+  includeFollowUpQuestion: true,
+  maxResponseLength: 'short',
+  forbiddenPatterns: ['checking in', 'just wanted to check', 'reminder'],
+};
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
 
 export class ConversationOrchestrator {
@@ -74,6 +87,7 @@ export class ConversationOrchestrator {
     private readonly pulseBacklogService?: PulseBacklogService,
     private readonly styleProfileRepo?: StyleProfileRepositoryPort,
     private readonly goalRepo?: GoalRepositoryPort,
+    private readonly onboardingTurn?: OnboardingTurnPort,
   ) {}
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
@@ -141,6 +155,7 @@ export class ConversationOrchestrator {
     const userName = conversation.userDisplayName ?? 'there';
     const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
+    const onboarding = this.onboardingTurn ? await this.onboardingTurn.contextFor(tenantId, userId) : null;
 
     // Classification and enrichment reads are independent. Goal reads degrade to no goals;
     // relevance is decided later, after safety and confirmation state are known.
@@ -150,6 +165,15 @@ export class ConversationOrchestrator {
         now: currentTurnAt,
         timezone: userTimezone,
         continuitySummary: conversation.activeTopic?.summary,
+        ...(onboarding
+          ? {
+              onboarding: {
+                track: onboarding.state.track,
+                participation: onboarding.state.participation,
+                introStatus: onboarding.state.introStatus,
+              },
+            }
+          : {}),
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -283,6 +307,29 @@ export class ConversationOrchestrator {
       speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
     ]);
 
+    // ── Onboarding text equivalents ─────────────────────────────────────────
+    // The classifier only labels meaning; interpretOnboardingSignal + decideOnboarding decide.
+    // The event is applied even on a safety turn, but a safety turn always keeps its own reply.
+    const onboardingSignal = onboarding ? classification.onboardingSignal ?? null : null;
+    const onboardingOutcome: SignalOutcome = onboarding
+      ? interpretOnboardingSignal(onboarding.state, onboardingSignal, inboundMessage.occurredAt)
+      : { kind: 'none' };
+    const onboardingResult: OnboardingApplyResult | null = onboardingOutcome.kind === 'event' && this.onboardingTurn
+      ? await this.onboardingTurn.applyTurnEvent(tenantId, userId, onboardingOutcome.event)
+      : null;
+    const onboardingState: OnboardingState | null = onboardingResult?.state ?? onboarding?.state ?? null;
+    const onboardingSafetyTurn = classification.requiresSafetyCheck || risk.severity !== 'none';
+    const onboardingMayOwnReply = !onboardingSafetyTurn
+      && onboardingSignal?.substantive !== true
+      && !reportingExplanationRequested
+      && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested;
+    const onboardingAck = onboardingMayOwnReply ? onboardingResult?.replyAck : undefined;
+    const onboardingOpens = onboardingMayOwnReply && onboardingAck === undefined && onboardingResult?.replyStart === true;
+    const onboardingClarify = onboardingOutcome.kind === 'clarify' && !onboardingSafetyTurn;
+    const onboardingOwnsReply = onboardingAck !== undefined || onboardingOpens;
+    const onboardingTakesTurn = onboardingOwnsReply || onboardingClarify;
+
     // ── Group confirmation interpretation (Phase B) ─────────────────────────
     // Safety classification must resolve before any survey state can change.
     const phaseB = this.surveyRepo && surveyEnabled
@@ -316,6 +363,7 @@ export class ConversationOrchestrator {
       && !pulseCaptureExplanationRequested
       && !confirmationHandled
       && !phaseB.awaitingPresent
+      && !onboardingTakesTurn
     ) {
       const pending = await this.surveyRepo.findPendingConfirmationGroups(userId, tenantId);
       if (pending.length > 0) {
@@ -367,6 +415,7 @@ export class ConversationOrchestrator {
 
     const probeQuestion =
       !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !risk.surveyMustBeBlocked
+      && !onboardingTakesTurn
         ? speculativeProbe
         : null;
 
@@ -446,7 +495,7 @@ export class ConversationOrchestrator {
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
-    const strategyWithStyle = applySessionConciseStyle(
+    const styledStrategy = applySessionConciseStyle(
       applyTerseStyle(
         confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
         memoryEnabled ? profile : null,
@@ -454,6 +503,10 @@ export class ConversationOrchestrator {
       ),
       conciseSession,
     );
+    // Unclear onboarding choice: one question, no state change (Q2, Q4).
+    const strategyWithStyle: ReplyStrategy = onboardingClarify
+      ? { ...styledStrategy, includeFollowUpQuestion: true, onboardingClarify: true }
+      : styledStrategy;
     const sameThreadDetail = classification.latestUserSubstance?.trim();
     const canRetainExplicitDetail = !sessionStart
       && continuityDecision.action !== 'replace'
@@ -516,6 +569,7 @@ export class ConversationOrchestrator {
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
       && !pulseCaptureExplanationRequested
+      && !onboardingOwnsReply
       && (reportingExplanationRequested || phaseB.awaitingPresent);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
@@ -568,7 +622,17 @@ export class ConversationOrchestrator {
           ? ' Добре, я нагадаю про це.'
           : " I'll remind you as requested."
       : '';
-    let generated = canAnswerPulseCaptureExplanation
+    const onboardingOpener = onboardingOpens
+      ? await this.openOnboardingConversation({
+          userId, tenantId, turns, userName, languagePolicy, surveyEnabled, memoryContext,
+          styleAdaptation, timezone: conversation.userTimezone, isSessionStart: sessionStart,
+        })
+      : null;
+    let generated = onboardingAck !== undefined
+      ? { text: onboardingAck, confidence: 1, containsSurveyProbe: false }
+      : onboardingOpener
+      ? onboardingOpener.generated
+      : canAnswerPulseCaptureExplanation
       ? {
           text: `${getPulseCaptureExplanationText(
             pulseCapture,
@@ -622,7 +686,11 @@ export class ConversationOrchestrator {
       replyBrief: replyPlan,
       replyPlan,
         });
-    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
+    // A backlog opener carries a probe, so it follows the proactive path's disclosure rule (A9).
+    const openerAppendsDisclosure = onboardingOpener?.probeQuestionId !== undefined
+      && surveyEnabled
+      && !hasCurrentDeliveredDisclosure;
+    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure || openerAppendsDisclosure;
     let responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
@@ -719,10 +787,13 @@ export class ConversationOrchestrator {
         shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage));
       }
     }
-    const containsSurveyProbe =
-      probeQuestion !== null
-      && !pauseTurn
-      && generated.containsSurveyProbe === true;
+    const containsSurveyProbe = onboardingOpener
+      ? onboardingOpener.probeQuestionId !== undefined
+        && generated.containsSurveyProbe === true
+        && generated.surveyProbeQuestionId === onboardingOpener.probeQuestionId
+      : probeQuestion !== null
+        && !pauseTurn
+        && generated.containsSurveyProbe === true;
 
     if (continuity.activeTopicUpdate) {
       await this.conversationRepo.updateActiveTopic(
@@ -741,6 +812,7 @@ export class ConversationOrchestrator {
       text: responseText,
       occurredAt: new Date(),
       traceId: input.traceId,
+      ...(onboardingAck !== undefined ? { messageType: 'onboarding_ack' } : {}),
       metadata: {
         ...conversationDecisionMetadata({
           replyPlan,
@@ -819,7 +891,11 @@ export class ConversationOrchestrator {
       traceId: input.traceId,
     });
 
-    if (surveyEnabled && !pulseCaptureExplanationRequested) await this.outbox.enqueueSurveyEvidence({
+    // Pulse evidence only from active personal participants, read after this turn's onboarding event
+    // (a substantive first message is analysed, Q2b); management roles never (Q11).
+    const onboardingAllowsEvidence = onboardingState === null
+      || (onboardingState.track !== 'management' && onboardingState.participation === 'active');
+    if (surveyEnabled && !pulseCaptureExplanationRequested && onboardingAllowsEvidence) await this.outbox.enqueueSurveyEvidence({
       conversationId,
       userId,
       tenantId,
@@ -1040,6 +1116,46 @@ export class ConversationOrchestrator {
       }
     }
     return out;
+  }
+
+  /**
+   * Text "let's start" without the user's own topic: open with the first backlog topic through the
+   * proactive check-in probe plumbing, or the approved opener with no model call when there is none (G1, Q25).
+   */
+  private async openOnboardingConversation(input: {
+    userId: string;
+    tenantId: string;
+    turns: ConversationTurn[];
+    userName: string;
+    languagePolicy: ResponseContext['languagePolicy'];
+    surveyEnabled: boolean;
+    memoryContext: NonNullable<ResponseContext['memoryContext']>;
+    styleAdaptation: ResponseContext['styleAdaptation'];
+    timezone: string | null | undefined;
+    isSessionStart: boolean;
+  }): Promise<{ generated: GeneratedResponse; probeQuestionId?: string }> {
+    const question = input.surveyEnabled ? await this.findSurveyProbe(input.userId, input.tenantId) : null;
+    if (!question) {
+      return { generated: { text: EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } };
+    }
+    const generated = await this.aiProvider.generateResponse(input.turns, ONBOARDING_OPENER_STRATEGY, {
+      userName: input.userName,
+      languagePolicy: input.languagePolicy,
+      memoryContext: input.memoryContext.items.length > 0 || input.memoryContext.goals.length > 0
+        ? input.memoryContext
+        : undefined,
+      styleAdaptation: input.styleAdaptation,
+      localTime: describeLocalTime(input.timezone),
+      isSessionStart: input.isSessionStart,
+      proactiveCheckIn: {
+        probeQuestion: {
+          id: question.id,
+          probeStrategies: question.probeStrategies,
+          ...(question.responseType ? { responseType: question.responseType } : {}),
+        },
+      },
+    });
+    return { generated, probeQuestionId: question.id };
   }
 
   private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {

@@ -124,10 +124,14 @@ export class OnboardingService implements OnboardingTurnPort {
     // Post-commit effects are not durable across a crash between commit and execution; lost reminders
     // are recovered by a later sweep over reminder_due_at.
     if (committed.result.changed) await this.runEffects(tenantId, personId, event, committed);
+    if (!isTurnOriginated(event)) return committed.result;
     const ack = committed.result.effects.find((e) => e.type === 'acknowledge');
-    return ack && ack.type === 'acknowledge' && isTurnOriginated(event)
-      ? { ...committed.result, replyAck: ACK_COPY[ack.key] }
-      : committed.result;
+    const start = committed.result.effects.some((e) => e.type === 'start_conversation');
+    return {
+      ...committed.result,
+      ...(ack && ack.type === 'acknowledge' ? { replyAck: ACK_COPY[ack.key] } : {}),
+      ...(start ? { replyStart: true } : {}),
+    };
   }
 
   private async runEffects(tenantId: string, personId: string, event: OnboardingEvent, c: Committed): Promise<void> {
@@ -160,6 +164,8 @@ export class OnboardingService implements OnboardingTurnPort {
         });
         return;
       case 'start_conversation':
+        // A turn-originated start is opened by the orchestrator's own reply (result.replyStart).
+        if (isTurnOriginated(event)) return;
         await this.effects.startConversation({
           tenantId, personId, dedupeKey: `${personId}:${c.version}`,
         });

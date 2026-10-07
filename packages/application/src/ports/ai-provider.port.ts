@@ -10,6 +10,7 @@ import type {
   ConfirmationResponse,
   ObservedStyle,
 } from '@entalent/contracts';
+import type { OnboardingTrack, Participation } from '../onboarding/onboarding-state';
 import type { SurveyResponseType } from '../types/records';
 
 export interface ConversationTurn {
@@ -27,6 +28,8 @@ export interface ClassifyContext {
   now?: string;
   /** IANA timezone of the employee — reminder times are interpreted in it */
   timezone?: string;
+  /** Present only when the person has an onboarding state; enables the onboardingSignal reading. */
+  onboarding?: { track: OnboardingTrack; participation: Participation; introStatus: string };
 }
 
 export interface RiskContext {

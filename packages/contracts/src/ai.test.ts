@@ -13,6 +13,50 @@ import {
 } from './ai';
 
 describe('Contract: SituationClassificationSchema', () => {
+  const onboardingBase = {
+    primaryIntent: 'casual_conversation',
+    secondaryIntents: [],
+    emotionalState: [],
+    urgency: 'low',
+    confidence: 0.8,
+    requiresSafetyCheck: false,
+    surveyAllowed: true,
+    reasoningSummary: 'test',
+  };
+
+  it('keeps a valid onboardingSignal through the transform', () => {
+    const parsed = SituationClassificationSchema.parse({
+      ...onboardingBase,
+      onboardingSignal: { intent: 'later', substantive: false },
+    });
+    expect(parsed.onboardingSignal).toEqual({ intent: 'later', substantive: false });
+  });
+
+  it('keeps onboardingSignal on pulse-capture classifications rewritten by the transform', () => {
+    const parsed = SituationClassificationSchema.parse({
+      ...onboardingBase,
+      primaryIntent: 'pulse_capture_explanation',
+      onboardingSignal: { intent: 'none', substantive: false },
+    });
+    expect(parsed.onboardingSignal).toEqual({ intent: 'none', substantive: false });
+  });
+
+  it('parses a missing onboardingSignal as absent and null as null', () => {
+    expect(SituationClassificationSchema.parse(onboardingBase).onboardingSignal ?? null).toBeNull();
+    expect(SituationClassificationSchema.parse({ ...onboardingBase, onboardingSignal: null }).onboardingSignal).toBeNull();
+  });
+
+  it('parses an invalid onboardingSignal as null instead of failing the classification', () => {
+    for (const onboardingSignal of [
+      { intent: 'maybe', substantive: false },
+      { intent: 'start' },
+      'start',
+    ]) {
+      const parsed = SituationClassificationSchema.parse({ ...onboardingBase, onboardingSignal });
+      expect(parsed.onboardingSignal).toBeNull();
+    }
+  });
+
   it('accepts a valid classification', () => {
     const parsed = SituationClassificationSchema.parse({
       primaryIntent: 'support',

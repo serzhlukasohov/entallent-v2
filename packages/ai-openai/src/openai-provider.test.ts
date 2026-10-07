@@ -123,6 +123,35 @@ describe('OpenAiProvider.classifySituation', () => {
     });
   });
 
+  it('keeps the onboarding signal only when onboarding context was supplied', async () => {
+    const content = JSON.stringify({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: ['neutral'],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: true,
+      reasoningSummary: 'Postpones.',
+      reminderRequest: null,
+      dialogueAct: 'closing',
+      latestUserSubstance: null,
+      topicAnchor: null,
+      onboardingSignal: { intent: 'later', substantive: false },
+    });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content } }] });
+    const provider = makeProvider();
+
+    const withContext = await provider.classifySituation(turns, {
+      userName: 'X',
+      onboarding: { track: 'employee', participation: 'undecided', introStatus: 'delivered' },
+    });
+    const withoutContext = await provider.classifySituation(turns, { userName: 'X' });
+
+    expect(withContext.onboardingSignal).toEqual({ intent: 'later', substantive: false });
+    expect(withoutContext.onboardingSignal).toBeNull();
+  });
+
   it('normalizes only known dialogue acts misplaced in primaryIntent', async () => {
     const classification = {
       secondaryIntents: [],

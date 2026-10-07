@@ -215,7 +215,7 @@ export class OpenAiProvider implements AiProviderPort {
         record['primaryIntent'] = 'casual_conversation';
       }
     }
-    return normalizeExplicitClosing(
+    const classification = normalizeExplicitClosing(
       normalizePulseCaptureExplanation(
         normalizeExplicitCorrectionRequest(
           normalizeDataUseExplanation(
@@ -228,6 +228,8 @@ export class OpenAiProvider implements AiProviderPort {
       ),
       turns,
     );
+    // Without onboarding context there is no status to read the signal against.
+    return context.onboarding ? classification : { ...classification, onboardingSignal: null };
   }
 
   async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {

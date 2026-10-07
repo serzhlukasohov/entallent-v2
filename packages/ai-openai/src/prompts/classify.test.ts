@@ -100,3 +100,37 @@ describe('buildClassifyUserPrompt', () => {
       .toBeLessThan(prompt.indexOf('LATEST EMPLOYEE MESSAGE TO CLASSIFY'));
   });
 });
+
+describe('onboarding signal classification', () => {
+  const turns = [{ role: 'user' as const, content: 'ok thanks', timestamp: new Date('2026-10-07T10:00:00.000Z') }];
+
+  it('declares the onboardingSignal field and the null default in the system prompt', () => {
+    const prompt = buildClassifySystemPrompt();
+    expect(prompt).toContain('"onboardingSignal": object|null');
+    expect(prompt).toContain('Set onboardingSignal to null unless the user prompt contains an ONBOARDING STATUS section');
+  });
+
+  it('omits the onboarding section when no onboarding context is given', () => {
+    const prompt = buildClassifyUserPrompt(turns, { userName: 'Sam' });
+    expect(prompt).not.toContain('ONBOARDING STATUS');
+    expect(prompt).not.toContain('stop_participation');
+  });
+
+  it('describes the current status and every label when onboarding context is given', () => {
+    const prompt = buildClassifyUserPrompt(turns, {
+      userName: 'Sam',
+      onboarding: { track: 'employee', participation: 'undecided', introStatus: 'delivered' },
+    });
+    expect(prompt).toContain('--- ONBOARDING STATUS ---');
+    expect(prompt).toContain('track: employee');
+    expect(prompt).toContain('participation: undecided');
+    expect(prompt).toContain('introduction: delivered');
+    for (const label of ['"start"', '"later"', '"decline"', '"acknowledge"', '"stop_participation"', '"end_today_only"', '"ambiguous"', '"none"']) {
+      expect(prompt).toContain(label);
+    }
+    expect(prompt).toContain('substantive');
+    expect(prompt).toContain('a greeting, thanks, or a question about Emma, onboarding or privacy is not substantive');
+    expect(prompt).toContain('ending only this conversation');
+    expect(prompt.indexOf('ONBOARDING STATUS')).toBeLessThan(prompt.indexOf('LATEST EMPLOYEE MESSAGE TO CLASSIFY'));
+  });
+});

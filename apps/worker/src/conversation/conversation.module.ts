@@ -19,6 +19,8 @@ import { ScheduledActionRepository } from '../followup/repositories/scheduled-ac
 import { GoalRepository } from '../memory/repositories/goal.repository';
 import { MemoryRepository } from '../memory/repositories/memory.repository';
 import { MemoryModule } from '../memory/memory.module';
+import { OnboardingModule } from '../onboarding/onboarding.module';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { EscalationStubService } from '../safety/escalation-stub.service';
 import { RiskSignalRepository } from '../safety/repositories/risk-signal.repository';
@@ -36,6 +38,7 @@ import { SurveyModule } from '../survey/survey.module';
     StyleModule,
     SafetyModule,
     FeatureFlagModule,
+    OnboardingModule,
     BullModule.registerQueue(
       { name: QUEUE_NAMES.CONVERSATION },
       { name: QUEUE_NAMES.MESSAGE_SEND },
@@ -66,6 +69,7 @@ import { SurveyModule } from '../survey/survey.module';
         pulseBacklogService: PulseBacklogService,
         styleProfileRepo: StyleProfileRepository,
         goalRepo: GoalRepository,
+        onboardingTurn: OnboardingService,
       ) => new ConversationOrchestrator(
         repo,
         ai,
@@ -79,6 +83,7 @@ import { SurveyModule } from '../survey/survey.module';
         pulseBacklogService,
         styleProfileRepo,
         goalRepo,
+        onboardingTurn,
       ),
       inject: [
         ConversationRepository,
@@ -93,6 +98,7 @@ import { SurveyModule } from '../survey/survey.module';
         PulseBacklogService,
         StyleProfileRepository,
         GoalRepository,
+        OnboardingService,
       ],
     },
     {

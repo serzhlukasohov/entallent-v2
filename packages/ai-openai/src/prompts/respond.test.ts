@@ -913,3 +913,21 @@ describe('buildRespondSystemPrompt qualified goal background', () => {
     expect(userPrompt).not.toContain('UNTRUSTED PREQUALIFIED GOAL BACKGROUND');
   });
 });
+
+describe('buildRespondSystemPrompt onboarding clarification', () => {
+  const normal: ReplyStrategy = { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] };
+
+  it('asks one short question separating a pause from stopping invitations when onboardingClarify is set', () => {
+    const prompt = buildRespondSystemPrompt({ ...normal, onboardingClarify: true }, context({ userName: 'Sam' }));
+    expect(prompt).toContain('Onboarding clarification');
+    expect(prompt).toMatch(/exactly one short question/i);
+    expect(prompt).toContain('pause just for today or for now');
+    expect(prompt).toContain('stop the invitations');
+    expect(prompt).toContain('start now');
+  });
+
+  it('adds nothing about onboarding otherwise', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam' }));
+    expect(prompt).not.toContain('Onboarding clarification');
+  });
+});

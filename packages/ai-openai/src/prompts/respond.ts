@@ -112,6 +112,10 @@ How to handle this:
 - If included: set "containsSurveyProbe": true, "surveyProbeQuestionId": "${context.surveyProbeQuestion.id}". Otherwise: false / undefined.`
     : '';
 
+  const onboardingClarifyHint = strategy.onboardingClarify && !safetyMode
+    ? `\nOnboarding clarification (hard contract for this turn; it overrides the question policy and any acknowledgement or closing contract below): the employee may be answering the invitation to regular conversations, but it is unclear what they want. Respond briefly to what they said, then ask exactly one short question that lets them tell you whether they want to pause just for today or for now, stop the invitations, or start now. Use your own words in ${languageName}; do not list options mechanically and do not assume an answer.`
+    : '';
+
   const timeHint = context.localTime && context.isSessionStart
     ? `\nEmployee's current local time: ${context.localTime}. This looks like the start of a session — a brief time-appropriate greeting (good morning / good evening) or, if they're wrapping up, a sign-off fits. Only when natural, never as filler; at night keep it low-key, not a chirpy "good morning".`
     : context.localTime
@@ -144,7 +148,7 @@ ${strategy.includeFollowUpQuestion
 
 Thread-following: people often drop hints mid-sentence and don't develop them — "I want something with more life to it", "my lead says yes, but...", "I actually wanted to suggest it, but didn't". These side remarks are often more important than the main topic they're talking about. When you catch one, follow it: it's an invitation. Don't let it disappear while you keep drilling the current subject.
 
-Length: ${lengthGuide}. Write in ${languageName}.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${reportingDisclosureHint}${goalHint}${checkInHint}${probeHint}${timeHint}
+Length: ${lengthGuide}. Write in ${languageName}.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${memoryHint}${reportingDisclosureHint}${goalHint}${checkInHint}${probeHint}${onboardingClarifyHint}${timeHint}
 
 ${replyPlanBlock}${RESPOND_STYLE_EXAMPLES}${styleBlock}
 
