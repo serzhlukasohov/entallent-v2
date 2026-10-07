@@ -10,6 +10,7 @@ import {
   conversations,
   messages,
   workspaceConnections,
+  onboardingStates,
   type DbClient,
 } from '@entalent/database';
 import {
@@ -55,6 +56,37 @@ export class IngestionService implements IngestionRepositoryPort {
     };
 
     return { tenantId: conn.tenantId, signingSecret: creds.signingSecret };
+  }
+
+  async findLinkedPersonId(params: {
+    tenantId: string;
+    channelType: string;
+    externalWorkspaceId: string;
+    externalUserId: string;
+  }): Promise<string | null> {
+    const [account] = await this.db.client.select({ userId: channelAccounts.userId })
+      .from(channelAccounts)
+      .where(and(
+        eq(channelAccounts.tenantId, params.tenantId),
+        eq(channelAccounts.channelType, params.channelType),
+        eq(channelAccounts.externalWorkspaceId, params.externalWorkspaceId),
+        eq(channelAccounts.externalUserId, params.externalUserId),
+        eq(channelAccounts.linkStatus, 'linked'),
+      )).limit(1);
+    return account?.userId ?? null;
+  }
+
+  async findOnboardingIntroTarget(tenantId: string, personId: string): Promise<{
+    introChannelId: string | null;
+    introActionsMessageTs: string | null;
+  } | null> {
+    const [row] = await this.db.client.select({
+      introChannelId: onboardingStates.introChannelId,
+      introActionsMessageTs: onboardingStates.introActionsMessageTs,
+    }).from(onboardingStates).where(and(
+      eq(onboardingStates.tenantId, tenantId), eq(onboardingStates.personId, personId),
+    )).limit(1);
+    return row ?? null;
   }
 
   async findOrCreateUser(params: {

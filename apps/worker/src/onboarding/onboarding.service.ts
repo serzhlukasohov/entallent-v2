@@ -52,6 +52,17 @@ export class OnboardingService implements OnboardingTurnPort {
     return row ? { state: row.state } : null;
   }
 
+  /**
+   * The intro message carrying the buttons was delivered: remember where it is, then apply the transition.
+   * The location is written first so the transition's post-commit effects (button replacement) can find it.
+   */
+  async recordIntroDelivered(
+    tenantId: string, personId: string, input: { channelId: string; messageTs: string; at: Date },
+  ): Promise<OnboardingApplyResult> {
+    await this.repo.recordIntroActionsMessage(tenantId, personId, input.channelId, input.messageTs);
+    return this.apply(tenantId, personId, { type: 'intro_delivered', at: input.at });
+  }
+
   applyTurnEvent(tenantId: string, userId: string, event: OnboardingEvent): Promise<OnboardingApplyResult> {
     return this.apply(tenantId, userId, event);
   }

@@ -73,6 +73,28 @@ describe('SlackIngestService rapid-message admission', () => {
     expect(ingestion.saveInboundMessage).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
   });
+
+  it('routes block_actions to an onboarding action job without idempotency or message persistence', async () => {
+    const { service, ingestion, idempotency, queue, actionQueue } = createService([]);
+    Object.assign(ingestion, {
+      findLinkedPersonId: vi.fn().mockResolvedValue('person-1'),
+      findOnboardingIntroTarget: vi.fn().mockResolvedValue({ introChannelId: 'D1', introActionsMessageTs: '100.1' }),
+    });
+
+    await service.processBody({
+      type: 'block_actions', team: { id: 'T1' }, user: { id: 'U1' }, channel: { id: 'D1' },
+      container: { message_ts: '100.1' },
+      actions: [{ action_id: 'onboarding:later', value: 'later', action_ts: '200.5' }],
+    });
+
+    expect(idempotency.isNew).not.toHaveBeenCalled();
+    expect(ingestion.findWorkspaceIdentity).toHaveBeenCalledWith('slack', 'T1');
+    expect(actionQueue.add).toHaveBeenCalledWith('action', expect.objectContaining({
+      tenantId: 'tenant-1', personId: 'person-1', action: 'later',
+    }), { jobId: 'onb-act:U1:200.5' });
+    expect(ingestion.saveInboundMessage).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
 });
 
 function createService(messageIds: string[]) {
@@ -90,16 +112,19 @@ function createService(messageIds: string[]) {
   }
   const idempotency = { isNew: vi.fn().mockResolvedValue(true) };
   const queue = { add: vi.fn().mockResolvedValue({}) };
+  const actionQueue = { add: vi.fn().mockResolvedValue({}) };
 
   return {
     service: new SlackIngestService(
       ingestion as never,
       idempotency as never,
       queue as unknown as Queue<ConversationJob>,
+      actionQueue as never,
     ),
     ingestion,
     idempotency,
     queue,
+    actionQueue,
   };
 }
 

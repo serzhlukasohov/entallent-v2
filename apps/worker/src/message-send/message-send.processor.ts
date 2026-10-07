@@ -2,14 +2,19 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { SlackAdapter } from '@entalent/channel-slack';
-import type { OutgoingMessage } from '@entalent/contracts';
+import { OutgoingMessageSchema, type OutgoingMessage } from '@entalent/contracts';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { GroupStateRepository } from '../survey/repositories/group-state.repository';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 
 /** Onboarding-originated messages go to people (incl. management) who are not pulse participants. */
 const ONBOARDING_MESSAGE_TYPES = new Set(['onboarding_ack', 'onboarding_intro', 'onboarding_reminder']);
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
 
 export type MessageSendJob = {
   messageId: string;
@@ -30,6 +35,7 @@ export class MessageSendProcessor extends WorkerHost {
     private readonly workspaceRepo: WorkspaceConnectionRepository,
     private readonly conversationRepo: ConversationRepository,
     private readonly groupStateRepo: GroupStateRepository,
+    private readonly onboardingService: OnboardingService,
   ) {
     super();
   }
@@ -68,6 +74,12 @@ export class MessageSendProcessor extends WorkerHost {
         await this.conversationRepo.completeOnboardingDelivery(messageId, tenantId, persisted.userId, persisted.sentAt, persisted.externalMessageId);
       }
       await this.activateDelivery(messageId, tenantId, conversationId, persisted.sentAt);
+      // Retry after a crash between the Slack send and the onboarding transition (idempotent).
+      if (persisted.externalMessageId && this.introActions(persisted.metadata)) {
+        await this.onboardingService.recordIntroDelivered(tenantId, persisted.userId, {
+          channelId: externalChannelId, messageTs: persisted.externalMessageId, at: persisted.sentAt,
+        });
+      }
       return;
     }
     const text = persisted.text;
@@ -103,6 +115,7 @@ export class MessageSendProcessor extends WorkerHost {
       externalWorkspaceId,
       externalChannelId,
       replyToExternalThreadId,
+      ...(this.messageActions(persisted.metadata) ? { actions: this.messageActions(persisted.metadata) } : {}),
     };
 
     if (channelType === 'slack') {
@@ -123,12 +136,27 @@ export class MessageSendProcessor extends WorkerHost {
       if (onboarding) {
         await this.conversationRepo.completeOnboardingDelivery(messageId, tenantId, persisted.userId, result.sentAt, result.externalMessageId);
       }
+      if (this.introActions(persisted.metadata)) {
+        await this.onboardingService.recordIntroDelivered(tenantId, persisted.userId, {
+          channelId: externalChannelId, messageTs: result.externalMessageId, at: result.sentAt,
+        });
+      }
 
       this.logger.log(`Message ${messageId} delivered — ts=${result.externalMessageId}`);
       return;
     }
 
     throw new Error(`Unsupported channel type: ${channelType}`);
+  }
+
+  private messageActions(metadata: unknown): OutgoingMessage['actions'] {
+    const parsed = OutgoingMessageSchema.shape.actions.safeParse(asRecord(metadata)['onboardingActions']);
+    return parsed.success && parsed.data?.length ? parsed.data : undefined;
+  }
+
+  /** The trust half of an onboarding intro carries the buttons; its delivery moves onboarding forward. */
+  private introActions(metadata: unknown): OutgoingMessage['actions'] {
+    return asRecord(metadata)['onboardingIntroPart'] === 'trust' ? this.messageActions(metadata) : undefined;
   }
 
   private async recordDelivery(

@@ -249,6 +249,7 @@ describe('ConversationRepository', () => {
       'externalMessageId',
       'onboardingDeliveryId',
       'messageType',
+      'metadata',
       'channelType',
       'externalConversationId',
     ]);

@@ -22,3 +22,14 @@ export interface OnboardingReminderJob {
   /** ISO timestamp the reminder was scheduled for. */
   dueAt: string;
 }
+
+export const OnboardingActionJobSchema = z.object({
+  tenantId: z.string(),
+  personId: z.string(),
+  action: OnboardingActionSchema,
+  /** Slack action_ts (epoch seconds, fractional). */
+  actionTs: z.string(),
+  messageTs: z.string(),
+  channelId: z.string(),
+});
+export type OnboardingActionJob = z.infer<typeof OnboardingActionJobSchema>;

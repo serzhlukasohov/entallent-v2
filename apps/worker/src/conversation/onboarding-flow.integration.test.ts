@@ -91,7 +91,8 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
     expect(outbound?.metadata).toMatchObject({ onboardingDeliveryId: deliveryId });
 
     const sender = new MessageSendProcessor(workspace as never, repository,
-      { activateDeliveredConfirmation: vi.fn() } as never);
+      { activateDeliveredConfirmation: vi.fn() } as never, {} as never,
+    );
     await sender.process(queued[0]!);
     await sender.process(queued[0]!);
     expect(slack.sendMessage).toHaveBeenCalledTimes(1);

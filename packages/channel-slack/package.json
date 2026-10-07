@@ -16,7 +16,8 @@
     "dev": "tsup src/index.ts --format cjs --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --import tsx --test src/*.test.ts"
   },
   "devDependencies": {
     "@entalent/eslint-config": "workspace:*",

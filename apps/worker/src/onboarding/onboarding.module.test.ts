@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { DatabaseService } from '../database/database.service';
 import { ConversationModule } from '../conversation/conversation.module';
 import { QUEUE_NAMES } from '../queue/queue.module';
+import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { OnboardingEffectsService } from './onboarding-effects.service';
 import { OnboardingModule } from './onboarding.module';
 import { OnboardingStateRepository } from './onboarding-state.repository';
@@ -23,8 +24,9 @@ describe('OnboardingModule wiring', () => {
     @Module({
       providers: [
         { provide: DatabaseService, useValue: {} },
-        ...[QUEUE_NAMES.CONVERSATION, QUEUE_NAMES.MESSAGE_SEND, QUEUE_NAMES.ONBOARDING_REMINDER]
+        ...[QUEUE_NAMES.CONVERSATION, QUEUE_NAMES.MESSAGE_SEND, QUEUE_NAMES.ONBOARDING_REMINDER, QUEUE_NAMES.ONBOARDING_ACTION]
           .map((name) => ({ provide: getQueueToken(name), useValue: stub })),
+        { provide: WorkspaceConnectionRepository, useValue: {} },
         OnboardingStateRepository,
         OnboardingEffectsService,
         { provide: ONBOARDING_EFFECTS, useExisting: OnboardingEffectsService },

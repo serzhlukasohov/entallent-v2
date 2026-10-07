@@ -46,6 +46,17 @@ async function bootstrap(): Promise<void> {
     },
   );
 
+  // Slack interactions arrive form-urlencoded; keep the raw body for signature verification.
+  fastify.removeContentTypeParser('application/x-www-form-urlencoded');
+  fastify.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (req: unknown, body: string, done: (err: Error | null, body?: unknown) => void) => {
+      (req as Record<string, unknown>)['rawBody'] = body;
+      done(null, Object.fromEntries(new URLSearchParams(body)));
+    },
+  );
+
   logger.log('Starting listener', 'Bootstrap');
   await app.listen(env.API_PORT, '0.0.0.0');
 

@@ -11,7 +11,10 @@ import { QUEUE_NAMES } from '../queue/queue.module';
 @Module({
   imports: [
     DatabaseModule,
-    BullModule.registerQueue({ name: QUEUE_NAMES.CONVERSATION }),
+    BullModule.registerQueue(
+      { name: QUEUE_NAMES.CONVERSATION },
+      { name: QUEUE_NAMES.ONBOARDING_ACTION },
+    ),
   ],
   controllers: [SlackEventsController],
   providers: [

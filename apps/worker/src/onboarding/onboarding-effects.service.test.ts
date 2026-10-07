@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const slack = vi.hoisted(() => ({ updateMessage: vi.fn() }));
+vi.mock('@entalent/channel-slack', () => ({
+  SlackAdapter: class { updateMessage = slack.updateMessage; },
+}));
+
 import { OnboardingEffectsService } from './onboarding-effects.service';
 import { stableId } from './stable-id';
 
@@ -14,11 +20,11 @@ function fakeDb(conversationRows: unknown[], accountRows: unknown[]) {
 const conv = [{ conversationId: 'c1', channelType: 'slack', externalConversationId: 'D1' }];
 const acct = [{ externalWorkspaceId: 'W1' }];
 
-function build(db: unknown) {
+function build(db: unknown, workspaceRepo: unknown = {}) {
   const reminderQueue = { add: vi.fn().mockResolvedValue(undefined) };
   const conversationQueue = { add: vi.fn().mockResolvedValue(undefined) };
   const messageSendQueue = { add: vi.fn().mockResolvedValue(undefined) };
-  const service = new OnboardingEffectsService(reminderQueue as never, conversationQueue as never, db as never, messageSendQueue as never);
+  const service = new OnboardingEffectsService(reminderQueue as never, conversationQueue as never, db as never, messageSendQueue as never, workspaceRepo as never);
   return { service, reminderQueue, conversationQueue, messageSendQueue };
 }
 
@@ -69,5 +75,38 @@ describe('OnboardingEffectsService', () => {
     expect(name).toBe('check-in');
     expect(data).toMatchObject({ onboardingStart: true, userId: 'p', conversationId: 'c1', externalWorkspaceId: 'W1' });
     expect(opts).toEqual({ jobId: 'onb-start:p:4' });
+  });
+
+  describe('replaceIntroActions', () => {
+    const input = { tenantId: 't', personId: 'p', channelId: 'D1', messageTs: '10.5', text: 'Body\n\n_Done_' };
+
+    it('updates the intro message without buttons using the tenant bot token', async () => {
+      slack.updateMessage.mockReset().mockResolvedValue(undefined);
+      const repo = {
+        findSlackAccountByUserId: vi.fn().mockResolvedValue({ externalWorkspaceId: 'W1', externalUserId: 'U1' }),
+        findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'xoxb' }),
+      };
+      await build({}, repo).service.replaceIntroActions(input);
+      expect(repo.findByExternalWorkspace).toHaveBeenCalledWith('slack', 'W1', 't');
+      expect(slack.updateMessage).toHaveBeenCalledWith({
+        tenantId: 't', externalChannelId: 'D1', externalMessageId: '10.5', text: 'Body\n\n_Done_',
+      });
+    });
+
+    it('logs and does not throw when Slack fails', async () => {
+      slack.updateMessage.mockReset().mockRejectedValue(new Error('boom'));
+      const repo = {
+        findSlackAccountByUserId: vi.fn().mockResolvedValue({ externalWorkspaceId: 'W1', externalUserId: 'U1' }),
+        findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'xoxb' }),
+      };
+      await expect(build({}, repo).service.replaceIntroActions(input)).resolves.toBeUndefined();
+    });
+
+    it('does nothing when no workspace connection exists', async () => {
+      slack.updateMessage.mockReset();
+      const repo = { findSlackAccountByUserId: vi.fn().mockResolvedValue(null), findByExternalWorkspace: vi.fn() };
+      await build({}, repo).service.replaceIntroActions(input);
+      expect(slack.updateMessage).not.toHaveBeenCalled();
+    });
   });
 });
