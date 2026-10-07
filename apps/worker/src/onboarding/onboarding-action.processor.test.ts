@@ -19,4 +19,42 @@ describe('OnboardingActionProcessor', () => {
       .rejects.toThrow();
     expect(apply).not.toHaveBeenCalled();
   });
+
+  it('treats an explicit button kind like a legacy job without kind', async () => {
+    const apply = vi.fn().mockResolvedValue({ changed: true });
+    await new OnboardingActionProcessor({ apply } as never).process({ data: { ...data, kind: 'button' } } as Job<never>);
+    expect(apply).toHaveBeenCalledWith('t1', 'p1', expect.objectContaining({ type: 'action', source: 'button' }));
+  });
+
+  it('applies a system role_changed event with the current time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    const apply = vi.fn().mockResolvedValue({ changed: true });
+    await new OnboardingActionProcessor({ apply } as never).process({ data: {
+      kind: 'system', tenantId: 't1', personId: 'p1', event: { type: 'role_changed', from: 'manager', to: 'employee' },
+    } } as Job<never>);
+    expect(apply).toHaveBeenCalledWith('t1', 'p1', {
+      type: 'role_changed', from: 'manager', to: 'employee', at: new Date('2026-10-07T10:00:00Z'),
+    });
+    vi.useRealTimers();
+  });
+
+  it('applies a system deactivated event', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    const apply = vi.fn().mockResolvedValue({ changed: true });
+    await new OnboardingActionProcessor({ apply } as never).process({ data: {
+      kind: 'system', tenantId: 't1', personId: 'p1', event: { type: 'deactivated' },
+    } } as Job<never>);
+    expect(apply).toHaveBeenCalledWith('t1', 'p1', { type: 'deactivated', at: new Date('2026-10-07T10:00:00Z') });
+    vi.useRealTimers();
+  });
+
+  it('rejects a system job with an unknown role', async () => {
+    const apply = vi.fn();
+    await expect(new OnboardingActionProcessor({ apply } as never).process({ data: {
+      kind: 'system', tenantId: 't1', personId: 'p1', event: { type: 'role_changed', from: 'x', to: 'employee' },
+    } } as Job<never>)).rejects.toThrow();
+    expect(apply).not.toHaveBeenCalled();
+  });
 });

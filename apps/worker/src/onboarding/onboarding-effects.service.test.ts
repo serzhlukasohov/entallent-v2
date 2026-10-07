@@ -24,11 +24,29 @@ function build(db: unknown, workspaceRepo: unknown = {}) {
   const reminderQueue = { add: vi.fn().mockResolvedValue(undefined) };
   const conversationQueue = { add: vi.fn().mockResolvedValue(undefined) };
   const messageSendQueue = { add: vi.fn().mockResolvedValue(undefined) };
-  const service = new OnboardingEffectsService(reminderQueue as never, conversationQueue as never, db as never, messageSendQueue as never, workspaceRepo as never);
-  return { service, reminderQueue, conversationQueue, messageSendQueue };
+  const intro = { sendIntro: vi.fn().mockResolvedValue({ introMessageId: 'i', trustMessageId: 't' }) };
+  const service = new OnboardingEffectsService(reminderQueue as never, conversationQueue as never, db as never, messageSendQueue as never, workspaceRepo as never, intro as never);
+  return { service, reminderQueue, conversationQueue, messageSendQueue, intro };
 }
 
 describe('OnboardingEffectsService', () => {
+  it('sendRoleIntro delegates to the intro service with the delivery target, role and version', async () => {
+    const { db } = fakeDb(conv, acct);
+    const { service, intro } = build(db);
+    await service.sendRoleIntro({ tenantId: 't', personId: 'p', role: 'team_lead', version: 7 });
+    expect(intro.sendIntro).toHaveBeenCalledWith({
+      tenantId: 't', personId: 'p', role: 'team_lead', version: 7,
+      conversation: { id: 'c1', channelType: 'slack', externalConversationId: 'D1', externalWorkspaceId: 'W1' },
+    });
+  });
+
+  it('sendRoleIntro sends nothing when the person has no active conversation', async () => {
+    const { db } = fakeDb([], []);
+    const { service, intro } = build(db);
+    await service.sendRoleIntro({ tenantId: 't', personId: 'p', role: 'employee', version: 2 });
+    expect(intro.sendIntro).not.toHaveBeenCalled();
+  });
+
   it('scheduleReminder uses a delayed deterministic job', async () => {
     const { service, reminderQueue } = build({});
     const dueAt = new Date(Date.now() + 60_000);

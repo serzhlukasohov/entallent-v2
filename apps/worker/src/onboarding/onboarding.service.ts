@@ -170,10 +170,14 @@ export class OnboardingService implements OnboardingTurnPort {
           tenantId, personId, dedupeKey: `${personId}:${c.version}`,
         });
         return;
+      case 'send_intro':
+        // Role-change intro: ids are keyed by the committed version, so they differ from every earlier intro.
+        await this.effects.sendRoleIntro({ tenantId, personId, role: c.role, version: c.version });
+        return;
       default:
         // cancel_reminder: the queued reminder job is not removed; the reminder processor compares the job's
         // dueAt with the state's reminder_due_at/reminderStatus and drops stale jobs.
-        // set_proactive is applied inside the transaction; send_intro is dispatched elsewhere.
+        // set_proactive is applied inside the transaction.
         return;
     }
   }

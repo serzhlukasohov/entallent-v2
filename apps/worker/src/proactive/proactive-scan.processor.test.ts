@@ -7,6 +7,7 @@ describe('ProactiveScanProcessor', () => {
     const dispatchPending = vi.fn().mockResolvedValue({ found: 2, queued: 2, failed: 0 });
     const processor = new ProactiveScanProcessor(
       { scan } as never, {} as never, {} as never, { dispatchPending } as never, { sweep: vi.fn().mockResolvedValue({ found: 0, enqueued: 0, failed: 0 }) } as never,
+      { sweep: vi.fn().mockResolvedValue({ found: 0, reconciled: 0, failed: 0 }) } as never,
     );
 
     await processor.process({ id: 'pilot', name: 'onboarding-only',
@@ -21,6 +22,7 @@ describe('ProactiveScanProcessor', () => {
     const dispatchPending = vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 });
     const processor = new ProactiveScanProcessor(
       { scan } as never, {} as never, {} as never, { dispatchPending } as never, { sweep: vi.fn().mockResolvedValue({ found: 0, enqueued: 0, failed: 0 }) } as never,
+      { sweep: vi.fn().mockResolvedValue({ found: 0, reconciled: 0, failed: 0 }) } as never,
     );
 
     await processor.process({ id: 'recurring', name: 'scan', data: {} } as never);
@@ -33,6 +35,7 @@ describe('ProactiveScanProcessor', () => {
     const dispatchPending = vi.fn();
     const processor = new ProactiveScanProcessor(
       { scan: vi.fn() } as never, {} as never, {} as never, { dispatchPending } as never, { sweep: vi.fn().mockResolvedValue({ found: 0, enqueued: 0, failed: 0 }) } as never,
+      { sweep: vi.fn().mockResolvedValue({ found: 0, reconciled: 0, failed: 0 }) } as never,
     );
     await expect(processor.process({ id: 'unscoped', name: 'onboarding-only',
       data: { tenantId: 'tenant-1' } } as never)).rejects.toThrow('onboarding_scope_required');
@@ -44,10 +47,12 @@ describe('ProactiveScanProcessor', () => {
     const scan = vi.fn(async () => { order.push('scan'); return { candidatesFound: 0, enqueued: 0, skippedQuietHours: 0 }; });
     const dispatchPending = vi.fn(async () => { order.push('dispatch'); return { found: 0, queued: 0, failed: 0 }; });
     const sweep = vi.fn(async () => { order.push('sweep'); return { found: 1, enqueued: 1, failed: 0 }; });
-    const processor = new ProactiveScanProcessor({ scan } as never, {} as never, {} as never, { dispatchPending } as never, { sweep } as never);
+    const reconcile = vi.fn(async () => { order.push('reconcile'); return { found: 1, reconciled: 1, failed: 0 }; });
+    const processor = new ProactiveScanProcessor({ scan } as never, {} as never, {} as never, { dispatchPending } as never, { sweep } as never, { sweep: reconcile } as never);
     await processor.process({ id: 'r', name: 'scan', data: { tenantId: 't1' } } as never);
-    expect(order).toEqual(['dispatch', 'sweep', 'scan']);
+    expect(order).toEqual(['dispatch', 'sweep', 'reconcile', 'scan']);
     expect(sweep).toHaveBeenCalledWith('t1');
+    expect(reconcile).toHaveBeenCalledWith('t1');
   });
 
   it('a sweep failure never blocks the scan', async () => {
@@ -55,6 +60,17 @@ describe('ProactiveScanProcessor', () => {
     const processor = new ProactiveScanProcessor(
       { scan } as never, {} as never, {} as never,
       { dispatchPending: vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 }) } as never,
+      { sweep: vi.fn().mockRejectedValue(new Error('db down')) } as never, { sweep: vi.fn().mockResolvedValue({ found: 0, reconciled: 0, failed: 0 }) } as never);
+    await processor.process({ id: 'r', name: 'scan', data: {} } as never);
+    expect(scan).toHaveBeenCalled();
+  });
+
+  it('a role reconcile failure never blocks the scan', async () => {
+    const scan = vi.fn().mockResolvedValue({ candidatesFound: 0, enqueued: 0, skippedQuietHours: 0 });
+    const processor = new ProactiveScanProcessor(
+      { scan } as never, {} as never, {} as never,
+      { dispatchPending: vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 }) } as never,
+      { sweep: vi.fn().mockResolvedValue({ found: 0, enqueued: 0, failed: 0 }) } as never,
       { sweep: vi.fn().mockRejectedValue(new Error('db down')) } as never);
     await processor.process({ id: 'r', name: 'scan', data: {} } as never);
     expect(scan).toHaveBeenCalled();
@@ -63,7 +79,7 @@ describe('ProactiveScanProcessor', () => {
   it('does not sweep in a unit-scoped onboarding-only job', async () => {
     const sweep = vi.fn();
     const processor = new ProactiveScanProcessor({ scan: vi.fn() } as never, {} as never, {} as never,
-      { dispatchPending: vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 }) } as never, { sweep } as never);
+      { dispatchPending: vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 }) } as never, { sweep } as never, { sweep } as never);
     await processor.process({ id: 'o', name: 'onboarding-only', data: { tenantId: 't', unitId: 'u' } } as never);
     expect(sweep).not.toHaveBeenCalled();
   });

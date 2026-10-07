@@ -6,7 +6,7 @@ import { normalizeSlackEvent } from '@entalent/channel-slack';
 import { IngestionService } from './ingestion.service';
 import { EventIdempotencyService } from './event-idempotency.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import type { OnboardingActionJob } from '@entalent/contracts';
+import type { OnboardingActionJob, OnboardingSystemJob } from '@entalent/contracts';
 import type { ConversationJob } from '../queue/queue.types';
 import { handleSlackInteraction } from './slack-interaction';
 
@@ -25,7 +25,7 @@ export class SlackIngestService {
     private readonly ingestion: IngestionService,
     private readonly idempotency: EventIdempotencyService,
     @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly conversationQueue: Queue<ConversationJob>,
-    @InjectQueue(QUEUE_NAMES.ONBOARDING_ACTION) private readonly onboardingActionQueue: Queue<OnboardingActionJob>,
+    @InjectQueue(QUEUE_NAMES.ONBOARDING_ACTION) private readonly onboardingActionQueue: Queue<OnboardingActionJob | OnboardingSystemJob>,
   ) {}
 
   async processBody(body: Record<string, unknown>): Promise<void> {

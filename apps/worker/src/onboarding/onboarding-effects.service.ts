@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { and, desc, eq } from 'drizzle-orm';
-import type { OnboardingEffectsPort } from '@entalent/application';
+import type { OnboardingEffectsPort, PrimaryOrgRole } from '@entalent/application';
 import { SlackAdapter } from '@entalent/channel-slack';
 import type { OnboardingReminderJob } from '@entalent/contracts';
 import { channelAccounts, conversations, messages } from '@entalent/database';
@@ -11,6 +11,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
 import type { MessageSendJob } from '../message-send/message-send.processor';
 import type { CheckInJob } from '../conversation/conversation.processor';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
+import { OnboardingIntroService } from './onboarding-intro.service';
 import { stableId } from './stable-id';
 
 export interface DeliveryTarget {
@@ -30,6 +31,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
     private readonly db: DatabaseService,
     @InjectQueue(QUEUE_NAMES.MESSAGE_SEND) private readonly messageSendQueue: Queue<MessageSendJob>,
     private readonly workspaceRepo: WorkspaceConnectionRepository,
+    private readonly intro: OnboardingIntroService,
   ) {}
 
   async scheduleReminder(input: { tenantId: string; personId: string; dueAt: Date }): Promise<void> {
@@ -99,6 +101,22 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       externalWorkspaceId: target.externalWorkspaceId, externalConversationId: target.externalConversationId,
       traceId: `onboarding-start:${input.dedupeKey}`, onboardingStart: true, onboardingStartKey: input.dedupeKey,
     }, { jobId: `onb-start:${input.dedupeKey}` });
+  }
+
+  /** Role-change introduction into the person's existing conversation; without one there is nothing to send into. */
+  async sendRoleIntro(input: { tenantId: string; personId: string; role: PrimaryOrgRole; version: number }): Promise<void> {
+    const target = await this.findDeliveryTarget(input.tenantId, input.personId);
+    if (!target) {
+      this.logger.warn(`No active conversation for role-change intro person=${input.personId}`);
+      return;
+    }
+    await this.intro.sendIntro({
+      tenantId: input.tenantId, personId: input.personId, role: input.role, version: input.version,
+      conversation: {
+        id: target.conversationId, channelType: target.channelType,
+        externalConversationId: target.externalConversationId, externalWorkspaceId: target.externalWorkspaceId,
+      },
+    });
   }
 
   /** The person's latest active conversation and linked workspace, or null. */

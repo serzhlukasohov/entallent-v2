@@ -9,6 +9,7 @@ import { OnboardingEffectsService } from './onboarding-effects.service';
 import { OnboardingReminderProcessor } from './onboarding-reminder.processor';
 import { OnboardingReminderRepository } from './onboarding-reminder.repository';
 import { OnboardingReminderSweepService } from './onboarding-reminder-sweep.service';
+import { OnboardingRoleReconcileService } from './onboarding-role-reconcile.service';
 import { OnboardingStateRepository } from './onboarding-state.repository';
 import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
 
@@ -33,7 +34,8 @@ import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
     OnboardingReminderRepository,
     OnboardingReminderProcessor,
     OnboardingReminderSweepService,
+    OnboardingRoleReconcileService,
   ],
-  exports: [OnboardingService, OnboardingIntroService, OnboardingStateRepository, OnboardingReminderSweepService],
+  exports: [OnboardingService, OnboardingIntroService, OnboardingStateRepository, OnboardingReminderSweepService, OnboardingRoleReconcileService],
 })
 export class OnboardingModule {}

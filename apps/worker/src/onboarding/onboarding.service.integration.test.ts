@@ -20,6 +20,7 @@ describe.skipIf(!localDatabase)('OnboardingService against PostgreSQL', () => {
     replaceIntroActions: vi.fn().mockResolvedValue(undefined),
     sendAcknowledgement: vi.fn().mockResolvedValue(undefined),
     startConversation: vi.fn().mockResolvedValue(undefined),
+    sendRoleIntro: vi.fn().mockResolvedValue(undefined),
   };
 
   beforeAll(async () => {

@@ -1,3 +1,4 @@
+import type { PrimaryOrgRole } from '../hierarchy/draft-person';
 import type { OnboardingEffect, OnboardingEvent, OnboardingState } from '../onboarding';
 
 export interface OnboardingApplyResult {
@@ -20,6 +21,8 @@ export interface OnboardingEffectsPort {
   replaceIntroActions(input: { tenantId: string; personId: string; channelId: string; messageTs: string; text: string }): Promise<void>;
   sendAcknowledgement(input: { tenantId: string; personId: string; text: string; dedupeKey: string }): Promise<void>;
   startConversation(input: { tenantId: string; personId: string; dedupeKey: string }): Promise<void>;
+  /** Role-change introduction (full approved copy of `role`); `version` is the committed state version that keys its message ids. */
+  sendRoleIntro(input: { tenantId: string; personId: string; role: PrimaryOrgRole; version: number }): Promise<void>;
 }
 
 /** Consumed by the conversation orchestrator. */

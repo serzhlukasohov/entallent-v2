@@ -46,7 +46,7 @@ describe.skipIf(!localDatabase)('onboarding reminder against PostgreSQL', () => 
       participation: 'deferred', reminderStatus: 'scheduled', reminderOriginAt: new Date(due.getTime() - 3 * 86_400_000),
       reminderDueAt: due, introActionsMessageTs: '1.2' });
     const dbService = { client: db } as never;
-    const effects = new OnboardingEffectsService(reminderQueue as never, {} as never, dbService, messageSendQueue as never, {} as never);
+    const effects = new OnboardingEffectsService(reminderQueue as never, {} as never, dbService, messageSendQueue as never, {} as never, {} as never);
     const onboarding = new OnboardingService(new OnboardingStateRepository(dbService), effects);
     processor = new OnboardingReminderProcessor(new OnboardingReminderRepository(dbService), onboarding, effects, reminderQueue as never);
     sweep = new OnboardingReminderSweepService(reminderQueue as never, dbService);

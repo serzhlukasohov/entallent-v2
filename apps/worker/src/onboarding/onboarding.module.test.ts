@@ -8,6 +8,7 @@ import { DatabaseService } from '../database/database.service';
 import { ConversationModule } from '../conversation/conversation.module';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
+import { OnboardingIntroService } from './onboarding-intro.service';
 import { OnboardingEffectsService } from './onboarding-effects.service';
 import { OnboardingModule } from './onboarding.module';
 import { OnboardingStateRepository } from './onboarding-state.repository';
@@ -28,6 +29,7 @@ describe('OnboardingModule wiring', () => {
           .map((name) => ({ provide: getQueueToken(name), useValue: stub })),
         { provide: WorkspaceConnectionRepository, useValue: {} },
         OnboardingStateRepository,
+        { provide: OnboardingIntroService, useValue: {} },
         OnboardingEffectsService,
         { provide: ONBOARDING_EFFECTS, useExisting: OnboardingEffectsService },
         OnboardingService,

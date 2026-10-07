@@ -1,5 +1,5 @@
 import type { Queue } from 'bullmq';
-import { OnboardingActionSchema, type NormalizedChannelEvent, type OnboardingActionJob } from '@entalent/contracts';
+import { OnboardingActionSchema, type NormalizedChannelEvent, type OnboardingActionJob, type OnboardingSystemJob } from '@entalent/contracts';
 
 export type SlackInteractionEvent = Extract<NormalizedChannelEvent, { type: 'interaction' }>;
 
@@ -14,7 +14,7 @@ export interface SlackInteractionDeps {
   findOnboardingIntroTarget(tenantId: string, personId: string): Promise<{
     introChannelId: string | null; introActionsMessageTs: string | null;
   } | null>;
-  queue: Pick<Queue<OnboardingActionJob>, 'add'>;
+  queue: Pick<Queue<OnboardingActionJob | OnboardingSystemJob>, 'add'>;
   debug(message: string): void;
 }
 
@@ -58,6 +58,7 @@ export async function handleSlackInteraction(
   }
 
   await deps.queue.add('action', {
+    kind: 'button',
     tenantId: workspace.tenantId,
     personId,
     action: parsed.data,

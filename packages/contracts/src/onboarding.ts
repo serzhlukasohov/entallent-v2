@@ -30,7 +30,10 @@ export interface OnboardingReminderRecalculateJob {
   tenantId: string;
 }
 
+export const OnboardingRoleSchema = z.enum(['employee', 'team_lead', 'manager', 'hr', 'hrbp', 'leadership']);
+
 export const OnboardingActionJobSchema = z.object({
+  kind: z.literal('button').default('button'),
   tenantId: z.string(),
   personId: z.string(),
   action: OnboardingActionSchema,
@@ -39,4 +42,23 @@ export const OnboardingActionJobSchema = z.object({
   messageTs: z.string(),
   channelId: z.string(),
 });
-export type OnboardingActionJob = z.infer<typeof OnboardingActionJobSchema>;
+export type OnboardingActionJob = z.input<typeof OnboardingActionJobSchema>;
+
+/** Queued by the API after a hierarchy mutation committed; the worker applies it as a state event. */
+export const OnboardingSystemJobSchema = z.object({
+  kind: z.literal('system'),
+  tenantId: z.string(),
+  personId: z.string(),
+  event: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('role_changed'), from: OnboardingRoleSchema, to: OnboardingRoleSchema }),
+    z.object({ type: z.literal('deactivated') }),
+  ]),
+});
+export type OnboardingSystemJob = z.infer<typeof OnboardingSystemJobSchema>;
+
+/** A job without `kind` predates the union and is a button job. */
+export const OnboardingQueueJobSchema = z.preprocess(
+  (v) => (v && typeof v === 'object' && !Array.isArray(v) && !('kind' in v) ? { ...v, kind: 'button' } : v),
+  z.discriminatedUnion('kind', [OnboardingActionJobSchema, OnboardingSystemJobSchema]),
+);
+export type OnboardingQueueJob = z.output<typeof OnboardingQueueJobSchema>;

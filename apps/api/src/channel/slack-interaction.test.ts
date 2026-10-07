@@ -33,7 +33,7 @@ describe('handleSlackInteraction', () => {
     const { d, queue } = deps();
     await expect(handleSlackInteraction(event(), d as never)).resolves.toBe(true);
     expect(queue.add).toHaveBeenCalledWith('action', {
-      tenantId: 'tenant-1', personId: 'person-1', action: 'start',
+      kind: 'button', tenantId: 'tenant-1', personId: 'person-1', action: 'start',
       actionTs: '200.5', messageTs: '100.1', channelId: 'D1',
     }, { jobId: 'onb-act:U1:200.5' });
   });

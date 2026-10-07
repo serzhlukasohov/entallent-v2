@@ -35,6 +35,7 @@ function harness(opts: { state?: Partial<OnboardingState>; row?: Partial<Onboard
     replaceIntroActions: vi.fn().mockResolvedValue(undefined),
     sendAcknowledgement: vi.fn().mockResolvedValue(undefined),
     startConversation: vi.fn().mockResolvedValue(undefined),
+    sendRoleIntro: vi.fn().mockResolvedValue(undefined),
   };
   const service = new OnboardingService(repo as never, effects);
   return { service, tx, repo, effects, calls };
@@ -200,5 +201,37 @@ describe('OnboardingService.apply', () => {
       expect(h.tx.setIntroLocation).not.toHaveBeenCalled();
       expect(h.tx.updateState).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('OnboardingService role changes and deactivation', () => {
+  it('sends the new role intro post-commit with the current role and the new state version', async () => {
+    const h = harness({ state: initialOnboardingState('manager'), role: 'employee' });
+    const r = await h.service.apply(T, P, { type: 'role_changed', from: 'manager', to: 'employee', at });
+    expect(r.changed).toBe(true);
+    expect(h.effects.sendRoleIntro).toHaveBeenCalledWith({ tenantId: T, personId: P, role: 'employee', version: 4 });
+    expect(h.calls.indexOf('commit')).toBeLessThan(h.effects.sendRoleIntro.mock.invocationCallOrder[0]!);
+  });
+
+  it('sends no intro for team lead to employee', async () => {
+    const h = harness({ role: 'employee' });
+    await h.service.apply(T, P, { type: 'role_changed', from: 'team_lead', to: 'employee', at });
+    expect(h.effects.sendRoleIntro).not.toHaveBeenCalled();
+  });
+
+  it('keeps going when the intro cannot be sent', async () => {
+    const h = harness({ state: initialOnboardingState('manager'), role: 'employee' });
+    h.effects.sendRoleIntro.mockRejectedValue(new Error('slack down'));
+    await expect(h.service.apply(T, P, { type: 'role_changed', from: 'manager', to: 'employee', at }))
+      .resolves.toMatchObject({ changed: true });
+  });
+
+  it('deactivation cancels a scheduled reminder and sends nothing', async () => {
+    const h = harness({ state: { reminderStatus: 'scheduled', reminderOriginAt: at, introStatus: 'delivered', buttonsActive: true } });
+    const r = await h.service.apply(T, P, { type: 'deactivated', at });
+    expect(r.changed).toBe(true);
+    expect(h.tx.updateState).toHaveBeenCalledWith('row1', expect.objectContaining({ reminderStatus: 'cancelled' }), expect.anything());
+    expect(h.effects.sendRoleIntro).not.toHaveBeenCalled();
+    expect(h.effects.sendAcknowledgement).not.toHaveBeenCalled();
   });
 });
