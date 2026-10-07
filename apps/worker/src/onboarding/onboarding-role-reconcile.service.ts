@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
-import type { OnboardingTrack, PrimaryOrgRole } from '@entalent/application';
+import { and, asc, eq, sql } from 'drizzle-orm';
+import { trackForRole, type OnboardingTrack, type PrimaryOrgRole } from '@entalent/application';
 import { onboardingStates, people, users } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { OnboardingService } from './onboarding.service';
@@ -40,7 +40,7 @@ export class OnboardingRoleReconcileService {
         eq(users.status, 'active'),
         sql`${onboardingStates.track} <> ${expectedTrack}`,
         ...(tenantId ? [eq(onboardingStates.tenantId, tenantId)] : []),
-      )).limit(RECONCILE_LIMIT);
+      )).orderBy(asc(onboardingStates.updatedAt)).limit(RECONCILE_LIMIT);
     let reconciled = 0;
     let failed = 0;
     for (const row of rows) {
@@ -48,6 +48,10 @@ export class OnboardingRoleReconcileService {
         const result = await this.onboarding.apply(row.tenantId, row.personId, {
           type: 'role_changed', from: REPRESENTATIVE_ROLE[row.track as OnboardingTrack],
           to: row.primaryRole as PrimaryOrgRole, at: new Date(),
+        }, async (tx, locked) => {
+          // Re-check under the row lock: a queued job may have fixed the track since the query ran.
+          const current = await tx.getPerson(row.tenantId, row.personId);
+          return trackForRole(current.role as PrimaryOrgRole) !== locked.state.track;
         });
         if (result.changed) reconciled += 1;
       } catch (error) {

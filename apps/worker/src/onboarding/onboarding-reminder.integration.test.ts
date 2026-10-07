@@ -64,7 +64,7 @@ describe.skipIf(!localDatabase)('onboarding reminder against PostgreSQL', () => 
   it('sweep finds the overdue scheduled row and enqueues a sweep-specific job', async () => {
     await sweep.sweep(tenantId);
     expect(reminderQueue.add).toHaveBeenCalledWith('remind', expect.objectContaining({ personId, dueAt: due.toISOString() }),
-      expect.objectContaining({ jobId: `onb-rem:${personId}:${due.getTime()}:sweep:${Math.floor(Date.now() / 3_600_000)}` }));
+      expect.objectContaining({ jobId: `onb-rem-sweep:${personId}:${due.getTime()}-${Math.floor(Date.now() / 3_600_000)}` }));
   });
 
   it('sends once: persists a button-less reminder, marks sent, enqueues message-send; a replay is a no-op', async () => {

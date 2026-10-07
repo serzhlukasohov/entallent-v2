@@ -8,6 +8,7 @@ import { OnboardingEffectsService } from './onboarding-effects.service';
 import { OnboardingReminderRepository } from './onboarding-reminder.repository';
 import { OnboardingService } from './onboarding.service';
 import { stableId } from './stable-id';
+import { reminderJobId } from './job-ids';
 
 const POSTPONE_MS = 30 * 60_000;
 /** A8: after this many postponements the reminder is sent regardless of recent activity. */
@@ -97,7 +98,7 @@ export class OnboardingReminderProcessor extends WorkerHost {
     if (!moved) return;
     await this.queue.add('remind',
       { tenantId: data.tenantId, personId: data.personId, dueAt: runAt.toISOString(), postponeCount },
-      { delay: Math.max(0, runAt.getTime() - now.getTime()), jobId: `onb-rem:${data.personId}:${runAt.getTime()}` });
+      { delay: Math.max(0, runAt.getTime() - now.getTime()), jobId: reminderJobId(data.personId, runAt.getTime()) });
   }
 
   /** Q16: after the company calendar changed. Only moves reminders that are already scheduled. */
@@ -116,7 +117,7 @@ export class OnboardingReminderProcessor extends WorkerHost {
         if (!(await this.repo.updateScheduledDue(row.stateId, dueAt, row.reminderDueAt))) continue;
         await this.queue.add('remind', { tenantId, personId: row.personId, dueAt: dueAt.toISOString() }, {
           delay: Math.max(0, dueAt.getTime() - now.getTime()),
-          jobId: `onb-rem:${row.personId}:${dueAt.getTime()}`,
+          jobId: reminderJobId(row.personId, dueAt.getTime()),
         });
         moved += 1;
       } catch (error) {

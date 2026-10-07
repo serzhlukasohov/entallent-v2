@@ -4,7 +4,7 @@ import {
   type OnboardingApplyResult, type OnboardingEffect, type OnboardingEffectsPort, type OnboardingEvent,
   type OnboardingState, type OnboardingTurnPort,
 } from '@entalent/application';
-import type { PrimaryOrgRole } from '@entalent/application';
+import { trackForRole, type PrimaryOrgRole } from '@entalent/application';
 import { OnboardingStateRepository, type OnboardingStateRepositoryPort, type OnboardingStateRow, type OnboardingTx } from './onboarding-state.repository';
 
 export const ONBOARDING_EFFECTS = Symbol('ONBOARDING_EFFECTS');
@@ -83,6 +83,13 @@ export class OnboardingService implements OnboardingTurnPort {
       const row = await tx.lockState(tenantId, personId);
       if (!row) return null;
       if (beforeDecide && !(await beforeDecide(tx, row))) {
+        return { result: { changed: false, effects: [], state: row.state }, dueAt: null, version: row.version,
+          role: 'employee', introChannelId: row.introChannelId, introActionsMessageTs: row.introActionsMessageTs };
+      }
+      // A track-changing role event whose result is already stored was applied by the other path
+      // (queued job vs reconcile sweep); applying it again would resend the intro.
+      if (event.type === 'role_changed' && trackForRole(event.from) !== trackForRole(event.to)
+        && row.state.track === trackForRole(event.to)) {
         return { result: { changed: false, effects: [], state: row.state }, dueAt: null, version: row.version,
           role: 'employee', introChannelId: row.introChannelId, introActionsMessageTs: row.introActionsMessageTs };
       }

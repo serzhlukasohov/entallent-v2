@@ -234,4 +234,19 @@ describe('OnboardingService role changes and deactivation', () => {
     expect(h.effects.sendRoleIntro).not.toHaveBeenCalled();
     expect(h.effects.sendAcknowledgement).not.toHaveBeenCalled();
   });
+
+  it('skips a role_changed whose track change was already applied (sweep/job race)', async () => {
+    const h = harness({ state: initialOnboardingState('manager'), role: 'manager' });
+    const r = await h.service.apply(T, P, { type: 'role_changed', from: 'employee', to: 'manager', at });
+    expect(r.changed).toBe(false);
+    expect(h.tx.updateState).not.toHaveBeenCalled();
+    expect(h.effects.sendRoleIntro).not.toHaveBeenCalled();
+  });
+
+  it('still sends the intro for a genuine same-track change (hr to manager)', async () => {
+    const h = harness({ state: initialOnboardingState('hr'), role: 'manager' });
+    const r = await h.service.apply(T, P, { type: 'role_changed', from: 'hr', to: 'manager', at });
+    expect(r.changed).toBe(true);
+    expect(h.effects.sendRoleIntro).toHaveBeenCalledWith({ tenantId: T, personId: P, role: 'manager', version: 4 });
+  });
 });

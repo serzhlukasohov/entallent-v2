@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QUEUE_NAMES, type OnboardingReminderRecalculateJob } from '@entalent/contracts';
 import type { OnboardingReminderRecalculator } from './company-calendar.service';
+import { recalculateJobId } from './job-ids';
 
 /** Hands the recomputation to the worker, which owns reminder state and jobs. */
 @Injectable()
@@ -12,6 +13,6 @@ export class BullOnboardingReminderRecalculator implements OnboardingReminderRec
   ) {}
 
   async recalculateScheduledReminders(tenantId: string): Promise<void> {
-    await this.queue.add('recalculate', { tenantId }, { jobId: `onb-recalc:${tenantId}:${Date.now()}` });
+    await this.queue.add('recalculate', { tenantId }, { jobId: recalculateJobId(tenantId, Date.now()) });
   }
 }

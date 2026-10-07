@@ -13,6 +13,7 @@ import type { CheckInJob } from '../conversation/conversation.processor';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { OnboardingIntroService } from './onboarding-intro.service';
 import { stableId } from './stable-id';
+import { reminderJobId, startJobId } from './job-ids';
 
 export interface DeliveryTarget {
   conversationId: string;
@@ -39,7 +40,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       tenantId: input.tenantId, personId: input.personId, dueAt: input.dueAt.toISOString(),
     }, {
       delay: Math.max(0, input.dueAt.getTime() - Date.now()),
-      jobId: `onb-rem:${input.personId}:${input.dueAt.getTime()}`,
+      jobId: reminderJobId(input.personId, input.dueAt.getTime()),
     });
   }
 
@@ -100,7 +101,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       conversationId: target.conversationId, userId: input.personId, tenantId: input.tenantId,
       externalWorkspaceId: target.externalWorkspaceId, externalConversationId: target.externalConversationId,
       traceId: `onboarding-start:${input.dedupeKey}`, onboardingStart: true, onboardingStartKey: input.dedupeKey,
-    }, { jobId: `onb-start:${input.dedupeKey}` });
+    }, { jobId: startJobId(input.dedupeKey) });
   }
 
   /** Role-change introduction into the person's existing conversation; without one there is nothing to send into. */

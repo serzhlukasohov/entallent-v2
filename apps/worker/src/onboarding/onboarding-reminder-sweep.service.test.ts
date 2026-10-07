@@ -16,7 +16,7 @@ describe('OnboardingReminderSweepService', () => {
     const result = await service.sweep();
     expect(limit).toHaveBeenCalledWith(100);
     expect(queue.add).toHaveBeenCalledWith('remind', { tenantId: 't1', personId: 'p1', dueAt: due.toISOString() },
-      { delay: 0, jobId: `onb-rem:p1:${due.getTime()}:sweep:${Math.floor(Date.now() / 3_600_000)}` });
+      { delay: 0, jobId: `onb-rem-sweep:p1:${due.getTime()}-${Math.floor(Date.now() / 3_600_000)}` });
     expect(result).toEqual({ found: 1, enqueued: 1, failed: 0 });
   });
 

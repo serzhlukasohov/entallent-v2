@@ -6,6 +6,7 @@ import type { OnboardingReminderJob } from '@entalent/contracts';
 import { onboardingStates } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
+import { reminderSweepJobId } from './job-ids';
 
 const SWEEP_LIMIT = 100;
 
@@ -41,7 +42,7 @@ export class OnboardingReminderSweepService {
         }, {
           delay: 0,
           // Distinct from the canonical id: a retained completed job must not dedupe the recovery (max one per row per hour).
-          jobId: `onb-rem:${row.personId}:${row.reminderDueAt.getTime()}:sweep:${Math.floor(Date.now() / 3_600_000)}`,
+          jobId: reminderSweepJobId(row.personId, row.reminderDueAt.getTime(), Math.floor(Date.now() / 3_600_000)),
         });
         enqueued += 1;
       } catch (error) {

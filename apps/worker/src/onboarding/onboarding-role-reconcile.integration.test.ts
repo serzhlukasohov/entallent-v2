@@ -74,4 +74,36 @@ describe.skipIf(!localDatabase)('OnboardingRoleReconcileService against PostgreS
     expect(second).toEqual({ found: 0, reconciled: 0, failed: 0 });
     expect(effects.sendRoleIntro).toHaveBeenCalledTimes(2);
   });
+
+  it('sweep then queued job: exactly one intro; job then sweep: exactly one intro', async () => {
+    effects.sendRoleIntro.mockClear();
+    const t2 = randomUUID();
+    const a = randomUUID(); // sweep first
+    const b = randomUUID(); // job first
+    const db = client.db;
+    await db.insert(tenants).values({ id: t2, name: 'Role race fixture' });
+    await db.insert(users).values([a, b].map((id) => ({ id, tenantId: t2, status: 'active' })));
+    await db.insert(people).values([a, b].map((id, i) => ({ id, tenantId: t2, customerEmployeeId: `X-${i}`,
+      workEmail: `x${i}@race.test`, displayName: `x${i}`, primaryRole: 'manager', pulseParticipant: false, lifecycleStatus: 'active' })));
+    await db.insert(onboardingStates).values([a, b].map((personId) => {
+      const s = initialOnboardingState('employee');
+      return { tenantId: t2, personId, track: s.track, introStatus: s.introStatus, participation: s.participation };
+    }));
+    await db.insert(tenantWorkCalendars).values({ tenantId: t2, timezone: 'Europe/Kyiv', workingDays: [1, 2, 3, 4, 5],
+      workStart: '09:00', workEnd: '18:00', updatedBy: 'test' });
+    const onboarding = new OnboardingService(new OnboardingStateRepository({ client: db } as never), effects);
+    const job = (personId: string) => onboarding.apply(t2, personId,
+      { type: 'role_changed', from: 'employee', to: 'manager', at: new Date() });
+    try {
+      // b: job first; a: sweep first, then the late job. The sweep must only see a.
+      await job(b);
+      expect(await service.sweep(t2)).toEqual({ found: 1, reconciled: 1, failed: 0 });
+      expect((await job(a)).changed).toBe(false);
+      expect(effects.sendRoleIntro.mock.calls.filter(([i]) => i.personId === a)).toHaveLength(1);
+      expect(effects.sendRoleIntro.mock.calls.filter(([i]) => i.personId === b)).toHaveLength(1);
+      expect(await service.sweep(t2)).toEqual({ found: 0, reconciled: 0, failed: 0 });
+    } finally {
+      await db.delete(tenants).where(eq(tenants.id, t2));
+    }
+  });
 });

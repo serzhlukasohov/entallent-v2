@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QUEUE_NAMES, type OnboardingActionJob, type OnboardingSystemJob } from '@entalent/contracts';
+import { systemJobId } from './job-ids';
 
 export interface OnboardingSystemEvent {
   personId: string;
@@ -26,7 +27,7 @@ export class OnboardingEventPublisher {
     for (const { personId, auditLogId, event } of events) {
       try {
         await this.queue.add('system', { kind: 'system', tenantId, personId, event }, {
-          jobId: `onb-sys:${personId}:${auditLogId}`,
+          jobId: systemJobId(personId, auditLogId),
         });
       } catch (error) {
         this.logger.error(`Onboarding system event enqueue failed person=${personId}: ${(error as Error).message}`);

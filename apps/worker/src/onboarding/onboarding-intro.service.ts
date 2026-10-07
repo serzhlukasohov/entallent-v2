@@ -8,6 +8,7 @@ import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import type { MessageSendJob } from '../message-send/message-send.processor';
 import { stableId } from './stable-id';
+import { trustJobId } from './job-ids';
 
 export interface SendIntroInput {
   tenantId: string;
@@ -132,7 +133,7 @@ export class OnboardingIntroService {
       messageId: trustId, tenantId: input.tenantId, conversationId: input.conversationId,
       channelType: input.channelType, externalWorkspaceId: input.externalWorkspaceId,
       externalChannelId: input.externalChannelId, text: trust.text,
-    }, { jobId: `onb-trust-${trustId}` });
+    }, { jobId: trustJobId(trustId) });
   }
 
   private job(messageId: string, text: string, input: SendIntroInput): MessageSendJob {

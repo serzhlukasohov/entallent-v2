@@ -1,5 +1,6 @@
 import type { Queue } from 'bullmq';
 import { OnboardingActionSchema, type NormalizedChannelEvent, type OnboardingActionJob, type OnboardingSystemJob } from '@entalent/contracts';
+import { actionJobId } from '../onboarding/job-ids';
 
 export type SlackInteractionEvent = Extract<NormalizedChannelEvent, { type: 'interaction' }>;
 
@@ -65,6 +66,6 @@ export async function handleSlackInteraction(
     actionTs: p.actionTs,
     messageTs: p.messageTs,
     channelId: p.externalChannelId,
-  }, { jobId: `onb-act:${p.externalUserId}:${p.actionTs}` });
+  }, { jobId: actionJobId(p.externalUserId, p.actionTs) });
   return true;
 }
