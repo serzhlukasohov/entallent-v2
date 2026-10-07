@@ -352,6 +352,10 @@ export class ConversationOrchestrator {
     const onboardingAck = onboardingMayOwnReply ? onboardingResult?.replyAck : undefined;
     const onboardingOpens = onboardingMayOwnReply && onboardingAck === undefined && onboardingResult?.replyStart === true;
     const onboardingClarify = onboardingOutcome.kind === 'clarify' && !onboardingSafetyTurn;
+    // A decision made inside a substantive turn is still acknowledged (Q4): the approved ack closes the reply.
+    const onboardingTrailingAck = !onboardingSafetyTurn && onboardingSignal?.substantive === true
+      ? onboardingResult?.replyAck
+      : undefined;
     const onboardingOwnsReply = onboardingAck !== undefined || onboardingOpens;
     const onboardingTakesTurn = onboardingOwnsReply || onboardingClarify;
 
@@ -812,6 +816,7 @@ export class ConversationOrchestrator {
         shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage));
       }
     }
+    if (onboardingTrailingAck) responseText = `${responseText}\n\n${onboardingTrailingAck}`;
     const containsSurveyProbe = onboardingOpener
       ? onboardingOpener.probeQuestionId !== undefined
         && generated.containsSurveyProbe === true

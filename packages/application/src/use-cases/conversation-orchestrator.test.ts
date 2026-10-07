@@ -4848,6 +4848,50 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
     expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
   });
 
+  it('active user stopping inside a substantive turn → stop applied, reply ends with the approved ack (Q4)', async () => {
+    const state = onboardingState('employee', { participation: 'active', introStatus: 'completed', buttonsActive: false });
+    const { m, orch, onboardingTurn } = setup({
+      text: 'these chats make my week worse, please stop inviting me',
+      signal: { intent: 'stop_participation', substantive: true },
+      state,
+      applyResult: {
+        effects: [{ type: 'set_proactive', enabled: false }, { type: 'acknowledge', key: 'decline' }],
+        state: { ...state, participation: 'declined' },
+        replyAck: ACK_COPY.decline,
+      },
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', { type: 'stop_requested', at: INBOUND_OCCURRED_AT });
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.responseText).toBe(`reply\n\n${ACK_COPY.decline}`);
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ text: `reply\n\n${ACK_COPY.decline}` }));
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].messageType).toBeUndefined();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('a substantive stop on a safety turn keeps the safety reply without the ack', async () => {
+    const state = onboardingState('employee', { participation: 'active', introStatus: 'completed', buttonsActive: false });
+    const { m, orch, onboardingTurn } = setup({
+      text: "I can't cope, stop inviting me",
+      signal: { intent: 'stop_participation', substantive: true },
+      state,
+      applyResult: { effects: [{ type: 'acknowledge', key: 'decline' }], state: { ...state, participation: 'declined' }, replyAck: ACK_COPY.decline },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...BASE_CLASSIFICATION, primaryIntent: 'burnout_signal', requiresSafetyCheck: true, surveyAllowed: false,
+      onboardingSignal: { intent: 'stop_participation', substantive: true },
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'burnout', severity: 'high', confidence: 0.9, evidence: ['cannot cope'],
+      immediateResponseRequired: false, escalationRecommended: false, surveyMustBeBlocked: true,
+      proactiveMessagesMustBePaused: false, reasoningSummary: 'High burnout risk.',
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'I am here with you.', confidence: 0.9, containsSurveyProbe: false });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', { type: 'stop_requested', at: INBOUND_OCCURRED_AT });
+    expect(result.responseText).toBe('I am here with you.');
+  });
+
   it('active user with an ambiguous reply → clarify, no state change (Q2, Q4)', async () => {
     const { m, orch, onboardingTurn } = setup({
       text: 'maybe I should stop this',
