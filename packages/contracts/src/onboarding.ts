@@ -15,3 +15,10 @@ export type WorkCalendar = z.infer<typeof WorkCalendarSchema>;
 
 export const OnboardingActionSchema = z.enum(['start', 'later', 'decline', 'got_it']);
 export type OnboardingActionContract = z.infer<typeof OnboardingActionSchema>;
+
+export interface OnboardingReminderJob {
+  tenantId: string;
+  personId: string;
+  /** ISO timestamp the reminder was scheduled for. */
+  dueAt: string;
+}

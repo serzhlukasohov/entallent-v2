@@ -26,7 +26,10 @@ export type ConversationJob = {
   rapidMessageCoalescing?: true;
 };
 
-export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'>;
+export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'> & {
+  /** Set by onboarding when the person chose to start; honoured by the processor in a later task. */
+  onboardingStart?: boolean;
+};
 
 const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { ignoreWindowHours: 48 };
 const RAPID_MESSAGE_COALESCING_WINDOW_MS = 2_000;

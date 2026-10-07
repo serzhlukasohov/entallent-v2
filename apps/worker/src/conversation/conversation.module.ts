@@ -124,6 +124,6 @@ import { SurveyModule } from '../survey/survey.module';
     ConversationProcessor,
     LlmRunRepository,
   ],
-  exports: [OnboardingDispatchService],
+  exports: [OnboardingDispatchService, OutboxService],
 })
 export class ConversationModule {}

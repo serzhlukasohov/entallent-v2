@@ -45,6 +45,8 @@ export { QUEUE_NAMES };
       { name: QUEUE_NAMES.GROUP_REPORT },
       { name: QUEUE_NAMES.STYLE_ANALYSIS },
       { name: QUEUE_NAMES.PROFILE_HYDRATION },
+      { name: QUEUE_NAMES.ONBOARDING_ACTION },
+      { name: QUEUE_NAMES.ONBOARDING_REMINDER },
     ),
   ],
   providers: [RedisService],

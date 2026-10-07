@@ -99,3 +99,4 @@ export type { RuntimeUserState } from './hierarchy/runtime-eligibility';
 export { validateActiveHierarchy, planEmployeeMove, planEmployeeDeactivation, planTeamLeadPromotion, planManagerPromotion, planTeamDeactivation, planUnitTransferDeactivation } from './hierarchy/active-graph';
 export type { ActiveHierarchyGraph, ActiveGraphIssue, EmployeeMovePlan, EmployeeDeactivationPlan, PreviousTeamLeadAction, TeamLeadPromotionPlan, PreviousManagerAction, ManagerPromotionPlan, TeamDeactivationPlan, UnitTransferDeactivationPlan } from './hierarchy/active-graph';
 export * from './onboarding';
+export type { OnboardingApplyResult, OnboardingEffectsPort, OnboardingTurnPort } from './ports/onboarding.port';
