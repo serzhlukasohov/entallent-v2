@@ -1098,3 +1098,11 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Verify the installed bot token's actual `x-oauth-scopes` and both recipient DM opens before scoped dispatch. Reinstall the app after adding `im:write`, reconcile stored workspace scope metadata with an audit record, and retry only an exact failed intent set with no outbound message or external receipt.
 - Regression check: Production preflight, both `conversations.open` probes, exact retry dry-run, targeted `onboarding-only` job, and receipt readback for the two selected Persons; migrated PostgreSQL retry test rejects an existing outbound message.
 - Status: fixed
+
+### 2026-10-04: Requirements PR interpreted as implementation
+- Symptom: onboarding requirements discussion produced an unsolicited implementation PR.
+- Expected: document the grilled requirements only.
+- Root cause layer: context; PR artifact type was inferred incorrectly.
+- Harness fix: preserve the artifact requested by the discussion; implementation requires its own user instruction.
+- Regression check: compare PR changed files against the requested artifact before pushing.
+- Status: fixed; implementation reverted and PR converted to documentation.
