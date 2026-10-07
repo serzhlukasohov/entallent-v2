@@ -490,4 +490,3 @@ describe('onboarding intro buttons', () => {
     });
   });
 });
-
