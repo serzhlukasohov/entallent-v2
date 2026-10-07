@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { Queue } from 'bullmq';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { ProactiveCheckInUseCase } from '@entalent/application';
+import { introMessages } from '@entalent/application';
 import { channelAccounts, createDbClient, messages, orgOnboardingDeliveries,
   orgUnits, people, tenants, users, type DbClient } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { MessageSendProcessor, type MessageSendJob } from '../message-send/message-send.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
 import { OnboardingDispatchService } from './onboarding-dispatch.service';
-import { OutboxService } from './outbox.service';
+import { OnboardingIntroService } from '../onboarding/onboarding-intro.service';
 
 const slack = vi.hoisted(() => ({ openDirectMessage: vi.fn(), sendMessage: vi.fn() }));
 vi.mock('@entalent/channel-slack', () => ({
@@ -67,41 +67,53 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
     }
   });
 
-  it('queues one persisted first contact and records one Slack receipt across a retry', async () => {
+  it('queues the approved two-message intro, chains the trust message after delivery, and records one Slack receipt across a retry', async () => {
     const repository = new ConversationRepository({ client: client.db } as never);
     const workspace = { findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'synthetic-token' }) };
-    const outbox = new OutboxService(queue as never, queue as never, queue as never,
-      queue as never, queue as never, queue as never, queue as never);
-    const checkIn = new ProactiveCheckInUseCase(repository, {
-      generateResponse: vi.fn().mockResolvedValue({ text: 'Welcome to enTalent', containsSurveyProbe: false }),
-    } as never, outbox);
-    const dispatcher = new OnboardingDispatchService({ client: client.db } as never,
-      workspace as never, checkIn);
+    const intro = new OnboardingIntroService({ client: client.db } as never, queue as never);
+    const dispatcher = new OnboardingDispatchService({ client: client.db } as never, workspace as never, intro);
 
     expect(await dispatcher.dispatchPending(tenantId, randomUUID())).toEqual({ found: 0, queued: 0, failed: 0 });
     expect(slack.openDirectMessage).not.toHaveBeenCalled();
     expect(await dispatcher.dispatchPending(tenantId)).toEqual({ found: 1, queued: 1, failed: 0 });
     expect(slack.openDirectMessage).toHaveBeenCalledWith('U-LEADER');
+
+    // Only the first half is queued; the trust half is persisted and waits.
     const queued = await queue.getWaiting();
     expect(queued).toHaveLength(1);
     expect(queued[0]!.data).toMatchObject({ messageId: deliveryId, tenantId,
       externalWorkspaceId: workspaceId, externalChannelId: dmId });
-    const [outbound] = await client.db.select().from(messages).where(eq(messages.id, deliveryId));
-    expect(outbound?.text).toBe('Welcome to enTalent');
-    expect(outbound?.metadata).toMatchObject({ onboardingDeliveryId: deliveryId });
+    const copy = introMessages('leadership');
+    const [first] = await client.db.select().from(messages).where(eq(messages.id, deliveryId));
+    expect(first?.text).toBe(copy.intro);
+    expect(first?.messageType).toBe('onboarding_intro');
+    const trustId = (first?.metadata as { onboardingTrustMessageId: string }).onboardingTrustMessageId;
+    const [trust] = await client.db.select().from(messages).where(eq(messages.id, trustId));
+    expect(trust?.text).toBe(copy.trust);
+    expect(trust?.sentAt).toBeNull();
 
+    const onboarding = { recordIntroDelivered: vi.fn() };
     const sender = new MessageSendProcessor(workspace as never, repository,
-      { activateDeliveredConfirmation: vi.fn() } as never, {} as never,
-    );
+      { activateDeliveredConfirmation: vi.fn() } as never, onboarding as never, intro);
     await sender.process(queued[0]!);
     await sender.process(queued[0]!);
     expect(slack.sendMessage).toHaveBeenCalledTimes(1);
+    expect(slack.sendMessage.mock.calls[0]![0]).not.toHaveProperty('actions');
+    expect(onboarding.recordIntroDelivered).not.toHaveBeenCalled();
     const [intent] = await client.db.select().from(orgOnboardingDeliveries)
       .where(eq(orgOnboardingDeliveries.id, deliveryId));
-    expect(intent).toMatchObject({ status: 'delivered', attemptCount: 1,
-      externalMessageId: '123.456' });
-    expect((await client.db.select().from(messages).where(eq(messages.id, deliveryId)))[0]?.sentAt)
-      .toBeInstanceOf(Date);
+    expect(intent).toMatchObject({ status: 'delivered', attemptCount: 1, externalMessageId: '123.456' });
+
+    // Delivering the first half released exactly one trust job, with the buttons.
+    const afterIntro = await queue.getWaiting();
+    const trustJobs = afterIntro.filter((j) => j.data.messageId === trustId);
+    expect(trustJobs).toHaveLength(1);
+    await sender.process(trustJobs[0]!);
+    expect(slack.sendMessage).toHaveBeenCalledTimes(2);
+    expect(slack.sendMessage.mock.calls[1]![0]).toMatchObject({ text: copy.trust,
+      actions: [{ actionId: 'onboarding:got_it', label: 'Got It', value: 'got_it' }] });
+    expect(onboarding.recordIntroDelivered).toHaveBeenCalledOnce();
     expect(await dispatcher.dispatchPending(tenantId)).toEqual({ found: 0, queued: 0, failed: 0 });
+    expect(await client.db.select().from(messages).where(eq(messages.userId, personId))).toHaveLength(2);
   });
 });

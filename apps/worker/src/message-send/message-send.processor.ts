@@ -6,6 +6,7 @@ import { OutgoingMessageSchema, type OutgoingMessage } from '@entalent/contracts
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { GroupStateRepository } from '../survey/repositories/group-state.repository';
+import { OnboardingIntroService } from '../onboarding/onboarding-intro.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 
@@ -36,6 +37,7 @@ export class MessageSendProcessor extends WorkerHost {
     private readonly conversationRepo: ConversationRepository,
     private readonly groupStateRepo: GroupStateRepository,
     private readonly onboardingService: OnboardingService,
+    private readonly onboardingIntro: OnboardingIntroService,
   ) {
     super();
   }
@@ -80,6 +82,7 @@ export class MessageSendProcessor extends WorkerHost {
           tenantId, persisted.userId, externalChannelId, persisted.externalMessageId, persisted.sentAt,
         );
       }
+      await this.chainTrustMessage(job.data, persisted.metadata);
       return;
     }
     const text = persisted.text;
@@ -95,6 +98,7 @@ export class MessageSendProcessor extends WorkerHost {
         externalMessageId: `dev:${messageId}`,
         sentAt: new Date(),
       });
+      await this.chainTrustMessage(job.data, persisted.metadata);
       return;
     }
 
@@ -142,11 +146,23 @@ export class MessageSendProcessor extends WorkerHost {
         );
       }
 
+      await this.chainTrustMessage(job.data, persisted.metadata);
+
       this.logger.log(`Message ${messageId} delivered — ts=${result.externalMessageId}`);
       return;
     }
 
     throw new Error(`Unsupported channel type: ${channelType}`);
+  }
+
+  /** The first intro message was delivered: release the second one (Q23 ordering). Idempotent. */
+  private async chainTrustMessage(data: MessageSendJob, metadata: unknown): Promise<void> {
+    if (asRecord(metadata)['onboardingIntroPart'] !== 'intro') return;
+    await this.onboardingIntro.enqueueTrustAfterIntro({
+      tenantId: data.tenantId, conversationId: data.conversationId, channelType: data.channelType,
+      externalWorkspaceId: data.externalWorkspaceId, externalChannelId: data.externalChannelId,
+      introMetadata: metadata,
+    });
   }
 
   private messageActions(metadata: unknown): OutgoingMessage['actions'] {

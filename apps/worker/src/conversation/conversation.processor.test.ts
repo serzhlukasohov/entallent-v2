@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Job } from 'bullmq';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -246,6 +248,28 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       ...checkInJob,
       pulseConfig: { ignoreWindowHours: 24 },
     });
+  });
+
+  it('passes an onboarding start check-in to ProactiveCheckInUseCase only, with no agent-service path', async () => {
+    const checkInUseCase = {
+      execute: vi.fn(async () => ({ outboundMessageId: 'o-1', responseText: 'opener', probeQuestionId: null })),
+    };
+    const orchestrator = { orchestrate: vi.fn() };
+    const { processor } = createProcessor({
+      checkInUseCase, orchestrator,
+      db: { client: { select: vi.fn(() => tenantQuery()) } },
+    });
+
+    await processor.process({
+      id: 'onb-start:p1:3', name: 'check-in', attemptsMade: 0,
+      data: { ...checkInJob, onboardingStart: true },
+    } as Job<CheckInJob>);
+
+    expect(checkInUseCase.execute).toHaveBeenCalledOnce();
+    expect(checkInUseCase.execute).toHaveBeenCalledWith(expect.objectContaining({ onboardingStart: true }));
+    expect(orchestrator.orchestrate).not.toHaveBeenCalled();
+    const source = readFileSync(join(__dirname, 'conversation.processor.ts'), 'utf8');
+    expect(source).not.toMatch(/agent-service|AGENT_RUNTIME|maf_|AgentRuntime/i);
   });
 
   it('propagates orchestrator failures and records the inbound run as failed', async () => {

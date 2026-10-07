@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { and, eq, lt, or, sql } from 'drizzle-orm';
-import { ProactiveCheckInUseCase } from '@entalent/application';
+import type { PrimaryOrgRole } from '@entalent/application';
 import { SlackAdapter } from '@entalent/channel-slack';
 import {
   channelAccounts, conversations, orgOnboardingDeliveries, people, users,
 } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
+import { OnboardingIntroService } from '../onboarding/onboarding-intro.service';
 import { WorkspaceConnectionRepository } from './repositories/workspace-connection.repository';
 
 const RETRY_AFTER_MS = 60 * 60 * 1000;
@@ -17,7 +18,7 @@ export class OnboardingDispatchService {
   constructor(
     private readonly db: DatabaseService,
     private readonly workspaceRepo: WorkspaceConnectionRepository,
-    private readonly checkIn: ProactiveCheckInUseCase,
+    private readonly intro: OnboardingIntroService,
   ) {}
 
   async dispatchPending(tenantId?: string, unitId?: string): Promise<{ found: number; queued: number; failed: number }> {
@@ -55,7 +56,7 @@ export class OnboardingDispatchService {
   private async dispatchOne(delivery: typeof orgOnboardingDeliveries.$inferSelect): Promise<void> {
     const [person] = await this.db.client.select({
       lifecycleStatus: people.lifecycleStatus,
-      pulseParticipant: people.pulseParticipant,
+      primaryRole: people.primaryRole,
       userStatus: users.status,
       deletedAt: users.deletedAt,
     }).from(people).innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, people.tenantId)))
@@ -98,11 +99,13 @@ export class OnboardingDispatchService {
       await this.db.client.update(orgOnboardingDeliveries).set({ status: 'pending', updatedAt: new Date() })
         .where(and(eq(orgOnboardingDeliveries.id, delivery.id), eq(orgOnboardingDeliveries.status, 'failed')));
     }
-    await this.checkIn.execute({
-      tenantId: delivery.tenantId, userId: delivery.personId,
-      conversationId: conversation.id, externalWorkspaceId: delivery.externalWorkspaceId,
-      externalConversationId: dmChannelId, traceId: `onboarding:${delivery.id}`,
-      onboardingMessageId: delivery.id, pulseEnabled: person.pulseParticipant,
+    await this.intro.sendIntro({
+      tenantId: delivery.tenantId, personId: delivery.personId, role: person.primaryRole as PrimaryOrgRole,
+      deliveryId: delivery.id,
+      conversation: {
+        id: conversation.id, channelType: 'slack', externalConversationId: dmChannelId,
+        externalWorkspaceId: delivery.externalWorkspaceId,
+      },
     });
   }
 }

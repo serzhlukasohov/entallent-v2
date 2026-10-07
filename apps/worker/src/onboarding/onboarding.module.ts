@@ -4,6 +4,7 @@ import { DatabaseModule } from '../database/database.module';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { OnboardingActionProcessor } from './onboarding-action.processor';
+import { OnboardingIntroService } from './onboarding-intro.service';
 import { OnboardingEffectsService } from './onboarding-effects.service';
 import { OnboardingStateRepository } from './onboarding-state.repository';
 import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
@@ -24,8 +25,9 @@ import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
     OnboardingEffectsService,
     { provide: ONBOARDING_EFFECTS, useExisting: OnboardingEffectsService },
     OnboardingService,
+    OnboardingIntroService,
     OnboardingActionProcessor,
   ],
-  exports: [OnboardingService, OnboardingStateRepository],
+  exports: [OnboardingService, OnboardingIntroService, OnboardingStateRepository],
 })
 export class OnboardingModule {}

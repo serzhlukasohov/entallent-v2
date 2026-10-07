@@ -53,10 +53,12 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
         ORDER BY created_at DESC
         LIMIT 1
       ) c ON true
+      LEFT JOIN people p ON p.id = u.id AND p.tenant_id = u.tenant_id
       LEFT JOIN workspace_connections wc
         ON wc.tenant_id = u.tenant_id AND wc.channel_type = c.channel_type AND wc.status = 'active'
       WHERE u.status = 'active'
         AND u.proactive_messaging_enabled = true
+        AND (p.id IS NULL OR p.pulse_participant = true)
         ${tenantFilter}
         AND NOT EXISTS (
           SELECT 1 FROM messages m

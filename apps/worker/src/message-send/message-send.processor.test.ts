@@ -35,7 +35,7 @@ describe('MessageSendProcessor', () => {
     const processor = new MessageSendProcessor(
       {} as never,
       { updateMessageDelivery, findOutboundMessageForDelivery, findOnboardingDelivery: vi.fn().mockResolvedValue(null), isUserRuntimeEligible: vi.fn().mockResolvedValue(true) } as never,
-      { activateDeliveredConfirmation } as never, {} as never,
+      { activateDeliveredConfirmation } as never, {} as never, {} as never,
     );
     const data: MessageSendJob = {
       messageId: 'message-1',
@@ -83,7 +83,7 @@ describe('MessageSendProcessor', () => {
     const processor = new MessageSendProcessor(
       { findByExternalWorkspace } as never,
       { updateMessageDelivery, findOutboundMessageForDelivery, findOnboardingDelivery: vi.fn().mockResolvedValue(null), isUserRuntimeEligible: vi.fn().mockResolvedValue(true) } as never,
-      { activateDeliveredConfirmation } as never, {} as never,
+      { activateDeliveredConfirmation } as never, {} as never, {} as never,
     );
 
     await processor.process({ data: slackJob() } as Job<MessageSendJob>);
@@ -121,7 +121,7 @@ describe('MessageSendProcessor', () => {
     const processor = new MessageSendProcessor(
       { findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'test-token' }) } as never,
       { updateMessageDelivery, findOutboundMessageForDelivery, findOnboardingDelivery: vi.fn().mockResolvedValue(null), isUserRuntimeEligible: vi.fn().mockResolvedValue(true) } as never,
-      { activateDeliveredConfirmation } as never, {} as never,
+      { activateDeliveredConfirmation } as never, {} as never, {} as never,
     );
 
     await expect(
@@ -149,7 +149,7 @@ describe('MessageSendProcessor', () => {
         findOnboardingDelivery: vi.fn().mockResolvedValue(null),
         updateMessageDelivery,
       } as never,
-      { activateDeliveredConfirmation } as never, {} as never,
+      { activateDeliveredConfirmation } as never, {} as never, {} as never,
     );
 
     await processor.process({ data: slackJob() } as Job<MessageSendJob>);
@@ -182,7 +182,7 @@ describe('MessageSendProcessor', () => {
         isUserRuntimeEligible: vi.fn().mockResolvedValue(true),
         findOnboardingDelivery: vi.fn().mockResolvedValue(null),
       } as never,
-      { activateDeliveredConfirmation } as never, {} as never,
+      { activateDeliveredConfirmation } as never, {} as never, {} as never,
     );
 
     await processor.process({ data: slackJob() } as Job<MessageSendJob>);
@@ -222,7 +222,7 @@ describe('MessageSendProcessor', () => {
         isUserRuntimeEligible: vi.fn().mockResolvedValue(true),
         findOnboardingDelivery: vi.fn().mockResolvedValue(null),
       } as never,
-      { activateDeliveredConfirmation } as never, {} as never,
+      { activateDeliveredConfirmation } as never, {} as never, {} as never,
     );
 
     await expect(
@@ -255,7 +255,7 @@ describe('MessageSendProcessor', () => {
     const processor = new MessageSendProcessor(
       { findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'test-token' }) } as never,
       repo as never,
-      { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never, {} as never,
+      { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never, {} as never, {} as never,
     );
 
     await processor.process({ data: slackJob() } as Job<MessageSendJob>);
@@ -279,7 +279,7 @@ describe('MessageSendProcessor', () => {
         isUserOnboardingEligible: vi.fn().mockResolvedValue(true),
         claimOnboardingDelivery: vi.fn().mockResolvedValue(false),
       } as never,
-      { activateDeliveredConfirmation: vi.fn() } as never, {} as never,
+      { activateDeliveredConfirmation: vi.fn() } as never, {} as never, {} as never,
     );
 
     await processor.process({ data: slackJob() } as Job<MessageSendJob>);
@@ -304,7 +304,7 @@ describe('MessageSendProcessor', () => {
         updateMessageDelivery: vi.fn().mockResolvedValue(new Date()),
       };
       const processor = new MessageSendProcessor({} as never, repo as never,
-        { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never, {} as never,
+        { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never, {} as never, {} as never,
     );
       return { processor, repo };
     }
@@ -367,6 +367,7 @@ describe('onboarding intro buttons', () => {
       repo as never,
       { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never,
       onboarding as never,
+      { enqueueTrustAfterIntro: vi.fn().mockResolvedValue(undefined) } as never,
     );
     return { processor, onboarding, calls };
   }
@@ -402,6 +403,57 @@ describe('onboarding intro buttons', () => {
     expect(first.onboarding.recordIntroDelivered).not.toHaveBeenCalled();
     expect(noButtons.onboarding.recordIntroDelivered).not.toHaveBeenCalled();
     expect(slack.sendMessage).toHaveBeenLastCalledWith(expect.not.objectContaining({ actions: expect.anything() }));
+  });
+
+  describe('two-message onboarding intro chain', () => {
+    const introMeta = { onboardingDeliveryId: 'message-1', onboardingIntroPart: 'intro', onboardingTrustMessageId: 'trust-1' };
+    function build(sentAt: Date | null, metadata: Record<string, unknown>) {
+      const when = new Date('2026-10-07T10:00:00.000Z');
+      slack.sendMessage.mockResolvedValue({ externalMessageId: '1.1', sentAt: when });
+      const repo = {
+        findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+          userId: 'user-1', text: 'intro text', sentAt, externalMessageId: sentAt ? '1.1' : null,
+          onboardingDeliveryId: 'message-1', messageType: 'onboarding_intro', metadata,
+          channelType: 'slack', externalConversationId: 'channel-1',
+        }),
+        findOnboardingDelivery: vi.fn().mockResolvedValue({ status: 'pending', externalWorkspaceId: 'workspace-1' }),
+        isUserOnboardingEligible: vi.fn().mockResolvedValue(true),
+        claimOnboardingDelivery: vi.fn().mockResolvedValue(true),
+        completeOnboardingDelivery: vi.fn().mockResolvedValue(undefined),
+        updateMessageDelivery: vi.fn().mockResolvedValue(when),
+      };
+      const intro = { enqueueTrustAfterIntro: vi.fn().mockResolvedValue(undefined) };
+      const onboarding = { recordIntroDelivered: vi.fn() };
+      const processor = new MessageSendProcessor(
+        { findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 't' }) } as never, repo as never,
+        { activateDeliveredConfirmation: vi.fn() } as never, onboarding as never, intro as never,
+      );
+      return { processor, intro, onboarding };
+    }
+
+    it('queues the trust message after the intro part is delivered, without recording intro delivery', async () => {
+      const { processor, intro, onboarding } = build(null, introMeta);
+      await processor.process({ data: slackJob() } as Job<MessageSendJob>);
+      expect(slack.sendMessage).toHaveBeenCalledOnce();
+      expect(onboarding.recordIntroDelivered).not.toHaveBeenCalled();
+      expect(intro.enqueueTrustAfterIntro).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: 'tenant-1', conversationId: 'conversation-1', introMetadata: introMeta,
+      }));
+    });
+
+    it('re-queues the trust message on a retry after the intro was already sent', async () => {
+      const { processor, intro } = build(new Date('2026-10-07T10:00:00.000Z'), introMeta);
+      await processor.process({ data: slackJob() } as Job<MessageSendJob>);
+      expect(slack.sendMessage).not.toHaveBeenCalled();
+      expect(intro.enqueueTrustAfterIntro).toHaveBeenCalledOnce();
+    });
+
+    it('does not chain when the intro send fails', async () => {
+      const { processor, intro } = build(null, introMeta);
+      slack.sendMessage.mockRejectedValue(new Error('slack down'));
+      await expect(processor.process({ data: slackJob() } as Job<MessageSendJob>)).rejects.toThrow('slack down');
+      expect(intro.enqueueTrustAfterIntro).not.toHaveBeenCalled();
+    });
   });
 });
 

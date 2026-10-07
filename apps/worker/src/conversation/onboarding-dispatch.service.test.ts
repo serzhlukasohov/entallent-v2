@@ -21,7 +21,7 @@ describe('OnboardingDispatchService', () => {
       }
       if (table === people) {
         return { innerJoin: () => ({ where: () => ({ limit: async () => [{
-          lifecycleStatus: 'active', pulseParticipant: false, userStatus: 'active', deletedAt: null,
+          lifecycleStatus: 'active', primaryRole: 'leadership', userStatus: 'active', deletedAt: null,
         }] }) }) };
       }
       if (table === channelAccounts) {
@@ -36,19 +36,19 @@ describe('OnboardingDispatchService', () => {
     });
     const select = vi.fn().mockReturnValue({ from });
     const insert = vi.fn().mockReturnValue({ values: () => ({ onConflictDoNothing: async () => undefined }) });
-    const execute = vi.fn().mockResolvedValue({ outboundMessageId: delivery.id });
+    const sendIntro = vi.fn().mockResolvedValue({ introMessageId: delivery.id, trustMessageId: 'trust-1' });
     const service = new OnboardingDispatchService(
       { client: { select, insert } } as never,
       { findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'test-token' }) } as never,
-      { execute } as never,
+      { sendIntro } as never,
     );
 
     expect(await service.dispatchPending('tenant-1')).toEqual({ found: 1, queued: 1, failed: 0 });
     expect(slack.openDirectMessage).toHaveBeenCalledWith('U123');
     expect(insert).toHaveBeenCalledWith(conversations);
-    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'tenant-1', userId: 'person-1', conversationId: 'conversation-1',
-      externalConversationId: 'D123', onboardingMessageId: delivery.id, pulseEnabled: false,
-    }));
+    expect(sendIntro).toHaveBeenCalledWith({
+      tenantId: 'tenant-1', personId: 'person-1', role: 'leadership', deliveryId: delivery.id,
+      conversation: { id: 'conversation-1', channelType: 'slack', externalConversationId: 'D123', externalWorkspaceId: 'T123' },
+    });
   });
 });

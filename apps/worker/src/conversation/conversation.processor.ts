@@ -27,7 +27,7 @@ export type ConversationJob = {
 };
 
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'> & {
-  /** Set by onboarding when the person chose to start; honoured by the processor in a later task. */
+  /** Set by onboarding when the person chose to start; forwarded to ProactiveCheckInUseCase. */
   onboardingStart?: boolean;
 };
 
