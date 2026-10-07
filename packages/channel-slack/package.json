@@ -24,6 +24,7 @@
     "@entalent/typescript-config": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.6.3"
   },
   "dependencies": {

@@ -23,6 +23,7 @@ function harness(opts: { state?: Partial<OnboardingState>; row?: Partial<Onboard
       calls.push('updateState'); row = { ...row!, state: next, version: row!.version + 1 }; void extra;
     }),
     setProactive: vi.fn(async () => { calls.push('setProactive'); }),
+    setIntroLocation: vi.fn(async () => { calls.push('setIntroLocation'); }),
     insertAudit: vi.fn(async (_a: Record<string, unknown>) => { calls.push('audit'); }),
   };
   const repo = {
@@ -150,5 +151,38 @@ describe('OnboardingService.apply', () => {
     await h.service.apply(T, P, { type: 'reminder_sent', at });
     expect(h.tx.insertAudit).toHaveBeenCalledWith(expect.objectContaining({ actorType: 'system', actorId: 'onboarding' }));
     expect(h.tx.updateState.mock.calls[0]![2]).toMatchObject({ reminderSentAt: at });
+  });
+
+  describe('recordIntroDelivered', () => {
+    it('stores the location and applies intro_delivered in one transaction on first delivery', async () => {
+      const h = harness({ row: { introChannelId: null, introActionsMessageTs: null } });
+      const r = await h.service.recordIntroDelivered(T, P, 'D9', '20.5', at);
+      expect(h.tx.setIntroLocation).toHaveBeenCalledWith('row1', 'D9', '20.5');
+      expect(r.changed).toBe(true);
+      expect(r.state?.buttonsActive).toBe(true);
+      expect(h.calls.slice(0, 3)).toEqual(['lock', 'setIntroLocation', 'updateState']);
+      expect(h.calls.filter((c) => c === 'commit')).toHaveLength(1);
+    });
+
+    it('is a no-op when a retried job replays the recorded message after a choice was made', async () => {
+      const h = harness({
+        row: { introChannelId: 'D1', introActionsMessageTs: '10.5' },
+        state: { introStatus: 'completed', participation: 'active', buttonsActive: false },
+      });
+      const r = await h.service.recordIntroDelivered(T, P, 'D1', '10.5', at);
+      expect(r.changed).toBe(false);
+      expect(r.state?.buttonsActive).toBe(false);
+      expect(h.tx.setIntroLocation).not.toHaveBeenCalled();
+      expect(h.tx.updateState).not.toHaveBeenCalled();
+      expect(h.tx.insertAudit).not.toHaveBeenCalled();
+    });
+
+    it('ignores an older trust message after a newer intro was recorded', async () => {
+      const h = harness({ row: { introChannelId: 'D1', introActionsMessageTs: '30.0' }, state: { introStatus: 'delivered', buttonsActive: true } });
+      const r = await h.service.recordIntroDelivered(T, P, 'D1', '9.5', at);
+      expect(r.changed).toBe(false);
+      expect(h.tx.setIntroLocation).not.toHaveBeenCalled();
+      expect(h.tx.updateState).not.toHaveBeenCalled();
+    });
   });
 });

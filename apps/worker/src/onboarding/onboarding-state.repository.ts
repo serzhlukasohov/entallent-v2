@@ -29,13 +29,13 @@ export interface OnboardingTx {
   getCalendar(tenantId: string): Promise<WorkCalendar | null>;
   updateState(id: string, next: OnboardingState, extra: { reminderDueAt?: Date | null; reminderSentAt?: Date }): Promise<void>;
   setProactive(tenantId: string, personId: string, enabled: boolean): Promise<void>;
+  setIntroLocation(id: string, channelId: string, messageTs: string): Promise<void>;
   insertAudit(input: OnboardingAuditInput): Promise<void>;
 }
 
 export interface OnboardingStateRepositoryPort {
   transaction<T>(fn: (tx: OnboardingTx) => Promise<T>): Promise<T>;
   readState(tenantId: string, personId: string): Promise<OnboardingStateRow | null>;
-  recordIntroActionsMessage(tenantId: string, personId: string, channelId: string, messageTs: string): Promise<void>;
 }
 
 type Row = typeof onboardingStates.$inferSelect;
@@ -67,13 +67,6 @@ export class OnboardingStateRepository implements OnboardingStateRepositoryPort 
     const [r] = await this.db.client.select().from(onboardingStates).where(and(
       eq(onboardingStates.tenantId, tenantId), eq(onboardingStates.personId, personId))).limit(1);
     return r ? toRow(r) : null;
-  }
-
-  /** Remembers which delivered intro message carries the buttons, so later clicks and replacements can target it. */
-  async recordIntroActionsMessage(tenantId: string, personId: string, channelId: string, messageTs: string): Promise<void> {
-    await this.db.client.update(onboardingStates).set({
-      introChannelId: channelId, introActionsMessageTs: messageTs, updatedAt: new Date(),
-    }).where(and(eq(onboardingStates.tenantId, tenantId), eq(onboardingStates.personId, personId)));
   }
 
   transaction<T>(fn: (tx: OnboardingTx) => Promise<T>): Promise<T> {
@@ -111,6 +104,11 @@ export class OnboardingStateRepository implements OnboardingStateRepositoryPort 
       async setProactive(tenantId, personId, enabled) {
         await dbTx.update(users).set({ proactiveMessagingEnabled: enabled, updatedAt: new Date() })
           .where(and(eq(users.id, personId), eq(users.tenantId, tenantId)));
+      },
+      async setIntroLocation(id, channelId, messageTs) {
+        await dbTx.update(onboardingStates).set({
+          introChannelId: channelId, introActionsMessageTs: messageTs, updatedAt: new Date(),
+        }).where(eq(onboardingStates.id, id));
       },
       async insertAudit(input) {
         await dbTx.insert(auditLogs).values(input);

@@ -76,9 +76,9 @@ export class MessageSendProcessor extends WorkerHost {
       await this.activateDelivery(messageId, tenantId, conversationId, persisted.sentAt);
       // Retry after a crash between the Slack send and the onboarding transition (idempotent).
       if (persisted.externalMessageId && this.introActions(persisted.metadata)) {
-        await this.onboardingService.recordIntroDelivered(tenantId, persisted.userId, {
-          channelId: externalChannelId, messageTs: persisted.externalMessageId, at: persisted.sentAt,
-        });
+        await this.onboardingService.recordIntroDelivered(
+          tenantId, persisted.userId, externalChannelId, persisted.externalMessageId, persisted.sentAt,
+        );
       }
       return;
     }
@@ -137,9 +137,9 @@ export class MessageSendProcessor extends WorkerHost {
         await this.conversationRepo.completeOnboardingDelivery(messageId, tenantId, persisted.userId, result.sentAt, result.externalMessageId);
       }
       if (this.introActions(persisted.metadata)) {
-        await this.onboardingService.recordIntroDelivered(tenantId, persisted.userId, {
-          channelId: externalChannelId, messageTs: result.externalMessageId, at: result.sentAt,
-        });
+        await this.onboardingService.recordIntroDelivered(
+          tenantId, persisted.userId, externalChannelId, result.externalMessageId, result.sentAt,
+        );
       }
 
       this.logger.log(`Message ${messageId} delivered — ts=${result.externalMessageId}`);

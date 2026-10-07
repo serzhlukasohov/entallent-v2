@@ -382,9 +382,7 @@ describe('onboarding intro buttons', () => {
     await processor.process({ data: slackJob() } as Job<MessageSendJob>);
 
     expect(slack.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ actions }));
-    expect(onboarding.recordIntroDelivered).toHaveBeenCalledWith('tenant-1', 'lead-1', {
-      channelId: 'channel-1', messageTs: '1788430496.000200', at: sentAt,
-    });
+    expect(onboarding.recordIntroDelivered).toHaveBeenCalledWith('tenant-1', 'lead-1', 'channel-1', '1788430496.000200', sentAt);
     expect(calls).toEqual(['sendMessage', 'intro_delivered']);
   });
 

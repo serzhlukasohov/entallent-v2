@@ -15,6 +15,8 @@ describe('queue contract', () => {
       GROUP_REPORT: 'group-report',
       STYLE_ANALYSIS: 'style-analysis',
       PROFILE_HYDRATION: 'profile-hydration',
+      ONBOARDING_ACTION: 'onboarding-action',
+      ONBOARDING_REMINDER: 'onboarding-reminder',
     });
   });
 
@@ -31,6 +33,8 @@ describe('queue contract', () => {
       'group-report',
       'style-analysis',
       'profile-hydration',
+      'onboarding-action',
+      'onboarding-reminder',
     ]);
   });
 

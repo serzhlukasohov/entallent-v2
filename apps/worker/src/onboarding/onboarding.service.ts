@@ -5,7 +5,7 @@ import {
   type OnboardingState, type OnboardingTurnPort,
 } from '@entalent/application';
 import type { PrimaryOrgRole } from '@entalent/application';
-import { OnboardingStateRepository, type OnboardingStateRepositoryPort } from './onboarding-state.repository';
+import { OnboardingStateRepository, type OnboardingStateRepositoryPort, type OnboardingStateRow, type OnboardingTx } from './onboarding-state.repository';
 
 export const ONBOARDING_EFFECTS = Symbol('ONBOARDING_EFFECTS');
 
@@ -53,24 +53,39 @@ export class OnboardingService implements OnboardingTurnPort {
   }
 
   /**
-   * The intro message carrying the buttons was delivered: remember where it is, then apply the transition.
-   * The location is written first so the transition's post-commit effects (button replacement) can find it.
+   * The intro message carrying the buttons was delivered. Under the row lock: ignore a replay of the
+   * recorded message or an older one (Slack ts compared numerically); otherwise store its location and
+   * apply `intro_delivered` in the same transaction, so a retried job cannot re-arm answered buttons.
    */
-  async recordIntroDelivered(
-    tenantId: string, personId: string, input: { channelId: string; messageTs: string; at: Date },
+  recordIntroDelivered(
+    tenantId: string, personId: string, channelId: string, messageTs: string, at: Date,
   ): Promise<OnboardingApplyResult> {
-    await this.repo.recordIntroActionsMessage(tenantId, personId, input.channelId, input.messageTs);
-    return this.apply(tenantId, personId, { type: 'intro_delivered', at: input.at });
+    return this.apply(tenantId, personId, { type: 'intro_delivered', at }, async (tx, row) => {
+      if (row.introActionsMessageTs === messageTs && row.introChannelId === channelId) return false;
+      if (row.introActionsMessageTs && row.introChannelId === channelId
+        && Number(row.introActionsMessageTs) > Number(messageTs)) return false;
+      await tx.setIntroLocation(row.id, channelId, messageTs);
+      row.introChannelId = channelId;
+      row.introActionsMessageTs = messageTs;
+      return true;
+    });
   }
 
   applyTurnEvent(tenantId: string, userId: string, event: OnboardingEvent): Promise<OnboardingApplyResult> {
     return this.apply(tenantId, userId, event);
   }
 
-  async apply(tenantId: string, personId: string, event: OnboardingEvent): Promise<OnboardingApplyResult> {
+  async apply(
+    tenantId: string, personId: string, event: OnboardingEvent,
+    beforeDecide?: (tx: OnboardingTx, row: OnboardingStateRow) => Promise<boolean>,
+  ): Promise<OnboardingApplyResult> {
     const committed = await this.repo.transaction<Committed | null>(async (tx) => {
       const row = await tx.lockState(tenantId, personId);
       if (!row) return null;
+      if (beforeDecide && !(await beforeDecide(tx, row))) {
+        return { result: { changed: false, effects: [], state: row.state }, dueAt: null, version: row.version,
+          role: 'employee', introChannelId: row.introChannelId, introActionsMessageTs: row.introActionsMessageTs };
+      }
       const { next, effects } = decideOnboarding(row.state, event);
       if (effects.length === 0 && sameState(row.state, next)) {
         return { result: { changed: false, effects, state: next }, dueAt: null, version: row.version,

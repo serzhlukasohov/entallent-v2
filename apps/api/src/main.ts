@@ -47,6 +47,9 @@ async function bootstrap(): Promise<void> {
   );
 
   // Slack interactions arrive form-urlencoded; keep the raw body for signature verification.
+  // Fastify cannot scope a content-type parser to one route without an encapsulated plugin, so this is global;
+  // it only matters for POST channel/slack/interactions (the sole form-urlencoded endpoint). Repeated keys keep the
+  // last value (Object.fromEntries); Slack sends a single `payload` field.
   fastify.removeContentTypeParser('application/x-www-form-urlencoded');
   fastify.addContentTypeParser(
     'application/x-www-form-urlencoded',
