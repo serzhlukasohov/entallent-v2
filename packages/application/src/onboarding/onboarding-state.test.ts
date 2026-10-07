@@ -131,6 +131,18 @@ describe('role changes (Q8) and deactivation (Q9)', () => {
     expect(r.effects).toContainEqual({ type: 'set_proactive', enabled: false });
     expect(r.effects).toContainEqual({ type: 'send_intro', track: 'management' });
   });
+  it.each(['employee', 'team_lead'] as const)('%s with a sent reminder -> manager resets reminderStatus to none (Q8, DB CHECK)', (role) => {
+    const reminded = decideOnboarding(delivered(role), { type: 'reminder_sent', at: t1 }).next;
+    expect(reminded.reminderStatus).toBe('sent');
+    const r = decideOnboarding(reminded, { type: 'role_changed', from: role, to: 'manager', at: t1 });
+    expect(r.next).toMatchObject({ track: 'management', reminderStatus: 'none' });
+    expect(types(r.effects)).not.toContain('cancel_reminder');
+  });
+  it('employee with a scheduled reminder -> manager cancels it', () => {
+    const r = decideOnboarding(delivered('employee'), { type: 'role_changed', from: 'employee', to: 'manager', at: t1 });
+    expect(r.next.reminderStatus).toBe('cancelled');
+    expect(r.effects).toContainEqual({ type: 'cancel_reminder' });
+  });
   it('manager -> employee starts a fresh personal onboarding, not enabled automatically (A6)', () => {
     const m = decideOnboarding(delivered('manager'), { type: 'action', action: 'got_it', source: 'button', at: t1 }).next;
     const r = decideOnboarding(m, { type: 'role_changed', from: 'manager', to: 'employee', at: t1 });

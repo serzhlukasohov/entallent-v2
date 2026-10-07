@@ -75,6 +75,27 @@ describe.skipIf(!localDatabase)('OnboardingRoleReconcileService against PostgreS
     expect(effects.sendRoleIntro).toHaveBeenCalledTimes(2);
   });
 
+  it('a person whose single reminder was already sent is promoted to manager without a CHECK violation (Q8)', async () => {
+    const t3 = randomUUID();
+    const p = randomUUID();
+    const db = client.db;
+    await db.insert(tenants).values({ id: t3, name: 'Role sent-reminder fixture' });
+    await db.insert(users).values({ id: p, tenantId: t3, status: 'active' });
+    await db.insert(people).values({ id: p, tenantId: t3, customerEmployeeId: 'S-1', workEmail: 's1@sent.test',
+      displayName: 's1', primaryRole: 'manager', pulseParticipant: false, lifecycleStatus: 'active' });
+    await db.insert(onboardingStates).values({ tenantId: t3, personId: p, track: 'employee', introStatus: 'delivered',
+      participation: 'undecided', reminderStatus: 'sent', reminderSentAt: new Date() });
+    await db.insert(tenantWorkCalendars).values({ tenantId: t3, timezone: 'Europe/Kyiv', workingDays: [1, 2, 3, 4, 5],
+      workStart: '09:00', workEnd: '18:00', updatedBy: 'test' });
+    try {
+      expect(await service.sweep(t3)).toEqual({ found: 1, reconciled: 1, failed: 0 });
+      const [row] = await db.select().from(onboardingStates).where(eq(onboardingStates.personId, p));
+      expect(row).toMatchObject({ track: 'management', participation: 'not_applicable', reminderStatus: 'none' });
+    } finally {
+      await db.delete(tenants).where(eq(tenants.id, t3));
+    }
+  });
+
   it('sweep then queued job: exactly one intro; job then sweep: exactly one intro', async () => {
     effects.sendRoleIntro.mockClear();
     const t2 = randomUUID();

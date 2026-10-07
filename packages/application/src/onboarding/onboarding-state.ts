@@ -191,7 +191,8 @@ function decideRoleChange(s: OnboardingState, from: PrimaryOrgRole, to: PrimaryO
     if (reminderPending(s)) effects.push({ type: 'cancel_reminder' });
     if (s.participation === 'active') effects.push({ type: 'set_proactive', enabled: false });
     effects.push({ type: 'send_intro', track });
-    return { next: { ...initialOnboardingState(to), reminderStatus: reminderPending(s) ? 'cancelled' as const : s.reminderStatus }, effects };
+    // Management rows may only hold 'none' | 'cancelled' (DB CHECK onboarding_states_management_no_reminder).
+    return { next: { ...initialOnboardingState(to), reminderStatus: reminderPending(s) ? 'cancelled' as const : 'none' as const }, effects };
   }
   if (s.track === 'management') {
     return { next: initialOnboardingState(to), effects: [{ type: 'send_intro', track }] as OnboardingEffect[] };
