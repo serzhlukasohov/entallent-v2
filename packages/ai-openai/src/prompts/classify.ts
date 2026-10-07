@@ -20,11 +20,8 @@ Return a JSON object with exactly these fields:
   "latestUserSubstance": string|null, // what the latest employee message newly contributes; null for pure acknowledgements/backchannels
   "topicAnchor": string|null,    // existing topic to continue when latestUserSubstance is null
   "resolvedDetails": string[],   // up to 5 explicit employee-stated facts that already close a clarification branch in the active thread
-  "pulseCaptureScope": object|null, // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
-  "onboardingSignal": object|null // {"intent": string, "substantive": boolean}; see the ONBOARDING STATUS section when present
+  "pulseCaptureScope": object|null // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
 }
-
-Set onboardingSignal to null unless the user prompt contains an ONBOARDING STATUS section.
 
 Dialogue act rules:
 - primaryIntent and dialogueAct are separate fields. Never put a dialogueAct
@@ -116,7 +113,8 @@ The employee received Emma's introduction, which invites them to regular convers
 track: ${onboarding.track}
 participation: ${onboarding.participation}
 introduction: ${onboarding.introStatus}
-Set "onboardingSignal" to {"intent": string, "substantive": boolean} for the LATEST employee message, read by meaning in any language:
+Add one more field to the JSON object, in addition to the fields listed in the system instructions (they stay unchanged):
+"onboardingSignal": {"intent": string, "substantive": boolean} for the LATEST employee message, read by meaning in any language:
 - "start": wants to start talking now or to take part.
 - "later": wants to postpone the invitation to another time.
 - "decline": does not want to take part in the invitations.

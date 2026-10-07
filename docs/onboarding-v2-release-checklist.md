@@ -6,7 +6,6 @@ Local implementation only. Nothing here has been deployed, and no Railway or Sla
 
 - [ ] Q21/Q22 privacy workstream is merged. The onboarding copy promises "not shown to anyone"; do not launch to a client until that is true.
 - [ ] G4 retention is a separate workstream and is not part of this release.
-- [ ] Live classifier regression fixed: `pulse-capture-exact-message` sim scenario (see `docs/agent-failures.md`, 2026-10-07).
 
 ## Database
 

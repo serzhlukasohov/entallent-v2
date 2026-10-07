@@ -104,10 +104,31 @@ describe('buildClassifyUserPrompt', () => {
 describe('onboarding signal classification', () => {
   const turns = [{ role: 'user' as const, content: 'ok thanks', timestamp: new Date('2026-10-07T10:00:00.000Z') }];
 
-  it('declares the onboardingSignal field and the null default in the system prompt', () => {
+  // Pinned to the pre-onboarding wording: adding a field to this block shifted how the model read
+  // dialogueAct (pulse-capture-exact-message sim regression). Onboarding lives only in the user prompt.
+  const BASE_SCHEMA_BLOCK = `Return a JSON object with exactly these fields:
+{
+  "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","social_checkin","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request","reporting_explanation","data_use_explanation","pulse_capture_explanation"
+  "secondaryIntents": string[],  // zero or more of the same values
+  "emotionalState": string[],    // descriptors like "stressed","excited","anxious","neutral","frustrated","hopeful"
+  "urgency": string,             // one of: "low","medium","high","critical"
+  "confidence": number,          // 0.0 to 1.0
+  "requiresSafetyCheck": boolean,// true if potential self-harm, crisis, harassment, or immediate danger signals
+  "surveyAllowed": boolean,      // false if user appears distressed, in crisis, or if topic is sensitive
+  "reasoningSummary": string,    // 1-2 sentence explanation
+  "reminderRequest": null,       // see reminder rules below; null unless explicitly requested
+  "dialogueAct": string,         // one of: "greeting","social_checkin","new_substance","acknowledgement","continuation","correction","request","emotional_disclosure","closing"
+  "latestUserSubstance": string|null, // what the latest employee message newly contributes; null for pure acknowledgements/backchannels
+  "topicAnchor": string|null,    // existing topic to continue when latestUserSubstance is null
+  "resolvedDetails": string[],   // up to 5 explicit employee-stated facts that already close a clarification branch in the active thread
+  "pulseCaptureScope": object|null // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
+}`;
+
+  it('keeps the system prompt schema block byte-identical to the base wording', () => {
     const prompt = buildClassifySystemPrompt();
-    expect(prompt).toContain('"onboardingSignal": object|null');
-    expect(prompt).toContain('Set onboardingSignal to null unless the user prompt contains an ONBOARDING STATUS section');
+    expect(prompt).toContain(BASE_SCHEMA_BLOCK);
+    expect(prompt).not.toContain('onboardingSignal');
+    expect(prompt).not.toContain('ONBOARDING STATUS');
   });
 
   it('omits the onboarding section when no onboarding context is given', () => {
@@ -131,6 +152,7 @@ describe('onboarding signal classification', () => {
     expect(prompt).toContain('substantive');
     expect(prompt).toContain('a greeting, thanks, or a question about Emma, onboarding or privacy is not substantive');
     expect(prompt).toContain('ending only this conversation');
+    expect(prompt).toContain('in addition to the fields listed in the system instructions');
     expect(prompt.indexOf('ONBOARDING STATUS')).toBeLessThan(prompt.indexOf('LATEST EMPLOYEE MESSAGE TO CLASSIFY'));
   });
 });

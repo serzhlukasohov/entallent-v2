@@ -1111,6 +1111,6 @@ These entries are retained as historical evidence but are not active work becaus
 - Symptom: `pulse-capture-exact-message` fails 3/3 at HEAD (passes 3/3 at base `dedcd1b`); the model returns `dialogueAct: "pulse_capture_explanation"`, which fails `SituationClassificationSchema` parsing. Unrelated gate failures (memory-recall, annna-intent-fidelity, terse-user) fail at base too.
 - Expected: Adding `onboardingSignal` to the classify prompt leaves existing live scenarios unchanged.
 - Root cause layer: verification; unit tests assert prompt text only, and live classification is exercised only by the sim gate.
-- Harness fix: Adjust `packages/ai-openai/src/prompts/classify.ts` JSON schema block (the edited `pulseCaptureScope`/`onboardingSignal` lines) and re-run the scenario until 3/3.
-- Regression check: `cd packages/conversation-sim && npx vitest run src/scenarios/pulse-capture-exact-message.sim.test.ts` (live model) repeated 3 times.
-- Status: open
+- Harness fix: The classify system prompt schema block is byte-identical to the base wording again; `onboardingSignal` is described only in the conditional ONBOARDING STATUS user-prompt section. `classify.test.ts` pins the base schema block and asserts the system prompt never mentions `onboardingSignal`.
+- Regression check: `cd packages/conversation-sim && npx vitest run src/scenarios/pulse-capture-exact-message.sim.test.ts` (live model) repeated 3 times; passed 3/3 (plus a 4th run) after the fix.
+- Status: fixed
