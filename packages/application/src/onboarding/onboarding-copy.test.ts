@@ -1,8 +1,86 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PrimaryOrgRole } from '../hierarchy/draft-person';
 import { ACK_COPY, EMPTY_BACKLOG_OPENER, STARTED_REPLACEMENT, introMessages, reminderCopy } from './onboarding-copy';
 
 const ROLES: PrimaryOrgRole[] = ['employee', 'team_lead', 'manager', 'hr', 'hrbp', 'leadership'];
+
+const EXPECTED_FULL: Record<PrimaryOrgRole, { intro: string[]; trust: string[] }> = {
+  employee: {
+    intro: [
+      "Hi! I'm Emma 👋 Your virtual colleague — someone who's here to listen, help you work through a situation, or give you space to vent.",
+      "You can message me anytime: about a difficult day, relationships with colleagues, something that makes you happy or worries you, or anything else you'd like to talk about. I'll listen and help you think things through if that's what you need.",
+      "Sometimes I'll also invite you to a short conversation about how things are going at work. These conversations help us understand what makes your work environment more comfortable and where support is needed."
+],
+    trust: [
+      "Your conversations and individual responses are not shown to anyone. If insights come up that could help improve the work environment, I'll ask for your permission to use them in a fully anonymized form — for a team report and recommendations to your manager on how to improve team management.",
+      "You decide which insights you're comfortable sharing. Without your approval, they won't be included in reports or recommendations.",
+      "Participation is voluntary: you can skip a question, postpone a conversation, or opt out. You can come back anytime — just message me as you would a familiar colleague.",
+      "Shall we talk about how things are going at work? You can also start by telling me what's on your mind."
+],
+  },
+  team_lead: {
+    intro: [
+      "Hi! I'm Emma 👋 Your virtual colleague and AI co-pilot for team management.",
+      "You can talk to me about your own experience at work, work through a situation, or simply vent. Message me anytime — about work or anything else that's on your mind.",
+      "As a Team Lead, you'll also receive shared signals about your team and recommendations. I'll help you choose your next step, prepare for a conversation, and reflect on what worked afterward. Managing a team becomes something you learn through practice."
+],
+    trust: [
+      "Your conversations and individual responses are not shown to anyone. If insights come up that could help improve the work environment, I'll ask for your permission to use them in a fully anonymized form — for a team report and recommendations to improve team management. Without your approval, they won't be included in reports or recommendations.",
+      "The same rules apply to your team's data: reports use only insights employees have approved, in a fully anonymized form. Conversations and individual responses are not shown to anyone, including you. Shared signals do not reveal who contributed a particular insight.",
+      "Your personal participation is voluntary and does not affect your access to team reports. You can skip a question, postpone a conversation, or opt out, and return anytime.",
+      "Would you like to start a personal conversation, or finish the introduction for now?"
+],
+  },
+  manager: {
+    intro: [
+      "Hi! I'm Emma 👋 Your AI co-pilot for team management.",
+      "I'll help you notice where your team needs support, understand possible reasons, and choose practical actions. You can discuss a management situation with me, prepare your next step, and reflect on what worked afterward.",
+      "Managing a team becomes something you learn by doing — one decision at a time."
+],
+    trust: [
+      "Reports use only insights that employees have approved for use, and only in a fully anonymized form. Employees' conversations and individual responses are not shown to anyone, including you.",
+      "You receive shared signals and recommendations within your area of responsibility. They do not reveal who contributed a particular insight.",
+      "Ready to get started?"
+],
+  },
+  hr: {
+    intro: [
+      "Hi! I'm Emma 👋 I'll help you spot emerging challenges across the organization and identify where support is needed sooner.",
+      "Numbers alone don't always explain what people are experiencing. Shared signals from conversations help you understand what concerns employees, what they're missing, and what's already working well.",
+      "I'll help you make sense of this information and suggest practical steps to improve the work environment."
+],
+    trust: [
+      "Reports use only insights that employees have approved for use, and only in a fully anonymized form. Employees' conversations and individual responses are not shown to anyone, including you.",
+      "You receive shared signals and recommendations within your area of responsibility. They do not reveal who contributed a particular insight.",
+      "Ready to get started?"
+],
+  },
+  hrbp: {
+    intro: [
+      "Hi! I'm Emma 👋 I'll help you spot emerging challenges in the teams you support and help their leaders choose what to do next.",
+      "Shared signals from conversations add context to the numbers: they help you understand what concerns people, where support is missing, and what's already working well.",
+      "You can work through these signals with me and quickly prepare recommendations for team leaders."
+],
+    trust: [
+      "Reports use only insights that employees have approved for use, and only in a fully anonymized form. Employees' conversations and individual responses are not shown to anyone, including you.",
+      "You receive shared signals and recommendations within your area of responsibility. They do not reveal who contributed a particular insight.",
+      "Ready to get started?"
+],
+  },
+  leadership: {
+    intro: [
+      "Hi! I'm Emma 👋 I'll help you see the overall picture of the work environment within your area of responsibility: what helps teams work well, where challenges are emerging, and what needs attention.",
+      "Shared signals from conversations add context to the numbers and help you understand why things are happening. I'll help you identify priorities and suggest actions to improve management and support your teams."
+],
+    trust: [
+      "Reports use only insights that employees have approved for use, and only in a fully anonymized form. Employees' conversations and individual responses are not shown to anyone, including you.",
+      "You receive shared signals and recommendations within your area of responsibility. They do not reveal who contributed a particular insight.",
+      "Ready to get started?"
+],
+  },
+};
 
 describe('ACK_COPY', () => {
   it('matches approved G2 / Q24 text exactly', () => {
@@ -90,6 +168,21 @@ describe('introMessages', () => {
       expect(first(m.intro).length).toBeGreaterThan(0);
       expect(m.trust.length).toBeGreaterThan(0);
       expect(m.intro).not.toMatch(/Actions?:|\*\*/);
+    }
+  });
+});
+
+describe('full intro copy for every role', () => {
+  const docText = readFileSync(resolve(__dirname, '../../../../docs/onboarding-v2.md'), 'utf8');
+  it.each(ROLES)('%s: intro and trust equal the approved paragraphs joined by blank lines', (role) => {
+    const m = introMessages(role);
+    expect(m.intro).toBe(EXPECTED_FULL[role].intro.join('\n\n'));
+    expect(m.trust).toBe(EXPECTED_FULL[role].trust.join('\n\n'));
+  });
+  it.each(ROLES)('%s: every paragraph exists verbatim in docs/onboarding-v2.md', (role) => {
+    const m = introMessages(role);
+    for (const para of [...m.intro.split('\n\n'), ...m.trust.split('\n\n')]) {
+      expect(docText).toContain(para);
     }
   });
 });

@@ -28,7 +28,7 @@ export type OnboardingEvent =
   | { type: 'substantive_turn'; at: Date }
   | { type: 'stop_requested'; at: Date }
   | { type: 'reminder_sent'; at: Date }
-  | { type: 'role_changed'; to: PrimaryOrgRole; at: Date }
+  | { type: 'role_changed'; from: PrimaryOrgRole; to: PrimaryOrgRole; at: Date }
   | { type: 'deactivated'; at: Date };
 
 export type OnboardingEffect =
@@ -89,7 +89,7 @@ function decline(s: OnboardingState, at: Date): { next: OnboardingState; effects
 export function decideOnboarding(s: OnboardingState, e: OnboardingEvent): { next: OnboardingState; effects: OnboardingEffect[] } {
   switch (e.type) {
     case 'intro_delivered': {
-      if (s.introStatus !== 'pending') return { next: s, effects: [] };
+      if (s.introStatus !== 'pending') return { next: { ...s, buttonsActive: true }, effects: [] };
       if (!personal(s)) return { next: { ...s, introStatus: 'delivered', buttonsActive: true }, effects: [] };
       return {
         next: { ...s, introStatus: 'delivered', buttonsActive: true, reminderStatus: 'scheduled', reminderOriginAt: e.at },
@@ -107,32 +107,53 @@ export function decideOnboarding(s: OnboardingState, e: OnboardingEvent): { next
     case 'substantive_turn': {
       if (!personal(s) || s.participation === 'active') return { next: s, effects: [] };
       if (s.participation === 'declined') {
-        return { next: { ...s, participation: 'active' }, effects: [{ type: 'set_proactive', enabled: true }] };
+        return {
+          next: { ...s, participation: 'active', introStatus: 'completed', completedAt: s.completedAt ?? e.at },
+          effects: [{ type: 'set_proactive', enabled: true }],
+        };
       }
       return activate(s, e.at, 'started', false);
     }
     case 'action':
-      return decideAction(s, e.action, e.at);
+      return decideAction(s, e.action, e.source, e.at);
     case 'role_changed':
-      return decideRoleChange(s, e.to);
+      return decideRoleChange(s, e.from, e.to);
   }
 }
 
-function decideAction(s: OnboardingState, action: OnboardingAction, at: Date) {
+function decideAction(s: OnboardingState, action: OnboardingAction, source: 'button' | 'text', at: Date) {
+  const stale = source === 'button' && !s.buttonsActive;
   if (s.track === 'management') {
     if (action !== 'got_it') return { next: s, effects: [] as OnboardingEffect[] };
-    if (s.introStatus === 'completed') return { next: s, effects: [] as OnboardingEffect[] };
+    if (s.introStatus === 'completed' && !s.buttonsActive) return { next: s, effects: [] as OnboardingEffect[] };
     const effects: OnboardingEffect[] = [];
     if (s.buttonsActive) effects.push({ type: 'remove_buttons', replacement: 'got_it_management' });
     effects.push({ type: 'acknowledge', key: 'got_it_management' });
-    return { next: { ...s, introStatus: 'completed' as const, completedAt: at, managementAckAt: at, buttonsActive: false }, effects };
+    return { next: { ...s, introStatus: 'completed' as const, completedAt: s.completedAt ?? at, managementAckAt: at, buttonsActive: false }, effects };
   }
   switch (action) {
     case 'start':
-      return s.participation === 'active' ? { next: s, effects: [] as OnboardingEffect[] } : activate(s, at, 'started', true);
+      if (s.participation === 'active') {
+        if (!s.buttonsActive) return { next: s, effects: [] as OnboardingEffect[] };
+        return {
+          next: { ...s, buttonsActive: false },
+          effects: [{ type: 'remove_buttons', replacement: 'started' }, { type: 'start_conversation' }] as OnboardingEffect[],
+        };
+      }
+      return activate(s, at, 'started', true);
     case 'got_it':
       if (s.track !== 'team_lead') return { next: s, effects: [] as OnboardingEffect[] };
-      if (s.participation === 'active') return { next: s, effects: [] as OnboardingEffect[] };
+      if (stale) return { next: s, effects: [] as OnboardingEffect[] };
+      if (s.participation === 'active') {
+        if (s.managementAckAt !== null || !s.buttonsActive) return { next: s, effects: [] as OnboardingEffect[] };
+        return {
+          next: { ...s, managementAckAt: at, buttonsActive: false },
+          effects: [
+            { type: 'remove_buttons', replacement: 'got_it_team_lead' },
+            { type: 'acknowledge', key: 'got_it_team_lead' },
+          ] as OnboardingEffect[],
+        };
+      }
       if (s.participation === 'declined') {
         return { next: { ...s, managementAckAt: s.managementAckAt ?? at }, effects: [] as OnboardingEffect[] };
       }
@@ -141,9 +162,15 @@ function decideAction(s: OnboardingState, action: OnboardingAction, at: Date) {
       return decline(s, at);
     case 'later': {
       if (s.participation === 'active') return { next: s, effects: [{ type: 'acknowledge', key: 'already_complete' }] as OnboardingEffect[] };
-      if (s.participation === 'declined' || s.reminderStatus === 'sent') {
-        return { next: s.participation === 'declined' ? s : { ...s, participation: 'deferred' as const },
-          effects: [{ type: 'acknowledge', key: 'later_after_reminder' }] as OnboardingEffect[] };
+      if (stale) return { next: s, effects: [] as OnboardingEffect[] };
+      if (s.participation === 'declined') {
+        return { next: s, effects: [{ type: 'acknowledge', key: 'later_after_reminder' }] as OnboardingEffect[] };
+      }
+      if (s.reminderStatus === 'sent') {
+        const effects: OnboardingEffect[] = [];
+        if (s.buttonsActive) effects.push({ type: 'remove_buttons', replacement: 'later_after_reminder' });
+        effects.push({ type: 'acknowledge', key: 'later_after_reminder' });
+        return { next: { ...s, participation: 'deferred' as const, buttonsActive: false }, effects };
       }
       const effects: OnboardingEffect[] = [{ type: 'schedule_reminder', originAt: at }];
       if (s.buttonsActive) effects.push({ type: 'remove_buttons', replacement: 'later_before_reminder' });
@@ -153,9 +180,12 @@ function decideAction(s: OnboardingState, action: OnboardingAction, at: Date) {
   }
 }
 
-function decideRoleChange(s: OnboardingState, to: PrimaryOrgRole) {
+function decideRoleChange(s: OnboardingState, from: PrimaryOrgRole, to: PrimaryOrgRole) {
   const track = trackForRole(to);
-  if (track === s.track) return { next: s, effects: [] as OnboardingEffect[] };
+  if (track === s.track) {
+    if (from !== to && track === 'management') return { next: s, effects: [{ type: 'send_intro', track }] as OnboardingEffect[] };
+    return { next: s, effects: [] as OnboardingEffect[] };
+  }
   if (track === 'management') {
     const effects: OnboardingEffect[] = [];
     if (reminderPending(s)) effects.push({ type: 'cancel_reminder' });
