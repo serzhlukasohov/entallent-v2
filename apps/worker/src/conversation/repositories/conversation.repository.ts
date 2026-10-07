@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { eq, and, desc, gte, isNotNull, isNull, lt, lte, ne, sql } from 'drizzle-orm';
-import { channelAccounts, conversations, messages, orgOnboardingDeliveries, people, users } from '@entalent/database';
+import { channelAccounts, conversations, messages, onboardingStates, orgOnboardingDeliveries, people, users } from '@entalent/database';
 import { isRuntimeEligibleUser } from '@entalent/application';
 import type {
   ConversationRepositoryPort,
@@ -266,6 +266,13 @@ export class ConversationRepository implements ConversationRepositoryPort {
       sentAt: message.sentAt ?? undefined,
       metadata: message.metadata as MessageRecord['metadata'],
     } : null;
+  }
+
+  /** Null when the person has no onboarding_states row (never onboarded through v2). */
+  async findOnboardingParticipation(tenantId: string, userId: string): Promise<string | null> {
+    const [row] = await this.db.client.select({ participation: onboardingStates.participation })
+      .from(onboardingStates).where(and(eq(onboardingStates.tenantId, tenantId), eq(onboardingStates.personId, userId))).limit(1);
+    return row?.participation ?? null;
   }
 
   async findOutboundMessageForDelivery(

@@ -86,7 +86,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
     await this.conversationQueue.add('check-in', {
       conversationId: target.conversationId, userId: input.personId, tenantId: input.tenantId,
       externalWorkspaceId: target.externalWorkspaceId, externalConversationId: target.externalConversationId,
-      traceId: `onboarding-start:${input.dedupeKey}`, onboardingStart: true,
+      traceId: `onboarding-start:${input.dedupeKey}`, onboardingStart: true, onboardingStartKey: input.dedupeKey,
     }, { jobId: `onb-start:${input.dedupeKey}` });
   }
 

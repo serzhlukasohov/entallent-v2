@@ -4953,7 +4953,7 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
       });
     });
 
-    it('replies exactly with the approved opener and no model call when the backlog is empty (G1)', async () => {
+    it('empty backlog: opener verbatim, no model call; disclosure appended only when not yet delivered (G1, A9)', async () => {
       const state = onboardingState('employee');
       const { m, orch } = setup({
         text: "let's do it",
@@ -4963,6 +4963,24 @@ describe('ConversationOrchestrator onboarding text replies (classifier-driven)',
         backlogQuestion: null,
       });
       m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+      const result = await orch.orchestrate(INPUT);
+      expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+      expect(result.responseText.startsWith(EMPTY_BACKLOG_OPENER)).toBe(true);
+      expect(result.responseText).toContain(getReportingDisclosureText('en'));
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata).toMatchObject({
+        reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION,
+      });
+    });
+
+    it('empty backlog with the disclosure already delivered: the opener only', async () => {
+      const state = onboardingState('employee');
+      const { m, orch } = setup({
+        text: "let's do it",
+        signal: { intent: 'start', substantive: false },
+        state,
+        applyResult: { effects: [{ type: 'start_conversation' }], state: startedState(state), replyStart: true },
+        backlogQuestion: null,
+      });
       const result = await orch.orchestrate(INPUT);
       expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
       expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);

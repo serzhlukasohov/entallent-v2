@@ -73,7 +73,7 @@ describe('OnboardingEffectsService', () => {
     await service.startConversation({ tenantId: 't', personId: 'p', dedupeKey: 'p:4' });
     const [name, data, opts] = conversationQueue.add.mock.calls[0]!;
     expect(name).toBe('check-in');
-    expect(data).toMatchObject({ onboardingStart: true, userId: 'p', conversationId: 'c1', externalWorkspaceId: 'W1' });
+    expect(data).toMatchObject({ onboardingStart: true, onboardingStartKey: expect.any(String), userId: 'p', conversationId: 'c1', externalWorkspaceId: 'W1' });
     expect(opts).toEqual({ jobId: 'onb-start:p:4' });
   });
 

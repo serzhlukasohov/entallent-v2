@@ -12,6 +12,7 @@ import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
 import { ConversationRepository } from './repositories/conversation.repository';
+import { stableId } from '../onboarding/stable-id';
 
 export type ConversationJob = {
   requestId: string;
@@ -29,6 +30,8 @@ export type ConversationJob = {
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'> & {
   /** Set by onboarding when the person chose to start; forwarded to ProactiveCheckInUseCase. */
   onboardingStart?: boolean;
+  /** Dedupe key of the start (person + state version); derives the deterministic outbound message id. */
+  onboardingStartKey?: string;
 };
 
 const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { ignoreWindowHours: 48 };
@@ -70,6 +73,14 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         this.logger.log(`Skipping check-in for inactive runtime user ${job.data.userId}`);
         return;
       }
+      if (job.data.onboardingStart) {
+        // The person may have declined or deferred between the button click and this job running.
+        const participation = await this.conversationRepo.findOnboardingParticipation(job.data.tenantId, job.data.userId);
+        if (participation !== null && participation !== 'active') {
+          this.logger.log(`Skipping onboarding start check-in for ${job.data.userId}: participation=${participation}`);
+          return;
+        }
+      }
       const [tenantRow] = await this.db.client
         .select({ policy: tenants.proactiveMessagingPolicy })
         .from(tenants)
@@ -86,7 +97,12 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         ...(testQuestionGroup ? { questionGroup: testQuestionGroup } : {}),
       };
 
-      const result = await this.checkInUseCase.execute({ ...job.data, pulseConfig });
+      const { onboardingStartKey, ...checkIn } = job.data;
+      const result = await this.checkInUseCase.execute({
+        ...checkIn, pulseConfig,
+        ...(checkIn.onboardingStart && onboardingStartKey
+          ? { onboardingStartMessageId: stableId('onb-start', onboardingStartKey) } : {}),
+      });
       this.logger.log(
         `Check-in job ${job.id} done — probe=${result.probeQuestionId ?? 'none'} text="${result.responseText.slice(0, 60)}"`,
       );

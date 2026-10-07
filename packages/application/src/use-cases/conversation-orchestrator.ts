@@ -715,8 +715,8 @@ export class ConversationOrchestrator {
       replyBrief: replyPlan,
       replyPlan,
         });
-    // A backlog opener carries a probe, so it follows the proactive path's disclosure rule (A9).
-    const openerAppendsDisclosure = onboardingOpener?.probeQuestionId !== undefined
+    // Any start opener (backlog probe or the approved empty-backlog opener) follows the proactive disclosure rule (A9).
+    const openerAppendsDisclosure = onboardingOpener !== null
       && surveyEnabled
       && !hasCurrentDeliveredDisclosure;
     let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure || openerAppendsDisclosure;

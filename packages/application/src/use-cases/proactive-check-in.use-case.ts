@@ -32,9 +32,11 @@ export interface ProactiveCheckInInput {
   pulseEnabled?: boolean;
   /**
    * The person pressed the onboarding start button: open with the first backlog topic, or the approved
-   * opener when there is none. Idempotency comes from the queue job id, not from a persisted message id.
+   * opener when there is none.
    */
   onboardingStart?: boolean;
+  /** Deterministic outbound id for an onboarding start; a retry reuses the persisted message and makes no model call. */
+  onboardingStartMessageId?: string;
 }
 
 export interface ProactiveCheckInResult {
@@ -77,6 +79,18 @@ export class ProactiveCheckInUseCase {
           throw new Error('Onboarding message ownership mismatch');
         }
         await this.enqueue(input, conversation.channelType, existing.id, existing.text);
+        return { outboundMessageId: existing.id, responseText: existing.text, probeQuestionId: null };
+      }
+    }
+
+    if (input.onboardingStartMessageId) {
+      if (!this.conversationRepo.findMessageById) throw new Error('Onboarding message lookup unavailable');
+      const existing = await this.conversationRepo.findMessageById(input.onboardingStartMessageId, tenantId, conversationId);
+      if (existing) {
+        if (existing.userId !== userId || existing.direction !== 'outbound') {
+          throw new Error('Onboarding start message ownership mismatch');
+        }
+        if (!existing.sentAt) await this.enqueue(input, conversation.channelType, existing.id, existing.text);
         return { outboundMessageId: existing.id, responseText: existing.text, probeQuestionId: null };
       }
     }
@@ -180,8 +194,7 @@ export class ProactiveCheckInUseCase {
       },
     });
 
-    const isVerbatimOpener = onboardingStart && !probeQuestion;
-    const responseText = surveyEnabled && !hasCurrentDeliveredDisclosure && !isVerbatimOpener
+    const responseText = surveyEnabled && !hasCurrentDeliveredDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
     const containsSurveyProbe =
@@ -191,6 +204,7 @@ export class ProactiveCheckInUseCase {
 
     const outbound = await this.conversationRepo.saveMessage({
       ...(input.onboardingMessageId ? { id: input.onboardingMessageId } : {}),
+      ...(input.onboardingStartMessageId ? { id: input.onboardingStartMessageId } : {}),
       conversationId,
       tenantId,
       userId,
@@ -201,7 +215,7 @@ export class ProactiveCheckInUseCase {
       messageType: 'proactive_check_in',
       metadata: {
         ...(input.onboardingMessageId ? { onboardingDeliveryId: input.onboardingMessageId } : {}),
-        ...(surveyEnabled && !hasCurrentDeliveredDisclosure && !isVerbatimOpener
+        ...(surveyEnabled && !hasCurrentDeliveredDisclosure
           ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
           : {}),
         ...(containsSurveyProbe

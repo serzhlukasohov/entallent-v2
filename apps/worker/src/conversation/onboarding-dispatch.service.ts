@@ -50,7 +50,51 @@ export class OnboardingDispatchService {
         this.logger.error(`Onboarding preparation failed delivery=${delivery.id}: ${(error as Error).message}`);
       }
     }
+    await this.recoverStrandedTrustMessages(tenantId);
     return { found: rows.length, queued, failed };
+  }
+
+  /**
+   * Safety net for the intro chain: an intro half that was delivered whose trust half was never queued
+   * (crash between the two, lost job). Never throws; the deterministic job id makes repeats harmless.
+   */
+  private async recoverStrandedTrustMessages(tenantId?: string): Promise<void> {
+    try {
+      const rows = (await this.db.client.execute(sql`
+        SELECT i.tenant_id AS tenant_id, i.conversation_id AS conversation_id, i.metadata AS metadata,
+               c.channel_type AS channel_type, c.external_conversation_id AS external_conversation_id,
+               ca.external_workspace_id AS external_workspace_id
+        FROM messages i
+        JOIN messages t ON t.id = (i.metadata->>'onboardingTrustMessageId')::uuid AND t.tenant_id = i.tenant_id
+        JOIN conversations c ON c.id = i.conversation_id AND c.tenant_id = i.tenant_id
+        JOIN channel_accounts ca ON ca.user_id = i.user_id AND ca.tenant_id = i.tenant_id
+          AND ca.channel_type = c.channel_type AND ca.link_status = 'linked'
+        WHERE i.message_type = 'onboarding_intro' AND i.direction = 'outbound'
+          AND i.metadata->>'onboardingIntroPart' = 'intro'
+          AND i.metadata->>'onboardingTrustMessageId' ~ '^[0-9a-f-]{36}$'
+          AND i.sent_at IS NOT NULL AND i.sent_at > now() - interval '7 days'
+          AND t.sent_at IS NULL AND t.deleted_at IS NULL
+          ${tenantId ? sql`AND i.tenant_id = ${tenantId}` : sql``}
+        ORDER BY i.sent_at
+        LIMIT 25
+      `)) as unknown as Array<{
+        tenant_id: string; conversation_id: string; metadata: unknown; channel_type: string;
+        external_conversation_id: string; external_workspace_id: string;
+      }>;
+      for (const r of rows) {
+        try {
+          await this.intro.enqueueTrustAfterIntro({
+            tenantId: r.tenant_id, conversationId: r.conversation_id, channelType: r.channel_type,
+            externalWorkspaceId: r.external_workspace_id, externalChannelId: r.external_conversation_id,
+            introMetadata: r.metadata,
+          });
+        } catch (error) {
+          this.logger.error(`Trust message recovery failed conversation=${r.conversation_id}: ${(error as Error).message}`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Trust message recovery sweep failed: ${(error as Error).message}`);
+    }
   }
 
   private async dispatchOne(delivery: typeof orgOnboardingDeliveries.$inferSelect): Promise<void> {

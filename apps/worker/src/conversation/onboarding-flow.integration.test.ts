@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { introMessages } from '@entalent/application';
-import { channelAccounts, createDbClient, messages, orgOnboardingDeliveries,
+import { channelAccounts, conversations, createDbClient, messages, orgOnboardingDeliveries,
   orgUnits, people, tenants, users, type DbClient } from '@entalent/database';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { MessageSendProcessor, type MessageSendJob } from '../message-send/message-send.processor';
@@ -115,5 +115,35 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
     expect(onboarding.recordIntroDelivered).toHaveBeenCalledOnce();
     expect(await dispatcher.dispatchPending(tenantId)).toEqual({ found: 0, queued: 0, failed: 0 });
     expect(await client.db.select().from(messages).where(eq(messages.userId, personId))).toHaveLength(2);
+  });
+  it('recovers a stranded trust message (intro sent, trust unsent) with a deterministic job id', async () => {
+    const strandedId = randomUUID();
+    const strandedDm = `D-${randomUUID()}`;
+    const fakeQueue = { add: vi.fn().mockResolvedValue(undefined) };
+    await client.db.insert(users).values({ id: strandedId, tenantId, status: 'active' });
+    await client.db.insert(people).values({ id: strandedId, tenantId, customerEmployeeId: 'S-1',
+      workEmail: 's1@fixture.test', displayName: 'Stranded', primaryRole: 'employee',
+      pulseParticipant: true, lifecycleStatus: 'active' });
+    await client.db.insert(channelAccounts).values({ tenantId, userId: strandedId,
+      channelType: 'slack', externalWorkspaceId: workspaceId, externalUserId: 'U-STRANDED' });
+    const [conversation] = await client.db.insert(conversations).values({ tenantId, userId: strandedId,
+      channelType: 'slack', externalConversationId: strandedDm }).returning();
+    const intro = new OnboardingIntroService({ client: client.db } as never, fakeQueue as never);
+    const sent = await intro.sendIntro({ tenantId, personId: strandedId, role: 'employee', version: 0,
+      conversation: { id: conversation!.id, channelType: 'slack', externalConversationId: strandedDm, externalWorkspaceId: workspaceId } });
+    await client.db.update(messages).set({ sentAt: new Date() }).where(eq(messages.id, sent.introMessageId));
+    fakeQueue.add.mockClear();
+    const dispatcher = new OnboardingDispatchService({ client: client.db } as never, {} as never, intro);
+
+    await dispatcher.dispatchPending(tenantId);
+    const trustCalls = fakeQueue.add.mock.calls.filter((c) => (c[1] as { messageId: string }).messageId === sent.trustMessageId);
+    expect(trustCalls).toHaveLength(1);
+    expect(trustCalls[0]![2]).toEqual({ jobId: `onb-trust-${sent.trustMessageId}` });
+    expect(trustCalls[0]![1]).toMatchObject({ externalChannelId: strandedDm, externalWorkspaceId: workspaceId });
+
+    await client.db.update(messages).set({ sentAt: new Date() }).where(eq(messages.id, sent.trustMessageId));
+    fakeQueue.add.mockClear();
+    await dispatcher.dispatchPending(tenantId);
+    expect(fakeQueue.add).not.toHaveBeenCalled();
   });
 });
