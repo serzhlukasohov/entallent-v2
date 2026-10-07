@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { and, eq, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import type { OnboardingReminderJob } from '@entalent/contracts';
 import { onboardingStates } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
@@ -31,7 +31,7 @@ export class OnboardingReminderSweepService {
       eq(onboardingStates.reminderStatus, 'scheduled'),
       lte(onboardingStates.reminderDueAt, sql`now() - interval '5 minutes'`),
       ...(tenantId ? [eq(onboardingStates.tenantId, tenantId)] : []),
-    )).limit(SWEEP_LIMIT);
+    )).orderBy(asc(onboardingStates.reminderDueAt)).limit(SWEEP_LIMIT);
     let enqueued = 0;
     let failed = 0;
     for (const row of rows) {

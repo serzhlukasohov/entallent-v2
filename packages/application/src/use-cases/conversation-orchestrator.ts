@@ -1485,11 +1485,11 @@ function safeDefault(): RiskDetection {
   };
 }
 
-/** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
 function describeLocalTime(timezone: string | undefined | null): string | undefined {
   if (!timezone) return undefined;
   try {
