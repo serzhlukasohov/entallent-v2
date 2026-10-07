@@ -292,7 +292,8 @@ describe('MessageSendProcessor', () => {
       messageId: 'm1', tenantId: 't1', conversationId: 'c1', channelType: 'dev',
       externalWorkspaceId: 'w1', externalChannelId: 'ch1', text: 'x',
     };
-    function build(messageType: string, onboardingEligible: boolean) {
+    function build(messageType: string, onboardingEligible: boolean, participation: string | null = 'undecided') {
+      const contextFor = vi.fn().mockResolvedValue(participation ? { state: { participation } } : null);
       const repo = {
         findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
           userId: 'u1', text: 'x', sentAt: null, channelType: 'dev', externalConversationId: 'ch1', messageType,
@@ -304,9 +305,9 @@ describe('MessageSendProcessor', () => {
         updateMessageDelivery: vi.fn().mockResolvedValue(new Date()),
       };
       const processor = new MessageSendProcessor({} as never, repo as never,
-        { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never, {} as never, {} as never,
+        { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never, { contextFor } as never, {} as never,
     );
-      return { processor, repo };
+      return { processor, repo, contextFor };
     }
 
     it.each(['onboarding_ack', 'onboarding_intro', 'onboarding_reminder'])('sends %s to a non-pulse manager', async (type) => {
@@ -320,6 +321,33 @@ describe('MessageSendProcessor', () => {
       const { processor, repo } = build('text', true);
       await processor.process({ data } as Job<MessageSendJob>);
       expect(repo.updateMessageDelivery).not.toHaveBeenCalled();
+    });
+
+    it.each(['undecided', 'deferred'])('sends onboarding_reminder while participation is %s', async (p) => {
+      const { processor, repo } = build('onboarding_reminder', true, p);
+      await processor.process({ data } as Job<MessageSendJob>);
+      expect(repo.updateMessageDelivery).toHaveBeenCalled();
+    });
+
+    it.each(['declined', 'active', 'not_applicable', null])(
+      'send-time re-check: skips onboarding_reminder when participation is %s', async (p) => {
+        const { processor, repo, contextFor } = build('onboarding_reminder', true, p);
+        await processor.process({ data } as Job<MessageSendJob>);
+        expect(contextFor).toHaveBeenCalledWith('t1', 'u1');
+        expect(repo.updateMessageDelivery).not.toHaveBeenCalled();
+      });
+
+    it('skips onboarding_reminder for an inactive user', async () => {
+      const { processor, repo } = build('onboarding_reminder', false);
+      await processor.process({ data } as Job<MessageSendJob>);
+      expect(repo.updateMessageDelivery).not.toHaveBeenCalled();
+    });
+
+    it('does not apply the participation re-check to other onboarding messages', async () => {
+      const { processor, repo, contextFor } = build('onboarding_ack', true, 'declined');
+      await processor.process({ data } as Job<MessageSendJob>);
+      expect(contextFor).not.toHaveBeenCalled();
+      expect(repo.updateMessageDelivery).toHaveBeenCalled();
     });
 
     it('skips onboarding_ack for an ineligible user', async () => {

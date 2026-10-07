@@ -21,6 +21,13 @@ export interface OnboardingReminderJob {
   personId: string;
   /** ISO timestamp the reminder was scheduled for. */
   dueAt: string;
+  /** Times this job was pushed back (recent user activity or closed hours); the 6th pass sends anyway. */
+  postponeCount?: number;
+}
+
+/** Queued by the API after the company work calendar changes; the worker recomputes scheduled reminders. */
+export interface OnboardingReminderRecalculateJob {
+  tenantId: string;
 }
 
 export const OnboardingActionJobSchema = z.object({

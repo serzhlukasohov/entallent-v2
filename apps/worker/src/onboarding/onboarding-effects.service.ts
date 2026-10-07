@@ -13,6 +13,13 @@ import type { CheckInJob } from '../conversation/conversation.processor';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { stableId } from './stable-id';
 
+export interface DeliveryTarget {
+  conversationId: string;
+  channelType: string;
+  externalConversationId: string;
+  externalWorkspaceId: string;
+}
+
 @Injectable()
 export class OnboardingEffectsService implements OnboardingEffectsPort {
   private readonly logger = new Logger(OnboardingEffectsService.name);
@@ -57,7 +64,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
   }
 
   async sendAcknowledgement(input: { tenantId: string; personId: string; text: string; dedupeKey: string }): Promise<void> {
-    const target = await this.findTarget(input.tenantId, input.personId);
+    const target = await this.findDeliveryTarget(input.tenantId, input.personId);
     if (!target) {
       this.logger.warn(`No active conversation for onboarding ack person=${input.personId}`);
       return;
@@ -68,17 +75,21 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       direction: 'outbound', senderType: 'agent', text: input.text, messageType: 'onboarding_ack',
       occurredAt: new Date(), metadata: {},
     }).onConflictDoNothing();
-    // Same job name/payload as OutboxService.enqueueMessageSend.
+    await this.enqueueMessageSend({ tenantId: input.tenantId, ...target }, messageId, input.text);
+  }
+
+  /** Same job name/payload as OutboxService.enqueueMessageSend. */
+  async enqueueMessageSend(target: DeliveryTarget & { tenantId: string }, messageId: string, text: string): Promise<void> {
     await this.messageSendQueue.add('send', {
-      messageId, tenantId: input.tenantId, conversationId: target.conversationId,
+      messageId, tenantId: target.tenantId, conversationId: target.conversationId,
       channelType: target.channelType, externalWorkspaceId: target.externalWorkspaceId,
-      externalChannelId: target.externalConversationId, text: input.text,
+      externalChannelId: target.externalConversationId, text,
       replyToExternalThreadId: undefined,
     });
   }
 
   async startConversation(input: { tenantId: string; personId: string; dedupeKey: string }): Promise<void> {
-    const target = await this.findTarget(input.tenantId, input.personId);
+    const target = await this.findDeliveryTarget(input.tenantId, input.personId);
     if (!target) {
       this.logger.warn(`No active conversation to start onboarding person=${input.personId}`);
       return;
@@ -90,7 +101,8 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
     }, { jobId: `onb-start:${input.dedupeKey}` });
   }
 
-  private async findTarget(tenantId: string, personId: string) {
+  /** The person's latest active conversation and linked workspace, or null. */
+  async findDeliveryTarget(tenantId: string, personId: string): Promise<DeliveryTarget | null> {
     const [conversation] = await this.db.client.select({
       conversationId: conversations.id, channelType: conversations.channelType,
       externalConversationId: conversations.externalConversationId,

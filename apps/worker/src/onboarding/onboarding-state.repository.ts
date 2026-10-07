@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import type { OnboardingState } from '@entalent/application';
 import type { WorkCalendar } from '@entalent/contracts';
-import { auditLogs, onboardingStates, people, tenantWorkCalendars, users } from '@entalent/database';
+import { auditLogs, messages, onboardingStates, people, tenantWorkCalendars, users } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 
 export interface OnboardingStateRow {
@@ -10,6 +10,7 @@ export interface OnboardingStateRow {
   version: number;
   introChannelId: string | null;
   introActionsMessageTs: string | null;
+  reminderDueAt: Date | null;
   state: OnboardingState;
 }
 
@@ -23,6 +24,16 @@ export interface OnboardingAuditInput {
   metadata: Record<string, unknown>;
 }
 
+export interface OnboardingOutboundMessageInput {
+  id: string;
+  tenantId: string;
+  conversationId: string;
+  userId: string;
+  text: string;
+  messageType: string;
+  occurredAt: Date;
+}
+
 export interface OnboardingTx {
   lockState(tenantId: string, personId: string): Promise<OnboardingStateRow | null>;
   getPerson(tenantId: string, personId: string): Promise<{ role: string; timezone: string | null }>;
@@ -31,6 +42,7 @@ export interface OnboardingTx {
   setProactive(tenantId: string, personId: string, enabled: boolean): Promise<void>;
   setIntroLocation(id: string, channelId: string, messageTs: string): Promise<void>;
   insertAudit(input: OnboardingAuditInput): Promise<void>;
+  insertOutboundMessage(input: OnboardingOutboundMessageInput): Promise<void>;
 }
 
 export interface OnboardingStateRepositoryPort {
@@ -46,6 +58,7 @@ function toRow(r: Row): OnboardingStateRow {
     version: r.version,
     introChannelId: r.introChannelId,
     introActionsMessageTs: r.introActionsMessageTs,
+    reminderDueAt: r.reminderDueAt,
     state: {
       track: r.track as OnboardingState['track'],
       introStatus: r.introStatus as OnboardingState['introStatus'],
@@ -112,6 +125,11 @@ export class OnboardingStateRepository implements OnboardingStateRepositoryPort 
       },
       async insertAudit(input) {
         await dbTx.insert(auditLogs).values(input);
+      },
+      async insertOutboundMessage(input) {
+        await dbTx.insert(messages).values({
+          ...input, direction: 'outbound', senderType: 'agent', metadata: {},
+        }).onConflictDoNothing();
       },
     }));
   }

@@ -11,7 +11,7 @@ const calendar = { timezone: 'Europe/Kyiv', workingDays: [1, 2, 3, 4, 5], workSt
 function harness(opts: { state?: Partial<OnboardingState>; row?: Partial<OnboardingStateRow>; role?: string; userTz?: string | null; calendar?: typeof calendar | null; noRow?: boolean } = {}) {
   const calls: string[] = [];
   let row: OnboardingStateRow | null = opts.noRow ? null : {
-    id: 'row1', version: 3, introChannelId: 'D1', introActionsMessageTs: '1.2',
+    id: 'row1', version: 3, introChannelId: 'D1', introActionsMessageTs: '1.2', reminderDueAt: null,
     state: { ...initialOnboardingState('employee'), ...opts.state },
     ...opts.row,
   };

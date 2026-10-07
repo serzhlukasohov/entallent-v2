@@ -71,6 +71,15 @@ export class MessageSendProcessor extends WorkerHost {
       this.logger.warn(`Skipping outbound delivery for inactive runtime user ${persisted.userId}`);
       return;
     }
+    // Send-time re-check: the user may have refused or started since the reminder was queued (Q13).
+    if (persisted.messageType === 'onboarding_reminder' && !persisted.sentAt) {
+      const state = await this.onboardingService.contextFor(tenantId, persisted.userId);
+      const participation = state?.state.participation;
+      if (participation !== 'undecided' && participation !== 'deferred') {
+        this.logger.warn(`Skipping onboarding reminder ${messageId}: participation=${participation ?? 'none'}`);
+        return;
+      }
+    }
     if (persisted.sentAt) {
       if (onboarding && persisted.externalMessageId) {
         await this.conversationRepo.completeOnboardingDelivery(messageId, tenantId, persisted.userId, persisted.sentAt, persisted.externalMessageId);

@@ -6,6 +6,9 @@ import { WorkspaceConnectionRepository } from '../conversation/repositories/work
 import { OnboardingActionProcessor } from './onboarding-action.processor';
 import { OnboardingIntroService } from './onboarding-intro.service';
 import { OnboardingEffectsService } from './onboarding-effects.service';
+import { OnboardingReminderProcessor } from './onboarding-reminder.processor';
+import { OnboardingReminderRepository } from './onboarding-reminder.repository';
+import { OnboardingReminderSweepService } from './onboarding-reminder-sweep.service';
 import { OnboardingStateRepository } from './onboarding-state.repository';
 import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
 
@@ -27,7 +30,10 @@ import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
     OnboardingService,
     OnboardingIntroService,
     OnboardingActionProcessor,
+    OnboardingReminderRepository,
+    OnboardingReminderProcessor,
+    OnboardingReminderSweepService,
   ],
-  exports: [OnboardingService, OnboardingIntroService, OnboardingStateRepository],
+  exports: [OnboardingService, OnboardingIntroService, OnboardingStateRepository, OnboardingReminderSweepService],
 })
 export class OnboardingModule {}
