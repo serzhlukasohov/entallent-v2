@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq, inArray } from 'drizzle-orm';
 import {
   channelAccounts, createDbClient, orgEmployeePlacements, orgOnboardingDeliveries,
-  orgUnits, people, tenants, users, workspaceConnections,
+  orgUnits, people, tenants, tenantWorkCalendars, users, workspaceConnections,
   type DbClient,
 } from '@entalent/database';
 import { HierarchyRolloutService } from './hierarchy-rollout.service';
@@ -26,6 +26,8 @@ describe.skipIf(!localDatabase)('multi-Unit rollout on migrated local PostgreSQL
     client = createDbClient(databaseUrl!);
     service = new HierarchyRolloutService({ client: client.db } as never);
     await client.db.insert(tenants).values({ id: tenantId, name: 'Rollout integration fixture' });
+    await client.db.insert(tenantWorkCalendars).values({ tenantId, timezone: 'Europe/Kyiv',
+      workingDays: [1, 2, 3, 4, 5], workStart: '09:00', workEnd: '18:00', updatedBy: 'fixture' });
     await client.db.insert(users).values(personIds.map((id) => ({ id, tenantId, status: 'inactive' })));
     await client.db.insert(people).values([
       ...managers.map((id, index) => ({ id, tenantId, customerEmployeeId: `M-${index}`, workEmail: `m${index}@fixture.test`,

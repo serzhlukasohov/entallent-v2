@@ -12,6 +12,7 @@ import { shouldMountDevModule } from './dev/dev-endpoints';
 import { InternalMafContextModule } from './internal-maf-context/internal-maf-context.module';
 import { HierarchyModule } from './hierarchy/hierarchy.module';
 import { CompanyAuthModule } from './company-auth/company-auth.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 
 const mountDevModule = shouldMountDevModule();
 
@@ -26,6 +27,7 @@ const mountDevModule = shouldMountDevModule();
     AdminModule,
     HierarchyModule,
     CompanyAuthModule,
+    OnboardingModule,
     InternalMafContextModule,
     ...(mountDevModule ? [DevModule] : []),
   ],

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import {
   channelAccounts, orgAdvisorAssignments, orgEmployeePlacements, orgHrbpScopes, orgOnboardingDeliveries,
-  orgPersonCapabilities, orgTeams, orgUnits, people, workspaceConnections,
+  orgPersonCapabilities, orgTeams, orgUnits, people, tenantWorkCalendars, workspaceConnections,
 } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 
@@ -11,7 +11,7 @@ export class CompanySetupReadService {
   constructor(private readonly db: DatabaseService) {}
 
   async snapshot(tenantId: string) {
-    const [persons, units, teams, placements, capabilities, slackLinks, workspaces, deliveries, advisorAssignments, hrbpScopes] = await Promise.all([
+    const [persons, units, teams, placements, capabilities, slackLinks, workspaces, deliveries, advisorAssignments, hrbpScopes, calendars] = await Promise.all([
       this.db.client.select({
         id: people.id, customerEmployeeId: people.customerEmployeeId,
         workEmail: people.workEmail, displayName: people.displayName,
@@ -41,7 +41,14 @@ export class CompanySetupReadService {
       }).from(orgOnboardingDeliveries).where(eq(orgOnboardingDeliveries.tenantId, tenantId)),
       this.db.client.select().from(orgAdvisorAssignments).where(eq(orgAdvisorAssignments.tenantId, tenantId)),
       this.db.client.select().from(orgHrbpScopes).where(eq(orgHrbpScopes.tenantId, tenantId)),
+      this.db.client.select({
+        timezone: tenantWorkCalendars.timezone, workingDays: tenantWorkCalendars.workingDays,
+        workStart: tenantWorkCalendars.workStart, workEnd: tenantWorkCalendars.workEnd,
+      }).from(tenantWorkCalendars).where(eq(tenantWorkCalendars.tenantId, tenantId)),
     ]);
-    return { persons, units, teams, placements, capabilities, slackLinks, workspaces, deliveries, advisorAssignments, hrbpScopes };
+    // Read-only: only enTalent staff configure the calendar (Q17); absence blocks rollout (Q18).
+    const calendar = calendars[0] ?? null;
+    return { persons, units, teams, placements, capabilities, slackLinks, workspaces, deliveries, advisorAssignments, hrbpScopes,
+      calendarConfigured: calendar !== null, calendar };
   }
 }

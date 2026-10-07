@@ -22,3 +22,4 @@ export * from './user-style-profiles';
 export * from './runtime-attempts';
 export * from './runtime-actions';
 export * from './runtime-shadow-diagnostics';
+export * from './onboarding';

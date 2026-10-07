@@ -56,6 +56,9 @@ describe('dedicated Company setup UI', () => {
     expect(script.body).toContain('renderHierarchy(snapshot)');
     expect(script.body).toContain('pending assignment');
     expect(html.body).toContain('First-contact delivery');
+    expect(html.body).toContain('id="work-calendar"');
+    expect(script.body).toContain('not configured by enTalent');
+    expect(script.body).not.toContain('calendar-form');
     expect(script.body).toContain('Sending · verify before retry');
   });
 });

@@ -73,6 +73,7 @@ table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;
 <div class="card"><h2>12. Activate Units</h2><p>Select one or more Units. All selected Units must pass structural checks; ready Persons activate together, while unlinked Persons remain draft.</p>
 <div class="grid"><label>Units<select id="rollout-unit" multiple size="6"></select></label><label>Slack workspace<select id="rollout-workspace"></select></label></div>
 <button id="rollout-preview" class="secondary">Check readiness</button><button id="rollout" disabled>Activate selected Units</button><div id="rollout-result" class="scroll"></div></div>
+<div class="card"><h2>Work calendar</h2><p id="work-calendar" class="muted"></p></div>
 <div class="card"><h2>First-contact delivery</h2><p>Pending and failed messages are retried by the worker. A message left in sending needs delivery verification before any manual retry.</p><div id="onboarding-deliveries" class="scroll"></div></div>
 <div class="card"><h2>Current hierarchy</h2><div id="hierarchy" class="scroll"></div></div>
 </section></main><script src="/api/v1/company-setup/ui.js" defer></script></body></html>`;
@@ -163,6 +164,12 @@ function renderHierarchy(data) {
   table(el('hierarchy'), [['Level', (row) => row.level], ['Name', (row) => row.name],
     ['Key', (row) => row.key], ['Status', (row) => row.status], ['Slack', (row) => row.slack]], rows);
 }
+function renderCalendar(data) {
+  const node = el('work-calendar');
+  if (!data.calendarConfigured) { node.className = 'error'; node.textContent = 'The work calendar is not configured by enTalent. Unit rollout is blocked until enTalent configures it.'; return; }
+  const c = data.calendar; node.className = 'muted';
+  node.textContent = 'Configured by enTalent: ' + c.timezone + ', days ' + c.workingDays.join(',') + ', ' + c.workStart + '-' + c.workEnd + '.';
+}
 function renderDeliveries(data) {
   const persons = new Map(data.persons.map((person) => [person.id, person]));
   const units = new Map(data.units.map((unit) => [unit.id, unit]));
@@ -221,6 +228,7 @@ async function refresh() {
   fill('link-workspace', workspaces, (w) => w.externalWorkspaceId, false);
   fill('rollout-workspace', workspaces, (w) => w.externalWorkspaceId, false);
   renderHierarchy(snapshot);
+  renderCalendar(snapshot);
   renderDeliveries(snapshot);
 }
 function loadEditDraft(kind) {
@@ -427,7 +435,8 @@ el('rollout-preview').addEventListener('click', () => run(async () => {
     ['Other pending', (row) => row.plan.pendingPersonIds.filter((id) => linked.has(id)).length],
     ['Already active', (row) => row.plan.activatePersonIds.filter((id) => people.get(id)?.lifecycleStatus === 'active').length],
     ['Issues', (row) => row.plan.issues.map((issue) => issue.code + ': ' + issue.entityId).join('; ') || 'None']], preview.units);
-  message(preview.ready ? 'Selected Units are ready for rollout.' : 'Resolve structural issues before rollout.', !preview.ready);
+  const calendarBlocked = preview.units.some((row) => row.plan.issues.some((issue) => issue.code === 'work_calendar_not_configured'));
+  message(preview.ready ? 'Selected Units are ready for rollout.' : calendarBlocked ? 'The work calendar is not configured by enTalent. Rollout is blocked until it is set.' : 'Resolve structural issues before rollout.', !preview.ready);
 }));
 el('rollout').addEventListener('click', () => run(async () => {
   const unitIds = rolloutUnitIds(); const workspaceId = value('rollout-workspace');
