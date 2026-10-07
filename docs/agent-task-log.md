@@ -247,3 +247,4 @@ Failure layer values:
 | 2026-10-07 | Onboarding v2 Task 6: classifier-driven text equivalents of onboarding actions | success | none | contracts, ai-openai, application, worker tests and typechecks; conversation-sim and api typecheck | Live sim gate not run for the new classifier labels |
 | 2026-10-07 | Onboarding v2 Task 7: two-message intro dispatch, backlog-first start, Pulse gating | success | none | application + worker tests (local PG/Redis integration), typechecks, lint | BullMQ custom job ids with one ':' are rejected (3-part ids pass); add a shared job-id helper test if ids multiply |
 | 2026-10-07 | Onboarding v2 Task 7 fix round 1: idempotent start, disclosure parity, trust recovery | success | none | application + worker tests incl. local PG/Redis integration, typecheck, lint | none |
+| 2026-10-07 | Onboarding v2 Task 7 fix round 2: trust sweep ignores superseded intros | success | none | worker tests (PG/Redis), typecheck | none |

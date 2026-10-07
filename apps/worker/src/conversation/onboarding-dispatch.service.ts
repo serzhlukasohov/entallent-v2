@@ -74,6 +74,12 @@ export class OnboardingDispatchService {
           AND i.metadata->>'onboardingTrustMessageId' ~ '^[0-9a-f-]{36}$'
           AND i.sent_at IS NOT NULL AND i.sent_at > now() - interval '7 days'
           AND t.sent_at IS NULL AND t.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM messages n
+            WHERE n.tenant_id = i.tenant_id AND n.user_id = i.user_id AND n.direction = 'outbound'
+              AND n.message_type = 'onboarding_intro' AND n.metadata->>'onboardingIntroPart' = 'intro'
+              AND n.occurred_at > i.occurred_at
+          )
           ${tenantId ? sql`AND i.tenant_id = ${tenantId}` : sql``}
         ORDER BY i.sent_at
         LIMIT 25

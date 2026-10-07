@@ -146,4 +146,29 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
     await dispatcher.dispatchPending(tenantId);
     expect(fakeQueue.add).not.toHaveBeenCalled();
   });
+  it('does not release the trust message of a superseded intro (a newer intro exists)', async () => {
+    const personId2 = randomUUID();
+    const dm = `D-${randomUUID()}`;
+    const fakeQueue = { add: vi.fn().mockResolvedValue(undefined) };
+    await client.db.insert(users).values({ id: personId2, tenantId, status: 'active' });
+    await client.db.insert(people).values({ id: personId2, tenantId, customerEmployeeId: 'S-2',
+      workEmail: 's2@fixture.test', displayName: 'Changed', primaryRole: 'manager',
+      pulseParticipant: false, lifecycleStatus: 'active' });
+    await client.db.insert(channelAccounts).values({ tenantId, userId: personId2,
+      channelType: 'slack', externalWorkspaceId: workspaceId, externalUserId: 'U-CHANGED' });
+    const [conversation] = await client.db.insert(conversations).values({ tenantId, userId: personId2,
+      channelType: 'slack', externalConversationId: dm }).returning();
+    const route = { id: conversation!.id, channelType: 'slack', externalConversationId: dm, externalWorkspaceId: workspaceId };
+    const intro = new OnboardingIntroService({ client: client.db } as never, fakeQueue as never);
+    const oldIntro = await intro.sendIntro({ tenantId, personId: personId2, role: 'employee', version: 0, conversation: route });
+    await client.db.update(messages).set({ sentAt: new Date() }).where(eq(messages.id, oldIntro.introMessageId));
+    await new Promise((r) => setTimeout(r, 20));
+    const newIntro = await intro.sendIntro({ tenantId, personId: personId2, role: 'manager', version: 1, conversation: route });
+    expect(newIntro.trustMessageId).not.toBe(oldIntro.trustMessageId);
+    fakeQueue.add.mockClear();
+    const dispatcher = new OnboardingDispatchService({ client: client.db } as never, {} as never, intro);
+
+    await dispatcher.dispatchPending(tenantId);
+    expect(fakeQueue.add.mock.calls.map((c) => (c[1] as { messageId: string }).messageId)).not.toContain(oldIntro.trustMessageId);
+  });
 });
