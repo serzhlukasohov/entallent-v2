@@ -10,13 +10,13 @@ function build(rows: unknown[]) {
 }
 
 describe('OnboardingReminderSweepService', () => {
-  it('enqueues the canonical job for each overdue scheduled row', async () => {
+  it('enqueues a sweep-specific id (hourly bucket) so a retained completed canonical job cannot dedupe it', async () => {
     const due = new Date('2026-10-07T09:00:00Z');
     const { service, queue, limit } = build([{ tenantId: 't1', personId: 'p1', reminderDueAt: due }]);
     const result = await service.sweep();
     expect(limit).toHaveBeenCalledWith(100);
     expect(queue.add).toHaveBeenCalledWith('remind', { tenantId: 't1', personId: 'p1', dueAt: due.toISOString() },
-      { delay: 0, jobId: `onb-rem:p1:${due.getTime()}` });
+      { delay: 0, jobId: `onb-rem:p1:${due.getTime()}:sweep:${Math.floor(Date.now() / 3_600_000)}` });
     expect(result).toEqual({ found: 1, enqueued: 1, failed: 0 });
   });
 

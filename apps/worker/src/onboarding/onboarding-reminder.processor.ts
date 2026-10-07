@@ -56,13 +56,13 @@ export class OnboardingReminderProcessor extends WorkerHost {
     if (ctx.lastInboundAt && now.getTime() - ctx.lastInboundAt.getTime() < POSTPONE_MS
       && postponeCount < MAX_REMINDER_POSTPONEMENTS) {
       const runAt = nextWorkingTime(new Date(now.getTime() + POSTPONE_MS), ctx.calendar, timeZone);
-      await this.requeue(data, postponeCount + 1, runAt, now);
+      await this.requeue(ctx.stateId, data, postponeCount + 1, runAt, now);
       return;
     }
     // 5. The calendar may have changed since scheduling.
     const workAt = nextWorkingTime(now, ctx.calendar, timeZone);
     if (workAt.getTime() !== now.getTime()) {
-      await this.requeue(data, postponeCount, workAt, now);
+      await this.requeue(ctx.stateId, data, postponeCount, workAt, now);
       return;
     }
 
@@ -88,13 +88,16 @@ export class OnboardingReminderProcessor extends WorkerHost {
     if (result.changed && messageId) await this.effects.enqueueMessageSend({ tenantId, ...target }, messageId, text);
   }
 
-  private async requeue(data: OnboardingReminderJob, postponeCount: number, runAt: Date, now: Date): Promise<void> {
-    const dueMs = new Date(data.dueAt).getTime();
-    // Same dueAt in the payload keeps the stale check valid; the id must differ from this (running) job's.
+  /**
+   * Persists the next attempt (compare-and-set on reminder_due_at) so the stale check, the recovery sweep and
+   * recalculation all see the real next run time, then enqueues the canonical job for it.
+   */
+  private async requeue(stateId: string, data: OnboardingReminderJob, postponeCount: number, runAt: Date, now: Date): Promise<void> {
+    const moved = await this.repo.updateScheduledDue(stateId, runAt, new Date(data.dueAt));
+    if (!moved) return;
     await this.queue.add('remind',
-      { tenantId: data.tenantId, personId: data.personId, dueAt: data.dueAt, postponeCount },
-      { delay: Math.max(0, runAt.getTime() - now.getTime()),
-        jobId: `onb-rem:${data.personId}:${dueMs}:${postponeCount}:${runAt.getTime()}` });
+      { tenantId: data.tenantId, personId: data.personId, dueAt: runAt.toISOString(), postponeCount },
+      { delay: Math.max(0, runAt.getTime() - now.getTime()), jobId: `onb-rem:${data.personId}:${runAt.getTime()}` });
   }
 
   /** Q16: after the company calendar changed. Only moves reminders that are already scheduled. */

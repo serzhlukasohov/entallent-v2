@@ -292,8 +292,8 @@ describe('MessageSendProcessor', () => {
       messageId: 'm1', tenantId: 't1', conversationId: 'c1', channelType: 'dev',
       externalWorkspaceId: 'w1', externalChannelId: 'ch1', text: 'x',
     };
-    function build(messageType: string, onboardingEligible: boolean, participation: string | null = 'undecided') {
-      const contextFor = vi.fn().mockResolvedValue(participation ? { state: { participation } } : null);
+    function build(messageType: string, onboardingEligible: boolean, participation: string | null = 'undecided', track = 'employee') {
+      const contextFor = vi.fn().mockResolvedValue(participation ? { state: { participation, track } } : null);
       const repo = {
         findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
           userId: 'u1', text: 'x', sentAt: null, channelType: 'dev', externalConversationId: 'ch1', messageType,
@@ -336,6 +336,12 @@ describe('MessageSendProcessor', () => {
         expect(contextFor).toHaveBeenCalledWith('t1', 'u1');
         expect(repo.updateMessageDelivery).not.toHaveBeenCalled();
       });
+
+    it('send-time re-check: skips onboarding_reminder for the management track', async () => {
+      const { processor, repo } = build('onboarding_reminder', true, 'undecided', 'management');
+      await processor.process({ data } as Job<MessageSendJob>);
+      expect(repo.updateMessageDelivery).not.toHaveBeenCalled();
+    });
 
     it('skips onboarding_reminder for an inactive user', async () => {
       const { processor, repo } = build('onboarding_reminder', false);

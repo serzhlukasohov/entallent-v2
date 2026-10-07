@@ -27,8 +27,11 @@ async function main(): Promise<void> {
   const client = createDbClient(databaseUrl);
   try {
     const service = new CompanyCalendarService({ client: client.db } as DatabaseService);
-    const stored = await service.configure(tenantId, input, operator);
-    process.stdout.write(`${JSON.stringify({ tenantId, calendar: stored, updatedBy: operator })}\n`);
+    const { calendar, recalculation } = await service.configure(tenantId, input, operator);
+    if (recalculation !== 'queued') {
+      process.stderr.write(`warning: calendar saved but scheduled reminders were not recalculated (${recalculation}); re-run after fixing Redis/queue access\n`);
+    }
+    process.stdout.write(`${JSON.stringify({ tenantId, calendar, updatedBy: operator, recalculation })}\n`);
   } finally {
     await client.sql.end();
   }

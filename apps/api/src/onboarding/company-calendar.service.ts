@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { WorkCalendarSchema, type WorkCalendar } from '@entalent/contracts';
 import { auditLogs, tenantWorkCalendars } from '@entalent/database';
@@ -16,8 +16,12 @@ export interface OnboardingReminderRecalculator {
   recalculateScheduledReminders(tenantId: string): Promise<void>;
 }
 
+export type RecalculationStatus = 'queued' | 'skipped' | 'failed';
+
 @Injectable()
 export class CompanyCalendarService {
+  private readonly logger = new Logger(CompanyCalendarService.name);
+
   constructor(
     private readonly db: DatabaseService,
     @Optional() @Inject(ONBOARDING_REMINDER_RECALCULATOR) private readonly recalculator?: OnboardingReminderRecalculator,
@@ -31,7 +35,9 @@ export class CompanyCalendarService {
       : null;
   }
 
-  async configure(tenantId: string, input: unknown, operator: string): Promise<WorkCalendar> {
+  async configure(
+    tenantId: string, input: unknown, operator: string,
+  ): Promise<{ calendar: WorkCalendar; recalculation: RecalculationStatus }> {
     if (!operator.trim()) throw new CompanyCalendarError('operator_required');
     const parsed = WorkCalendarSchema.safeParse(input);
     if (!parsed.success) throw new CompanyCalendarError('invalid_calendar');
@@ -47,7 +53,14 @@ export class CompanyCalendarService {
         metadata: { before: before ?? null, after },
       });
     });
-    await this.recalculator?.recalculateScheduledReminders(tenantId);
-    return after;
+    if (!this.recalculator) return { calendar: after, recalculation: 'skipped' };
+    // The calendar is already committed; a queue failure must not report the whole change as failed.
+    try {
+      await this.recalculator.recalculateScheduledReminders(tenantId);
+      return { calendar: after, recalculation: 'queued' };
+    } catch (error) {
+      this.logger.warn(`Reminder recalculation not queued tenant=${tenantId}: ${(error as Error).message}`);
+      return { calendar: after, recalculation: 'failed' };
+    }
   }
 }

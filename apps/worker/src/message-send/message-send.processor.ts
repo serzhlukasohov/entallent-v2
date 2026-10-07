@@ -75,7 +75,7 @@ export class MessageSendProcessor extends WorkerHost {
     if (persisted.messageType === 'onboarding_reminder' && !persisted.sentAt) {
       const state = await this.onboardingService.contextFor(tenantId, persisted.userId);
       const participation = state?.state.participation;
-      if (participation !== 'undecided' && participation !== 'deferred') {
+      if ((participation !== 'undecided' && participation !== 'deferred') || state?.state.track === 'management') {
         this.logger.warn(`Skipping onboarding reminder ${messageId}: participation=${participation ?? 'none'}`);
         return;
       }

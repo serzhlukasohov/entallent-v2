@@ -11,8 +11,8 @@ const SWEEP_LIMIT = 100;
 
 /**
  * Recovery for reminders whose delayed job was lost (Redis flush, crash between commit and enqueue).
- * Re-enqueues with the canonical jobId, so a job that still exists is not duplicated; the processor's
- * stale check and the deterministic message id keep a second run harmless.
+ * Uses an hour-bucketed id so a retained completed canonical job cannot swallow it; the processor's stale
+ * check, the row lock and the deterministic message id keep duplicate runs harmless.
  */
 @Injectable()
 export class OnboardingReminderSweepService {
@@ -38,7 +38,11 @@ export class OnboardingReminderSweepService {
         if (!row.reminderDueAt) continue;
         await this.queue.add('remind', {
           tenantId: row.tenantId, personId: row.personId, dueAt: row.reminderDueAt.toISOString(),
-        }, { delay: 0, jobId: `onb-rem:${row.personId}:${row.reminderDueAt.getTime()}` });
+        }, {
+          delay: 0,
+          // Distinct from the canonical id: a retained completed job must not dedupe the recovery (max one per row per hour).
+          jobId: `onb-rem:${row.personId}:${row.reminderDueAt.getTime()}:sweep:${Math.floor(Date.now() / 3_600_000)}`,
+        });
         enqueued += 1;
       } catch (error) {
         failed += 1;

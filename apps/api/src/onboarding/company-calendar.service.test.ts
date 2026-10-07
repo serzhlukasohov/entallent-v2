@@ -50,7 +50,8 @@ describe('CompanyCalendarService', () => {
   it('upserts and audits in one transaction, then recalculates reminders', async () => {
     const before = { tenantId, ...valid, workEnd: '17:00', onboardingLanguage: 'en', updatedBy: 'old' };
     const { service, inserts, order, recalculator } = setup(before);
-    const stored = await service.configure(tenantId, valid, 'op@entalent');
+    const { calendar: stored, recalculation } = await service.configure(tenantId, valid, 'op@entalent');
+    expect(recalculation).toBe('queued');
     expect(stored).toEqual({ ...valid, workingDays: [1, 2, 3, 4, 5] });
     expect(inserts[0]).toMatchObject({ table: tenantWorkCalendars, value: expect.objectContaining({ tenantId, updatedBy: 'op@entalent' }) });
     expect(inserts[1]).toMatchObject({ table: auditLogs, value: {
@@ -65,6 +66,12 @@ describe('CompanyCalendarService', () => {
       select: () => ({ from: () => ({ where: () => ({ for: async () => [] }) }) }),
       insert: () => ({ values: () => ({ onConflictDoUpdate: async () => undefined, then: (r: (v: unknown) => unknown) => Promise.resolve().then(r) }) }),
     }) } } as never);
-    await expect(service.configure(tenantId, valid, 'op')).resolves.toBeDefined();
+    await expect(service.configure(tenantId, valid, 'op')).resolves.toMatchObject({ recalculation: 'skipped' });
+  });
+
+  it('a recalculator failure after commit is reported, not thrown', async () => {
+    const { service, recalculator } = setup();
+    recalculator.recalculateScheduledReminders.mockRejectedValueOnce(new Error('redis down'));
+    await expect(service.configure(tenantId, valid, 'op')).resolves.toMatchObject({ recalculation: 'failed' });
   });
 });

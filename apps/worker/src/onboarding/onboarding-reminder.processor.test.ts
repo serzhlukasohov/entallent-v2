@@ -18,7 +18,7 @@ function ctx(over: Record<string, unknown> = {}) {
 }
 
 function build(context: unknown, opts: { target?: unknown; hookRow?: Record<string, unknown> } = {}) {
-  const repo = { loadContext: vi.fn().mockResolvedValue(context), listScheduled: vi.fn(), updateScheduledDue: vi.fn() };
+  const repo = { loadContext: vi.fn().mockResolvedValue(context), listScheduled: vi.fn(), updateScheduledDue: vi.fn().mockResolvedValue(true) };
   const inserted: unknown[] = [];
   const row = { state: { reminderStatus: 'scheduled', participation: 'undecided', track: 'employee' }, reminderDueAt: DUE,
     introActionsMessageTs: '1.2', ...opts.hookRow };
@@ -100,23 +100,44 @@ describe('OnboardingReminderProcessor remind', () => {
     expect(apply).toHaveBeenCalledTimes(1);
   });
 
-  it('4. recent inbound postpones 30 minutes with the same dueAt key and a counter', async () => {
-    const { processor, apply, queue } = build(ctx({ lastInboundAt: new Date(NOW.getTime() - 10 * 60_000) }));
+  it('4. recent inbound postpones 30 minutes: persists the new due (CAS) and enqueues the canonical id for it', async () => {
+    const { processor, apply, queue, repo } = build(ctx({ lastInboundAt: new Date(NOW.getTime() - 10 * 60_000) }));
     await processor.process(job());
     expect(apply).not.toHaveBeenCalled();
     const runAt = new Date(NOW.getTime() + 30 * 60_000);
+    expect(repo.updateScheduledDue).toHaveBeenCalledWith('s1', runAt, DUE);
     expect(queue.add).toHaveBeenCalledWith('remind',
-      { tenantId: 't1', personId: 'p1', dueAt: DUE.toISOString(), postponeCount: 1 },
-      { delay: 30 * 60_000, jobId: `onb-rem:p1:${DUE.getTime()}:1:${runAt.getTime()}` });
+      { tenantId: 't1', personId: 'p1', dueAt: runAt.toISOString(), postponeCount: 1 },
+      { delay: 30 * 60_000, jobId: `onb-rem:p1:${runAt.getTime()}` });
   });
 
   it('4. postponement is clamped to working time', async () => {
     vi.setSystemTime(new Date('2026-10-07T14:50:00Z')); // 17:50 Kyiv, +30min is after hours
-    const { processor, queue } = build(ctx({ lastInboundAt: new Date('2026-10-07T14:45:00Z') }));
+    const { processor, queue, repo } = build(ctx({ lastInboundAt: new Date('2026-10-07T14:45:00Z') }));
     await processor.process(job());
     const next = new Date('2026-10-08T06:00:00.000Z'); // Thursday 09:00 Kyiv (UTC+3)
-    expect(queue.add.mock.calls[0]![2].jobId).toBe(`onb-rem:p1:${DUE.getTime()}:1:${next.getTime()}`);
+    expect(repo.updateScheduledDue).toHaveBeenCalledWith('s1', next, DUE);
+    expect(queue.add.mock.calls[0]![2].jobId).toBe(`onb-rem:p1:${next.getTime()}`);
     expect(queue.add.mock.calls[0]![2].delay).toBe(next.getTime() - Date.now());
+  });
+
+  it('the postponed job passes the stale check against the persisted new due; the old job no longer does', async () => {
+    const runAt = new Date(NOW.getTime() + 30 * 60_000);
+    // state after the CAS: due moved to runAt
+    const moved = build(ctx({ reminderDueAt: runAt, lastInboundAt: null }));
+    vi.setSystemTime(runAt);
+    await moved.processor.process(job({ dueAt: runAt.toISOString(), postponeCount: 1 }));
+    expect(moved.apply).toHaveBeenCalledTimes(1);
+    const old = build(ctx({ reminderDueAt: runAt }));
+    await old.processor.process(job()); // original dueAt
+    expect(old.apply).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the CAS lost (someone else moved the reminder)', async () => {
+    const { processor, queue, repo } = build(ctx({ lastInboundAt: new Date(NOW.getTime() - 60_000) }));
+    repo.updateScheduledDue.mockResolvedValue(false);
+    await processor.process(job());
+    expect(queue.add).not.toHaveBeenCalled();
   });
 
   it('4. sends after six postponements even if the user keeps writing', async () => {
@@ -126,15 +147,16 @@ describe('OnboardingReminderProcessor remind', () => {
     expect(apply).toHaveBeenCalledTimes(1);
   });
 
-  it('5. outside working time re-enqueues at the next working time', async () => {
+  it('5. outside working time moves the due to the next working time via CAS and re-enqueues', async () => {
     vi.setSystemTime(new Date('2026-10-10T10:00:00Z')); // Saturday
-    const { processor, apply, queue } = build(ctx());
+    const { processor, apply, queue, repo } = build(ctx());
     await processor.process(job());
     expect(apply).not.toHaveBeenCalled();
     const next = new Date('2026-10-12T06:00:00.000Z'); // Monday 09:00 Kyiv
+    expect(repo.updateScheduledDue).toHaveBeenCalledWith('s1', next, DUE);
     expect(queue.add).toHaveBeenCalledWith('remind',
-      { tenantId: 't1', personId: 'p1', dueAt: DUE.toISOString(), postponeCount: 0 },
-      { delay: next.getTime() - Date.now(), jobId: `onb-rem:p1:${DUE.getTime()}:0:${next.getTime()}` });
+      { tenantId: 't1', personId: 'p1', dueAt: next.toISOString(), postponeCount: 0 },
+      { delay: next.getTime() - Date.now(), jobId: `onb-rem:p1:${next.getTime()}` });
   });
 
   it('reads working time in the user timezone, falling back to the company timezone', async () => {
