@@ -150,7 +150,10 @@ describe('onboarding signal classification', () => {
       expect(prompt).toContain(label);
     }
     expect(prompt).toContain('substantive');
-    expect(prompt).toContain('a greeting, thanks, or a question about Emma, onboarding or privacy is not substantive');
+    expect(prompt).toContain('a greeting, thanks, a question about Emma, onboarding or privacy, or a brief reason for postponing or declining');
+    expect(prompt).toContain('when participation is active, not wanting to talk right now is "end_today_only"');
+    expect(prompt).toContain('otherwise a plain thanks is "none"');
+    expect(prompt).toContain('Simply sharing a situation is "none" with substantive true');
     expect(prompt).toContain('ending only this conversation');
     expect(prompt).toContain('in addition to the fields listed in the system instructions');
     expect(prompt.indexOf('ONBOARDING STATUS')).toBeLessThan(prompt.indexOf('LATEST EMPLOYEE MESSAGE TO CLASSIFY'));
