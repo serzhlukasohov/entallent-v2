@@ -278,6 +278,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
     sentAt: Date | null;
     externalMessageId: string | null;
     onboardingDeliveryId: string | null;
+    messageType: string;
     channelType: string;
     externalConversationId: string;
   } | null> {
@@ -288,6 +289,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         sentAt: messages.sentAt,
         externalMessageId: messages.externalMessageId,
         onboardingDeliveryId: sql<string | null>`${messages.metadata}->>'onboardingDeliveryId'`,
+        messageType: messages.messageType,
         channelType: conversations.channelType,
         externalConversationId: conversations.externalConversationId,
       })

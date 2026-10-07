@@ -248,6 +248,7 @@ describe('ConversationRepository', () => {
       'sentAt',
       'externalMessageId',
       'onboardingDeliveryId',
+      'messageType',
       'channelType',
       'externalConversationId',
     ]);

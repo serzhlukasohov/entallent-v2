@@ -20,6 +20,11 @@ function sameState(a: OnboardingState, b: OnboardingState): boolean {
     && sameDate(a.reminderOriginAt, b.reminderOriginAt);
 }
 
+/** Text actions and turn events are acknowledged by the orchestrator reply, not by a separate message. */
+function isTurnOriginated(e: OnboardingEvent): boolean {
+  return (e.type === 'action' && e.source === 'text') || e.type === 'stop_requested' || e.type === 'substantive_turn';
+}
+
 const names = (s: OnboardingState) => ({
   introStatus: s.introStatus, participation: s.participation, reminderStatus: s.reminderStatus,
 });
@@ -90,19 +95,23 @@ export class OnboardingService implements OnboardingTurnPort {
     });
 
     if (!committed) return { changed: false, effects: [], state: null };
+    // Post-commit effects are not durable across a crash between commit and execution; lost reminders
+    // are recovered by a later sweep over reminder_due_at.
     if (committed.result.changed) await this.runEffects(tenantId, personId, event, committed);
-    return committed.result;
+    const ack = committed.result.effects.find((e) => e.type === 'acknowledge');
+    return ack && ack.type === 'acknowledge' && isTurnOriginated(event)
+      ? { ...committed.result, replyAck: ACK_COPY[ack.key] }
+      : committed.result;
   }
 
   private async runEffects(tenantId: string, personId: string, event: OnboardingEvent, c: Committed): Promise<void> {
-    const state = c.result.state!;
     for (const effect of c.result.effects) {
-      await this.safely(effect, () => this.runEffect(tenantId, personId, event, c, state, effect));
+      await this.safely(effect, () => this.runEffect(tenantId, personId, event, c, effect));
     }
   }
 
   private async runEffect(
-    tenantId: string, personId: string, event: OnboardingEvent, c: Committed, state: OnboardingState, effect: OnboardingEffect,
+    tenantId: string, personId: string, event: OnboardingEvent, c: Committed, effect: OnboardingEffect,
   ): Promise<void> {
     switch (effect.type) {
       case 'schedule_reminder':
@@ -118,19 +127,22 @@ export class OnboardingService implements OnboardingTurnPort {
         return;
       }
       case 'acknowledge':
-        // Text-sourced actions are answered by the orchestrator using the returned effect.
-        if (event.type === 'action' && event.source === 'text') return;
+        // Turn-originated events are answered by the orchestrator via result.replyAck.
+        if (isTurnOriginated(event)) return;
         await this.effects.sendAcknowledgement({
           tenantId, personId, text: ACK_COPY[effect.key], dedupeKey: `${personId}:ack:${effect.key}:${c.version}`,
         });
         return;
       case 'start_conversation':
         await this.effects.startConversation({
-          tenantId, personId, dedupeKey: `${personId}:${state.completedAt?.toISOString() ?? 'none'}`,
+          tenantId, personId, dedupeKey: `${personId}:${c.version}`,
         });
         return;
       default:
-        return; // cancel_reminder / set_proactive handled in the transaction; send_intro is dispatched elsewhere
+        // cancel_reminder: the queued reminder job is not removed; the reminder processor compares the job's
+        // dueAt with the state's reminder_due_at/reminderStatus and drops stale jobs.
+        // set_proactive is applied inside the transaction; send_intro is dispatched elsewhere.
+        return;
     }
   }
 

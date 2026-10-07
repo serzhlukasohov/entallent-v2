@@ -8,6 +8,9 @@ import { ConversationRepository } from '../conversation/repositories/conversatio
 import { GroupStateRepository } from '../survey/repositories/group-state.repository';
 import { QUEUE_NAMES } from '../queue/queue.module';
 
+/** Onboarding-originated messages go to people (incl. management) who are not pulse participants. */
+const ONBOARDING_MESSAGE_TYPES = new Set(['onboarding_ack', 'onboarding_intro', 'onboarding_reminder']);
+
 export type MessageSendJob = {
   messageId: string;
   tenantId: string;
@@ -53,7 +56,7 @@ export class MessageSendProcessor extends WorkerHost {
     if (onboarding && onboarding.externalWorkspaceId !== externalWorkspaceId) {
       throw new Error(`Onboarding workspace mismatch: ${messageId}`);
     }
-    const eligible = onboarding
+    const eligible = onboarding || (persisted.messageType !== undefined && ONBOARDING_MESSAGE_TYPES.has(persisted.messageType))
       ? await this.conversationRepo.isUserOnboardingEligible(tenantId, persisted.userId, externalWorkspaceId)
       : await this.conversationRepo.isUserRuntimeEligible(tenantId, persisted.userId);
     if (!eligible) {

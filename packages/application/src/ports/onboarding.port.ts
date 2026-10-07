@@ -5,6 +5,8 @@ export interface OnboardingApplyResult {
   effects: OnboardingEffect[];
   /** null when the person has no onboarding state row (legacy / not rolled out). */
   state: OnboardingState | null;
+  /** Acknowledgement text the orchestrator must send as its reply (turn-originated events only). */
+  replyAck?: string;
 }
 
 /** Post-commit side effects of onboarding transitions. Implementations must be idempotent per dedupeKey. */

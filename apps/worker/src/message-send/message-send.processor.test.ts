@@ -286,6 +286,47 @@ describe('MessageSendProcessor', () => {
 
     expect(slack.sendMessage).not.toHaveBeenCalled();
   });
+
+  describe('onboarding-originated messages', () => {
+    const data: MessageSendJob = {
+      messageId: 'm1', tenantId: 't1', conversationId: 'c1', channelType: 'dev',
+      externalWorkspaceId: 'w1', externalChannelId: 'ch1', text: 'x',
+    };
+    function build(messageType: string, onboardingEligible: boolean) {
+      const repo = {
+        findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+          userId: 'u1', text: 'x', sentAt: null, channelType: 'dev', externalConversationId: 'ch1', messageType,
+        }),
+        findOnboardingDelivery: vi.fn().mockResolvedValue(null),
+        // managers have no pulse participation: runtime eligibility is false for them
+        isUserRuntimeEligible: vi.fn().mockResolvedValue(false),
+        isUserOnboardingEligible: vi.fn().mockResolvedValue(onboardingEligible),
+        updateMessageDelivery: vi.fn().mockResolvedValue(new Date()),
+      };
+      const processor = new MessageSendProcessor({} as never, repo as never,
+        { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never);
+      return { processor, repo };
+    }
+
+    it.each(['onboarding_ack', 'onboarding_intro', 'onboarding_reminder'])('sends %s to a non-pulse manager', async (type) => {
+      const { processor, repo } = build(type, true);
+      await processor.process({ data } as Job<MessageSendJob>);
+      expect(repo.updateMessageDelivery).toHaveBeenCalled();
+      expect(repo.isUserRuntimeEligible).not.toHaveBeenCalled();
+    });
+
+    it('still skips a normal message for the same manager', async () => {
+      const { processor, repo } = build('text', true);
+      await processor.process({ data } as Job<MessageSendJob>);
+      expect(repo.updateMessageDelivery).not.toHaveBeenCalled();
+    });
+
+    it('skips onboarding_ack for an ineligible user', async () => {
+      const { processor, repo } = build('onboarding_ack', false);
+      await processor.process({ data } as Job<MessageSendJob>);
+      expect(repo.updateMessageDelivery).not.toHaveBeenCalled();
+    });
+  });
 });
 
 function slackJob(): MessageSendJob {

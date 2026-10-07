@@ -113,6 +113,26 @@ describe('OnboardingService.apply', () => {
     expect(r.effects).toContainEqual({ type: 'acknowledge', key: 'decline' });
   });
 
+  it('stop_requested returns the ack as replyAck and does not send it', async () => {
+    const h = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
+    const r = await h.service.apply(T, P, { type: 'stop_requested', at });
+    expect(h.effects.sendAcknowledgement).not.toHaveBeenCalled();
+    expect(r.replyAck).toBe(ACK_COPY.decline);
+  });
+
+  it('text actions return replyAck; button actions send and omit it', async () => {
+    const t = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
+    expect((await t.service.apply(T, P, { type: 'action', action: 'decline', source: 'text', at })).replyAck).toBe(ACK_COPY.decline);
+    const b = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
+    expect((await b.service.apply(T, P, { type: 'action', action: 'decline', source: 'button', at })).replyAck).toBeUndefined();
+  });
+
+  it('start dedupeKey uses the post-commit version', async () => {
+    const h = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
+    await h.service.apply(T, P, { type: 'action', action: 'start', source: 'button', at });
+    expect(h.effects.startConversation).toHaveBeenCalledWith({ tenantId: T, personId: P, dedupeKey: `${P}:4` });
+  });
+
   it('audit metadata holds state names only', async () => {
     const h = harness({ state: { buttonsActive: true, introStatus: 'delivered' } });
     await h.service.apply(T, P, { type: 'action', action: 'start', source: 'button', at });

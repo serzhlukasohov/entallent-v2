@@ -7,7 +7,7 @@ import type { OnboardingReminderJob } from '@entalent/contracts';
 import { channelAccounts, conversations, messages } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { OutboxService } from '../conversation/outbox.service';
+import type { MessageSendJob } from '../message-send/message-send.processor';
 import type { CheckInJob } from '../conversation/conversation.processor';
 import { stableId } from './stable-id';
 
@@ -19,7 +19,7 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
     @InjectQueue(QUEUE_NAMES.ONBOARDING_REMINDER) private readonly reminderQueue: Queue<OnboardingReminderJob>,
     @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly conversationQueue: Queue<CheckInJob>,
     private readonly db: DatabaseService,
-    private readonly outbox: OutboxService,
+    @InjectQueue(QUEUE_NAMES.MESSAGE_SEND) private readonly messageSendQueue: Queue<MessageSendJob>,
   ) {}
 
   async scheduleReminder(input: { tenantId: string; personId: string; dueAt: Date }): Promise<void> {
@@ -48,10 +48,12 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       direction: 'outbound', senderType: 'agent', text: input.text, messageType: 'onboarding_ack',
       occurredAt: new Date(), metadata: {},
     }).onConflictDoNothing();
-    await this.outbox.enqueueMessageSend({
+    // Same job name/payload as OutboxService.enqueueMessageSend.
+    await this.messageSendQueue.add('send', {
       messageId, tenantId: input.tenantId, conversationId: target.conversationId,
       channelType: target.channelType, externalWorkspaceId: target.externalWorkspaceId,
       externalChannelId: target.externalConversationId, text: input.text,
+      replyToExternalThreadId: undefined,
     });
   }
 
