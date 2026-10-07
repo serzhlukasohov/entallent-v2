@@ -12,3 +12,6 @@ export const WorkCalendarSchema = z.object({
   workEnd: HHMM,
 }).refine((c) => c.workStart < c.workEnd, 'workStart must be before workEnd');
 export type WorkCalendar = z.infer<typeof WorkCalendarSchema>;
+
+export const OnboardingActionSchema = z.enum(['start', 'later', 'decline', 'got_it']);
+export type OnboardingActionContract = z.infer<typeof OnboardingActionSchema>;
