@@ -1106,3 +1106,11 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: preserve the artifact requested by the discussion; implementation requires its own user instruction.
 - Regression check: compare PR changed files against the requested artifact before pushing.
 - Status: fixed; implementation reverted and PR converted to documentation.
+
+### 2026-10-07: Onboarding v2 classifier prompt regresses CAP-8 live scenario
+- Symptom: `pulse-capture-exact-message` fails 3/3 at HEAD (passes 3/3 at base `dedcd1b`); the model returns `dialogueAct: "pulse_capture_explanation"`, which fails `SituationClassificationSchema` parsing. Unrelated gate failures (memory-recall, annna-intent-fidelity, terse-user) fail at base too.
+- Expected: Adding `onboardingSignal` to the classify prompt leaves existing live scenarios unchanged.
+- Root cause layer: verification; unit tests assert prompt text only, and live classification is exercised only by the sim gate.
+- Harness fix: Adjust `packages/ai-openai/src/prompts/classify.ts` JSON schema block (the edited `pulseCaptureScope`/`onboardingSignal` lines) and re-run the scenario until 3/3.
+- Regression check: `cd packages/conversation-sim && npx vitest run src/scenarios/pulse-capture-exact-message.sim.test.ts` (live model) repeated 3 times.
+- Status: open

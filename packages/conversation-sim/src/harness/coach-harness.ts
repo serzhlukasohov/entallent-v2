@@ -9,6 +9,7 @@ import {
   type MemoryContext,
   type MemoryItemRecord,
   type MessageRecord,
+  type OnboardingTurnPort,
   type OrchestrateResult,
   type ResponseContext,
   type RiskContext,
@@ -55,6 +56,7 @@ export interface CoachHarnessOptions {
   aiProvider?: AiProviderPort;
   scheduledActionRepo?: ScheduledActionRepositoryPort;
   surveyRepo?: SurveyRepositoryPort;
+  onboardingTurn?: OnboardingTurnPort;
 }
 
 export interface GenerateResponseCall {
@@ -144,6 +146,7 @@ export class CoachHarness {
       undefined,
       this.styleRepo,
       this.goalRepo,
+      options.onboardingTurn,
     );
   }
 
