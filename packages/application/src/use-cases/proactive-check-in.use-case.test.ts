@@ -342,10 +342,10 @@ describe('ProactiveCheckInUseCase', () => {
       expect(context.proactiveCheckIn.afterUserStart).toBe(true);
       expect(backlog.recordProbeSent).toHaveBeenCalled();
       expect(result.probeQuestionId).toBe('q-1');
-      // Disclosure append behaviour is unchanged (A9).
-      expect(repo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
-        text: expect.stringContaining(getReportingDisclosureText('en')),
-      }));
+      // The onboarding opener carries no disclosure (decision 2026-10-08).
+      const saved = (repo.saveMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(saved.text).not.toContain(getReportingDisclosureText('en'));
+      expect(saved.metadata).not.toHaveProperty('reportingDisclosureVersion');
     });
 
     it('replies with the approved opener and makes no model call when the backlog is empty', async () => {
@@ -365,7 +365,7 @@ describe('ProactiveCheckInUseCase', () => {
       expect(outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ text: EMPTY_BACKLOG_OPENER }));
     });
 
-    it('appends the reporting disclosure to the opener when none was delivered yet (A9)', async () => {
+    it('does not append the reporting disclosure to the opener even when none was delivered yet', async () => {
       const ai = makeAiProvider();
       const repo = makeConversationRepo({
         findRecentMessages: vi.fn().mockResolvedValue([]),
@@ -376,11 +376,9 @@ describe('ProactiveCheckInUseCase', () => {
       const result = await useCase.execute({ ...BASE_INPUT, onboardingStart: true });
 
       expect(ai.generateResponse).not.toHaveBeenCalled();
-      expect(result.responseText.startsWith(EMPTY_BACKLOG_OPENER)).toBe(true);
-      expect(result.responseText).toContain(getReportingDisclosureText('en'));
-      expect(repo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
-        metadata: expect.objectContaining({ reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }),
-      }));
+      expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+      const saved = (repo.saveMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(saved.metadata).not.toHaveProperty('reportingDisclosureVersion');
     });
 
     it('is retry-idempotent: an existing start message is reused with no model call or new message', async () => {

@@ -715,11 +715,8 @@ export class ConversationOrchestrator {
       replyBrief: replyPlan,
       replyPlan,
         });
-    // Any start opener (backlog probe or the approved empty-backlog opener) follows the proactive disclosure rule (A9).
-    const openerAppendsDisclosure = onboardingOpener !== null
-      && surveyEnabled
-      && !hasCurrentDeliveredDisclosure;
-    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure || openerAppendsDisclosure;
+    // The onboarding opener never carries the disclosure; existing mechanisms deliver it later (decision 2026-10-08).
+    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure && onboardingOpener === null;
     let responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;

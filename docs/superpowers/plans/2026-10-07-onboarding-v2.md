@@ -45,7 +45,7 @@ Each assumption is isolated behind one function, so changing it is local.
 | A6 | Manager → Employee starts a fresh personal onboarding with a fresh one-reminder budget. | 9 | Q8 |
 | A7 | Role-change introductions reuse the full approved copy of the new role. No new short copy is invented. | 9 | Q8 asks for a "short introduction" but no copy exists |
 | A8 | If the user wrote in the last 30 minutes and has not completed onboarding (greeting or clarification only), the reminder is postponed by 30 minutes, clamped to working time. | 8 | Q15 "do not interrupt" |
-| A9 | The first conversation after Let's Talk keeps today's reporting-disclosure append behaviour (no receipt changes). | 7 | Q22 separate workstream |
+| A9 | **Superseded 2026-10-08:** onboarding opener carries no disclosure; disclosure delivered later by existing mechanisms. (Was: the first conversation after Let's Talk keeps today's reporting-disclosure append behaviour, no receipt changes.) | 7 | Q22 separate workstream |
 
 ## Review Focus
 

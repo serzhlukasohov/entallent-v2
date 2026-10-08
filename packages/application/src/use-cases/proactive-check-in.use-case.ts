@@ -194,7 +194,9 @@ export class ProactiveCheckInUseCase {
       },
     });
 
-    const responseText = surveyEnabled && !hasCurrentDeliveredDisclosure
+    // The onboarding opener never carries the disclosure; later check-ins deliver it (decision 2026-10-08).
+    const appendDisclosure = surveyEnabled && !hasCurrentDeliveredDisclosure && !onboardingStart;
+    const responseText = appendDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
     const containsSurveyProbe =
@@ -215,7 +217,7 @@ export class ProactiveCheckInUseCase {
       messageType: 'proactive_check_in',
       metadata: {
         ...(input.onboardingMessageId ? { onboardingDeliveryId: input.onboardingMessageId } : {}),
-        ...(surveyEnabled && !hasCurrentDeliveredDisclosure
+        ...(appendDisclosure
           ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
           : {}),
         ...(containsSurveyProbe
