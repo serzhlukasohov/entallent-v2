@@ -1114,3 +1114,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: The classify system prompt schema block is byte-identical to the base wording again; `onboardingSignal` is described only in the conditional ONBOARDING STATUS user-prompt section. `classify.test.ts` pins the base schema block and asserts the system prompt never mentions `onboardingSignal`.
 - Regression check: `cd packages/conversation-sim && npx vitest run src/scenarios/pulse-capture-exact-message.sim.test.ts` (live model) repeated 3 times; passed 3/3 (plus a 4th run) after the fix.
 - Status: fixed
+
+## 2026-10-08 Emma silent when model returns null for optional confirmationSummary
+
+- Symptom: after a declined onboarding choice, two user messages got no reply; worker retried and failed with `ZodError: confirmationSummary Expected string, received null` in `OpenAiProvider.generateResponse`.
+- Expected: A null optional field from the model is treated as absent and the reply is delivered.
+- Root cause layer: verification; `GeneratedResponseSchema` was strict about null for `confirmationSummary` while only `surveyProbeQuestionId` had null normalization, and no test covered model nulls.
+- Harness fix: `confirmationSummary` now normalizes null to undefined (same preprocess as `surveyProbeQuestionId`).
+- Regression check: `pnpm --filter @entalent/contracts test` (ai.test.ts "normalizes null confirmationSummary").
+- Status: fixed

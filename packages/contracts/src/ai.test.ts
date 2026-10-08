@@ -493,6 +493,16 @@ describe('Contract: GeneratedResponseSchema', () => {
     expect(result.surveyProbeQuestionId).toBe('q-team-collab');
   });
 
+  it('normalizes null confirmationSummary from model output to undefined', () => {
+    const result = GeneratedResponseSchema.parse({
+      text: 'Okay, I am here if you need me.',
+      confirmationSummary: null,
+      confidence: 0.8,
+      containsSurveyProbe: false,
+    });
+    expect(result.confirmationSummary).toBeUndefined();
+  });
+
   it('normalizes null optional survey probe id from model output', () => {
     const result = GeneratedResponseSchema.parse({
       text: 'That is a lot to carry.',
