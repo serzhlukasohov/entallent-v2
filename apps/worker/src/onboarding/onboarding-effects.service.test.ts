@@ -120,10 +120,21 @@ describe('OnboardingEffectsService', () => {
       await expect(build({}, repo).service.replaceIntroActions(input)).resolves.toBe(false);
     });
 
+    it('logs the replacement for a dev-console conversation without calling Slack', async () => {
+      slack.updateMessage.mockReset();
+      const repo = { findSlackAccountByUserId: vi.fn().mockResolvedValue(null), findByExternalWorkspace: vi.fn() };
+      const db = { client: { select: vi.fn(() => ({ from: () => ({ where: () => ({ limit: async () => [{ id: 'c1' }] }) }) })) } };
+      const devInput = { ...input, channelId: 'dev-conv-alice' };
+      await expect(build(db, repo).service.replaceIntroActions(devInput)).resolves.toBe(true);
+      expect(slack.updateMessage).not.toHaveBeenCalled();
+      expect(repo.findByExternalWorkspace).not.toHaveBeenCalled();
+    });
+
     it('does nothing when no workspace connection exists', async () => {
       slack.updateMessage.mockReset();
       const repo = { findSlackAccountByUserId: vi.fn().mockResolvedValue(null), findByExternalWorkspace: vi.fn() };
-      await expect(build({}, repo).service.replaceIntroActions(input)).resolves.toBe(false);
+      const noDevConversation = { client: { select: vi.fn(() => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) })) } };
+      await expect(build(noDevConversation, repo).service.replaceIntroActions(input)).resolves.toBe(false);
       expect(slack.updateMessage).not.toHaveBeenCalled();
     });
   });

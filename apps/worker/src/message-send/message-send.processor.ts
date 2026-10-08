@@ -65,7 +65,9 @@ export class MessageSendProcessor extends WorkerHost {
       throw new Error(`Onboarding workspace mismatch: ${messageId}`);
     }
     const eligible = onboarding || (persisted.messageType !== undefined && ONBOARDING_MESSAGE_TYPES.has(persisted.messageType))
-      ? await this.conversationRepo.isUserOnboardingEligible(tenantId, persisted.userId, externalWorkspaceId)
+      ? await this.conversationRepo.isUserOnboardingEligible(
+        tenantId, persisted.userId, externalWorkspaceId, channelType === 'dev' ? 'dev' : 'slack',
+      )
       : await this.conversationRepo.isUserRuntimeEligible(tenantId, persisted.userId);
     if (!eligible) {
       this.logger.warn(`Skipping outbound delivery for inactive runtime user ${persisted.userId}`);
@@ -102,12 +104,22 @@ export class MessageSendProcessor extends WorkerHost {
     // Dev channel: log the AI response instead of sending it anywhere.
     if (channelType === 'dev') {
       this.logger.log(`[DEV RESPONSE] messageId=${messageId}\n${text}`);
+      const devButtons = this.introActions(persisted.metadata);
+      // Buttons activate like a Slack delivery: the message gets a Slack-like ts the dev console clicks against.
+      const devTs = (Date.now() / 1000).toFixed(6);
+      const sentAt = new Date();
       await this.recordDelivery(messageId, {
         tenantId,
         conversationId,
-        externalMessageId: `dev:${messageId}`,
-        sentAt: new Date(),
+        externalMessageId: devButtons ? devTs : `dev:${messageId}`,
+        sentAt,
       });
+      if (devButtons) {
+        this.logger.log(`[DEV BUTTONS] ${devButtons.map((a) => a.label).join(' | ')}`);
+        await this.onboardingService.recordIntroDelivered(
+          tenantId, persisted.userId, externalChannelId, devTs, sentAt, this.isRoleChangeIntro(persisted.metadata),
+        );
+      }
       await this.chainTrustMessage(job.data, persisted.metadata);
       return;
     }

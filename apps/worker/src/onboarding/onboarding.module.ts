@@ -5,6 +5,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { OnboardingActionProcessor } from './onboarding-action.processor';
 import { OnboardingIntroService } from './onboarding-intro.service';
+import { OnboardingDevIntroService } from './onboarding-dev-intro.service';
 import { OnboardingEffectsService } from './onboarding-effects.service';
 import { OnboardingReminderProcessor } from './onboarding-reminder.processor';
 import { OnboardingReminderRepository } from './onboarding-reminder.repository';
@@ -30,6 +31,7 @@ import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
     { provide: ONBOARDING_EFFECTS, useExisting: OnboardingEffectsService },
     OnboardingService,
     OnboardingIntroService,
+    OnboardingDevIntroService,
     OnboardingActionProcessor,
     OnboardingReminderRepository,
     OnboardingReminderProcessor,

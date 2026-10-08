@@ -1,9 +1,13 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { OnboardingQueueJobSchema, type OnboardingActionJob, type OnboardingSystemJob } from '@entalent/contracts';
+import {
+  OnboardingQueueJobSchema, type OnboardingActionJob, type OnboardingDevIntroJob, type OnboardingSystemJob,
+} from '@entalent/contracts';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { OnboardingService } from './onboarding.service';
+import { OnboardingDevIntroService } from './onboarding-dev-intro.service';
+import { devJobsEnabled } from './dev-jobs';
 
 /**
  * Applies a validated Slack button click or a system event published after a hierarchy change.
@@ -13,12 +17,25 @@ import { OnboardingService } from './onboarding.service';
 export class OnboardingActionProcessor extends WorkerHost {
   private readonly logger = new Logger(OnboardingActionProcessor.name);
 
-  constructor(private readonly onboarding: OnboardingService) {
+  constructor(
+    private readonly onboarding: OnboardingService,
+    private readonly devIntro?: OnboardingDevIntroService,
+  ) {
     super();
   }
 
-  async process(job: Job<OnboardingActionJob | OnboardingSystemJob>): Promise<void> {
+  async process(job: Job<OnboardingActionJob | OnboardingSystemJob | OnboardingDevIntroJob>): Promise<void> {
     const data = OnboardingQueueJobSchema.parse(job.data);
+    if (data.kind === 'dev_intro') {
+      if (!devJobsEnabled() || !this.devIntro) {
+        this.logger.warn(`Ignoring dev_intro job outside local development person=${data.personId}`);
+        return;
+      }
+      // The job's creation time (stable across retries) seeds a fresh state version after the dev reset.
+      const sent = await this.devIntro.send(data.tenantId, data.personId, Math.floor(job.timestamp / 1000));
+      this.logger.log(`Dev intro queued person=${data.personId} trust=${sent.trustMessageId}`);
+      return;
+    }
     if (data.kind === 'system') {
       const at = new Date();
       const event = data.event.type === 'role_changed'

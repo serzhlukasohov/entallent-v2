@@ -56,9 +56,20 @@ export const OnboardingSystemJobSchema = z.object({
 });
 export type OnboardingSystemJob = z.infer<typeof OnboardingSystemJobSchema>;
 
+/**
+ * Local dev console only (`POST /dev/onboarding/start`): send the intro for the person's current role.
+ * The worker ignores it in production, where the dev endpoints are never mounted.
+ */
+export const OnboardingDevIntroJobSchema = z.object({
+  kind: z.literal('dev_intro'),
+  tenantId: z.string(),
+  personId: z.string(),
+});
+export type OnboardingDevIntroJob = z.infer<typeof OnboardingDevIntroJobSchema>;
+
 /** A job without `kind` predates the union and is a button job. */
 export const OnboardingQueueJobSchema = z.preprocess(
   (v) => (v && typeof v === 'object' && !Array.isArray(v) && !('kind' in v) ? { ...v, kind: 'button' } : v),
-  z.discriminatedUnion('kind', [OnboardingActionJobSchema, OnboardingSystemJobSchema]),
+  z.discriminatedUnion('kind', [OnboardingActionJobSchema, OnboardingSystemJobSchema, OnboardingDevIntroJobSchema]),
 );
 export type OnboardingQueueJob = z.output<typeof OnboardingQueueJobSchema>;

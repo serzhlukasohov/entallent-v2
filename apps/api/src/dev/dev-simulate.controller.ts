@@ -185,6 +185,9 @@ export class DevSimulateController {
         text: messages.text,
         occurredAt: messages.occurredAt,
         traceId: messages.traceId,
+        messageType: messages.messageType,
+        sentAt: messages.sentAt,
+        metadata: messages.metadata,
       })
       .from(messages)
       .where(eq(messages.conversationId, conversationId))

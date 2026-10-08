@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Job } from 'bullmq';
+import { Logger } from '@nestjs/common';
 import { MessageSendProcessor, type MessageSendJob } from './message-send.processor';
 
 const slack = vi.hoisted(() => ({ sendMessage: vi.fn() }));
@@ -495,5 +496,81 @@ describe('onboarding intro buttons', () => {
       await expect(processor.process({ data: slackJob() } as Job<MessageSendJob>)).rejects.toThrow('slack down');
       expect(intro.enqueueTrustAfterIntro).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('dev channel onboarding buttons (local dev console)', () => {
+  const actions = [
+    { actionId: 'onboarding:start', label: "Let's Talk", value: 'start' },
+    { actionId: 'onboarding:later', label: 'Later', value: 'later' },
+    { actionId: 'onboarding:decline', label: "I Don't Want to Participate", value: 'decline' },
+  ];
+  const devJob: MessageSendJob = {
+    messageId: 'trust-1', tenantId: 't1', conversationId: 'c1', channelType: 'dev',
+    externalWorkspaceId: 'dev-workspace', externalChannelId: 'dev-conv-alice', text: 'x',
+  };
+
+  function build(metadata: Record<string, unknown>) {
+    const sentAt = new Date('2026-10-08T10:00:00.000Z');
+    const repo = {
+      findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+        userId: 'p1', text: 'Trust copy', sentAt: null, messageType: 'onboarding_intro', metadata,
+        channelType: 'dev', externalConversationId: 'dev-conv-alice',
+      }),
+      findOnboardingDelivery: vi.fn().mockResolvedValue(null),
+      isUserOnboardingEligible: vi.fn().mockResolvedValue(true),
+      updateMessageDelivery: vi.fn().mockResolvedValue(sentAt),
+    };
+    const onboarding = { recordIntroDelivered: vi.fn().mockResolvedValue({ changed: true }) };
+    const intro = { enqueueTrustAfterIntro: vi.fn().mockResolvedValue(undefined) };
+    const processor = new MessageSendProcessor({} as never, repo as never,
+      { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never, onboarding as never, intro as never);
+    return { processor, repo, onboarding, intro, sentAt };
+  }
+
+  it('records intro delivery for a dev trust message with buttons, using a Slack-like ts', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-08T10:00:00.123Z'));
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { processor, repo, onboarding } = build({ onboardingIntroPart: 'trust', onboardingActions: actions });
+    await processor.process({ data: devJob } as Job<MessageSendJob>);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("[DEV BUTTONS] Let's Talk | Later | I Don't Want to Participate"));
+    log.mockRestore();
+    expect(repo.isUserOnboardingEligible).toHaveBeenCalledWith('t1', 'p1', 'dev-workspace', 'dev');
+    expect(repo.updateMessageDelivery).toHaveBeenCalledWith('trust-1', expect.objectContaining({ externalMessageId: '1791453600.123000' }));
+    expect(onboarding.recordIntroDelivered).toHaveBeenCalledWith('t1', 'p1', 'dev-conv-alice', '1791453600.123000', new Date('2026-10-08T10:00:00.123Z'), false);
+  });
+
+  it('passes the role-change marker through on the dev channel', async () => {
+    const { processor, onboarding } = build({ onboardingIntroPart: 'trust', onboardingRoleChange: true, onboardingActions: actions });
+    await processor.process({ data: devJob } as Job<MessageSendJob>);
+    expect(onboarding.recordIntroDelivered).toHaveBeenCalledWith('t1', 'p1', 'dev-conv-alice', expect.stringMatching(/^\d+\.\d{6}$/), expect.any(Date), true);
+  });
+
+  it.each([
+    ['the first intro half', { onboardingIntroPart: 'intro', onboardingTrustMessageId: 'trust-2' }],
+    ['a button-less trust message', { onboardingIntroPart: 'trust', onboardingActions: [] }],
+    ['an ordinary message', {}],
+  ])('does not record intro delivery for %s', async (_label, metadata) => {
+    const { processor, repo, onboarding } = build(metadata);
+    await processor.process({ data: devJob } as Job<MessageSendJob>);
+    expect(onboarding.recordIntroDelivered).not.toHaveBeenCalled();
+    expect(repo.updateMessageDelivery).toHaveBeenCalledWith('trust-1', expect.objectContaining({ externalMessageId: 'dev:trust-1' }));
+  });
+
+  it('checks Slack onboarding eligibility for Slack deliveries', async () => {
+    slack.sendMessage.mockResolvedValue({ externalMessageId: '1.1', sentAt: new Date() });
+    const repo = {
+      findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+        userId: 'u1', text: 'x', sentAt: null, messageType: 'onboarding_ack', channelType: 'slack', externalConversationId: 'channel-1',
+      }),
+      findOnboardingDelivery: vi.fn().mockResolvedValue(null),
+      isUserOnboardingEligible: vi.fn().mockResolvedValue(true),
+      updateMessageDelivery: vi.fn().mockResolvedValue(new Date()),
+    };
+    const processor = new MessageSendProcessor({ findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 't' }) } as never,
+      repo as never, { activateDeliveredConfirmation: vi.fn() } as never, {} as never, { enqueueTrustAfterIntro: vi.fn() } as never);
+    await processor.process({ data: slackJob() } as Job<MessageSendJob>);
+    expect(repo.isUserOnboardingEligible).toHaveBeenCalledWith('tenant-1', 'u1', 'workspace-1', 'slack');
   });
 });

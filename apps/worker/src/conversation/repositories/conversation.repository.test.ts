@@ -39,6 +39,20 @@ describe('ConversationRepository', () => {
     expect(joins.flatMap((join) => compileSql(join).params)).toContain('linked');
   });
 
+  it('checks the dev channel account only when asked for the dev channel', async () => {
+    const joins: SQL[] = [];
+    const query = {
+      innerJoin: (_table: unknown, predicate: SQL) => { joins.push(predicate); return query; },
+      where: () => query,
+      limit: async () => [{ userStatus: 'active', deletedAt: null, personLifecycle: 'active' }],
+    };
+    const repo = new ConversationRepository({ client: { select: () => ({ from: () => query }) } } as never);
+    await repo.isUserOnboardingEligible('tenant-1', 'person-1', 'dev-workspace', 'dev');
+    const params = joins.flatMap((join) => compileSql(join).params);
+    expect(params).toContain('dev');
+    expect(params).not.toContain('slack');
+  });
+
   it('finds a newer inbound only inside the queued tenant, user, conversation, and window', async () => {
     const occurredAt = new Date('2026-09-11T00:16:26.984Z');
     const candidate = {

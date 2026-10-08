@@ -52,6 +52,10 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
         ? await this.workspaceRepo.findByExternalWorkspace('slack', account.externalWorkspaceId, input.tenantId)
         : null;
       if (!connection) {
+        if (await this.isDevConversation(input)) {
+          this.logger.log(`[DEV BUTTONS REPLACED] ${input.text}`);
+          return true;
+        }
         this.logger.warn(`No Slack workspace connection to replace intro actions person=${input.personId}`);
         return false;
       }
@@ -66,6 +70,15 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       this.logger.error(`replaceIntroActions failed person=${input.personId}: ${(error as Error).message}`);
       return false;
     }
+  }
+
+  /** Local dev console: the intro lives in a `dev` conversation, which has no Slack message to edit. */
+  private async isDevConversation(input: { tenantId: string; personId: string; channelId: string }): Promise<boolean> {
+    const [row] = await this.db.client.select({ id: conversations.id }).from(conversations).where(and(
+      eq(conversations.tenantId, input.tenantId), eq(conversations.userId, input.personId),
+      eq(conversations.channelType, 'dev'), eq(conversations.externalConversationId, input.channelId),
+    )).limit(1);
+    return Boolean(row);
   }
 
   async sendAcknowledgement(input: { tenantId: string; personId: string; text: string; dedupeKey: string }): Promise<void> {

@@ -24,4 +24,9 @@ describe('OnboardingQueueJobSchema', () => {
       kind: 'system', tenantId: 't', personId: 'p', event: { type: 'nope' },
     })).toThrow();
   });
+  it('parses the dev-only intro job and rejects one without a person', () => {
+    expect(OnboardingQueueJobSchema.parse({ kind: 'dev_intro', tenantId: 't', personId: 'p' }))
+      .toEqual({ kind: 'dev_intro', tenantId: 't', personId: 'p' });
+    expect(() => OnboardingQueueJobSchema.parse({ kind: 'dev_intro', tenantId: 't' })).toThrow();
+  });
 });

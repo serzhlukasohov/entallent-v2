@@ -41,13 +41,16 @@ export class ConversationRepository implements ConversationRepositoryPort {
     return row ?? null;
   }
 
-  async isUserOnboardingEligible(tenantId: string, userId: string, externalWorkspaceId: string): Promise<boolean> {
+  /** `channelType` is 'dev' only for the local dev console channel; every real delivery checks Slack. */
+  async isUserOnboardingEligible(
+    tenantId: string, userId: string, externalWorkspaceId: string, channelType: 'slack' | 'dev' = 'slack',
+  ): Promise<boolean> {
     const rows = await this.db.client.select({
       userStatus: users.status, deletedAt: users.deletedAt,
       personLifecycle: people.lifecycleStatus,
     }).from(people).innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, people.tenantId)))
       .innerJoin(channelAccounts, and(eq(channelAccounts.userId, people.id),
-        eq(channelAccounts.tenantId, people.tenantId), eq(channelAccounts.channelType, 'slack'),
+        eq(channelAccounts.tenantId, people.tenantId), eq(channelAccounts.channelType, channelType),
         eq(channelAccounts.linkStatus, 'linked'),
         eq(channelAccounts.externalWorkspaceId, externalWorkspaceId)))
       .where(and(eq(people.id, userId), eq(people.tenantId, tenantId))).limit(2);

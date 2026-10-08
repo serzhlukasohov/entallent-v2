@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Job } from 'bullmq';
 import { OnboardingActionProcessor } from './onboarding-action.processor';
 
@@ -56,5 +56,28 @@ describe('OnboardingActionProcessor', () => {
       kind: 'system', tenantId: 't1', personId: 'p1', event: { type: 'role_changed', from: 'x', to: 'employee' },
     } } as Job<never>)).rejects.toThrow();
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  describe('dev_intro (local dev console only)', () => {
+    const devJob = { data: { kind: 'dev_intro', tenantId: 't1', personId: 'p1' }, timestamp: 1_791_000_000_123 } as Job<never>;
+    afterEach(() => { vi.unstubAllEnvs(); });
+
+    it.each(['development', 'test'])('sends a fresh intro when NODE_ENV=%s', async (nodeEnv) => {
+      vi.stubEnv('NODE_ENV', nodeEnv);
+      const apply = vi.fn();
+      const devIntro = { send: vi.fn().mockResolvedValue({ introMessageId: 'i', trustMessageId: 't' }) };
+      await new OnboardingActionProcessor({ apply } as never, devIntro as never).process(devJob);
+      expect(devIntro.send).toHaveBeenCalledWith('t1', 'p1', 1_791_000_000);
+      expect(apply).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, 'true'])('ignores the job in production (ENABLE_DEV_ENDPOINTS=%s)', async (flag) => {
+      vi.stubEnv('NODE_ENV', 'production');
+      if (flag) vi.stubEnv('ENABLE_DEV_ENDPOINTS', flag);
+      const devIntro = { send: vi.fn() };
+      await expect(new OnboardingActionProcessor({ apply: vi.fn() } as never, devIntro as never).process(devJob))
+        .resolves.toBeUndefined();
+      expect(devIntro.send).not.toHaveBeenCalled();
+    });
   });
 });
