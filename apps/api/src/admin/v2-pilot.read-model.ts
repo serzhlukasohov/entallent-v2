@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
-import type { AdminV2PilotCycle, AdminV2PilotQuestion, AdminV2PilotResponse } from '@entalent/contracts';
+import type {
+  AdminV2PilotCycle, AdminV2PilotPeopleResponse, AdminV2PilotPersonQuestion,
+  AdminV2PilotQuestion, AdminV2PilotResponse,
+} from '@entalent/contracts';
 import { DatabaseService } from '../database/database.service';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -13,9 +16,87 @@ type CycleRow = Omit<AdminV2PilotCycle, 'periodStart' | 'periodEnd' | 'lastInbou
 
 type QuestionRow = AdminV2PilotQuestion;
 
+type PersonQuestionRow = {
+  userId: string;
+  displayName: string;
+  inbound: number;
+  stableKey: string;
+  title: string;
+  group: string;
+  workingStatus: string | null;
+  ready: boolean | null;
+  workingSummary: string | null;
+  finalSummary: string | null;
+  outcome: string | null;
+  score: string | null;
+};
+
 @Injectable()
 export class V2PilotReadModel {
   constructor(private readonly db: DatabaseService) {}
+
+  async getPeople(tenantId: unknown, cohortId: unknown): Promise<AdminV2PilotPeopleResponse> {
+    if (typeof tenantId !== 'string' || !UUID.test(tenantId)
+      || typeof cohortId !== 'string' || !UUID.test(cohortId)) {
+      throw new BadRequestException('tenantId and cohortId must be UUIDs');
+    }
+
+    // The frozen cohort is the only source of members. Never select message text,
+    // source IDs, Bundle text, or summaries from another tenant or cycle.
+    const rows = await this.db.client.execute(sql`
+      SELECT member.user_id AS "userId",
+             coalesce(account.display_name, 'Participant ' || member.position::text) AS "displayName",
+             activity.inbound,
+             q.stable_key AS "stableKey", q.title, q.question_group AS "group",
+             wi.status AS "workingStatus", wi.ready_for_confirmation AS ready,
+             CASE WHEN wi.purged_at IS NULL THEN coalesce(wi.confirmed_semantic_summary, wi.working_summary)
+               ELSE NULL END AS "workingSummary",
+             insight.deidentified_summary AS "finalSummary",
+             insight.outcome, insight.score
+      FROM survey_reporting_cohorts c
+      CROSS JOIN LATERAL unnest(c.roster_user_ids) WITH ORDINALITY AS member(user_id, position)
+      JOIN survey_questions q ON q.survey_definition_id = c.survey_definition_id
+        AND q.response_type = 'open_ended'
+      LEFT JOIN LATERAL (
+        SELECT a.display_name FROM channel_accounts a
+        WHERE a.tenant_id = c.tenant_id AND a.user_id = member.user_id
+          AND a.channel_type = 'slack' AND a.link_status = 'linked'
+        ORDER BY a.updated_at DESC LIMIT 1
+      ) account ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS inbound FROM messages m
+        WHERE m.tenant_id = c.tenant_id AND m.user_id = member.user_id
+          AND m.direction = 'inbound' AND m.deleted_at IS NULL
+          AND m.occurred_at >= c.period_start AND m.occurred_at < c.period_end
+      ) activity ON true
+      LEFT JOIN LATERAL (
+        SELECT w.id FROM survey_windows w
+        WHERE w.tenant_id = c.tenant_id AND w.user_id = member.user_id
+          AND w.reporting_cohort_id = c.id
+        ORDER BY w.period_start DESC LIMIT 1
+      ) window_row ON true
+      LEFT JOIN LATERAL (
+        SELECT wi.status, wi.ready_for_confirmation, wi.working_summary,
+               wi.confirmed_semantic_summary, wi.purged_at
+        FROM survey_question_working_insights wi
+        WHERE wi.tenant_id = c.tenant_id AND wi.user_id = member.user_id
+          AND wi.survey_window_id = window_row.id AND wi.survey_question_id = q.id
+        ORDER BY wi.updated_at DESC LIMIT 1
+      ) wi ON true
+      LEFT JOIN LATERAL (
+        SELECT i.deidentified_summary, i.outcome, i.score
+        FROM survey_question_insights i
+        WHERE i.tenant_id = c.tenant_id AND i.user_id = member.user_id
+          AND i.survey_window_id = window_row.id AND i.survey_question_id = q.id
+          AND i.is_current AND i.withdrawn_at IS NULL
+        ORDER BY i.scored_at DESC LIMIT 1
+      ) insight ON true
+      WHERE c.tenant_id = ${tenantId} AND c.id = ${cohortId}
+      ORDER BY member.position, q.display_order
+    `) as unknown as PersonQuestionRow[];
+
+    return projectPilotPeople(cohortId, rows);
+  }
 
   async getStatus(tenantId: unknown, cohortIdsRaw: unknown): Promise<AdminV2PilotResponse> {
     if (typeof tenantId !== 'string' || !UUID.test(tenantId)) {
@@ -85,6 +166,34 @@ export class V2PilotReadModel {
                JOIN survey_windows w ON w.id = b.survey_window_id
                WHERE b.tenant_id = c.tenant_id AND w.reporting_cohort_id = c.id
                  AND b.status = 'resolved') AS "resolvedBundles",
+             (SELECT count(DISTINCT m.id)::int FROM messages m
+               JOIN survey_windows w ON w.tenant_id = m.tenant_id AND w.user_id = m.user_id
+               WHERE w.reporting_cohort_id = c.id AND m.tenant_id = c.tenant_id
+                 AND m.direction = 'outbound' AND m.sent_at IS NOT NULL AND m.deleted_at IS NULL
+                 AND m.occurred_at >= c.period_start AND m.occurred_at < c.period_end
+                 AND m.metadata->>'reportingDisclosureVersion' = 'reporting-disclosure-v1') AS "deliveredDisclosures",
+             (SELECT count(DISTINCT m.id)::int FROM messages m
+               JOIN survey_windows w ON w.tenant_id = m.tenant_id AND w.user_id = m.user_id
+               WHERE w.reporting_cohort_id = c.id AND m.tenant_id = c.tenant_id
+                 AND m.direction = 'outbound' AND m.sent_at IS NOT NULL AND m.deleted_at IS NULL
+                 AND m.occurred_at >= c.period_start AND m.occurred_at < c.period_end
+                 AND m.metadata->>'v2ConfirmationBundle' = 'true') AS "deliveredBundles",
+             (SELECT count(*)::int FROM survey_question_verdict_receipts r
+               JOIN survey_question_confirmation_bundles b ON b.id = r.bundle_id AND b.tenant_id = r.tenant_id
+               JOIN survey_windows w ON w.id = b.survey_window_id AND w.tenant_id = b.tenant_id
+               WHERE r.tenant_id = c.tenant_id AND w.reporting_cohort_id = c.id
+                 AND r.question_group = 'autonomy'
+                 AND r.verdict_kind IN ('agree', 'partial', 'reject')) AS "autonomyVerdicts",
+             (SELECT count(DISTINCT eligible.user_id)::int FROM (
+               SELECT i.user_id
+               FROM survey_question_insights i
+               JOIN survey_windows w ON w.id = i.survey_window_id AND w.tenant_id = i.tenant_id
+               WHERE i.tenant_id = c.tenant_id AND w.reporting_cohort_id = c.id
+                 AND i.question_group = 'autonomy' AND i.is_current AND i.outcome = 'scored'
+                 AND i.withdrawn_at IS NULL AND i.scoring_policy_version = p.version
+               GROUP BY i.user_id, i.survey_window_id
+               HAVING count(DISTINCT i.survey_question_id) = 3
+             ) eligible) AS "autonomyScoredParticipants",
              (SELECT count(*)::int FROM survey_question_insights i
                JOIN survey_windows w ON w.id = i.survey_window_id
                WHERE i.tenant_id = c.tenant_id AND w.reporting_cohort_id = c.id
@@ -166,6 +275,30 @@ export class V2PilotReadModel {
   }
 }
 
+export function projectPilotPeople(cohortId: string, rows: PersonQuestionRow[]): AdminV2PilotPeopleResponse {
+  const people = new Map<string, AdminV2PilotPeopleResponse['people'][number]>();
+  for (const row of rows) {
+    let person = people.get(row.userId);
+    if (!person) {
+      person = { userId: row.userId, displayName: row.displayName, inbound: row.inbound, questions: [] };
+      people.set(row.userId, person);
+    }
+    const question: AdminV2PilotPersonQuestion = {
+      stableKey: row.stableKey,
+      title: row.title,
+      group: row.group,
+      status: row.outcome ?? row.workingStatus ?? 'no_data',
+      ready: row.ready === true && row.outcome === null,
+      workingSummary: row.outcome === null ? row.workingSummary : null,
+      finalSummary: row.finalSummary,
+      outcome: row.outcome,
+      score: row.score === null ? null : Number(row.score),
+    };
+    person.questions.push(question);
+  }
+  return { cohortId, checkedAt: new Date().toISOString(), people: [...people.values()] };
+}
+
 export function projectPilotCycle(row: CycleRow, questions: AdminV2PilotQuestion[]): AdminV2PilotCycle {
   return {
     cohortId: row.cohortId,
@@ -186,6 +319,10 @@ export function projectPilotCycle(row: CycleRow, questions: AdminV2PilotQuestion
     bundles: row.bundles,
     awaitingBundles: row.awaitingBundles,
     resolvedBundles: row.resolvedBundles,
+    deliveredDisclosures: row.deliveredDisclosures,
+    deliveredBundles: row.deliveredBundles,
+    autonomyVerdicts: row.autonomyVerdicts,
+    autonomyScoredParticipants: row.autonomyScoredParticipants,
     finalScored: row.finalScored,
     finalInsufficient: row.finalInsufficient,
     reportSnapshots: row.reportSnapshots,

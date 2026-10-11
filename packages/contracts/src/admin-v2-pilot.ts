@@ -29,6 +29,10 @@ export interface AdminV2PilotCycle {
   bundles: number;
   awaitingBundles: number;
   resolvedBundles: number;
+  deliveredDisclosures: number;
+  deliveredBundles: number;
+  autonomyVerdicts: number;
+  autonomyScoredParticipants: number;
   finalScored: number;
   finalInsufficient: number;
   reportSnapshots: number;
