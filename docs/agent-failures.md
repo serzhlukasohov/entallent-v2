@@ -2921,3 +2921,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: The API resolves the cohort from the tenant's V2 cohorts by period (`selectCurrentPilotCohort`) and returns a derived `state`; dashboard labels come from that state only.
 - Regression check: `apps/api/src/admin/v2-pilot.read-model.test.ts` (active cohort beside an older closed cohort with more data) and `apps/dashboard/src/app/v2-pilot-progress.test.ts` (`cohortLabel`).
 - Status: fixed
+
+## 2026-10-11: `railway up` from a worktree uploaded the linked main checkout
+
+- Symptom: `railway up --service api --detach` run inside `.claude/worktrees/fix-pulse-current-cohort-e71081` produced api deployment `32361f16` built from `/Users/serzh/Documents/enTalentNew` (the Railway-linked main checkout on another branch with uncommitted changes). Startup logs mapped `company-setup` routes but no `/admin/v2-pilot` routes, so the QA dashboard reads returned 404 until redeploy.
+- Expected: The deploy archive is exactly the reviewed worktree commit.
+- Root cause layer: tooling. Railway CLI 5.41 archives the linked project directory, not the cwd, unless a path and `--path-as-root` are given.
+- Harness fix: Always deploy from a worktree with `railway up <absolute-worktree-path> --path-as-root --service <name> --detach`; after SUCCESS, check the startup `Mapped {...}` log lines or an endpoint that exists only in the new build before deploying dependent services.
+- Regression check: `railway logs --service api --deployment <id> | grep '<new route>'` returns the route before the dashboard deploy.
+- Status: fixed
