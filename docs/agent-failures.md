@@ -1123,3 +1123,11 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: `confirmationSummary` now normalizes null to undefined (same preprocess as `surveyProbeQuestionId`).
 - Regression check: `pnpm --filter @entalent/contracts test` (ai.test.ts "normalizes null confirmationSummary").
 - Status: fixed
+
+## 2026-10-11: Live sim test ran in the deterministic CI gate
+- Symptom: PR CI `Deterministic harness gate` failed with `OPENAI_API_KEY is required to run conversation simulations` from `onboarding-classifier-live.sim.test.ts`.
+- Expected: The deterministic gate passes without model credentials; live sims run only on demand with a key.
+- Root cause layer: verification; `harness:check` runs every changed `*.test.ts`, and the live test built its provider at collection time, so it threw even though it was never meant for CI.
+- Harness fix: The live onboarding classifier suite now uses `describe.skipIf(!process.env.OPENAI_API_KEY)` with the provider created in `beforeAll`. Other live sims (burnout, memory-recall, terse-user, ...) still create providers at collection time and will fail the gate the same way when changed; a harness-level rule for live sims is the durable follow-up.
+- Regression check: `env -u OPENAI_API_KEY pnpm harness:check -- --base origin/main` (live suite reported as skipped).
+- Status: open

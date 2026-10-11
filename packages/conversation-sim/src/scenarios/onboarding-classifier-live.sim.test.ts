@@ -3,7 +3,7 @@ import {
   initialOnboardingState, interpretOnboardingSignal, introMessages,
   type ClassifyContext, type ConversationTurn, type OnboardingState, type SignalOutcome,
 } from '@entalent/application';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { createLiveProvider } from '../harness/coach-harness';
 
 /**
@@ -65,8 +65,12 @@ function turnsFor(c: Case): ConversationTurn[] {
   return [...intro, { role: 'user', content: c.text, timestamp: new Date(now) }];
 }
 
-describe('live onboarding classifier labels', () => {
-  const provider = createLiveProvider();
+// Needs a real model key; the deterministic CI gate runs changed tests without one.
+describe.skipIf(!process.env.OPENAI_API_KEY)('live onboarding classifier labels', () => {
+  let provider: ReturnType<typeof createLiveProvider>;
+  beforeAll(() => {
+    provider = createLiveProvider();
+  });
 
   it.each(CASES)('$name: "$text"', async (c) => {
     const classification = await provider.classifySituation(turnsFor(c), {
