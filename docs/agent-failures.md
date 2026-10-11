@@ -2912,3 +2912,12 @@ These entries are retained as historical evidence but are not active work becaus
 - Status: open
 
 The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each participant card; evidence-classification and readiness checks remain open.
+
+## 2026-10-11: QA Pulse labelled a closed V2 cohort as the current cycle
+
+- Symptom: The production `/pulse` page ("Темы участников · V2", "Текущий цикл") showed cohort `9b5d3697` (closed 2026-10-08 19:00 Warsaw) while cohort `aa069583` was running; participants with 3/3 scored Autonomy in the active cohort appeared as "Беседа не начата". `/pilot` likewise called the newest of three hardcoded cohorts "Текущий цикл".
+- Expected: The QA views resolve the running cohort for the tenant and never present a closed cohort as current.
+- Root cause layer: architecture. `fetchAdminV2PilotPeople` and `fetchAdminV2Pilot` in the dashboard hardcoded cohort IDs; each new cycle needed a dashboard redeploy, and the page text and `/pilot` (`index === 0`) assumed the hardcoded cohort was current.
+- Harness fix: The API resolves the cohort from the tenant's V2 cohorts by period (`selectCurrentPilotCohort`) and returns a derived `state`; dashboard labels come from that state only.
+- Regression check: `apps/api/src/admin/v2-pilot.read-model.test.ts` (active cohort beside an older closed cohort with more data) and `apps/dashboard/src/app/v2-pilot-progress.test.ts` (`cohortLabel`).
+- Status: fixed

@@ -1,3 +1,5 @@
+import type { AdminV2PilotCohortState } from './admin-v2-pilot';
+
 export interface AdminV2PilotPersonQuestion {
   stableKey: string;
   title: string;
@@ -19,6 +21,9 @@ export interface AdminV2PilotPerson {
 
 export interface AdminV2PilotPeopleResponse {
   cohortId: string;
+  periodStart: string;
+  periodEnd: string;
+  state: AdminV2PilotCohortState;
   checkedAt: string;
   people: AdminV2PilotPerson[];
 }

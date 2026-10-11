@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Nav } from '../../components/Nav';
 import { fetchAdminV2PilotPeople } from '../../lib';
-import { personProgress, questionStatusLabel } from '../../v2-pilot-progress';
+import { cohortLabel, personProgress, questionStatusLabel } from '../../v2-pilot-progress';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -23,7 +23,7 @@ export default async function UserInsightsPage({ params }: { params: Promise<{ u
       <Nav active="pulse" />
       <Link href="/pulse" style={{ fontSize: 13 }}>← Pulse Check</Link>
       <h1 style={{ fontSize: 22, marginTop: 20 }}>{person?.displayName ?? 'Записи недоступны'}</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Рабочий смысл показывается до подтверждения; после финализации остаётся обезличенный итог.</p>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{data ? `${cohortLabel(data)}. ` : ''}Рабочий смысл показывается до подтверждения; после финализации остаётся обезличенный итог.</p>
       {person && <p style={{ padding: 12, background: 'var(--surface2)', borderRadius: 8, fontSize: 13 }}>
         <b>{personProgress(person).stage}</b> · {personProgress(person).nextStep}
       </p>}

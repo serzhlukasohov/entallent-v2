@@ -1,14 +1,18 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type {
-  AdminV2PilotCycle, AdminV2PilotPeopleResponse, AdminV2PilotPersonQuestion,
+  AdminV2PilotCohortState, AdminV2PilotCycle, AdminV2PilotPeopleResponse, AdminV2PilotPersonQuestion,
   AdminV2PilotQuestion, AdminV2PilotResponse,
 } from '@entalent/contracts';
 import { DatabaseService } from '../database/database.service';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type CycleRow = Omit<AdminV2PilotCycle, 'periodStart' | 'periodEnd' | 'lastInboundAt' | 'questions'> & {
+const MAX_CYCLES = 5;
+
+export type PilotCohortCandidate = { cohortId: string; periodStart: Date | string; periodEnd: Date | string };
+
+type CycleRow = Omit<AdminV2PilotCycle, 'state' | 'periodStart' | 'periodEnd' | 'lastInboundAt' | 'questions'> & {
   periodStart: Date;
   periodEnd: Date;
   lastInboundAt: Date | null;
@@ -35,11 +39,23 @@ type PersonQuestionRow = {
 export class V2PilotReadModel {
   constructor(private readonly db: DatabaseService) {}
 
-  async getPeople(tenantId: unknown, cohortId: unknown): Promise<AdminV2PilotPeopleResponse> {
+  /**
+   * Without an explicit cohortId the cohort is resolved from the tenant's V2
+   * cohorts by period: the running one, else the most recently started one,
+   * reported with state 'closed' so callers never label it as current.
+   */
+  async getPeople(tenantId: unknown, cohortIdRaw: unknown): Promise<AdminV2PilotPeopleResponse> {
     if (typeof tenantId !== 'string' || !UUID.test(tenantId)
-      || typeof cohortId !== 'string' || !UUID.test(cohortId)) {
+      || (cohortIdRaw !== undefined && (typeof cohortIdRaw !== 'string' || !UUID.test(cohortIdRaw)))) {
       throw new BadRequestException('tenantId and cohortId must be UUIDs');
     }
+    const now = new Date();
+    const candidates = await this.listCohorts(tenantId);
+    const cohort = cohortIdRaw === undefined
+      ? selectCurrentPilotCohort(candidates, now)
+      : candidates.find((candidate) => candidate.cohortId === cohortIdRaw) ?? null;
+    if (!cohort) throw new NotFoundException('No V2 pilot cohort for this tenant');
+    const cohortId = cohort.cohortId;
 
     // The frozen cohort is the only source of members. Never select message text,
     // source IDs, Bundle text, or summaries from another tenant or cycle.
@@ -95,17 +111,42 @@ export class V2PilotReadModel {
       ORDER BY member.position, q.display_order
     `) as unknown as PersonQuestionRow[];
 
-    return projectPilotPeople(cohortId, rows);
+    return projectPilotPeople(cohort, rows, now);
+  }
+
+  /** V2 cohorts only: a cohort without a cycle scoring policy is not part of the pilot. */
+  private async listCohorts(tenantId: string): Promise<PilotCohortCandidate[]> {
+    return await this.db.client.execute(sql`
+      SELECT c.id AS "cohortId", c.period_start AS "periodStart", c.period_end AS "periodEnd"
+      FROM survey_reporting_cohorts c
+      WHERE c.tenant_id = ${tenantId}
+        AND EXISTS (
+          SELECT 1 FROM survey_cycle_scoring_policies cp
+          WHERE cp.tenant_id = c.tenant_id AND cp.survey_definition_id = c.survey_definition_id
+            AND cp.period_start = c.period_start AND cp.period_end = c.period_end
+        )
+      ORDER BY c.period_start DESC, c.id
+    `) as unknown as PilotCohortCandidate[];
   }
 
   async getStatus(tenantId: unknown, cohortIdsRaw: unknown): Promise<AdminV2PilotResponse> {
     if (typeof tenantId !== 'string' || !UUID.test(tenantId)) {
       throw new BadRequestException('tenantId query param must be a UUID');
     }
-    const cohortIds = typeof cohortIdsRaw === 'string' ? cohortIdsRaw.split(',') : [];
-    if (cohortIds.length < 1 || cohortIds.length > 5
-      || new Set(cohortIds).size !== cohortIds.length || cohortIds.some((id) => !UUID.test(id))) {
-      throw new BadRequestException('cohortIds must contain one to five distinct UUIDs');
+    let cohortIds: string[];
+    if (cohortIdsRaw === undefined) {
+      const now = new Date();
+      cohortIds = (await this.listCohorts(tenantId))
+        .filter((cohort) => cohortState(cohort, now) !== 'upcoming')
+        .slice(0, MAX_CYCLES)
+        .map((cohort) => cohort.cohortId);
+      if (cohortIds.length === 0) return { tenantId, checkedAt: now.toISOString(), cycles: [] };
+    } else {
+      cohortIds = typeof cohortIdsRaw === 'string' ? cohortIdsRaw.split(',') : [];
+      if (cohortIds.length < 1 || cohortIds.length > MAX_CYCLES
+        || new Set(cohortIds).size !== cohortIds.length || cohortIds.some((id) => !UUID.test(id))) {
+        throw new BadRequestException('cohortIds must contain one to five distinct UUIDs');
+      }
     }
 
     // Only cohort and status metadata leave this query. Private text, source IDs,
@@ -220,10 +261,11 @@ export class V2PilotReadModel {
       ORDER BY c.period_start DESC
     `) as unknown as CycleRow[];
 
+    const now = new Date();
     const cycles: AdminV2PilotCycle[] = await Promise.all(rows.map(async (row) =>
-      projectPilotCycle(row, await this.getQuestions(tenantId, row.cohortId))));
+      projectPilotCycle(row, await this.getQuestions(tenantId, row.cohortId), now)));
 
-    return { tenantId, checkedAt: new Date().toISOString(), cycles };
+    return { tenantId, checkedAt: now.toISOString(), cycles };
   }
 
   private async getQuestions(tenantId: string, cohortId: string): Promise<AdminV2PilotQuestion[]> {
@@ -275,7 +317,31 @@ export class V2PilotReadModel {
   }
 }
 
-export function projectPilotPeople(cohortId: string, rows: PersonQuestionRow[]): AdminV2PilotPeopleResponse {
+export function cohortState(cohort: Pick<PilotCohortCandidate, 'periodStart' | 'periodEnd'>, now: Date): AdminV2PilotCohortState {
+  if (now.getTime() < new Date(cohort.periodStart).getTime()) return 'upcoming';
+  return now.getTime() < new Date(cohort.periodEnd).getTime() ? 'active' : 'closed';
+}
+
+/**
+ * The current cohort is the one whose period contains `now` (latest start wins
+ * if periods ever overlap). Only when none is running does the most recently
+ * started cohort stand in; data volume never influences the choice.
+ */
+export function selectCurrentPilotCohort(
+  cohorts: PilotCohortCandidate[],
+  now: Date,
+): PilotCohortCandidate | null {
+  const started = cohorts
+    .filter((cohort) => cohortState(cohort, now) !== 'upcoming')
+    .sort((a, b) => new Date(b.periodStart).getTime() - new Date(a.periodStart).getTime());
+  return started.find((cohort) => cohortState(cohort, now) === 'active') ?? started[0] ?? null;
+}
+
+export function projectPilotPeople(
+  cohort: PilotCohortCandidate,
+  rows: PersonQuestionRow[],
+  now: Date = new Date(),
+): AdminV2PilotPeopleResponse {
   const people = new Map<string, AdminV2PilotPeopleResponse['people'][number]>();
   for (const row of rows) {
     let person = people.get(row.userId);
@@ -296,12 +362,24 @@ export function projectPilotPeople(cohortId: string, rows: PersonQuestionRow[]):
     };
     person.questions.push(question);
   }
-  return { cohortId, checkedAt: new Date().toISOString(), people: [...people.values()] };
+  return {
+    cohortId: cohort.cohortId,
+    periodStart: new Date(cohort.periodStart).toISOString(),
+    periodEnd: new Date(cohort.periodEnd).toISOString(),
+    state: cohortState(cohort, now),
+    checkedAt: now.toISOString(),
+    people: [...people.values()],
+  };
 }
 
-export function projectPilotCycle(row: CycleRow, questions: AdminV2PilotQuestion[]): AdminV2PilotCycle {
+export function projectPilotCycle(
+  row: CycleRow,
+  questions: AdminV2PilotQuestion[],
+  now: Date = new Date(),
+): AdminV2PilotCycle {
   return {
     cohortId: row.cohortId,
+    state: cohortState(row, now),
     definitionVersion: row.definitionVersion,
     scoringPolicyVersion: row.scoringPolicyVersion,
     periodStart: new Date(row.periodStart).toISOString(),

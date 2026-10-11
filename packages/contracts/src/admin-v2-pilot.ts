@@ -10,8 +10,12 @@ export interface AdminV2PilotQuestion {
   finalInsufficient: number;
 }
 
+/** Derived from the cohort period at read time: closed once period_end has passed. */
+export type AdminV2PilotCohortState = 'upcoming' | 'active' | 'closed';
+
 export interface AdminV2PilotCycle {
   cohortId: string;
+  state: AdminV2PilotCohortState;
   definitionVersion: string;
   scoringPolicyVersion: string;
   periodStart: string;

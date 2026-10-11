@@ -2,7 +2,7 @@ import Link from 'next/link';
 import type { AdminV2PilotPersonQuestion } from '@entalent/contracts';
 import { Nav } from '../components/Nav';
 import { fetchAdminV2PilotPeople } from '../lib';
-import { personProgress, questionStatusLabel } from '../v2-pilot-progress';
+import { cohortLabel, personProgress, questionStatusLabel } from '../v2-pilot-progress';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -34,7 +34,7 @@ export default async function PulsePage() {
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
       <Nav active="pulse" />
       <h1 style={{ fontSize: 22, fontWeight: 600 }}>Темы участников · V2</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Текущий цикл. Предварительные формулировки ещё не подтверждены участником и не являются итоговыми инсайтами. Сначала показана Автономия; остальные девять тем можно раскрыть.</p>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{data ? `${cohortLabel(data)}. ` : ''}Предварительные формулировки ещё не подтверждены участником и не являются итоговыми инсайтами. Сначала показана Автономия; остальные девять тем можно раскрыть.</p>
       {!data ? <p style={{ marginTop: 32 }}>Карточки участников сейчас недоступны.</p> : (
         <div style={{ display: 'grid', gap: 16, marginTop: 24 }}>
           {data.people.map((person) => (

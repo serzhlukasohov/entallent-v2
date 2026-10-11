@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Nav } from './components/Nav';
 import { fetchAdminV2PilotPeople } from './lib';
-import { personProgress } from './v2-pilot-progress';
+import { cohortLabel, personProgress } from './v2-pilot-progress';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -15,7 +15,7 @@ export default async function DashboardPage() {
       <Nav active="team" />
       <h1 style={{ fontSize: 22, fontWeight: 600 }}>Команда · пилот V2</h1>
       <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-        Текущий замороженный цикл. Рабочие записи меняются до подтверждения и удаляются после финализации.
+        {data ? `${cohortLabel(data)}. ` : ''}Замороженный состав когорты. Рабочие записи меняются до подтверждения и удаляются после финализации.
       </p>
       {!data ? <p style={{ marginTop: 32 }}>Карточки участников сейчас недоступны.</p> : (
         <>
@@ -46,7 +46,7 @@ export default async function DashboardPage() {
               })}</tbody>
             </table>
           </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>«Записи / итоги» считаются по всем 12 темам текущего цикла.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>«Записи / итоги» считаются по всем 12 темам показанного цикла.</p>
         </>
       )}
     </main>

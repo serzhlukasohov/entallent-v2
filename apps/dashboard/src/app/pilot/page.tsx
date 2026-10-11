@@ -87,7 +87,7 @@ function Cycle({ cycle, now, current }: { cycle: AdminV2PilotCycle; now: number;
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', alignItems: 'baseline' }}>
         <div>
-          <h2 style={{ fontSize: 19 }}>{current ? 'Текущий цикл' : 'Предыдущий цикл'} · {cycleStage(cycle, now)}</h2>
+          <h2 style={{ fontSize: 19 }}>{current ? 'Текущий цикл' : cycle.state === 'upcoming' ? 'Следующий цикл' : 'Завершённый цикл'} · {cycleStage(cycle, now)}</h2>
           <p style={{ color: 'var(--text-muted)', marginTop: 5 }}>
             {warsaw(cycle.periodStart)} → {warsaw(cycle.periodEnd)} (Варшава)
           </p>
@@ -146,7 +146,7 @@ function Cycle({ cycle, now, current }: { cycle: AdminV2PilotCycle; now: number;
     return (
       <details style={{ marginTop: 18, padding: 20, border: '1px solid var(--border)', borderRadius: 14, background: 'var(--surface2)' }}>
         <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
-          Предыдущий цикл · {warsaw(cycle.periodStart)}–{warsaw(cycle.periodEnd)} · Автономия 3/3: {cycle.autonomyScoredParticipants}/{requiredContributors}
+          Завершённый цикл · {warsaw(cycle.periodStart)}–{warsaw(cycle.periodEnd)} · Автономия 3/3: {cycle.autonomyScoredParticipants}/{requiredContributors}
         </summary>
         <div style={{ marginTop: 18 }}>{content}</div>
       </details>
@@ -183,7 +183,10 @@ export default async function PilotPage() {
             Проверено: {warsaw(data.checkedAt)} (Варшава). Данные обновляются при открытии страницы.
           </p>
           {data.cycles.length === 0 && <p style={{ marginTop: 28 }}>Для этого тенанта нет циклов V2.</p>}
-          {data.cycles.map((cycle, index) => <Cycle key={cycle.cohortId} cycle={cycle} now={now} current={index === 0} />)}
+          {data.cycles.length > 0 && !data.cycles.some((cycle) => cycle.state === 'active') && (
+            <p style={{ marginTop: 28 }}>Активного цикла сейчас нет; ниже — завершённые циклы.</p>
+          )}
+          {data.cycles.map((cycle) => <Cycle key={cycle.cohortId} cycle={cycle} now={now} current={cycle.state === 'active'} />)}
         </>
       )}
     </main>

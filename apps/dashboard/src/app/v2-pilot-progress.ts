@@ -1,4 +1,18 @@
-import type { AdminV2PilotPerson } from '@entalent/contracts';
+import type { AdminV2PilotCohortState, AdminV2PilotPerson } from '@entalent/contracts';
+
+function warsawDate(instant: string): string {
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Warsaw', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(instant));
+}
+
+/** Only a cohort whose period is running is called the current cycle. */
+export function cohortLabel(cohort: { state: AdminV2PilotCohortState; periodStart: string; periodEnd: string }): string {
+  const period = `${warsawDate(cohort.periodStart)} → ${warsawDate(cohort.periodEnd)} (Варшава)`;
+  if (cohort.state === 'active') return `Текущий цикл · ${period}`;
+  if (cohort.state === 'upcoming') return `Цикл ещё не начался · ${period}`;
+  return `Завершённый цикл · ${period} · активного цикла сейчас нет`;
+}
 
 export function questionStatusLabel(status: string): string {
   const labels: Record<string, string> = {
