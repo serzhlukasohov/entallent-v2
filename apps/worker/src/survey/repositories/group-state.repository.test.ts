@@ -330,6 +330,9 @@ describe('GroupStateRepository', () => {
     expect(query.sql).toContain('"survey_reporting_cohorts"."id"');
     expect(query.sql).toContain('"survey_reporting_cohorts"."team_id"');
     expect(query.sql).toContain('"survey_reporting_cohorts"."roster_user_ids"');
+    expect(query.sql).toContain('from "survey_window_scoring_policies" v2_binding');
+    expect(query.sql).toContain('v2_window.reporting_cohort_id =');
+    expect(query.sql).toContain('v2_binding.tenant_id =');
     expect(query.sql).toContain('report_user.tenant_id');
     expect(query.sql).toContain('report_user.deleted_at is null');
     expect(query.sql).toContain("report_user.consent_state->'surveyEnabled' = 'true'::jsonb");

@@ -1,12 +1,11 @@
 import Link from 'next/link';
 
 const TABS = [
-  { key: 'team', label: 'Team', href: '/' },
   { key: 'trends', label: 'Trends', href: '/trends' },
-  { key: 'pulse', label: 'Pulse Check', href: '/pulse' },
+  { key: 'pilot', label: 'V2 Pilot', href: '/pilot' },
 ] as const;
 
-export function Nav({ active }: { active: 'team' | 'trends' | 'pulse' }) {
+export function Nav({ active }: { active: 'trends' | 'pilot' }) {
   return (
     <nav style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
       {TABS.map((t) => {

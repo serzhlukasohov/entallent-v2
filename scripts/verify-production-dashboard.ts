@@ -1,11 +1,8 @@
-import type { AdminManagerTeamResponse, AdminManagerTrendsResponse } from '@entalent/contracts';
-
-type TeamEmployee = AdminManagerTeamResponse['employees'][number];
+import type { AdminManagerTrendsResponse } from '@entalent/contracts';
 
 const DEFAULT_API_BASE = 'https://api-production-bc75.up.railway.app/api/v1';
 const DEFAULT_DASHBOARD_BASE = 'https://dashboard-production-a4f4.up.railway.app';
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const NONEXISTENT_USER_ID = '00000000-0000-4000-8000-000000000000';
 
 interface HttpResult {
   status: number;
@@ -17,10 +14,9 @@ interface VerificationSummary {
   apiBase: string;
   dashboardBase: string;
   tenantId: string;
-  teamSize: number;
-  verifiedEmployees: string[];
   trendsDays: number;
   dashboardRoutes: string[];
+  privateRoutesBlocked: string[];
 }
 
 async function main(): Promise<void> {
@@ -33,13 +29,6 @@ async function main(): Promise<void> {
   }
 
   await assertHealth(apiBase);
-  const team = await fetchJson<AdminManagerTeamResponse>(
-    `${apiBase}/admin/manager/team?tenantId=${encodeURIComponent(tenantId)}`,
-    adminApiKey,
-    'admin manager team',
-  );
-  assertTeamDisplayNames(team);
-
   const trendsDays = resolveTrendsDays(process.env.DASHBOARD_VERIFY_TRENDS_DAYS);
   const trends = await fetchJson<AdminManagerTrendsResponse>(
     `${apiBase}/admin/manager/trends?tenantId=${encodeURIComponent(tenantId)}&days=${trendsDays}`,
@@ -48,12 +37,24 @@ async function main(): Promise<void> {
   );
   assertTrends(trends);
 
+  const privateApiPaths = [
+    '/admin/manager/team',
+    '/admin/pulse/overview',
+    `/admin/users/${NONEXISTENT_USER_ID}/insights`,
+    '/admin/survey/coverage/windows',
+    `/users/${NONEXISTENT_USER_ID}/data-export`,
+    `/users/${NONEXISTENT_USER_ID}/memory`,
+  ];
+  for (const path of privateApiPaths) {
+    await assertNotFound(`${apiBase}${path}?tenantId=${encodeURIComponent(tenantId)}`, adminApiKey, path);
+  }
+  await assertNotFound(`${apiBase}/internal/maf/context/read`, undefined, 'retired internal context', 'POST');
+
   const verifiedRoutes: string[] = [];
   const home = await fetchHtml(`${dashboardBase}/`, 'dashboard home');
   assertDynamicDashboardRoute(home, 'dashboard home');
   assertNoDashboardFallback(home, 'dashboard home');
-  assertHtmlIncludes(home.body, 'Team Q12 Pulse', 'dashboard home title');
-  assertEmployeeNamesInHtml(home.body, team.employees, 'dashboard home');
+  assertHtmlIncludes(home.body, 'Trends', 'dashboard home redirect target');
   verifiedRoutes.push('/');
 
   const trendsPage = await fetchHtml(`${dashboardBase}/trends`, 'dashboard trends');
@@ -64,36 +65,16 @@ async function main(): Promise<void> {
   assertHtmlIncludes(trendsPage.body, trends.rangeEnd, 'dashboard trends range end');
   verifiedRoutes.push('/trends');
 
-  const pulse = await fetchHtml(`${dashboardBase}/pulse`, 'dashboard pulse');
-  assertNoDashboardFallback(pulse, 'dashboard pulse');
-  assertHtmlIncludes(pulse.body, 'Pulse Check Groups', 'dashboard pulse title');
-  assertEmployeeNamesInHtml(
-    pulse.body,
-    team.employees.filter((employee) => employee.totalQuestions > 0),
-    'dashboard pulse',
-  );
-  verifiedRoutes.push('/pulse');
-
-  const employeeForInsights = team.employees.find((employee) => employee.totalQuestions > 0);
-  if (employeeForInsights) {
-    const insights = await fetchHtml(
-      `${dashboardBase}/pulse/${encodeURIComponent(employeeForInsights.userId)}`,
-      'dashboard user insights',
-    );
-    assertNoDashboardFallback(insights, 'dashboard user insights');
-    assertHtmlIncludes(insights.body, 'Employee Insights', 'dashboard user insights title');
-    assertHtmlIncludes(insights.body, employeeForInsights.userId, 'dashboard user insights user id');
-    verifiedRoutes.push(`/pulse/${employeeForInsights.userId}`);
-  }
+  await assertNotFound(`${dashboardBase}/pulse`, undefined, 'dashboard pulse');
+  await assertNotFound(`${dashboardBase}/pulse/${NONEXISTENT_USER_ID}`, undefined, 'dashboard user insights');
 
   const summary: VerificationSummary = {
     apiBase,
     dashboardBase,
     tenantId,
-    teamSize: team.teamSize,
-    verifiedEmployees: team.employees.map((employee) => employee.displayName),
     trendsDays,
     dashboardRoutes: verifiedRoutes,
+    privateRoutesBlocked: [...privateApiPaths, '/internal/maf/context/read', '/pulse', '/pulse/[userId]'],
   };
 
   console.log('Production dashboard verification passed');
@@ -128,14 +109,28 @@ async function fetchHtml(url: string, label: string): Promise<HttpResult> {
   return result;
 }
 
+async function assertNotFound(
+  url: string,
+  adminApiKey: string | undefined,
+  label: string,
+  method = 'GET',
+): Promise<void> {
+  const headers = adminApiKey ? { 'x-api-key': adminApiKey } : {};
+  const result = await request(url, label, headers, method);
+  if (result.status !== 404) {
+    fail(`${label} returned HTTP ${result.status}; expected 404`);
+  }
+}
+
 async function request(
   url: string,
   label: string,
   headers: Record<string, string> = {},
+  method = 'GET',
 ): Promise<HttpResult> {
   let response: Response;
   try {
-    response = await fetch(url, { headers });
+    response = await fetch(url, { headers, method });
   } catch (error) {
     fail(`${label} request failed: ${(error as Error).message}`);
   }
@@ -145,31 +140,6 @@ async function request(
     headers: response.headers,
     body: await response.text(),
   };
-}
-
-function assertTeamDisplayNames(team: AdminManagerTeamResponse): void {
-  if (!Array.isArray(team.employees)) {
-    fail('admin manager team employees must be an array');
-  }
-  if (team.teamSize !== team.employees.length) {
-    fail(`admin manager teamSize ${team.teamSize} does not match ${team.employees.length} rows`);
-  }
-  if (team.employees.length === 0) {
-    fail('admin manager team returned no employees');
-  }
-
-  const badNames = team.employees.filter((employee) => {
-    const displayName = employee.displayName.trim();
-    return !displayName || displayName === employee.userId || UUID_PATTERN.test(displayName);
-  });
-
-  if (badNames.length > 0) {
-    fail(
-      `admin manager team returned ID fallback display names for user(s): ${badNames
-        .map((employee) => employee.userId)
-        .join(', ')}`,
-    );
-  }
 }
 
 function assertTrends(trends: AdminManagerTrendsResponse): void {
@@ -207,20 +177,6 @@ function assertNoDashboardFallback(result: HttpResult, label: string): void {
   }
 }
 
-function assertEmployeeNamesInHtml(
-  html: string,
-  employees: TeamEmployee[],
-  label: string,
-): void {
-  const missingNames = employees
-    .map((employee) => employee.displayName)
-    .filter((displayName) => !html.includes(displayName) && !html.includes(escapeHtml(displayName)));
-
-  if (missingNames.length > 0) {
-    fail(`${label} is missing employee display name(s): ${missingNames.join(', ')}`);
-  }
-}
-
 function assertHtmlIncludes(html: string, marker: string, label: string): void {
   if (!html.includes(marker)) {
     fail(`${label} missing marker: ${marker}`);
@@ -237,15 +193,6 @@ function resolveTrendsDays(raw: string | undefined): number {
     fail('DASHBOARD_VERIFY_TRENDS_DAYS must be an integer between 1 and 120');
   }
   return days;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 function requireEnv(name: string): string {

@@ -7,8 +7,8 @@ import { DatabaseService } from '../database/database.service';
 export class AuditLogRepository implements AuditLogPort {
   constructor(private readonly db: DatabaseService) {}
 
-  async append(params: AppendAuditLogParams): Promise<void> {
-    await this.db.client.insert(auditLogs).values({
+  async append(params: AppendAuditLogParams): Promise<boolean> {
+    const inserted = await this.db.client.insert(auditLogs).values({
       tenantId: params.tenantId,
       actorType: params.actorType,
       actorId: params.actorId,
@@ -18,6 +18,10 @@ export class AuditLogRepository implements AuditLogPort {
       reason: params.reason,
       metadata: params.metadata ?? {},
       traceId: params.traceId,
-    });
+      idempotencyKey: params.idempotencyKey,
+    }).onConflictDoNothing({
+      target: [auditLogs.tenantId, auditLogs.idempotencyKey],
+    }).returning({ id: auditLogs.id });
+    return inserted.length === 1;
   }
 }

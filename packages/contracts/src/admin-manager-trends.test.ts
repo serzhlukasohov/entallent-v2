@@ -11,6 +11,7 @@ describe('admin manager trends contract', () => {
     const response = {
       rangeStart: '2026-08-01',
       rangeEnd: '2026-08-14',
+      suppressed: false,
       engagement: [
         {
           date: '2026-08-01',

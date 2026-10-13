@@ -177,6 +177,14 @@ export interface SurveyRepositoryPort {
   expireTemporaryGroupStatesForClosedCohorts(
     params: ExpireTemporaryGroupStatesForClosedCohortsParams,
   ): Promise<number>;
+  /** Cut off unresolved V2 questions and erase their private analytical content. */
+  expireTemporaryQuestionInsightsForClosedWindows(
+    params: ExpireTemporaryGroupStatesForClosedCohortsParams,
+  ): Promise<number>;
+  /** Tenants with V2 temporary content whose cycle cutoff has passed. */
+  findTenantsWithClosedTemporaryQuestionInsights(now: Date): Promise<string[]>;
+  /** Count timely replies still awaiting conversation processing after the cutoff grace period. */
+  countOverdueQuestionConfirmationReplies(now: Date): Promise<number>;
   /** Find active window or auto-create one from the active survey definition. Returns null if no definition exists for the tenant. */
   findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | null>;
   findQuestionsForWindow(windowId: string): Promise<SurveyQuestionRecord[]>;

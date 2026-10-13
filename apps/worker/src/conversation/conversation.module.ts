@@ -27,6 +27,8 @@ import { StyleProfileRepository } from '../style/repositories/style-profile.repo
 import { StyleModule } from '../style/style.module';
 import { SurveyRepository } from '../survey/repositories/survey.repository';
 import { SurveyModule } from '../survey/survey.module';
+import { QuestionInsightRepository } from '../survey/repositories/question-insight.repository';
+import { DatabaseService } from '../database/database.service';
 
 @Module({
   imports: [
@@ -66,6 +68,8 @@ import { SurveyModule } from '../survey/survey.module';
         pulseBacklogService: PulseBacklogService,
         styleProfileRepo: StyleProfileRepository,
         goalRepo: GoalRepository,
+        questionInsightRepo: QuestionInsightRepository,
+        db: DatabaseService,
       ) => new ConversationOrchestrator(
         repo,
         ai,
@@ -79,6 +83,8 @@ import { SurveyModule } from '../survey/survey.module';
         pulseBacklogService,
         styleProfileRepo,
         goalRepo,
+        questionInsightRepo,
+        { run: (callback) => db.withTransaction(callback) },
       ),
       inject: [
         ConversationRepository,
@@ -93,6 +99,8 @@ import { SurveyModule } from '../survey/survey.module';
         PulseBacklogService,
         StyleProfileRepository,
         GoalRepository,
+        QuestionInsightRepository,
+        DatabaseService,
       ],
     },
     {

@@ -8,8 +8,9 @@
     "dev": "dotenv -e ../../.env -- nodemon",
     "start": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "pnpm --filter @entalent/application build && tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:focused": "pnpm --filter @entalent/application build && vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {

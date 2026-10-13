@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Job } from 'bullmq';
+import { Logger } from '@nestjs/common';
 import { MessageSendProcessor, type MessageSendJob } from './message-send.processor';
 
 const slack = vi.hoisted(() => ({ sendMessage: vi.fn() }));
@@ -16,10 +17,12 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('MessageSendProcessor', () => {
-  it('marks a logged dev response delivered', async () => {
+  it('marks a dev response delivered without logging its text', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     const sentAt = new Date('2026-09-03T10:00:00.000Z');
     vi.useFakeTimers();
     vi.setSystemTime(sentAt);
@@ -32,10 +35,12 @@ describe('MessageSendProcessor', () => {
       externalConversationId: 'channel-1',
     });
     const activateDeliveredConfirmation = vi.fn().mockResolvedValue(false);
+    const activateDeliveredQuestionBundle = vi.fn().mockResolvedValue(undefined);
     const processor = new MessageSendProcessor(
       {} as never,
       { updateMessageDelivery, findOutboundMessageForDelivery, findOnboardingDelivery: vi.fn().mockResolvedValue(null), isUserRuntimeEligible: vi.fn().mockResolvedValue(true) } as never,
       { activateDeliveredConfirmation } as never,
+      { activateDeliveredQuestionBundle } as never,
     );
     const data: MessageSendJob = {
       messageId: 'message-1',
@@ -44,10 +49,11 @@ describe('MessageSendProcessor', () => {
       channelType: 'dev',
       externalWorkspaceId: 'workspace-1',
       externalChannelId: 'channel-1',
-      text: 'response',
     };
 
     await processor.process({ data } as Job<MessageSendJob>);
+
+    expect(JSON.stringify(log.mock.calls)).not.toContain('persisted response');
 
     expect(updateMessageDelivery).toHaveBeenCalledWith('message-1', {
       tenantId: 'tenant-1',
@@ -57,6 +63,12 @@ describe('MessageSendProcessor', () => {
     });
     expect(activateDeliveredConfirmation).toHaveBeenCalledWith({
       confirmationPromptMessageId: 'message-1',
+      tenantId: 'tenant-1',
+      conversationId: 'conversation-1',
+      deliveredAt: sentAt,
+    });
+    expect(activateDeliveredQuestionBundle).toHaveBeenCalledWith({
+      promptMessageId: 'message-1',
       tenantId: 'tenant-1',
       conversationId: 'conversation-1',
       deliveredAt: sentAt,
@@ -108,7 +120,7 @@ describe('MessageSendProcessor', () => {
   });
 
   it('does not create a disclosure receipt when Slack delivery fails', async () => {
-    slack.sendMessage.mockRejectedValue(new Error('slack unavailable'));
+    slack.sendMessage.mockRejectedValue(new Error('slack unavailable: private employee detail'));
     const updateMessageDelivery = vi.fn().mockResolvedValue(undefined);
     const findOutboundMessageForDelivery = vi.fn().mockResolvedValue({
       userId: 'user-1',
@@ -126,9 +138,39 @@ describe('MessageSendProcessor', () => {
 
     await expect(
       processor.process({ data: slackJob() } as Job<MessageSendJob>),
-    ).rejects.toThrow('slack unavailable');
+    ).rejects.toThrow('outbound_delivery_failed');
     expect(updateMessageDelivery).not.toHaveBeenCalled();
     expect(activateDeliveredConfirmation).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat an uncertain committed Slack send', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    slack.sendMessage.mockRejectedValue(new Error('provider result unknown: private detail'));
+    const claimCommittedMessageSendAttempt = vi.fn()
+      .mockResolvedValueOnce('claimed').mockResolvedValueOnce('already_started');
+    const updateMessageDelivery = vi.fn();
+    const processor = new MessageSendProcessor(
+      { findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'test-token' }) } as never,
+      {
+        findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+          userId: 'user-1', text: 'private detail', sentAt: null,
+          channelType: 'slack', externalConversationId: 'channel-1',
+        }),
+        findOnboardingDelivery: vi.fn().mockResolvedValue(null),
+        isUserRuntimeEligible: vi.fn().mockResolvedValue(true),
+        claimCommittedMessageSendAttempt,
+        updateMessageDelivery,
+      } as never,
+      { activateDeliveredConfirmation: vi.fn() } as never,
+    );
+
+    await expect(processor.process({ data: slackJob() } as Job<MessageSendJob>))
+      .rejects.toThrow('outbound_delivery_failed');
+    await processor.process({ data: slackJob() } as Job<MessageSendJob>);
+
+    expect(slack.sendMessage).toHaveBeenCalledOnce();
+    expect(updateMessageDelivery).not.toHaveBeenCalled();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private detail');
   });
 
   it('does not send a queued Slack message after the Person becomes ineligible', async () => {
@@ -195,6 +237,58 @@ describe('MessageSendProcessor', () => {
       conversationId: 'conversation-1',
       deliveredAt,
     });
+  });
+
+  it.each([false, true])('keeps private repository errors out of the failed reason (already sent: %s)',
+    async (alreadySent) => {
+      const privateMarker = 'private employee Bundle statement';
+      const sentAt = new Date('2026-09-03T10:00:00.000Z');
+      const updateMessageDelivery = vi.fn().mockResolvedValue(sentAt);
+      const processor = new MessageSendProcessor(
+        {} as never,
+        {
+          findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+            userId: 'user-1', text: privateMarker,
+            sentAt: alreadySent ? sentAt : null,
+            channelType: 'dev', externalConversationId: 'channel-1',
+          }),
+          findOnboardingDelivery: vi.fn().mockResolvedValue(null),
+          isUserRuntimeEligible: vi.fn().mockResolvedValue(true),
+          updateMessageDelivery,
+        } as never,
+        { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never,
+        { activateDeliveredQuestionBundle: vi.fn().mockRejectedValue(new Error(privateMarker)) } as never,
+      );
+      const data = { ...slackJob(), channelType: 'dev' };
+
+      const failure = await processor.process({ data } as Job<MessageSendJob>).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toBe('outbound_delivery_state_unknown');
+      expect((failure as Error).stack).not.toContain(privateMarker);
+      expect(updateMessageDelivery).toHaveBeenCalledTimes(alreadySent ? 0 : 1);
+    });
+
+  it('redacts a delivery-record failure before BullMQ can persist it', async () => {
+    const privateMarker = 'private outbound message';
+    const processor = new MessageSendProcessor(
+      {} as never,
+      {
+        findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+          userId: 'user-1', text: privateMarker, sentAt: null,
+          channelType: 'dev', externalConversationId: 'channel-1',
+        }),
+        findOnboardingDelivery: vi.fn().mockResolvedValue(null),
+        isUserRuntimeEligible: vi.fn().mockResolvedValue(true),
+        updateMessageDelivery: vi.fn().mockRejectedValue(new Error(privateMarker)),
+      } as never,
+      { activateDeliveredConfirmation: vi.fn() } as never,
+    );
+
+    const data = { ...slackJob(), channelType: 'dev' };
+    const failure = await processor.process({ data } as Job<MessageSendJob>)
+      .catch((error: unknown) => error);
+    expect((failure as Error).message).toBe('outbound_delivery_state_unknown');
+    expect((failure as Error).stack).not.toContain(privateMarker);
   });
 
   it.each([
@@ -296,6 +390,5 @@ function slackJob(): MessageSendJob {
     channelType: 'slack',
     externalWorkspaceId: 'workspace-1',
     externalChannelId: 'channel-1',
-    text: 'response',
   };
 }

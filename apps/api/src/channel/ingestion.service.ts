@@ -9,6 +9,7 @@ import {
   channelAccounts,
   conversations,
   messages,
+  conversationJobAdmissions,
   workspaceConnections,
   type DbClient,
 } from '@entalent/database';
@@ -149,16 +150,27 @@ export class IngestionService implements IngestionRepositoryPort {
           conversations.externalConversationId,
         ],
         set: { updatedAt: new Date() },
+        setWhere: and(
+          eq(conversations.tenantId, params.tenantId),
+          eq(conversations.userId, params.userId),
+        ),
       })
-      .returning({ id: conversations.id });
+      .returning({ id: conversations.id, tenantId: conversations.tenantId, userId: conversations.userId });
 
+    if (!result || result.tenantId !== params.tenantId || result.userId !== params.userId) {
+      throw new Error('conversation_owner_mismatch');
+    }
     return { conversationId: result.id };
   }
 
-  async saveInboundMessage(params: IngestMessageParams): Promise<IngestMessageResult> {
-    const [msg] = await this.db.client
-      .insert(messages)
-      .values({
+  async saveInboundMessage(params: IngestMessageParams, admission?: {
+    externalWorkspaceId: string;
+    externalConversationId: string;
+    eventId: string;
+    requestId: string;
+  }): Promise<IngestMessageResult> {
+    return this.db.client.transaction(async (tx) => {
+      const [msg] = await tx.insert(messages).values({
         conversationId: params.conversationId,
         tenantId: params.tenantId,
         userId: params.userId,
@@ -170,9 +182,33 @@ export class IngestionService implements IngestionRepositoryPort {
         occurredAt: params.occurredAt,
         receivedAt: new Date(),
         traceId: params.traceId,
-      })
-      .returning({ id: messages.id });
+      }).returning({ id: messages.id });
+      if (!msg) throw new Error('inbound_message_insert_failed');
+      if (admission) {
+        await tx.insert(conversationJobAdmissions).values({
+          messageId: msg.id,
+          tenantId: params.tenantId,
+          userId: params.userId,
+          conversationId: params.conversationId,
+          externalWorkspaceId: admission.externalWorkspaceId,
+          externalConversationId: admission.externalConversationId,
+          eventId: admission.eventId,
+          requestId: admission.requestId,
+          traceId: params.traceId,
+        });
+      }
+      return { messageId: msg.id };
+    });
+  }
 
-    return { messageId: msg.id };
+  async markConversationJobQueued(input: { messageId: string; tenantId: string; userId: string }): Promise<void> {
+    const [admission] = await this.db.client.update(conversationJobAdmissions)
+      .set({ queuedAt: new Date() })
+      .where(and(
+        eq(conversationJobAdmissions.messageId, input.messageId),
+        eq(conversationJobAdmissions.tenantId, input.tenantId),
+        eq(conversationJobAdmissions.userId, input.userId),
+      )).returning({ messageId: conversationJobAdmissions.messageId });
+    if (!admission) throw new Error('conversation_job_admission_missing');
   }
 }

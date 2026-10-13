@@ -14,6 +14,7 @@ import { ALL_QUEUE_NAMES, type AdminQueuesResponse, type QueueName } from '@enta
 import { Job, Queue } from 'bullmq';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import type { Env } from '@entalent/config';
+import { redisConnectionFromUrl } from './redis-connection';
 
 type AdminQueue = Queue & { name: QueueName };
 
@@ -26,14 +27,7 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
   constructor(@Inject(ConfigService) private readonly config: ConfigService<Env, true>) {}
 
   onModuleInit(): void {
-    const redisUrl = new URL(this.config.get('REDIS_URL', { infer: true }));
-    const db = parseRedisDatabase(redisUrl.pathname);
-    const connection = {
-      host: redisUrl.hostname,
-      port: Number(redisUrl.port) || 6379,
-      db,
-      ...(redisUrl.password ? { password: decodeURIComponent(redisUrl.password) } : {}),
-    };
+    const connection = redisConnectionFromUrl(this.config.get('REDIS_URL', { infer: true }));
     this.queues = ALL_QUEUE_NAMES.map((name) => new Queue(name, { connection }) as AdminQueue);
   }
 
@@ -61,9 +55,7 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
           id: job.id,
           queue: q.name,
           name: job.name,
-          failedReason: job.failedReason,
           attemptsMade: job.attemptsMade,
-          data: job.data,
           timestamp: job.timestamp,
           finishedOn: job.finishedOn,
         }));
@@ -115,14 +107,4 @@ export class QueuesController implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Retried job ${jobId} in queue ${queue.name}`);
     return { retried: true, queue: queue.name };
   }
-}
-
-function parseRedisDatabase(pathname: string): number {
-  const raw = pathname.slice(1);
-  if (!raw) return 0;
-  const db = Number(raw);
-  if (!Number.isInteger(db) || db < 0) {
-    throw new Error('invalid_redis_database');
-  }
-  return db;
 }

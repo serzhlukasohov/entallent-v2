@@ -33,3 +33,10 @@ pnpm --filter @entalent/dashboard dev   # http://localhost:3002 (3001 is the wor
 - Cohort-safety: aggregate analytics endpoints suppress data below a minimum
   cohort size; the per-employee manager view is intentionally identifiable and is
   therefore gated behind the admin key.
+- `/pilot` is a temporary public QA progress view for the approved Test AI
+  Agent tenant and its two frozen V2 cohorts. Its server-side API read still
+  requires `ADMIN_API_KEY` and `INTERNAL_DASHBOARD_ENABLED`. It shows only
+  processing counts, topic status counts, Bundle/final/report status, and
+  timestamps. It never selects employee names, conversation text, private
+  summaries, individual scores, or report payloads. Remove this public
+  exception and apply the normal access boundary before a customer launch.

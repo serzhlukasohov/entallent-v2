@@ -50,12 +50,14 @@ export interface GroupReportPayload {
   questionGroups?: string[];
   reportKind?: 'intermediate' | 'final';
   traceId: string;
+  sourceGroupStateId?: string;
 }
 
 export interface StyleAnalysisPayload {
   conversationId: string;
   userId: string;
   tenantId: string;
+  inboundMessageId?: string;
   traceId: string;
 }
 
@@ -65,6 +67,7 @@ export interface ProfileHydrationPayload {
   channelType: string;
   externalWorkspaceId?: string;
   traceId: string;
+  inboundMessageId?: string;
 }
 
 export interface OutboxPort {

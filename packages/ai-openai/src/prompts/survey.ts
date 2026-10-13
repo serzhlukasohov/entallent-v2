@@ -1,7 +1,7 @@
-import type { ConversationTurn, SurveyQuestionForEvaluation } from '@entalent/application';
+import type { ConversationTurn, SurveyQuestionForEvaluation, SurveyEvidenceEvaluationOptions } from '@entalent/application';
 import { sanitizeTurnContent, INJECTION_GUARD } from './sanitize';
 
-export function buildSurveySystemPrompt(): string {
+export function buildSurveySystemPrompt(options?: SurveyEvidenceEvaluationOptions): string {
   return `You are an impartial survey evidence analyst for an employee engagement platform.
 
 Analyze a conversation transcript to identify evidence relevant to specific survey questions about the employee's work experience, wellbeing, and engagement.
@@ -17,6 +17,8 @@ Evidence extraction rules:
 - thresholdReached: true when completeness ≥ 0.70 AND confidence ≥ 0.75 simultaneously
 - assessmentShouldRemainUnknown: true when there is NO relevant signal at all, or when a contraindication is present (e.g. employee in crisis, actively distressed, discussing the contraindication topic)
 - numericValue: for responseType "numeric_0_10", copy the employee's explicit rating only when it is clearly an answer to that question and is between 0 and 10 inclusive. Never infer a rating from sentiment or polarity. Omit numericValue when no explicit rating was given.
+- voluntaryReopenQuestionIds: list open-ended question IDs only when the latest employee message explicitly volunteers to discuss them after a previous skip or refusal (for example, "I changed my mind; let's talk about growth"). A topic mention, older transcript content, or inferred willingness is insufficient. This list is independent of evidence[]: the employee may reopen a question without yet giving a substantive answer. Otherwise return [].
+${options?.focusLatestEmployeeMessage ? '- For this evaluation, extract evidence only when the latest employee message expresses or explicitly reaffirms it. Earlier turns are context only: they may clarify what a short answer refers to, but must not create evidence by themselves. If the latest employee message adds no relevant meaning, return empty evidence[] and candidateQuestionIds[].' : ''}
 
 evidenceSummary — write a self-contained insight (2-4 sentences) that a manager can read months later without the conversation and fully understand:
 1. What the employee said or revealed (the concrete fact or pattern)
@@ -32,6 +34,7 @@ Important:
 Return JSON only:
 {
   "candidateQuestionIds": ["id1", "id2"],
+  "voluntaryReopenQuestionIds": [],
   "evidence": [
     {
       "questionId": "uuid",

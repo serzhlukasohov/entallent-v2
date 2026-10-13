@@ -26,7 +26,7 @@ describe('QueuesController retry', () => {
     const controller = makeController([
       queue('conversation', {
         counts: { waiting: 1, failed: 1 },
-        failed: [failedJob({ id: 'job-1', failedReason: 'MAF runtime unavailable' })],
+        failed: [failedJob({ id: 'job-1', failedReason: 'Private conversation detail' })],
       }),
       queue('profile-hydration', {
         counts: { waiting: 0, failed: 0 },
@@ -40,20 +40,21 @@ describe('QueuesController retry', () => {
         { name: 'profile-hydration', counts: { waiting: 0, failed: 0 } },
       ],
     });
-    await expect(controller.getDeadLetterJobs()).resolves.toEqual({
+    const deadLetter = await controller.getDeadLetterJobs();
+    expect(deadLetter).toEqual({
       jobs: [
         {
           id: 'job-1',
           queue: 'conversation',
           name: 'process-message',
-          failedReason: 'MAF runtime unavailable',
           attemptsMade: 3,
-          data: { traceId: 'trace-1', runtimeMode: 'maf_primary' },
           timestamp: 1786492800000,
           finishedOn: 1786492801000,
         },
       ],
     });
+    expect(JSON.stringify(deadLetter)).not.toContain('Private conversation detail');
+    expect(JSON.stringify(deadLetter)).not.toContain('trace-1');
   });
 
   it('does not retry when a job id exists in multiple queues', async () => {

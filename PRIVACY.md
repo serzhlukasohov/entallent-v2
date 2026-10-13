@@ -5,7 +5,7 @@
 | Category | Examples | Sensitivity |
 |----------|---------|-------------|
 | Profile | Name, timezone, Slack ID | Low |
-| Conversations | Message text (inbound + outbound) | High — processed in transit, retained 90d |
+| Conversations | Message text (inbound + outbound) | High — retained under the tenant message-retention setting |
 | Memory items | Extracted facts, goals, concerns | High — derived from conversations |
 | Survey assessments | Engagement scores, wellbeing dimensions | High — only shown in aggregate |
 | Risk signals | Detected distress indicators | Critical — HR-restricted |
@@ -16,10 +16,10 @@
 
 | Role | What they can see |
 |------|------------------|
-| Employee (self) | Own conversation history (via Slack), memory items, goals, preferences |
+| Employee (self) | Their own Slack conversation; a verified self-service export, deletion, and review channel is not mounted in the API |
 | Manager | Aggregate survey metrics (cohort ≥ 5), aggregate engagement trends — NO individual conversation data |
-| Admin (`X-Api-Key`) | Everything in the admin panel, including user debug view (audit-logged) |
-| AI system | Full conversation context during processing; no retention beyond the job |
+| Admin (`X-Api-Key`) | Mounted aggregate and operational admin routes; no original conversations, temporary question insights, or individual employee analytics |
+| Employee-facing runtime | Tenant- and employee-scoped conversation history needed for continuity |
 
 ## Manager Visibility Boundaries
 
@@ -33,38 +33,24 @@ The `GET /admin/analytics` and `GET /admin/survey/coverage` endpoints enforce co
 
 ## Retention
 
-Default retention periods (configurable per tenant via `tenants.retention_policy`):
+The current domain defaults (configurable per tenant via `tenants.retention_policy`) are below. The retention cleanup code and script apply these settings when run; this table does not assert a production schedule or a separately approved legal retention policy.
+
+Earlier versions of this document stated 90 days for messages, 365 days for memory, and 730 days for audit logs. Those values conflict with the code defaults below. The intended policy needs explicit privacy/product reconciliation before these defaults are represented as a customer retention commitment.
 
 | Data | Default retention | After expiry |
 |------|-----------------|-------------|
-| Message text | 90 days | `text` set to `[deleted]`, `deleted_at` set |
-| Memory items | 365 days | `status` set to `deleted`, `content` cleared |
-| Audit logs | 730 days | Not deleted — compliance requirement |
-| LLM run records | 90 days | Deleted |
-| Risk signals | See severity expiry | `status` set to `resolved` |
+| Message text and linked survey evidence | 365 days | Message text and metadata redacted; evidence summaries and assessment detail cleared |
+| Memory items and V2 analytical insights | 730 days | Memory content and temporary Bundle text cleared; final V2 insight rows deleted, with a content-free withdrawal audit entry when applicable |
+| Audit logs | 2555 days | Deleted by the retention cleanup |
+| Risk signals | 90 days | Expired and recommended action cleared; source evidence UUIDs remain under the database source guard |
 
-## Data Deletion (GDPR Right to Erasure)
+The cleanup is available through `pnpm retention:cleanup`; its production schedule has not been verified. The V2 cycle-close processor may clear temporary analytical text earlier, after timely replies have been processed.
 
-`POST /users/:userId/data-deletion` (202 Accepted):
-1. Anonymise all message text → `[deleted]`
-2. Mark all memory items as deleted, clear content
-3. Cancel all pending scheduled actions
-4. Resolve all active risk signals
-5. Soft-delete user record (`status = deleted`, `deleted_at = now()`)
-6. Write audit log entry `user.data_deletion_requested`
+## Employee Export, Deletion, and Review
 
-The user row is soft-deleted (not hard-deleted) to preserve referential integrity with audit logs. Hard deletion can be scheduled after the audit log retention period.
+The legacy `GET /users/:userId/data-export` and `POST /users/:userId/data-deletion` controllers are not mounted in the active API. They accept an arbitrary user ID under a shared key, assume `DEFAULT_TENANT_ID`, and do not cover V2 analytical data, so they must not be presented as employee-rights endpoints. The legacy preferences route is also unmounted.
 
-## Data Export (GDPR Right to Portability)
-
-`GET /users/:userId/data-export` returns JSON containing:
-- User profile (no credentials)
-- Last 500 messages (non-deleted)
-- All active memory items
-- All goals
-- All scheduled actions
-
-The response is intentionally limited to avoid exfiltration of system metadata. Sensitive fields like `encrypted_credentials` are never included.
+IA-043 preserves employee export, deletion, and future self-review rights under a separate privacy and retention contract. A verified employee identity boundary, tenant-scoped request workflow, V2 data coverage, audit trail, and deletion/retention rules are still required before these functions can be made available through the product. The V2 insight specification does not define that contract.
 
 ## Consent
 
@@ -72,7 +58,7 @@ User preferences tracked in `users.consent_state` (JSONB):
 - `surveyEnabled` — opt-in/out of survey probing
 - `proactiveMessagingEnabled` — bool column (not consent_state)
 
-All consent changes are audit-logged via `PATCH /users/:userId/preferences`.
+The legacy `PATCH /users/:userId/preferences` route is not mounted. Consent changes in the active runtime need a separately verified boundary and audit review.
 
 ## Encryption at Rest
 

@@ -1,11 +1,12 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { SlackAdapter } from '@entalent/channel-slack';
 import type { OutgoingMessage } from '@entalent/contracts';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { GroupStateRepository } from '../survey/repositories/group-state.repository';
+import { QuestionInsightRepository } from '../survey/repositories/question-insight.repository';
 import { QUEUE_NAMES } from '../queue/queue.module';
 
 export type MessageSendJob = {
@@ -15,7 +16,6 @@ export type MessageSendJob = {
   channelType: string;
   externalWorkspaceId: string;
   externalChannelId: string;
-  text: string;
   replyToExternalThreadId?: string;
 };
 
@@ -27,6 +27,7 @@ export class MessageSendProcessor extends WorkerHost {
     private readonly workspaceRepo: WorkspaceConnectionRepository,
     private readonly conversationRepo: ConversationRepository,
     private readonly groupStateRepo: GroupStateRepository,
+    @Optional() private readonly questionInsightRepo?: QuestionInsightRepository,
   ) {
     super();
   }
@@ -71,9 +72,10 @@ export class MessageSendProcessor extends WorkerHost {
 
     this.logger.log(`Sending message ${messageId} via ${channelType}`);
 
-    // Dev channel: log the AI response instead of sending it anywhere.
+    // Dev channel records delivery without writing private conversation text to logs.
     if (channelType === 'dev') {
-      this.logger.log(`[DEV RESPONSE] messageId=${messageId}\n${text}`);
+      if (!await this.claimCommittedDelivery(messageId, tenantId, persisted.userId, conversationId)) return;
+      this.logger.log(`Dev message ${messageId} delivered`);
       await this.recordDelivery(messageId, {
         tenantId,
         conversationId,
@@ -108,7 +110,14 @@ export class MessageSendProcessor extends WorkerHost {
         this.logger.warn(`Onboarding delivery ${messageId} is already sending or delivered; manual reconciliation may be required`);
         return;
       }
-      const result = await adapter.sendMessage(outgoing);
+      if (!await this.claimCommittedDelivery(messageId, tenantId, persisted.userId, conversationId)) return;
+      let result: Awaited<ReturnType<SlackAdapter['sendMessage']>>;
+      try {
+        result = await adapter.sendMessage(outgoing);
+      } catch {
+        // BullMQ persists failure reasons; provider errors can contain request text.
+        throw new Error('outbound_delivery_failed');
+      }
 
       await this.recordDelivery(messageId, {
         tenantId,
@@ -128,12 +137,30 @@ export class MessageSendProcessor extends WorkerHost {
     throw new Error(`Unsupported channel type: ${channelType}`);
   }
 
+  private async claimCommittedDelivery(
+    messageId: string, tenantId: string, userId: string, conversationId: string,
+  ): Promise<boolean> {
+    const result = await this.conversationRepo.claimCommittedMessageSendAttempt?.({
+      messageId, tenantId, userId, conversationId,
+    });
+    if (result === 'already_started') {
+      this.logger.warn(`Conversation delivery requires reconciliation: messageId=${messageId}`);
+      return false;
+    }
+    return true;
+  }
+
   private async recordDelivery(
     messageId: string,
     params: Parameters<ConversationRepository['updateMessageDelivery']>[1],
   ): Promise<void> {
-    const deliveredAt = await this.conversationRepo.updateMessageDelivery(messageId, params);
-    await this.activateDelivery(messageId, params.tenantId, params.conversationId, deliveredAt);
+    try {
+      const deliveredAt = await this.conversationRepo.updateMessageDelivery(messageId, params);
+      await this.activateDelivery(messageId, params.tenantId, params.conversationId, deliveredAt);
+    } catch {
+      // BullMQ persists failure reasons; repository errors may contain private message content.
+      throw new Error('outbound_delivery_state_unknown');
+    }
   }
 
   private async activateDelivery(
@@ -142,11 +169,21 @@ export class MessageSendProcessor extends WorkerHost {
     conversationId: string,
     deliveredAt: Date,
   ): Promise<void> {
-    await this.groupStateRepo.activateDeliveredConfirmation({
-      confirmationPromptMessageId: messageId,
-      tenantId,
-      conversationId,
-      deliveredAt,
-    });
+    try {
+      await this.groupStateRepo.activateDeliveredConfirmation({
+        confirmationPromptMessageId: messageId,
+        tenantId,
+        conversationId,
+        deliveredAt,
+      });
+      await this.questionInsightRepo?.activateDeliveredQuestionBundle({
+        promptMessageId: messageId,
+        tenantId,
+        conversationId,
+        deliveredAt,
+      });
+    } catch {
+      throw new Error('outbound_delivery_state_unknown');
+    }
   }
 }

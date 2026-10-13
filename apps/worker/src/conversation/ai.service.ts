@@ -10,6 +10,16 @@ import type {
   MemoryContext,
   ResponseContext,
   SurveyQuestionForEvaluation,
+  SurveyEvidenceEvaluationOptions,
+  QuestionBundleComposition,
+  AwaitingQuestionBundle,
+  QuestionBundleVerdict,
+  PendingQuestionClarification,
+  QuestionClarificationVerdict,
+  ApprovedQuestionRubric,
+  QuestionScoreResult,
+  QuestionScorerPort,
+  QuestionDeidentifierPort,
 } from '@entalent/application';
 import type {
   SituationClassification,
@@ -25,7 +35,7 @@ import type {
 } from '@entalent/contracts';
 
 @Injectable()
-export class AiService implements AiProviderPort {
+export class AiService implements AiProviderPort, QuestionScorerPort, QuestionDeidentifierPort {
   private readonly provider: OpenAiProvider;
 
   constructor(@Inject(ConfigService) private readonly config: ConfigService<Env, true>) {
@@ -63,8 +73,22 @@ export class AiService implements AiProviderPort {
   evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: SurveyEvidenceEvaluationOptions,
   ): Promise<SurveyEvidenceEvaluation> {
-    return this.provider.evaluateSurveyEvidence(turns, questions);
+    return this.provider.evaluateSurveyEvidence(turns, questions, options);
+  }
+
+  scoreConfirmedMeaning(input: {
+    semanticSummary: string;
+    rubric: ApprovedQuestionRubric;
+    questionId: string;
+    scoringPolicyVersion: string;
+  }): Promise<QuestionScoreResult> {
+    return this.provider.scoreConfirmedMeaning(input);
+  }
+
+  deidentify(input: { semanticSummary: string; attempt: number }): Promise<string> {
+    return this.provider.deidentify(input);
   }
 
   generateResponse(
@@ -73,6 +97,36 @@ export class AiService implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     return this.provider.generateResponse(turns, strategy, context);
+  }
+
+  composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+  ): Promise<QuestionBundleComposition> {
+    return this.provider.composeQuestionBundle(turns, questions, responseLanguage);
+  }
+
+  interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict> {
+    return this.provider.interpretQuestionBundleResponse(turns, bundle);
+  }
+
+  composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string> {
+    return this.provider.composeQuestionClarification(turns, clarification, responseLanguage);
+  }
+
+  interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict> {
+    return this.provider.interpretQuestionClarificationResponse(turns, clarification);
   }
 
   generateGroupSummary(

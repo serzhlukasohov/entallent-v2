@@ -40,8 +40,10 @@ export class SlackAdapter implements ChannelAdapterPort {
 
     if (!timestamp || !signature) return false;
 
-    const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 300;
-    if (parseInt(timestamp, 10) < fiveMinutesAgo) return false;
+    if (!/^\d+$/.test(timestamp)) return false;
+    const requestTime = Number(timestamp);
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isSafeInteger(requestTime) || Math.abs(now - requestTime) > 300) return false;
 
     const sigBase = `v0:${timestamp}:${rawBody}`;
     const mySignature =
@@ -92,6 +94,15 @@ export class SlackAdapter implements ChannelAdapterPort {
     const channelId = result.channel?.id;
     if (!result.ok || !channelId) throw new Error(`Slack openDirectMessage failed: ${result.error ?? 'missing channel'}`);
     return channelId;
+  }
+
+  async getDirectMessageUser(channelId: string): Promise<string | null> {
+    if (!this.webClient) throw new Error('SlackAdapter: botToken is required for getDirectMessageUser');
+    const result = await this.webClient.conversations.info({ channel: channelId });
+    const channel = result.channel;
+    return result.ok && channel?.id === channelId && channel.is_im
+      && 'user' in channel && typeof channel.user === 'string'
+      ? channel.user : null;
   }
 
   async updateMessage(message: UpdateOutgoingMessage): Promise<void> {

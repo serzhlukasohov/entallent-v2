@@ -1,6 +1,7 @@
-import { pgTable, uuid, text, timestamp, numeric, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, numeric, index, unique } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { users } from './users';
+import { messages } from './messages';
 
 export const riskSignals = pgTable(
   'risk_signals',
@@ -12,6 +13,8 @@ export const riskSignals = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    sourceMessageId: uuid('source_message_id')
+      .references(() => messages.id, { onDelete: 'cascade' }),
     type: text('type').notNull(),
     severity: text('severity').notNull(), // low | medium | high | critical
     confidence: numeric('confidence', { precision: 3, scale: 2 }).notNull(),
@@ -27,6 +30,7 @@ export const riskSignals = pgTable(
   (t) => ({
     userStatusIdx: index('risk_signals_user_status_idx').on(t.userId, t.status),
     severityIdx: index('risk_signals_severity_idx').on(t.severity, t.status),
+    sourceUnique: unique('risk_signals_tenant_source_unique').on(t.tenantId, t.sourceMessageId),
   }),
 );
 

@@ -32,13 +32,13 @@ export class SlackSocketModeService implements OnModuleInit, OnModuleDestroy {
       const b = body as Record<string, unknown>;
       if (b['type'] === 'url_verification') return;
 
-      this.pipeline.processBody(b).catch((err: unknown) => {
-        this.logger.error('Socket Mode event processing failed', err);
+      this.pipeline.processBody(b).catch(() => {
+        this.logger.error('slack_socket_event_processing_failed');
       });
     });
 
-    this.client.start().catch((err: unknown) => {
-      this.logger.error('Failed to start Socket Mode client', err);
+    this.client.start().catch(() => {
+      this.logger.error('slack_socket_start_failed');
     });
 
     this.logger.log('Slack Socket Mode client started');

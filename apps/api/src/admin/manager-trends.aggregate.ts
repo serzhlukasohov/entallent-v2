@@ -141,6 +141,7 @@ export function buildTrends(input: BuildTrendsInput): TrendsResult {
   return {
     rangeStart: dates[0],
     rangeEnd: dates[dates.length - 1],
+    suppressed: false,
     engagement,
     signalCapture,
     coverageFunnel: funnel,

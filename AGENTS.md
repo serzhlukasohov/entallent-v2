@@ -317,6 +317,8 @@ Backend/API changes:
 Worker/runtime changes:
 
 - For `apps/worker` changes, run targeted worker tests when available, otherwise `pnpm --filter @entalent/worker test`.
+- When worker tests consume changed workspace packages through package entry points, build those packages first (for example, `pnpm --filter @entalent/application build`) so tests do not load stale `dist` output.
+- For a focused worker test after editing `packages/application`, use `pnpm --filter @entalent/worker test:focused src/path/to/test.ts` (no `--` separator); this command builds the application package before Vitest.
 - Active runtime changes must stay in the TypeScript path and include a regression proving the worker remains disconnected from MAF.
 - For prompt/orchestration changes, run `pnpm sim` or at least `SIM_GATE_RUNS=1 pnpm sim:gate` when model credentials are available.
 

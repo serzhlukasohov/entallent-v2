@@ -10,6 +10,8 @@ import {
   FollowUpCandidateSchema,
   GeneratedResponseSchema,
   SurveyEvidenceEvaluationSchema,
+  QuestionScoreResponseSchema,
+  QuestionDeidentifiedSummarySchema,
   GroupSummarySchema,
   GroupReportSchema,
   SentimentScoreSchema,
@@ -34,8 +36,22 @@ import type {
   MemoryContext,
   ResponseContext,
   SurveyQuestionForEvaluation,
+  SurveyEvidenceEvaluationOptions,
+  QuestionBundleComposition,
+  AwaitingQuestionBundle,
+  QuestionBundleVerdict,
+  PendingQuestionClarification,
+  QuestionClarificationVerdict,
+  ApprovedQuestionRubric,
+  QuestionScoreResult,
 } from '@entalent/application';
-import { isExplicitPulseCaptureRequest } from '@entalent/application';
+import {
+  isExplicitPulseCaptureRequest,
+  validateQuestionBundleComposition,
+  validateQuestionBundleVerdict,
+  validateQuestionClarificationPrompt,
+  validateQuestionClarificationVerdict,
+} from '@entalent/application';
 import { buildClassifySystemPrompt, buildClassifyUserPrompt } from './prompts/classify';
 import { buildStyleAnalyzeSystemPrompt, buildStyleAnalyzeUserPrompt } from './prompts/style-analyze';
 import { buildMemorySystemPrompt, buildMemoryUserPrompt } from './prompts/memory';
@@ -43,8 +59,23 @@ import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
 import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey';
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
+import { buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt } from './prompts/question-bundle';
+import { buildQuestionBundleInterpretSystemPrompt, buildQuestionBundleInterpretUserPrompt } from './prompts/question-bundle-interpret';
+import {
+  buildQuestionClarificationSystemPrompt,
+  buildQuestionClarificationUserPrompt,
+  buildQuestionClarificationInterpretSystemPrompt,
+  buildQuestionClarificationInterpretUserPrompt,
+} from './prompts/question-clarification';
 import { buildConfirmInterpretSystemPrompt, buildConfirmInterpretUserPrompt } from './prompts/confirm-interpret';
 import { buildGroupReportSystemPrompt, buildGroupReportUserPrompt } from './prompts/group-report';
+import {
+  QUESTION_SCORE_PROMPT_VERSION,
+  buildQuestionScoreSystemPrompt,
+  buildQuestionScoreUserPrompt,
+  buildQuestionDeidentifySystemPrompt,
+  buildQuestionDeidentifyUserPrompt,
+} from './prompts/question-insight-finalization';
 
 export interface ModelConfig {
   /** Used for classification and risk detection (structured, lower cost). Default: gpt-4o-mini */
@@ -270,14 +301,47 @@ export class OpenAiProvider implements AiProviderPort {
   async evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: SurveyEvidenceEvaluationOptions,
   ): Promise<SurveyEvidenceEvaluation> {
     const raw = await this.complete(
-      buildSurveySystemPrompt(),
+      buildSurveySystemPrompt(options),
       buildSurveyUserPrompt(turns, questions),
       this.analysisModel,
       4096,
     );
     return SurveyEvidenceEvaluationSchema.parse(JSON.parse(raw));
+  }
+
+  async scoreConfirmedMeaning(input: {
+    semanticSummary: string;
+    rubric: ApprovedQuestionRubric;
+    questionId: string;
+    scoringPolicyVersion: string;
+  }): Promise<QuestionScoreResult> {
+    const raw = await this.complete(
+      buildQuestionScoreSystemPrompt(),
+      buildQuestionScoreUserPrompt(input),
+      this.analysisModel,
+      512,
+      0,
+    );
+    const result = QuestionScoreResponseSchema.parse(JSON.parse(raw));
+    return {
+      ...result,
+      modelId: this.analysisModel,
+      promptVersion: QUESTION_SCORE_PROMPT_VERSION,
+    };
+  }
+
+  async deidentify(input: { semanticSummary: string; attempt: number }): Promise<string> {
+    const raw = await this.complete(
+      buildQuestionDeidentifySystemPrompt(input.attempt),
+      buildQuestionDeidentifyUserPrompt(input.semanticSummary),
+      this.analysisModel,
+      512,
+      0,
+    );
+    return QuestionDeidentifiedSummarySchema.parse(JSON.parse(raw)).summary;
   }
 
   async generateResponse(
@@ -329,6 +393,70 @@ export class OpenAiProvider implements AiProviderPort {
       throw new Error('OpenAI returned a noncompliant numeric survey probe after retry');
     }
     return corrected;
+  }
+
+  async composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+  ): Promise<QuestionBundleComposition> {
+    const raw = await this.complete(
+      buildQuestionBundleSystemPrompt(responseLanguage, questions.length),
+      buildQuestionBundleUserPrompt(turns, questions),
+      this.generationModel,
+      2048,
+    );
+    return validateQuestionBundleComposition(
+      JSON.parse(raw) as unknown,
+      questions.map((question) => question.surveyQuestionId),
+    );
+  }
+
+  async interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict> {
+    const raw = await this.complete(
+      buildQuestionBundleInterpretSystemPrompt(bundle.components.length),
+      buildQuestionBundleInterpretUserPrompt(turns, bundle),
+      this.analysisModel,
+      512,
+    );
+    return validateQuestionBundleVerdict(
+      JSON.parse(raw) as unknown,
+      bundle.components.map((component) => component.surveyQuestionId),
+    );
+  }
+
+  async composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string> {
+    const raw = await this.complete(
+      buildQuestionClarificationSystemPrompt(responseLanguage),
+      buildQuestionClarificationUserPrompt(turns, clarification),
+      this.generationModel,
+      512,
+    );
+    const parsed: unknown = JSON.parse(raw);
+    const text = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)['text']
+      : undefined;
+    return validateQuestionClarificationPrompt(text);
+  }
+
+  async interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict> {
+    const raw = await this.complete(
+      buildQuestionClarificationInterpretSystemPrompt(),
+      buildQuestionClarificationInterpretUserPrompt(turns, clarification),
+      this.analysisModel,
+      512,
+    );
+    return validateQuestionClarificationVerdict(JSON.parse(raw) as unknown);
   }
 
   async generateGroupSummary(

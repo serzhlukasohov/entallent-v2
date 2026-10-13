@@ -1,5 +1,6 @@
 import { createDbClient } from '@entalent/database';
 import { OpenSurveyReportingCycleUseCase } from '@entalent/application';
+import type { SurveyReportingCohortRecord } from '@entalent/application';
 import { SurveyRepository } from '../apps/worker/src/survey/repositories/survey.repository';
 
 export interface OpenSurveyReportingCycleConfig {
@@ -36,8 +37,9 @@ export function parseOpenSurveyReportingCycleConfig(
   };
 }
 
-async function main(): Promise<void> {
-  const config = parseOpenSurveyReportingCycleConfig(process.env);
+export async function openSurveyReportingCycle(
+  config: OpenSurveyReportingCycleConfig,
+): Promise<SurveyReportingCohortRecord[]> {
   const client = createDbClient(config.databaseUrl);
   try {
     const repository = new SurveyRepository(
@@ -46,8 +48,16 @@ async function main(): Promise<void> {
       {} as never,
     );
     const useCase = new OpenSurveyReportingCycleUseCase(repository);
-    const cohorts = await useCase.execute(config);
-    console.log(JSON.stringify({
+    return await useCase.execute(config);
+  } finally {
+    await client.sql.end({ timeout: 2 }).catch(() => undefined);
+  }
+}
+
+async function main(): Promise<void> {
+  const config = parseOpenSurveyReportingCycleConfig(process.env);
+  const cohorts = await openSurveyReportingCycle(config);
+  console.log(JSON.stringify({
       tenantId: config.tenantId,
       surveyDefinitionId: config.surveyDefinitionId,
       periodStart: config.periodStart.toISOString(),
@@ -59,9 +69,6 @@ async function main(): Promise<void> {
         openedAt: cohort.openedAt.toISOString(),
       })),
     }, null, 2));
-  } finally {
-    await client.sql.end({ timeout: 2 }).catch(() => undefined);
-  }
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {

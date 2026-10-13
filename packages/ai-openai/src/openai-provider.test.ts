@@ -42,6 +42,72 @@ const questions = [
   },
 ];
 
+describe('OpenAiProvider V2 question finalization', () => {
+  beforeEach(() => createMock.mockReset());
+
+  const scoreInput = {
+    semanticSummary: 'Manager Mira moved my Project Atlas review.',
+    rubric: {
+      version: 'synthetic-rubric-v1', instructions: 'Assess growth opportunity.',
+      title: 'Growth opportunity', canonicalMeaning: 'Access to meaningful development.',
+      approvedExamples: [{ score: 65, text: 'Useful opportunities exist, with some constraints.' }],
+      anchors: [
+        { score: 0, description: 'No opportunity.' },
+        { score: 100, description: 'Strong opportunity.' },
+      ],
+    },
+    questionId: 'question-1', scoringPolicyVersion: 'synthetic-policy-v1',
+  };
+
+  it('scores the confirmed meaning once against its rubric with model provenance', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      outcome: 'scored', score: 37, confidence: 0.86, direction: 'adverse', severity: 'moderate',
+      rootCauseCategory: 'growth',
+    }) } }] });
+    const result = await makeProvider().scoreConfirmedMeaning(scoreInput);
+
+    expect(result).toMatchObject({
+      outcome: 'scored', score: 37, confidence: 0.86, modelId: 'gpt-test',
+      promptVersion: 'question-score-v2-4', rootCauseCategory: 'growth',
+    });
+    expect(createMock).toHaveBeenCalledOnce();
+    const request = createMock.mock.calls[0]?.[0];
+    expect(request.messages[1].content).toContain(scoreInput.semanticSummary);
+    expect(request.messages[1].content).toContain(scoreInput.rubric.instructions);
+    expect(request.messages[1].content).toContain(scoreInput.rubric.canonicalMeaning);
+    expect(request.messages[1].content).toContain(scoreInput.rubric.approvedExamples[0]?.text);
+    expect(request.temperature).toBe(0);
+  });
+
+  it('rejects an out-of-range score before persistence', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      score: 101, confidence: 0.8, direction: 'adverse', severity: 'high',
+      rootCauseCategory: 'growth',
+    }) } }] });
+    await expect(makeProvider().scoreConfirmedMeaning(scoreInput)).rejects.toThrow();
+  });
+
+  it('accepts recognition as a scored root-cause category', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      outcome: 'scored', score: 15, confidence: 0.8, direction: 'adverse', severity: 'high',
+      rootCauseCategory: 'recognition',
+    }) } }] });
+    const result = await makeProvider().scoreConfirmedMeaning(scoreInput);
+    expect(result.rootCauseCategory).toBe('recognition');
+  });
+
+  it('requests stricter de-identification on a retry and parses only the safe candidate', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: {
+      content: '{"summary":"Growth opportunity was delayed."}',
+    } }] });
+    expect(await makeProvider().deidentify({
+      semanticSummary: scoreInput.semanticSummary, attempt: 2,
+    })).toBe('Growth opportunity was delayed.');
+    expect(createMock.mock.calls[0]?.[0].messages[0].content)
+      .toContain('Generalize more aggressively');
+  });
+});
+
 describe('OpenAiProvider.interpretConfirmationResponse', () => {
   beforeEach(() => createMock.mockReset());
 
@@ -80,6 +146,52 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
       'summary',
     );
     expect(r.verdict).toBe('exclude');
+  });
+});
+
+describe('OpenAiProvider.composeQuestionBundle', () => {
+  beforeEach(() => createMock.mockReset());
+
+  it('requires an exact three-question mapping in the one displayed message', async () => {
+    const statements = [
+      { surveyQuestionId: 'q1', statement: 'You have room to choose.' },
+      { surveyQuestionId: 'q2', statement: 'You set priorities.' },
+      { surveyQuestionId: 'q3', statement: 'You can raise concerns.' },
+    ];
+    const text = `It sounds like ${statements.map((item) => item.statement).join(' ')} Is that fair?`;
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text, statements }) } }],
+    });
+    const provider = makeProvider();
+
+    expect(await provider.composeQuestionBundle(turns, statements.map((item) => ({
+      surveyQuestionId: item.surveyQuestionId,
+      workingSummary: item.statement,
+    })), 'en')).toEqual({ text, statements });
+    expect(createMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('OpenAiProvider.interpretQuestionBundleResponse', () => {
+  beforeEach(() => createMock.mockReset());
+
+  it('validates a per-question partial reply from the model', async () => {
+    const verdict = {
+      kind: 'partial', acceptedQuestionIds: ['q1'],
+      disputedQuestionIds: ['q2'], declinedQuestionIds: ['q3'],
+    };
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(verdict) } }],
+    });
+    const provider = makeProvider();
+    const bundle = {
+      displayedText: 'Is that fair?',
+      components: ['q1', 'q2', 'q3'].map((surveyQuestionId) => ({
+        surveyQuestionId, questionVersion: 'v2', statement: surveyQuestionId,
+      })),
+    };
+
+    expect(await provider.interpretQuestionBundleResponse(turns, bundle)).toEqual(verdict);
   });
 });
 
@@ -2205,6 +2317,17 @@ describe('OpenAiProvider.complete truncation handling', () => {
     expect(createMock).toHaveBeenCalledTimes(1);
     const arg = createMock.mock.calls[0][0];
     expect(arg.max_completion_tokens).toBeGreaterThanOrEqual(4096);
+  });
+
+  it('uses latest-employee-message evidence scope when requested for V2', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: '{"candidateQuestionIds":[],"evidence":[]}' } }],
+    });
+
+    await makeProvider().evaluateSurveyEvidence(turns, questions, { focusLatestEmployeeMessage: true });
+
+    const arg = createMock.mock.calls[0][0];
+    expect(arg.messages[0].content).toContain('Earlier turns are context only');
   });
 
   it('parses a complete (non-truncated) response normally', async () => {

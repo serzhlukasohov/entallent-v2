@@ -1,6 +1,8 @@
 import type { AiProviderPort, ConversationTurn, SurveyQuestionForEvaluation } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
+import type { QuestionWorkingCapturePort } from '../ports/question-working-capture.port';
+import type { SurveyEvidenceEvaluation } from '@entalent/contracts';
 import type { SurveyQuestionRecord, SurveyWindowRecord, MessageRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
@@ -27,28 +29,95 @@ export interface SurveyEvidenceExtractionInput {
   inboundMessageId: string;
 }
 
+export interface PreparedSurveyEvidenceExtraction {
+  window: SurveyWindowRecord;
+  questions: SurveyQuestionRecord[];
+  eligibleQuestions: SurveyQuestionRecord[];
+  messages: MessageRecord[];
+  sourceMessageId: string;
+  mode: 'v1' | 'v2';
+  evaluation: SurveyEvidenceEvaluation;
+}
+
 export class SurveyEvidenceExtractionUseCase {
   constructor(
     private readonly ai: AiProviderPort,
     private readonly conversationRepo: ConversationRepositoryPort,
     private readonly surveyRepo: SurveyRepositoryPort,
     private readonly pulseBacklogService?: PulseBacklogService,
+    private readonly questionCapture?: QuestionWorkingCapturePort,
   ) {}
 
   async execute(input: SurveyEvidenceExtractionInput): Promise<void> {
+    const prepared = await this.prepare(input);
+    if (prepared) await this.apply(input, prepared);
+  }
+
+  async prepare(input: SurveyEvidenceExtractionInput): Promise<PreparedSurveyEvidenceExtraction | null> {
+    await this.assertConversationOwner(input);
+    const messages = this.conversationRepo.findMessagesThrough
+      ? await this.conversationRepo.findMessagesThrough({ ...input, limit: 15 })
+      : await this.conversationRepo.findRecentMessages(input.conversationId, 15);
+    this.assertOwnedMessages(input, messages);
+    const sourceIndex = messages.findIndex((message) =>
+      message.id === input.inboundMessageId && message.direction === 'inbound');
+    if (sourceIndex < 0) return null;
+    const source = messages[sourceIndex]!;
+
     const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
-    if (!window) return;
+    if (!window) return null;
 
     const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
-    const messages = await this.conversationRepo.findRecentMessages(input.conversationId, 15);
-    if (!messages.some((m) => m.direction === 'inbound')) return;
-    const evaluatedAt = messages.find(
-      (message) => message.id === input.inboundMessageId && message.direction === 'inbound',
-    )?.occurredAt;
-    const eligibleQuestions = this.eligibleQuestions(window, questions, evaluatedAt);
-    if (!eligibleQuestions.length) return;
+    const eligibleQuestions = this.eligibleQuestions(window, questions, source.occurredAt);
+    if (!eligibleQuestions.length) return null;
 
-    await this.processMessageWindow(input, window, eligibleQuestions, messages, input.inboundMessageId);
+    const mode = await this.questionCapture?.getWindowMode({
+      tenantId: input.tenantId, userId: input.userId, surveyWindowId: window.id,
+    }) ?? 'v1';
+    const sourceMessages = messages.slice(0, sourceIndex + 1);
+    const evaluated = await this.evaluateMessageWindow(
+      eligibleQuestions, sourceMessages, input.inboundMessageId, mode,
+    );
+    if (!evaluated) return null;
+    return {
+      window, questions, eligibleQuestions, messages: sourceMessages,
+      sourceMessageId: input.inboundMessageId, mode, evaluation: evaluated,
+    };
+  }
+
+  async apply(input: SurveyEvidenceExtractionInput, prepared: PreparedSurveyEvidenceExtraction): Promise<void> {
+    await this.assertConversationOwner(input);
+    const current = this.conversationRepo.findMessagesThrough
+      ? await this.conversationRepo.findMessagesThrough({ ...input, limit: 15 })
+      : await this.conversationRepo.findRecentMessages(input.conversationId, 15);
+    this.assertOwnedMessages(input, current);
+    const sourceIndex = current.findIndex((message) => message.id === prepared.sourceMessageId
+      && message.direction === 'inbound');
+    if (sourceIndex < 0) return;
+    const source = current[sourceIndex]!;
+    const currentThroughSource = current.slice(0, sourceIndex + 1);
+    if (currentThroughSource.length !== prepared.messages.length
+      || currentThroughSource.some((message, index) => message.id !== prepared.messages[index]?.id
+        || message.text !== prepared.messages[index]?.text
+        || message.occurredAt.getTime() !== prepared.messages[index]?.occurredAt.getTime())) {
+      throw new Error('survey_evidence_prepared_history_changed');
+    }
+    const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
+    if (!window || window.id !== prepared.window.id) return;
+    const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
+    const eligible = this.eligibleQuestions(window, questions, source.occurredAt);
+    if (eligible.length !== prepared.eligibleQuestions.length
+      || eligible.some((question, index) => question.id !== prepared.eligibleQuestions[index]?.id
+        || question.version !== prepared.eligibleQuestions[index]?.version)) {
+      throw new Error('survey_evidence_prepared_questions_changed');
+    }
+    const mode = await this.questionCapture?.getWindowMode({
+      tenantId: input.tenantId, userId: input.userId, surveyWindowId: window.id,
+    }) ?? 'v1';
+    if (mode !== prepared.mode) throw new Error('survey_evidence_prepared_mode_changed');
+    await this.processMessageWindow(
+      input, window, eligible, prepared.messages, prepared.sourceMessageId, mode, prepared.evaluation,
+    );
   }
 
   /**
@@ -62,15 +131,43 @@ export class SurveyEvidenceExtractionUseCase {
   async backfill(
     input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
   ): Promise<{ windowsProcessed: number }> {
+    await this.assertConversationOwner(input);
     const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
     if (!window) return { windowsProcessed: 0 };
 
     const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
     if (!questions.length) return { windowsProcessed: 0 };
+    const mode = await this.questionCapture?.getWindowMode({
+      tenantId: input.tenantId, userId: input.userId, surveyWindowId: window.id,
+    }) ?? 'v1';
 
     // Chronological (oldest → newest); large limit covers the whole recent history.
     const history = await this.conversationRepo.findRecentMessages(input.conversationId, 500);
+    this.assertOwnedMessages(input, history);
     if (!history.length) return { windowsProcessed: 0 };
+
+    if (mode === 'v2') {
+      let previousOutbound: MessageRecord | null = null;
+      let windowsProcessed = 0;
+      for (const message of history) {
+        if (message.direction === 'outbound') {
+          previousOutbound = message;
+          continue;
+        }
+        if (message.direction !== 'inbound'
+          || message.occurredAt < window.periodStart || message.occurredAt >= window.periodEnd) {
+          continue;
+        }
+        const eligibleQuestions = this.eligibleQuestions(window, questions, message.occurredAt);
+        if (!eligibleQuestions.length) continue;
+        await this.processMessageWindow(
+          input, window, eligibleQuestions,
+          previousOutbound ? [previousOutbound, message] : [message], message.id, mode,
+        );
+        windowsProcessed++;
+      }
+      return { windowsProcessed };
+    }
 
     const WINDOW_SIZE = 15;
     const STEP = 10; // overlap of 5 messages so signals spanning a boundary aren't lost
@@ -85,15 +182,39 @@ export class SurveyEvidenceExtractionUseCase {
     let windowsProcessed = 0;
     for (const start of starts) {
       const slice = history.slice(start, start + WINDOW_SIZE);
-      if (!slice.some((m) => m.direction === 'inbound')) continue;
-      const lastInbound = [...slice].reverse().find((m) => m.direction === 'inbound')!;
+      let sourceIndex = slice.length - 1;
+      while (sourceIndex >= 0 && slice[sourceIndex]?.direction !== 'inbound') sourceIndex--;
+      if (sourceIndex < 0) continue;
+      const lastInbound = slice[sourceIndex]!;
       const eligibleQuestions = this.eligibleQuestions(window, questions, lastInbound.occurredAt);
       if (!eligibleQuestions.length) continue;
-      await this.processMessageWindow(input, window, eligibleQuestions, slice, lastInbound.id);
+      await this.processMessageWindow(
+        input, window, eligibleQuestions, slice.slice(0, sourceIndex + 1), lastInbound.id, mode,
+      );
       windowsProcessed++;
     }
 
     return { windowsProcessed };
+  }
+
+  async assertConversationOwner(
+    input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
+  ): Promise<void> {
+    const conversation = await this.conversationRepo.findById(input.conversationId, input.tenantId);
+    if (!conversation || conversation.tenantId !== input.tenantId
+      || conversation.userId !== input.userId) {
+      throw new Error('survey_evidence_conversation_scope_mismatch');
+    }
+  }
+
+  private assertOwnedMessages(
+    input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
+    messages: MessageRecord[],
+  ): void {
+    if (messages.some((message) => message.conversationId !== input.conversationId
+      || message.tenantId !== input.tenantId || message.userId !== input.userId)) {
+      throw new Error('survey_evidence_message_scope_mismatch');
+    }
   }
 
   /** Evaluates one transcript window and persists any evidence it yields. */
@@ -103,32 +224,30 @@ export class SurveyEvidenceExtractionUseCase {
     questions: SurveyQuestionRecord[],
     messages: MessageRecord[],
     sourceMessageId: string,
+    mode: 'v1' | 'v2',
+    preparedEvaluation?: SurveyEvidenceEvaluation,
   ): Promise<void> {
-    const turns: ConversationTurn[] = messages.map((m) => ({
-      role: m.direction === 'inbound' ? 'user' : 'assistant',
-      content: m.text,
-      timestamp: m.occurredAt,
-    }));
-
-    if (!turns.some((t) => t.role === 'user')) return;
-
+    const evaluation = preparedEvaluation
+      ?? await this.evaluateMessageWindow(questions, messages, sourceMessageId, mode);
+    if (!evaluation) return;
     const sourceProbeQuestionId = surveyProbeQuestionIdForSource(messages, sourceMessageId);
     const evaluationQuestions = questions.filter(
       (question) => question.responseType !== 'numeric_0_10' || question.id === sourceProbeQuestionId,
     );
     if (!evaluationQuestions.length) return;
-
-    const questionsForEval: SurveyQuestionForEvaluation[] = evaluationQuestions.map((q) => ({
-      id: q.id,
-      stableKey: q.stableKey,
-      canonicalMeaning: q.canonicalMeaning,
-      responseType: q.responseType,
-      positiveIndicators: q.positiveIndicators,
-      negativeIndicators: q.negativeIndicators,
-      contraindications: q.contraindications,
-    }));
-
-    const evaluation = await this.ai.evaluateSurveyEvidence(turns, questionsForEval);
+    if (mode === 'v2' && this.questionCapture) {
+      for (const questionId of new Set(evaluation.voluntaryReopenQuestionIds ?? [])) {
+        const question = evaluationQuestions.find((item) => item.id === questionId
+          && item.responseType === 'open_ended');
+        if (!question) continue;
+        await this.questionCapture.reopenDeclinedQuestion({
+          tenantId: input.tenantId, userId: input.userId,
+          conversationId: input.conversationId, surveyWindowId: window.id,
+          surveyQuestionId: question.id, questionVersion: question.version,
+          sourceMessageId,
+        });
+      }
+    }
     const assessmentByQuestion = new Map(
       (await this.surveyRepo.findAssessmentsForWindow(window.id)).map((assessment) => [
         assessment.surveyQuestionId,
@@ -146,6 +265,26 @@ export class SurveyEvidenceExtractionUseCase {
         ? validatedExplicitRating(messages, sourceMessageId, question.id, ev.numericValue)
         : undefined;
       if (ev.strength < MIN_EVIDENCE_STRENGTH && numericValue === undefined) continue;
+
+      if (mode === 'v2' && !isNumeric) {
+        if (!this.questionCapture) throw new Error('v2_question_capture_unavailable');
+        const captured = await this.questionCapture.captureMeaning({
+          tenantId: input.tenantId,
+          userId: input.userId,
+          conversationId: input.conversationId,
+          surveyWindowId: window.id,
+          surveyQuestionId: question.id,
+          questionVersion: question.version,
+          sourceMessageId,
+          meaning: ev.evidenceSummary,
+          sufficientMeaning: COMPLETED_ASSESSMENT_STATUSES.has(computeAssessmentStatus(ev, question)),
+        });
+        if (captured === 'captured' && this.pulseBacklogService
+          && COMPLETED_ASSESSMENT_STATUSES.has(computeAssessmentStatus(ev, question))) {
+          await this.pulseBacklogService.markQuestionCovered(input.userId, window.id, question.id, 1);
+        }
+        continue;
+      }
 
       // The evaluator re-reads the same transcript every message, so consecutive
       // runs restate the same finding. The new record replaces prior records that
@@ -236,6 +375,57 @@ export class SurveyEvidenceExtractionUseCase {
 
       await this.checkGroupCompletion(input, window.id, ev.questionId, questions);
     }
+  }
+
+  private async evaluateMessageWindow(
+    questions: SurveyQuestionRecord[], messages: MessageRecord[],
+    sourceMessageId: string, mode: 'v1' | 'v2',
+  ): Promise<SurveyEvidenceEvaluation | null> {
+    const sourceIndex = messages.findIndex((message) =>
+      message.id === sourceMessageId && message.direction === 'inbound');
+    if (sourceIndex < 0) return null;
+    let firstContextIndex = sourceIndex;
+    if (mode === 'v2') {
+      for (let index = sourceIndex - 1; index >= 0; index--) {
+        if (messages[index]?.direction === 'outbound') {
+          firstContextIndex = index;
+          break;
+        }
+      }
+    }
+    const evaluationMessages = mode === 'v2'
+      ? firstContextIndex === sourceIndex
+        ? [messages[sourceIndex]!]
+        : [messages[firstContextIndex]!, messages[sourceIndex]!]
+      : messages;
+    const turns: ConversationTurn[] = evaluationMessages.map((m) => ({
+      role: m.direction === 'inbound' ? 'user' : 'assistant',
+      content: m.text,
+      timestamp: m.occurredAt,
+    }));
+
+    if (!turns.some((t) => t.role === 'user')) return null;
+
+    const sourceProbeQuestionId = surveyProbeQuestionIdForSource(messages, sourceMessageId);
+    const evaluationQuestions = questions.filter(
+      (question) => question.responseType !== 'numeric_0_10' || question.id === sourceProbeQuestionId,
+    );
+    if (!evaluationQuestions.length) return null;
+
+    const questionsForEval: SurveyQuestionForEvaluation[] = evaluationQuestions.map((q) => ({
+      id: q.id,
+      stableKey: q.stableKey,
+      canonicalMeaning: q.canonicalMeaning,
+      responseType: q.responseType,
+      positiveIndicators: q.positiveIndicators,
+      negativeIndicators: q.negativeIndicators,
+      contraindications: q.contraindications,
+    }));
+
+    const evaluation = mode === 'v2'
+      ? await this.ai.evaluateSurveyEvidence(turns, questionsForEval, { focusLatestEmployeeMessage: true })
+      : await this.ai.evaluateSurveyEvidence(turns, questionsForEval);
+    return evaluation;
   }
 
   private async checkGroupCompletion(

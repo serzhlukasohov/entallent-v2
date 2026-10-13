@@ -45,6 +45,9 @@ export class FollowUpExecutionUseCase {
 
   async execute(input: FollowUpExecutionInput): Promise<PolicyDecision> {
     const action = await this.actionRepo.findById(input.scheduledActionId, input.tenantId);
+    if (action && action.userId !== input.userId) {
+      throw new Error('follow_up_action_scope_mismatch');
+    }
     if (!action || action.status !== 'pending') {
       return { decision: 'skip', reason: 'not_pending' };
     }

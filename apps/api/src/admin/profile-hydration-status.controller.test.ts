@@ -123,6 +123,31 @@ describe('profile hydration admin status', () => {
     expect(response.summary.failedJobs).toBe(1);
   });
 
+  it('does not return historical metadata or queue error text', async () => {
+    const privateMarker = 'private employee content';
+    const controller = makeController([row({
+      profileMetadata: { profileHydration: {
+        status: 'failed', lastError: privateMarker, reason: privateMarker,
+      } },
+    })]);
+    (controller as unknown as {
+      profileHydrationQueue: { getFailed: () => Promise<unknown[]> };
+    }).profileHydrationQueue = {
+      getFailed: async () => [{
+        ...failedJob({ id: 'private-job', data: {
+          tenantId: 'tenant-1', userId: 'u-1', traceId: privateMarker,
+        } }),
+        failedReason: privateMarker,
+      }],
+    };
+
+    const response = await controller.getStatus('tenant-1');
+    expect(response.missingDisplayNames[0]?.lastError).toBeNull();
+    expect(response.missingDisplayNames[0]?.reason).toBeNull();
+    expect(response.failedJobs[0]?.failedReason).toBe('profile_hydration_job_failed');
+    expect(JSON.stringify(response)).not.toContain(privateMarker);
+  });
+
   it('rejects a blank tenant id', async () => {
     const controller = makeController();
 
