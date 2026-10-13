@@ -1,6 +1,6 @@
 import type {
   SituationClassification,
-  RiskDetection,
+  ProviderRiskDetection,
   MemoryProposal,
   ReplyStrategy,
   GeneratedResponse,
@@ -179,7 +179,8 @@ export interface AiProviderPort {
     context: ClassifyContext,
   ): Promise<SituationClassification>;
 
-  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection>;
+  /** Model risk output plus any provider moderation signal; may throw ModerationSignalError. */
+  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection>;
 
   extractMemory(turns: ConversationTurn[], existing: MemoryContext): Promise<MemoryProposal>;
 

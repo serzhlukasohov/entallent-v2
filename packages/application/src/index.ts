@@ -36,6 +36,7 @@ export type { StyleProfileRepositoryPort, CommittedStyleAnalysisInput, Committed
 export type { ConversationRecord, MessageRecord, ReportingDisclosureReceiptRecord, WorkspaceConnectionRecord, ChannelAccountRecord, MemoryItemRecord, UserGoalRecord, UserRecord, ScheduledActionRecord, SurveyQuestionRecord, SurveyWindowRecord, SurveyReportingCohortRecord, SurveyEvidenceRecord, RiskSignalRecord, SurveyGroupStateRecord, TeamRecord, TeamMembershipRecord, StyleProfileRecord, StyleDimensions, StylePhrase } from './types/records';
 export { DEIDENTIFICATION_POLICY_VERSION, evaluateDeidentification, isAcceptedDeidentificationDecision } from './utils/deidentification-policy';
 export type { DeidentificationDecision, DeidentificationRejectionReason, DeidentificationPolicyInput } from './utils/deidentification-policy';
+export { RISK_TRIPWIRE_POLICY_VERSION, applyModerationTripwire, assessRisk, isRiskTurn, mustEscalate, riskBlocksSurvey, toAssessedRisk, tripwireRaise, unassessedRisk } from './utils/risk-policy';
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
 export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';

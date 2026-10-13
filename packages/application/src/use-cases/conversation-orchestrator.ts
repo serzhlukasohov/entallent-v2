@@ -2,7 +2,7 @@ import {
   CLASSIFIER_TRANSCRIPT_TURN_LIMIT,
   PulseCaptureSourceMessageIdSchema,
   type SituationClassification,
-  type RiskDetection,
+  type RiskAssessment,
   type ReplyStrategy,
   type ConversationMode,
 } from '@entalent/contracts';
@@ -46,6 +46,7 @@ import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdi
 import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isSessionStart } from '../utils/session';
+import { assessRisk, isRiskTurn, mustEscalate, riskBlocksSurvey } from '../utils/risk-policy';
 import { resolveLanguagePolicy } from '../utils/language-policy';
 import {
   REPORTING_DISCLOSURE_VERSION,
@@ -67,7 +68,8 @@ import type {
 } from '../ports/agent-runtime.port';
 
 export type OrchestrateInput = ProcessMessageRequest;
-export type OrchestrateResult = ProcessMessageResult;
+/** The active runtime result. Unlike the archived ProcessMessageResult, risk may be unassessed. */
+export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & { risk: RiskAssessment };
 
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
@@ -196,9 +198,13 @@ export class ConversationOrchestrator {
     const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
 
+    // Safety assessment is independent of classification and runs on every turn (ADR-013 D3).
+    // assessRisk never rejects: a failure is `assessed: false`, which policy treats as unknown.
+    const riskAssessment = assessRisk(this.aiProvider, turns, { userName });
+
     // Classification and enrichment reads are independent. Goal reads degrade to no goals;
     // relevance is decided later, after safety and confirmation state are known.
-    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile, activeGoals] = await Promise.all([
+    const enrichment = Promise.all([
       this.aiProvider.classifySituation(turns, {
         userName,
         now: currentTurnAt,
@@ -219,11 +225,20 @@ export class ConversationOrchestrator {
         ? this.goalRepo.findActiveByUser(userId, tenantId).catch(() => [])
         : Promise.resolve([]),
     ]);
+    let enriched: Awaited<typeof enrichment>;
+    try {
+      enriched = await enrichment;
+    } catch (err) {
+      // The reply pipeline failed (e.g. the provider refused a crisis transcript). Escalation
+      // must not depend on it, so apply the safety decision before the job fails and retries.
+      await this.raiseEscalationIfRequired(await riskAssessment, { tenantId, userId, input });
+      throw err;
+    }
+    const [rawClassification, [memoryEnabled, surveyEnabled], speculativeMemory, profile, activeGoals] = enriched;
 
-    // Safety is too important to hinge on one model field. Intents that already route to
-    // sensitive/crisis mode force the safety pass deterministically, even if the classifier
-    // left requiresSafetyCheck false — otherwise detectRisk silently never runs on a burnout
-    // or harassment turn and no risk signal can ever fire.
+    // Risk detection no longer depends on this flag (it always runs above), but intents that
+    // route to sensitive/crisis mode still mark the turn as a safety turn for continuity and
+    // goal selection, even if the classifier left requiresSafetyCheck false.
     const hasSafetyIntent = [rawClassification.primaryIntent, ...rawClassification.secondaryIntents]
       .some((intent) => SAFETY_INTENTS.has(intent));
     let classification: SituationClassification = hasSafetyIntent
@@ -331,11 +346,11 @@ export class ConversationOrchestrator {
       && !dataUseExplanationRequested
       && !pulseCaptureExplanationRequested;
     const [risk, speculativeProbe] = await Promise.all([
-      classification.requiresSafetyCheck
-        ? this.aiProvider.detectRisk(turns, { userName })
-        : Promise.resolve(safeDefault()),
+      riskAssessment,
       speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
     ]);
+    // Escalate as soon as risk is known, so no later survey/confirmation failure can skip it.
+    await this.raiseEscalationIfRequired(risk, { tenantId, userId, input });
 
     const appliedQuestionVerdict = await this.questionConfirmationRepo
       ?.findAppliedQuestionVerdictForInbound?.({
@@ -351,7 +366,7 @@ export class ConversationOrchestrator {
           awaitingPresent: true,
         }
       : this.questionConfirmationRepo && surveyEnabled
-      && classification.surveyAllowed && !risk.surveyMustBeBlocked
+      && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested
       && !pulseCaptureExplanationRequested
       ? await this.handleAwaitingQuestionBundle(turns, input, reportingDisclosureReceipt)
@@ -364,7 +379,7 @@ export class ConversationOrchestrator {
       verdict: Exclude<QuestionClarificationVerdict, { kind: 'unrelated' }>;
     } | null = null;
     if (!clarificationWasPresent && this.questionConfirmationRepo && surveyEnabled
-      && classification.surveyAllowed && !risk.surveyMustBeBlocked
+      && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested && !pulseCaptureExplanationRequested) {
       pendingClarification = await this.questionConfirmationRepo.findPendingQuestionClarification({
         tenantId, userId, conversationId, inboundMessageId: input.messageId,
@@ -404,7 +419,7 @@ export class ConversationOrchestrator {
       : clarificationWasPresent
         ? { confirmedGroup: false as string | false, awaitingPresent: true }
       : this.surveyRepo && surveyEnabled
-      && classification.surveyAllowed && !risk.surveyMustBeBlocked
+      && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested
       && !pulseCaptureExplanationRequested
       ? await this.handleAwaitingConfirmation(
@@ -428,7 +443,7 @@ export class ConversationOrchestrator {
       && !closingTurn
       && surveyEnabled
       && classification.surveyAllowed
-      && !risk.surveyMustBeBlocked
+      && !riskBlocksSurvey(risk)
       && !reportingExplanationRequested
       && !dataUseExplanationRequested
       && !pulseCaptureExplanationRequested
@@ -455,7 +470,7 @@ export class ConversationOrchestrator {
       && !classification.reminderRequest
       && surveyEnabled
       && classification.surveyAllowed
-      && !risk.surveyMustBeBlocked
+      && !riskBlocksSurvey(risk)
       && !reportingExplanationRequested
       && !dataUseExplanationRequested
       && !pulseCaptureExplanationRequested
@@ -471,7 +486,7 @@ export class ConversationOrchestrator {
     }
 
     const currentTurnHasTopicAnchor = !!classification.topicAnchor?.trim();
-    const safetyTurn = classification.requiresSafetyCheck || risk.severity !== 'none';
+    const safetyTurn = classification.requiresSafetyCheck || isRiskTurn(risk);
     const continuity = resolveContinuity({
       classification,
       activeTopic: conversation.activeTopic,
@@ -508,12 +523,13 @@ export class ConversationOrchestrator {
     };
 
     const probeQuestion =
-      !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !risk.surveyMustBeBlocked
+      !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !riskBlocksSurvey(risk)
         ? speculativeProbe
         : null;
 
-    // Persist risk signal when a real risk is detected
-    if (risk.riskType && risk.severity !== 'none' && this.riskSignalRepo) {
+    // Persist risk signal when a real risk is detected. Unassessed (tripwire-only) risk has no
+    // confidence to store; it has already escalated above and is visible in the turn result.
+    if (risk.assessed && risk.riskType && risk.severity !== 'none' && this.riskSignalRepo) {
       await this.riskSignalRepo.saveOnceForSource({
         tenantId,
         userId,
@@ -524,19 +540,6 @@ export class ConversationOrchestrator {
         evidenceMessageIds: [input.messageId],
         policyVersion: 'v1',
         expiresAt: computeRiskExpiry(risk.severity),
-      });
-    }
-
-    // Trigger escalation for critical / immediate-response scenarios
-    if ((risk.immediateResponseRequired || risk.severity === 'critical') && this.escalation) {
-      await this.escalation.raise({
-        type: 'risk_detected',
-        severity: risk.severity,
-        userId,
-        tenantId,
-        riskType: risk.riskType,
-        messageIds: [input.messageId],
-        traceId: input.traceId,
       });
     }
 
@@ -648,24 +651,24 @@ export class ConversationOrchestrator {
       && !hasCurrentDeliveredDisclosure
       && !pauseTurn
       && classification.surveyAllowed
-      && !risk.surveyMustBeBlocked
+      && !riskBlocksSurvey(risk)
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
       && !pulseCaptureExplanationRequested
       && (reportingExplanationRequested || phaseB.awaitingPresent || v2ReadyForDisclosure);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
-      && !risk.surveyMustBeBlocked
+      && !riskBlocksSurvey(risk)
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
     const canAnswerDataUseExplanation =
       dataUseExplanationRequested
-      && !risk.surveyMustBeBlocked
+      && !riskBlocksSurvey(risk)
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
     const canAnswerPulseCaptureExplanation =
       pulseCaptureExplanationRequested
-      && !risk.surveyMustBeBlocked
+      && !riskBlocksSurvey(risk)
       && strategy.mode !== 'sensitive'
       && strategy.mode !== 'crisis';
     const pulseCaptureResolution = canAnswerPulseCaptureExplanation
@@ -1410,6 +1413,31 @@ export class ConversationOrchestrator {
     return out;
   }
 
+  /** MustEscalate (R5): critical / immediate-response only. Idempotent per source message downstream. */
+  private async raiseEscalationIfRequired(
+    risk: RiskAssessment,
+    ctx: { tenantId: string; userId: string; input: OrchestrateInput },
+  ): Promise<void> {
+    if (!mustEscalate(risk) || !this.escalation) return;
+    await this.escalation.raise({
+      type: 'risk_detected',
+      severity: risk.severity,
+      userId: ctx.userId,
+      tenantId: ctx.tenantId,
+      riskType: risk.riskType,
+      messageIds: [ctx.input.messageId],
+      traceId: ctx.input.traceId,
+      details: {
+        assessed: risk.assessed,
+        tripwireRaised: risk.tripwireRaised,
+        ...(risk.assessed ? {} : { unassessedReason: risk.reason }),
+        ...(risk.moderation
+          ? { moderation: { source: risk.moderation.source, blocked: risk.moderation.blocked, categories: risk.moderation.categories } }
+          : {}),
+      },
+    });
+  }
+
   private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
     if (!this.pulseBacklogService) return null;
     const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
@@ -1637,7 +1665,7 @@ function selectRelevantGoal(
   goals: UserGoalRecord[],
   input: {
     classification: SituationClassification;
-    risk: RiskDetection;
+    risk: RiskAssessment;
     confirmationTurn: boolean;
   },
 ): UserGoalRecord | undefined {
@@ -1646,7 +1674,7 @@ function selectRelevantGoal(
     classification.primaryIntent !== 'progress_update' ||
     !classification.latestUserSubstance?.trim() ||
     classification.requiresSafetyCheck ||
-    input.risk.severity !== 'none' ||
+    isRiskTurn(input.risk) ||
     input.confirmationTurn ||
     classification.dialogueAct === 'greeting' ||
     classification.dialogueAct === 'social_checkin' ||
@@ -1690,20 +1718,6 @@ function computeRiskExpiry(severity: string): Date {
   else if (severity === 'medium') d.setDate(d.getDate() + 30);
   else d.setDate(d.getDate() + 7);
   return d;
-}
-
-function safeDefault(): RiskDetection {
-  return {
-    riskType: null,
-    severity: 'none',
-    confidence: 0.99,
-    evidence: [],
-    immediateResponseRequired: false,
-    escalationRecommended: false,
-    surveyMustBeBlocked: false,
-    proactiveMessagesMustBePaused: false,
-    reasoningSummary: 'Safety check not required for this conversation.',
-  };
 }
 
 /** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
@@ -1859,18 +1873,17 @@ function conversationDecisionMetadata(input: {
 }
 
 /**
- * Intents that route to sensitive/crisis mode (see modeMap below). The safety pass is forced
- * for these regardless of the classifier's requiresSafetyCheck field, so a single missed flag
- * can never silently skip risk detection on a burnout / harassment / crisis turn.
+ * Intents that route to sensitive/crisis mode (see modeMap below). They force
+ * requiresSafetyCheck so a single missed classifier flag cannot drop safety-turn handling.
  */
 const SAFETY_INTENTS = new Set<string>(['burnout_signal', 'harassment_signal', 'potential_crisis']);
 
 function buildReplyStrategy(
   classification: SituationClassification,
-  risk: RiskDetection,
+  risk: RiskAssessment,
   surveyProbeQuestionId?: string,
 ): ReplyStrategy {
-  if (risk.immediateResponseRequired || risk.severity === 'critical') {
+  if (mustEscalate(risk)) {
     return {
       mode: 'crisis',
       tone: 'empathetic',
@@ -1880,7 +1893,8 @@ function buildReplyStrategy(
     };
   }
 
-  if (risk.severity === 'high') {
+  // Unknown risk is handled like high risk: no survey, no pressure, until assessment recovers.
+  if (risk.severity === 'high' || !risk.assessed) {
     return {
       mode: 'sensitive',
       tone: 'empathetic',

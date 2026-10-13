@@ -30,7 +30,7 @@ import type {
   MemoryProposal,
   ObservedStyle,
   ReplyStrategy,
-  RiskDetection,
+  ProviderRiskDetection,
   SituationClassification,
   SurveyEvidenceEvaluation,
 } from '@entalent/contracts';
@@ -210,7 +210,7 @@ class RecordingAiProvider implements AiProviderPort {
     return this.delegate.classifySituation(turns, context);
   }
 
-  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
+  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
     return this.delegate.detectRisk(turns, context);
   }
 

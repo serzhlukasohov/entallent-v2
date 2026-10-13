@@ -2775,3 +2775,30 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Resolve and decrypt the active tenant's workspace connection through `WorkspaceConnectionRepository`, then use that token for read-only DM checks; do not assume a global bot token exists.
 - Regression check: After named PostgreSQL/Redis preflight, read the configured DM with `SlackAdapter.getDirectMessageUser` and compare it to the linked active hierarchy manager user ID.
 - Status: fixed
+
+## 2026-10-13: Root script imported a workspace package by name
+
+- Symptom: `scripts/safety-latency-bench.ts` failed with `Cannot find module '@entalent/ai-openai'` on its first background run, which cost one benchmark slot.
+- Expected: Root `scripts/` resolve workspace code the same way the existing scripts do.
+- Root cause layer: context
+- Harness fix: Root scripts import workspace code via relative `../packages/<pkg>/src/...` paths, because the root package does not depend on workspace packages; the bench now follows that.
+- Regression check: Before a long background run of a new root script, run it once with the smallest input (for example `safety-latency-bench.ts 1`).
+- Status: fixed
+
+## 2026-10-13: Root `pnpm test` stops at a DB-required script before later script tests
+
+- Symptom: `pnpm test` passed every package suite, then `test:scripts:non-maf` exited at `activate-v2-scoring-policy.integration.test.ts` (`DATABASE_URL is required`). The chained `close-survey-reporting-cycle`, `run-retention-cleanup`, and `agent-harness` tests never ran.
+- Expected: Without a database target, the integration script skips like `open-survey-reporting-cycle.integration.test.ts` does, and the rest of the chain still runs.
+- Root cause layer: verification
+- Harness fix: Make `activate-v2-scoring-policy.integration.test.ts` skip when `DATABASE_URL` is absent, matching its sibling. Until then, run the remaining chained script tests individually.
+- Regression check: `env -u DATABASE_URL pnpm run test:scripts:non-maf` reaches `agent-harness.test.ts`.
+- Status: open
+
+## 2026-10-13: Generalized Azure content-filter behavior from one bare-prompt probe
+
+- Symptom: The first draft claimed that Azure blocks self-harm disclosures, so the employee "gets no reply". Local Slack E2E then showed the same message passing in a longer conversation, with a crisis reply delivered. Explicit intent was annotated `safe`.
+- Expected: Provider moderation behavior is measured through the real pipeline (full prompts, real transcripts) before it is reported as a product fact.
+- Root cause layer: verification
+- Harness fix: Report provider-filter findings only with the E2E path that reproduces them; the design doc now lists the per-prompt results.
+- Regression check: Run the signed-event Slack E2E (benign / burnout / self-harm) plus a direct `detectRisk` probe before claiming filter behavior.
+- Status: fixed

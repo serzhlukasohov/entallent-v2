@@ -15,7 +15,7 @@ import type {
 } from '@entalent/application';
 import type {
   SituationClassification,
-  RiskDetection,
+  ProviderRiskDetection,
   MemoryProposal,
   ReplyStrategy,
   GeneratedResponse,
@@ -45,7 +45,7 @@ export class AiProviderWithFallback implements AiProviderPort {
     return this.withFallback((p) => p.classifySituation(turns, context));
   }
 
-  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
+  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
     return this.withFallback((p) => p.detectRisk(turns, context));
   }
 

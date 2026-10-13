@@ -2,16 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the OpenAI SDK so we control the completion response.
 const createMock = vi.fn();
+const moderationMock = vi.fn();
 vi.mock('openai', () => {
   class FakeClient {
     chat = { completions: { create: createMock } };
+    moderations = { create: moderationMock };
     constructor(_cfg: unknown) {}
   }
   return { default: FakeClient, AzureOpenAI: FakeClient };
 });
 
 import { OpenAiProvider } from './openai-provider';
-import { ReplyStrategy } from '@entalent/contracts';
+import { ReplyStrategy, isModerationSignalError, type ModerationSignalError } from '@entalent/contracts';
 import type { LanguagePolicy, MemoryContext, ResponseContext } from '@entalent/application';
 
 function makeProvider() {
@@ -2338,5 +2340,105 @@ describe('OpenAiProvider.complete truncation handling', () => {
     const provider = makeProvider();
     const result = await provider.evaluateSurveyEvidence(turns, questions);
     expect(result.evidence).toEqual([]);
+  });
+});
+
+describe('OpenAiProvider detectRisk (ADR-013 R1)', () => {
+  beforeEach(() => {
+    createMock.mockReset();
+    moderationMock.mockReset();
+  });
+
+  const riskJson = JSON.stringify({
+    riskType: null, severity: 'none', confidence: 0.7, evidence: [], immediateResponseRequired: false,
+    escalationRecommended: false, surveyMustBeBlocked: false, proactiveMessagesMustBePaused: false,
+    reasoningSummary: 'none',
+  });
+  const azureProvider = () => new OpenAiProvider({
+    azure: true, endpoint: 'https://example.invalid', apiKey: 'test', apiVersion: '2024-10-21', deploymentName: 'dep',
+  });
+  const contentFilterError = () => Object.assign(new Error('content_filter'), {
+    status: 400,
+    code: 'content_filter',
+    error: { innererror: { code: 'ResponsibleAIPolicyViolation', content_filter_result: {
+      hate: { filtered: false, severity: 'safe' }, self_harm: { filtered: true, severity: 'medium' },
+      violence: { filtered: false, severity: 'safe' },
+    } } },
+  });
+
+  it('runs at temperature 0 and attaches flagged OpenAI moderation categories for the latest user turn', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: riskJson } }] });
+    moderationMock.mockResolvedValue({ results: [{ flagged: true, categories: {
+      'self-harm': true, 'self-harm/intent': true, violence: false,
+    } }] });
+    const turns = [
+      { role: 'user' as const, content: 'older', timestamp: new Date() },
+      { role: 'assistant' as const, content: 'reply', timestamp: new Date() },
+      { role: 'user' as const, content: 'latest message', timestamp: new Date() },
+    ];
+
+    const result = await makeProvider().detectRisk(turns, { userName: 'Ana' });
+
+    expect(createMock.mock.calls[0]?.[0].temperature).toBe(0);
+    expect(moderationMock).toHaveBeenCalledWith({ model: 'omni-moderation-latest', input: 'latest message' });
+    expect(result.moderation).toEqual({ source: 'openai_moderation', blocked: false, categories: [
+      { category: 'self_harm', level: null }, { category: 'self_harm_intent', level: null },
+    ] });
+  });
+
+  it('degrades to no moderation signal when the moderation endpoint fails', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: riskJson } }] });
+    moderationMock.mockRejectedValue(new Error('moderation down'));
+
+    const result = await makeProvider().detectRisk(turns, { userName: 'Ana' });
+
+    expect(result.severity).toBe('none');
+    expect(result).not.toHaveProperty('moderation');
+  });
+
+  it('reads Azure prompt annotations from the same call without a moderation request', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: riskJson } }],
+      prompt_filter_results: [{ prompt_index: 0, content_filter_results: {
+        self_harm: { filtered: false, severity: 'low' }, violence: { filtered: false, severity: 'safe' },
+      } }],
+    });
+
+    const result = await azureProvider().detectRisk(turns, { userName: 'Ana' });
+
+    expect(moderationMock).not.toHaveBeenCalled();
+    expect(result.moderation).toEqual({
+      source: 'azure_content_filter', blocked: false, categories: [{ category: 'self_harm', level: 'low' }],
+    });
+  });
+
+  it('turns an Azure content_filter refusal into a ModerationSignalError', async () => {
+    createMock.mockRejectedValue(contentFilterError());
+
+    const err = await azureProvider().detectRisk(turns, { userName: 'Ana' }).catch((e: unknown) => e);
+
+    expect(isModerationSignalError(err)).toBe(true);
+    expect((err as ModerationSignalError).moderation).toEqual({
+      source: 'azure_content_filter', blocked: true, categories: [{ category: 'self_harm', level: 'medium' }],
+    });
+  });
+
+  it('does not open the circuit breaker on repeated content_filter refusals', async () => {
+    const provider = azureProvider();
+    createMock.mockRejectedValue(contentFilterError());
+    for (let i = 0; i < 6; i += 1) {
+      await provider.detectRisk(turns, { userName: 'Ana' }).catch(() => undefined);
+    }
+    createMock.mockReset();
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: riskJson } }] });
+
+    await expect(provider.detectRisk(turns, { userName: 'Ana' })).resolves.toMatchObject({ severity: 'none' });
+  });
+
+  it('rethrows an ordinary failure unchanged when there is no moderation signal', async () => {
+    createMock.mockRejectedValue(new Error('timeout'));
+    moderationMock.mockResolvedValue({ results: [{ flagged: false, categories: {} }] });
+
+    await expect(makeProvider().detectRisk(turns, { userName: 'Ana' })).rejects.toThrow('timeout');
   });
 });

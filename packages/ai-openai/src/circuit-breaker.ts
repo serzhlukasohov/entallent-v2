@@ -7,6 +7,8 @@ export interface CircuitBreakerOptions {
   windowMs?: number;
   /** How long to stay OPEN before probing again in ms. Default: 30_000 */
   cooldownMs?: number;
+  /** Errors for which this returns false are rethrown without counting as provider failures. */
+  isFailure?: (err: unknown) => boolean;
 }
 
 export class CircuitBreaker {
@@ -38,7 +40,7 @@ export class CircuitBreaker {
       }
       return result;
     } catch (err) {
-      this.recordFailure();
+      if (this.options.isFailure?.(err) ?? true) this.recordFailure();
       throw err;
     }
   }
