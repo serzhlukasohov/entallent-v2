@@ -6,6 +6,7 @@ import type { SurveyEvidenceEvaluation } from '@entalent/contracts';
 import type { SurveyQuestionRecord, SurveyWindowRecord, MessageRecord } from '../types/records';
 import { computeAssessmentStatus } from '../utils/survey-scoring';
 import { contentSimilarity } from '../utils/text-similarity';
+import { modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isEngagementWindowEligible } from '../services/pulse-backlog.service';
 
@@ -74,7 +75,7 @@ export class SurveyEvidenceExtractionUseCase {
     const mode = await this.questionCapture?.getWindowMode({
       tenantId: input.tenantId, userId: input.userId, surveyWindowId: window.id,
     }) ?? 'v1';
-    const sourceMessages = messages.slice(0, sourceIndex + 1);
+    const sourceMessages = modelMessagesAfterContentFilter(messages.slice(0, sourceIndex + 1));
     const evaluated = await this.evaluateMessageWindow(
       eligibleQuestions, sourceMessages, input.inboundMessageId, mode,
     );
@@ -95,7 +96,7 @@ export class SurveyEvidenceExtractionUseCase {
       && message.direction === 'inbound');
     if (sourceIndex < 0) return;
     const source = current[sourceIndex]!;
-    const currentThroughSource = current.slice(0, sourceIndex + 1);
+    const currentThroughSource = modelMessagesAfterContentFilter(current.slice(0, sourceIndex + 1));
     if (currentThroughSource.length !== prepared.messages.length
       || currentThroughSource.some((message, index) => message.id !== prepared.messages[index]?.id
         || message.text !== prepared.messages[index]?.text
@@ -142,8 +143,9 @@ export class SurveyEvidenceExtractionUseCase {
     }) ?? 'v1';
 
     // Chronological (oldest → newest); large limit covers the whole recent history.
-    const history = await this.conversationRepo.findRecentMessages(input.conversationId, 500);
-    this.assertOwnedMessages(input, history);
+    const loadedHistory = await this.conversationRepo.findRecentMessages(input.conversationId, 500);
+    this.assertOwnedMessages(input, loadedHistory);
+    const history = modelMessagesAfterContentFilter(loadedHistory);
     if (!history.length) return { windowsProcessed: 0 };
 
     if (mode === 'v2') {

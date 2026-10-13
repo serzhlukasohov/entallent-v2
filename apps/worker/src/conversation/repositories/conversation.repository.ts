@@ -235,6 +235,34 @@ export class ConversationRepository implements ConversationRepositoryPort {
       .orderBy(desc(messages.occurredAt), desc(messageOrderKey), desc(messages.id))
       .limit(input.limit);
 
+    // A filtered turn can finish after a newer inbound arrived. Include its
+    // persisted outcome by source time, even when the outcome time is later.
+    const [recovery] = await this.db.client.select({ message: messages }).from(messages)
+      .where(and(
+        eq(messages.conversationId, input.conversationId),
+        eq(messages.tenantId, input.tenantId),
+        eq(messages.userId, input.userId),
+        eq(messages.direction, 'outbound'),
+        isNull(messages.deletedAt),
+        sql`${messages.metadata}->>'conversationOutcome' = 'input_filtered'`,
+        sql`exists (
+          select 1 from messages source_message
+          where source_message.id::text = ${messages.metadata}->>'sourceInboundMessageId'
+            and source_message.conversation_id = ${input.conversationId}
+            and source_message.tenant_id = ${input.tenantId}
+            and source_message.user_id = ${input.userId}
+            and source_message.direction = 'inbound'
+            and source_message.deleted_at is null
+            and source_message.occurred_at <= ${anchor.occurredAt.toISOString()}::timestamptz
+        )`,
+      ))
+      .orderBy(desc(messages.occurredAt))
+      .limit(1);
+
+    if (recovery && !rows.some(({ message }) => message.id === recovery.message.id)) {
+      rows.push(recovery);
+    }
+
     return rows.reverse().map(({ message: m }) => ({
       id: m.id,
       conversationId: m.conversationId,

@@ -905,14 +905,6 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts`
 - Status: fixed
 
-## 2026-08-20: TSX IPC socket blocks full pre-push inside sandbox
-- Symptom: `pnpm prepush` passes monorepo typecheck, lint, and package tests, then `test:scripts` fails with `listen EPERM` for the TSX IPC socket. On 2026-08-29 the escalation also exposed that the default script suite still included a retired live-MAF smoke test.
-- Expected: Complete ordinary pre-push verification without invoking retired MAF tooling.
-- Root cause layer: workflow
-- Harness fix: Remove the retired live-MAF test from `test:scripts`; rerun `pnpm prepush` outside the sandbox only for the remaining TypeScript-owned script checks when TSX IPC is denied.
-- Regression check: `pnpm test:scripts`
-- Status: fixed
-
 ## 2026-08-19: Story 11.2 consumer typecheck read stale declarations
 - Symptom: The focused `ai-openai` typecheck rejected new `ReplyPlan` reasons before `application` declarations were rebuilt.
 - Expected: Consumer verification should use declarations generated from the current source.
@@ -2817,4 +2809,29 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: instructions
 - Harness fix: Memory rule `no-lexical-heuristics`; before fixing any understanding bug, look up the signal's inventory row and wave and follow D2.
 - Regression check: `git grep -nE "іїєґ|\\\\bщо\\\\b|_ONLY_WORDS" packages/application/src` returns nothing; S9 changes ship with `src/scenarios/language-eval.sim.test.ts`.
+## 2026-10-08: Content-filter repair initially targeted the wrong source baseline
+
+- Symptom: A locally passing recovery patch was prepared from `origin/main`, while open PR #7 and the active worker used newer V2 turn and dispatch contracts.
+- Expected: A runtime repair and its release plan use the current PR head and verify the active deployment provenance.
+- Root cause layer: context and workflow
+- Harness fix: For an incident touching an open PR, record its head SHA and compare active service source before implementation; reuse its transaction and dispatch ledger.
+- Regression check: Compare `gh pr view 7 --json headRefOid` with the implementation base, then run the focused V2 transaction and worker tests.
 - Status: fixed
+
+## 2026-10-08: PostgreSQL history integration bound a Date as SQL text
+
+- Symptom: The causal recovery query failed with `The "string" argument must be of type string ... Received an instance of Date`.
+- Expected: A late recovery outcome is returned for the next inbound without a query binding error.
+- Root cause layer: verification and tooling
+- Harness fix: Bind the source time as an ISO timestamp with an explicit `timestamptz` cast; test against a migrated isolated PostgreSQL database.
+- Regression check: Run `conversation.repository.privacy.integration.test.ts` on the named isolated database, including the late outcome case.
+- Status: fixed
+
+## 2026-10-13: Database integration test fails on clean main with dispatch-intent immutability
+
+- Symptom: `conversation-turn-effects.integration.test.ts` › "binds one scoped inbound and outbound, and only identifier dispatch targets" fails with `PostgresError: conversation_dispatch_intent_immutable` on local PostgreSQL, both on `main` (`4cc5ba8`) and on the CAP-1 branch.
+- Expected: The database integration suite passes on `main`.
+- Root cause layer: verification (unknown: test isolation against a reused local database, or a trigger/test mismatch)
+- Harness fix: Run the suite against a freshly migrated database to separate state leakage from a real trigger regression; then fix the test or the trigger.
+- Regression check: `DATABASE_URL=<fresh-migrated-db> pnpm --filter @entalent/database test:integration`.
+- Status: open

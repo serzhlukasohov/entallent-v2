@@ -5,6 +5,7 @@ import type {
   StyleProfileRepositoryPort,
 } from '../ports/style-profile.repository.port';
 import { DEFAULT_STYLE_PROFILE, updateStyleProfile, MIN_USER_TURNS } from '../utils/style-adaptation';
+import { modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 
 export interface StyleAnalysisInput {
   conversationId: string;
@@ -29,9 +30,10 @@ export class StyleAnalysisUseCase {
     if (committedInput && !this.conversationRepo.findMessagesThrough) {
       throw new Error('committed_style_source_lookup_missing');
     }
-    const messages = committedInput
+    const loadedMessages = committedInput
       ? await this.conversationRepo.findMessagesThrough!({ ...committedInput, limit: 30 })
       : await this.conversationRepo.findRecentMessages(input.conversationId, 30);
+    const messages = modelMessagesAfterContentFilter(loadedMessages);
     const userTurns = messages
       .filter((m) => m.direction === 'inbound' && m.text !== '__init__')
       .map((m) => m.text);

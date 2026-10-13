@@ -1,5 +1,6 @@
 import OpenAI, { AzureOpenAI } from 'openai';
 import { CircuitBreaker } from './circuit-breaker';
+import { ProviderContentFilterError } from '@entalent/application';
 import {
   SituationClassificationSchema,
   SituationIntentSchema,
@@ -107,6 +108,26 @@ export interface AzureOpenAiConfig {
 
 export type OpenAiProviderConfig = DirectOpenAiConfig | AzureOpenAiConfig;
 
+function errorFields(error: unknown): Record<string, unknown> {
+  return typeof error === 'object' && error !== null ? error as Record<string, unknown> : {};
+}
+
+function isConfirmedAzureInputFilter(error: unknown): boolean {
+  const outer = errorFields(error);
+  const body = errorFields(outer['error']);
+  const code = outer['code'] ?? body['code'];
+  const param = outer['param'] ?? body['param'];
+  const inner = errorFields(outer['innererror'] ?? body['innererror']);
+  return outer['status'] === 400 && code === 'content_filter'
+    && (param === 'prompt' || inner['code'] === 'ResponsibleAIPolicyViolation');
+}
+
+function isRetryableProviderFailure(error: unknown): boolean {
+  if (error instanceof ProviderContentFilterError) return false;
+  const status = errorFields(error)['status'];
+  return typeof status !== 'number' || status === 429 || status >= 500;
+}
+
 function questionRetryInstruction(maxQuestions: 0 | 1): string {
   return maxQuestions === 0
     ? '\n\nYour previous draft asked a question. This turn must ask none — rewrite without any question anywhere in the reply.'
@@ -205,15 +226,13 @@ export class OpenAiProvider implements AiProviderPort {
   private readonly client: OpenAI;
   private readonly analysisModel: string;
   private readonly generationModel: string;
-  private readonly azure: boolean;
-  // A content-moderation refusal is a property of the content, not provider health: one user's
-  // crisis message must not open the breaker for every other conversation.
   private readonly breaker = new CircuitBreaker({
-    failureThreshold: 5,
-    windowMs: 60_000,
-    cooldownMs: 30_000,
-    isFailure: (err) => !isAzureContentFilterError(err),
+    failureThreshold: 5, windowMs: 60_000, cooldownMs: 30_000,
+    // A content-filter or other permanent 400 is a property of the request, not provider health:
+    // one user's message must not open the breaker for every other conversation.
+    isFailure: isRetryableProviderFailure,
   });
+  private readonly azure: boolean;
 
   constructor(config: OpenAiProviderConfig) {
     this.azure = config.azure === true;
@@ -582,19 +601,30 @@ export class OpenAiProvider implements AiProviderPort {
     temperature: number,
   ): Promise<{ content: string; response: unknown }> {
     return this.breaker.call(async () => {
-      const response = await this.client.chat.completions.create({
-        model,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        response_format: { type: 'json_object' } as any,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature,
-        max_completion_tokens: maxTokens,
-      });
+      let response;
+      try {
+        response = await this.client.chat.completions.create({
+          model,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          response_format: { type: 'json_object' } as any,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature,
+          max_completion_tokens: maxTokens,
+        });
+      } catch (error) {
+        if (this.azure && isConfirmedAzureInputFilter(error)) {
+          throw new ProviderContentFilterError('input', azureContentFilterSignal(error)?.categories ?? []);
+        }
+        throw error;
+      }
 
       const choice = response.choices[0];
+      if (this.azure && choice?.finish_reason === 'content_filter') {
+        throw new ProviderContentFilterError('output');
+      }
       const content = choice?.message?.content;
       if (!content) throw new Error('OpenAI returned an empty response');
       // A truncated response is invalid JSON — surface it clearly instead of
@@ -634,6 +664,11 @@ function isAzureContentFilterError(err: unknown): boolean {
 
 /** Azure rejects a prompt that crosses its content-filter threshold with a 400 content_filter. */
 function azureContentFilterSignal(err: unknown): ModerationSignal | undefined {
+  if (err instanceof ProviderContentFilterError) {
+    return err.direction === 'input'
+      ? { source: 'azure_content_filter', blocked: true, categories: [...err.categories] }
+      : undefined;
+  }
   if (!isAzureContentFilterError(err)) return undefined;
   const inner = (err as { error?: { innererror?: { content_filter_result?: AzureFilterResult } } })
     .error?.innererror?.content_filter_result;
