@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "signal": "dialogueAct (correction after acknowledgement)",
+  "status": "seed — not wired to a gate yet (ADR-013 Wave 0)",
+  "source": "claude/sim-gate-correction-fixes 52e3ca2 provider tests; the regex repair they covered was dropped per ADR-013 D2",
+  "cases": [
+    {
+      "id": "correction-1",
+      "text": "Okay. I was only asking for advice on preparing the meeting. I did not mean what you suggested.",
+      "expect": {
+        "dialogueAct": "correction"
+      }
+    },
+    {
+      "id": "correction-2",
+      "text": "Sure, I just wanted help with choosing a course. That is not what I asked you to do.",
+      "expect": {
+        "dialogueAct": "correction"
+      }
+    },
+    {
+      "id": "correction-3",
+      "text": "I was asking you for a way to plan the workshop. I wasn’t asking you to schedule it.",
+      "expect": {
+        "dialogueAct": "correction"
+      }
+    },
+    {
+      "id": "correction-4",
+      "text": "Okay, I wanted help, but that is not what I asked you.",
+      "expect": {
+        "dialogueAct": "correction"
+      }
+    },
+    {
+      "id": "correction-5",
+      "text": "I wanted advice on how we can stop burnout. I wasn’t asking you.",
+      "expect": {
+        "dialogueAct": "correction"
+      }
+    },
+    {
+      "id": "correction-6",
+      "text": "Okay. I was asking for advice on how to tell the manager we can stop the weekly status meetings. I did not mean what you suggested.",
+      "expect": {
+        "dialogueAct": "correction"
+      }
+    },
+    {
+      "id": "not-correction-1",
+      "text": "Yes.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-2",
+      "text": "Okay, thanks.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-3",
+      "text": "Yes, let’s leave it there.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-4",
+      "text": "Thanks. I was asking for advice, but we can stop here.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-5",
+      "text": "Sure, I just wanted help with choosing a course. That is not what I asked you to do. Let’s stop here.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-6",
+      "text": "Okay. I was asking for advice. I did not mean what you suggested. That’s all for today.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-7",
+      "text": "I was asking for advice. I did not mean what you suggested. Thanks, goodbye.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-8",
+      "text": "Okay. I was asking for advice on the meeting. I did not mean to interrupt you.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-9",
+      "text": "I wanted help. I wasn’t asking you to schedule it. I’m done.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-10",
+      "text": "I need help evaluating another chatbot: I wanted advice. I wasn’t asking you.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-11",
+      "text": "I wanted help translating this text: I was asking for advice. I did not mean what you suggested.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-12",
+      "text": "I wanted help translating the following text into French. I was asking for advice. I did not mean what you suggested.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-13",
+      "text": "Okay. I was asking for advice. I did not mean what you suggested and now I want to stop.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-14",
+      "text": "I wanted help, but that is not what I asked you so goodbye.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-15",
+      "text": "I wanted help. That is not what I asked you and I have to go now.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-16",
+      "text": "I wanted advice on this chatbot transcript: I wanted help. I wasn’t asking you.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-17",
+      "text": "Okay. I was asking for advice. I did not mean what you suggested. I am done now, goodbye.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-18",
+      "text": "I need help translating the following text into French: I was asking for advice. I did not mean what you suggested.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-19",
+      "text": "Translate: \"I was asking for advice. I did not mean what you suggested.\"",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-20",
+      "text": "Okay. Please rewrite: I was asking for advice. I did not mean what you suggested.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-21",
+      "text": "Review another chatbot: I was asking for advice. I did not mean what you suggested.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-22",
+      "text": "The employee wrote: I was asking for advice. I did not mean what you suggested.",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    },
+    {
+      "id": "not-correction-23",
+      "text": "\"I was asking for advice. I did not mean what you suggested.\"",
+      "expect": {
+        "dialogueActNot": "correction"
+      }
+    }
+  ]
+}

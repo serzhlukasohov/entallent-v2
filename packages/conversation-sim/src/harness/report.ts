@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { onTestFailed } from 'vitest';
 import type { ScenarioResult } from '@langwatch/scenario';
 import type { StyleDimensions } from '@entalent/application';
 import { describeViolations, findViolations } from './assertions';
@@ -71,15 +72,32 @@ export async function reportRun(
   writeScenarioRunReport(data);
 }
 
-export function writeScenarioRunReport(data: ScenarioRunReport): void {
+export function writeScenarioRunReport(input: ScenarioRunReport): void {
+  const data = structuredClone(input);
   const report = buildMarkdownReport(data);
   console.log(`\n${report}`);
 
   const runsDir = process.env.SIM_GATE_REPORT_DIR ?? RUNS_DIR;
   const fileStem = buildFileStem(data.scenarioSlug);
   mkdirSync(runsDir, { recursive: true });
-  writeFileSync(join(runsDir, `${fileStem}.md`), report, 'utf8');
-  writeFileSync(join(runsDir, `${fileStem}.json`), JSON.stringify(data, null, 2), 'utf8');
+  const markdownPath = join(runsDir, `${fileStem}.md`);
+  const jsonPath = join(runsDir, `${fileStem}.json`);
+  const persist = () => {
+    writeFileSync(markdownPath, buildMarkdownReport(data), 'utf8');
+    writeFileSync(jsonPath, JSON.stringify(data, null, 2), 'utf8');
+  };
+  persist();
+  // Each report registers its own finalizer, including multiple reports in one test.
+  // Paths belong to this attempt even if environment variables change afterward.
+  onTestFailed(({ task }) => {
+    data.deterministic.passed = false;
+    data.deterministic.violations.push({
+      turn: 0,
+      rule: 'test-failure',
+      detail: (task.result?.errors ?? []).map((error) => error.message).join('; ') || 'Vitest test failed',
+    });
+    persist();
+  });
 }
 
 async function buildReportData(
@@ -127,8 +145,8 @@ async function buildReportData(
       },
       responseLength: turn.responseText.length,
       responseText: turn.responseText,
-      replyPlan: harness.generateResponseCalls[index]?.context.replyPlan ?? null,
-      replyBrief: harness.generateResponseCalls[index]?.context.replyBrief ?? null,
+      replyPlan: harness.responseCallsByTurn[index]?.context.replyPlan ?? null,
+      replyBrief: harness.responseCallsByTurn[index]?.context.replyBrief ?? null,
     })),
     memoryItems: harness.memoryItems.map((item) => ({
       category: item.category,
@@ -161,9 +179,9 @@ function buildMarkdownReport(data: ScenarioRunReport): string {
     data.judge.reasoning ? `\n${data.judge.reasoning}` : '',
     '',
     '## Deterministic checks',
-    data.deterministic.violations.length === 0
+    data.deterministic.passed && data.deterministic.violations.length === 0
       ? 'all clear'
-      : describeViolations(data.deterministic.violations),
+      : describeViolations(data.deterministic.violations) || 'deterministic checks failed',
     '',
     '## Turns',
     `reply lengths: ${lengths.join(', ')}`,
