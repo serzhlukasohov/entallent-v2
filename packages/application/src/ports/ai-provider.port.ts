@@ -105,10 +105,9 @@ export interface ReplyPlan {
 export type ReplyBrief = ReplyPlan;
 
 export interface LanguagePolicy {
+  /** Primary BCP-47 language subtag the mentor replies in. */
   responseLanguage: string;
-  source: 'current_turn' | 'recent_turns' | 'user_profile' | 'tenant_default';
-  confidence: number;
-  shouldUpdateUserLocale: boolean;
+  source: 'product_default';
 }
 
 export interface ResponseContext {
