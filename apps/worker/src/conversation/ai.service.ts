@@ -23,7 +23,7 @@ import type {
 } from '@entalent/application';
 import type {
   SituationClassification,
-  RiskDetection,
+  ProviderRiskDetection,
   MemoryProposal,
   ReplyStrategy,
   GeneratedResponse,
@@ -62,7 +62,7 @@ export class AiService implements AiProviderPort, QuestionScorerPort, QuestionDe
     return this.provider.classifySituation(turns, context);
   }
 
-  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
+  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
     return this.provider.detectRisk(turns, context);
   }
 

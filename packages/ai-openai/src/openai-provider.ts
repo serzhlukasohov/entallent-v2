@@ -5,6 +5,7 @@ import {
   SituationIntentSchema,
   DialogueActSchema,
   RiskDetectionSchema,
+  ModerationSignalError,
   MemoryItemProposalSchema,
   GoalProposalSchema,
   FollowUpCandidateSchema,
@@ -18,7 +19,9 @@ import {
   ConfirmationResponseSchema,
   ObservedStyleSchema,
   type SituationClassification,
-  type RiskDetection,
+  type ProviderRiskDetection,
+  type ModerationCategory,
+  type ModerationSignal,
   type MemoryProposal,
   type ReplyStrategy,
   type GeneratedResponse,
@@ -202,9 +205,18 @@ export class OpenAiProvider implements AiProviderPort {
   private readonly client: OpenAI;
   private readonly analysisModel: string;
   private readonly generationModel: string;
-  private readonly breaker = new CircuitBreaker({ failureThreshold: 5, windowMs: 60_000, cooldownMs: 30_000 });
+  private readonly azure: boolean;
+  // A content-moderation refusal is a property of the content, not provider health: one user's
+  // crisis message must not open the breaker for every other conversation.
+  private readonly breaker = new CircuitBreaker({
+    failureThreshold: 5,
+    windowMs: 60_000,
+    cooldownMs: 30_000,
+    isFailure: (err) => !isAzureContentFilterError(err),
+  });
 
   constructor(config: OpenAiProviderConfig) {
+    this.azure = config.azure === true;
     if (config.azure) {
       this.client = new AzureOpenAI({
         endpoint: config.endpoint,
@@ -261,13 +273,47 @@ export class OpenAiProvider implements AiProviderPort {
     );
   }
 
-  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
-    const raw = await this.complete(
-      buildRiskSystemPrompt(),
-      buildRiskUserPrompt(turns, context),
-      this.analysisModel,
-    );
-    return RiskDetectionSchema.parse(JSON.parse(raw));
+  /**
+   * Risk detection at temperature 0 (ADR-013 R1) with the provider's moderation signal attached
+   * as a tripwire: Azure content-filter annotations on the same call, or the OpenAI moderation
+   * endpoint in parallel. A refusal or failure that carries a moderation signal is rethrown as
+   * ModerationSignalError so policy can still raise severity.
+   */
+  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
+    const latestUserText = [...turns].reverse().find((turn) => turn.role === 'user')?.content ?? '';
+    const [completion, endpointModeration] = await Promise.allSettled([
+      this.completeWithResponse(
+        buildRiskSystemPrompt(),
+        buildRiskUserPrompt(turns, context),
+        this.analysisModel,
+        2048,
+        0,
+      ),
+      this.azure ? Promise.resolve(undefined) : this.moderate(latestUserText),
+    ]);
+    const openAiSignal = endpointModeration.status === 'fulfilled' ? endpointModeration.value : undefined;
+
+    if (completion.status === 'rejected') {
+      const blocked = azureContentFilterSignal(completion.reason);
+      const signal = blocked ?? openAiSignal;
+      if (signal) throw new ModerationSignalError(signal, 'Risk detection failed with a moderation signal');
+      throw completion.reason;
+    }
+
+    const detection = RiskDetectionSchema.parse(JSON.parse(completion.value.content));
+    const signal = this.azure ? azurePromptAnnotationSignal(completion.value.response) : openAiSignal;
+    return signal ? { ...detection, moderation: signal } : detection;
+  }
+
+  /** OpenAI moderation endpoint (free). Best-effort: a failure yields no signal, never an error. */
+  private async moderate(text: string): Promise<ModerationSignal | undefined> {
+    if (!text.trim()) return undefined;
+    try {
+      const response = await this.client.moderations.create({ model: 'omni-moderation-latest', input: text });
+      return openAiModerationSignal(response.results?.[0]?.categories as unknown as Record<string, boolean> | undefined);
+    } catch {
+      return undefined;
+    }
   }
 
   async extractMemory(
@@ -524,6 +570,17 @@ export class OpenAiProvider implements AiProviderPort {
     maxTokens = 2048,
     temperature = 0.3,
   ): Promise<string> {
+    const { content } = await this.completeWithResponse(systemPrompt, userPrompt, model, maxTokens, temperature);
+    return content;
+  }
+
+  private async completeWithResponse(
+    systemPrompt: string,
+    userPrompt: string,
+    model: string,
+    maxTokens: number,
+    temperature: number,
+  ): Promise<{ content: string; response: unknown }> {
     return this.breaker.call(async () => {
       const response = await this.client.chat.completions.create({
         model,
@@ -547,9 +604,66 @@ export class OpenAiProvider implements AiProviderPort {
           `OpenAI response truncated (finish_reason=length, max_completion_tokens=${maxTokens}) — raise the token budget for this call`,
         );
       }
-      return content;
+      return { content, response };
     });
   }
+}
+
+type AzureFilterResult = Record<string, { filtered?: boolean; severity?: string } | undefined>;
+
+const AZURE_FILTER_CATEGORIES: Array<[string, ModerationCategory]> = [
+  ['self_harm', 'self_harm'],
+  ['violence', 'violence'],
+];
+
+function azureFilterCategories(result: AzureFilterResult | undefined): ModerationSignal['categories'] {
+  if (!result) return [];
+  const categories: ModerationSignal['categories'] = [];
+  for (const [key, category] of AZURE_FILTER_CATEGORIES) {
+    const level = result[key]?.severity;
+    if (level === 'low' || level === 'medium' || level === 'high') categories.push({ category, level });
+  }
+  return categories;
+}
+
+function isAzureContentFilterError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null
+    && (err as { status?: unknown }).status === 400
+    && (err as { code?: unknown }).code === 'content_filter';
+}
+
+/** Azure rejects a prompt that crosses its content-filter threshold with a 400 content_filter. */
+function azureContentFilterSignal(err: unknown): ModerationSignal | undefined {
+  if (!isAzureContentFilterError(err)) return undefined;
+  const inner = (err as { error?: { innererror?: { content_filter_result?: AzureFilterResult } } })
+    .error?.innererror?.content_filter_result;
+  return { source: 'azure_content_filter', blocked: true, categories: azureFilterCategories(inner) };
+}
+
+/** Prompt annotations on a successful Azure call. They cover the whole risk prompt window. */
+function azurePromptAnnotationSignal(response: unknown): ModerationSignal | undefined {
+  const results = (response as { prompt_filter_results?: Array<{ content_filter_results?: AzureFilterResult }> })
+    ?.prompt_filter_results;
+  if (!Array.isArray(results)) return undefined;
+  const categories = results.flatMap((entry) => azureFilterCategories(entry.content_filter_results));
+  return categories.length > 0 ? { source: 'azure_content_filter', blocked: false, categories } : undefined;
+}
+
+const OPENAI_MODERATION_CATEGORIES: Array<[string, ModerationCategory]> = [
+  ['self-harm', 'self_harm'],
+  ['self-harm/intent', 'self_harm_intent'],
+  ['self-harm/instructions', 'self_harm_instructions'],
+  ['violence', 'violence'],
+  ['harassment/threatening', 'harassment_threatening'],
+  ['hate/threatening', 'hate_threatening'],
+];
+
+function openAiModerationSignal(flags: Record<string, boolean> | undefined): ModerationSignal | undefined {
+  if (!flags) return undefined;
+  const categories = OPENAI_MODERATION_CATEGORIES
+    .filter(([key]) => flags[key] === true)
+    .map(([, category]) => ({ category, level: null }));
+  return categories.length > 0 ? { source: 'openai_moderation', blocked: false, categories } : undefined;
 }
 
 const EXPLICIT_CORRECTION_REQUEST_PREFIX =

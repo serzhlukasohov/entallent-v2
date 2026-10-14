@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { ModerationSignalError } from '@entalent/contracts';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import {
   REPORTING_DISCLOSURE_VERSION,
@@ -14,6 +15,18 @@ import type { UserGoalRecord } from '../types/records';
 const INBOUND_OCCURRED_AT = new Date('2026-09-03T10:00:00.000Z');
 const OWNERSHIP = { conversationId: 'c-1', tenantId: 't-1', userId: 'u-1' };
 const CAP8_SOURCE_ID = '11111111-1111-4111-8111-111111111111';
+
+const NO_RISK = {
+  riskType: null,
+  severity: 'none',
+  confidence: 0.9,
+  evidence: [],
+  immediateResponseRequired: false,
+  escalationRecommended: false,
+  surveyMustBeBlocked: false,
+  proactiveMessagesMustBePaused: false,
+  reasoningSummary: 'no risk',
+};
 
 function baseMocks() {
   const conversationRepo = {
@@ -45,7 +58,7 @@ function baseMocks() {
       latestUserSubstance: 'hey',
       topicAnchor: null,
     }),
-    detectRisk: vi.fn(),
+    detectRisk: vi.fn().mockResolvedValue(NO_RISK),
     generateResponse: vi.fn().mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false }),
     interpretConfirmationResponse: vi.fn(),
     scoreSentiment: vi.fn().mockResolvedValue(0.9),
@@ -3001,7 +3014,7 @@ describe('ConversationOrchestrator deterministic safety pass', () => {
     expect(result.classification.requiresSafetyCheck).toBe(true);
   });
 
-  it('does not force a safety pass for a benign intent', async () => {
+  it('assesses risk on a benign turn without marking it as a safety turn (ADR-013 G1)', async () => {
     const m = baseMocks(); // default classification: casual_conversation, requiresSafetyCheck false
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -3010,8 +3023,136 @@ describe('ConversationOrchestrator deterministic safety pass', () => {
 
     const result = await orch.orchestrate(INPUT);
 
-    expect(m.aiProvider.detectRisk).not.toHaveBeenCalled();
+    expect(m.aiProvider.detectRisk).toHaveBeenCalledOnce();
     expect(result.classification.requiresSafetyCheck).toBe(false);
+    expect(result.risk).toMatchObject({ assessed: true, severity: 'none', tripwireRaised: false });
+  });
+
+  it('starts risk detection before classification resolves, so safety runs in parallel', async () => {
+    const m = baseMocks();
+    let releaseClassification!: () => void;
+    const defaultClassification = await m.aiProvider.classifySituation();
+    m.aiProvider.classifySituation.mockClear();
+    m.aiProvider.classifySituation.mockReturnValue(new Promise((resolve) => {
+      releaseClassification = () => resolve(defaultClassification);
+    }));
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const pending = orch.orchestrate(INPUT);
+    await vi.waitFor(() => expect(m.aiProvider.classifySituation).toHaveBeenCalled());
+    expect(m.aiProvider.detectRisk).toHaveBeenCalledOnce();
+    releaseClassification();
+    await pending;
+  });
+
+  it('treats a failed risk assessment as unknown, never as safe (ADR-013 G2)', async () => {
+    const m = baseMocks();
+    m.aiProvider.detectRisk.mockRejectedValue(new Error('provider timeout'));
+    const riskSignalRepo = { saveOnceForSource: vi.fn() };
+    const escalation = { raise: vi.fn() };
+    const orch = new ConversationOrchestrator(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo, riskSignalRepo as any,
+      escalation, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.risk).toEqual({
+      assessed: false, reason: 'assessment_failed', riskType: null, severity: 'unknown',
+      immediateResponseRequired: false, tripwireRaised: false,
+    });
+    expect(result.risk).not.toHaveProperty('confidence');
+    expect(result.mode).toBe('sensitive');
+    expect(riskSignalRepo.saveOnceForSource).not.toHaveBeenCalled();
+    expect(escalation.raise).not.toHaveBeenCalled();
+    const [, strategy] = m.aiProvider.generateResponse.mock.calls[0]!;
+    expect(strategy).toMatchObject({ includeFollowUpQuestion: false, forbiddenPatterns: ['survey'] });
+  });
+
+  it('escalates when the provider moderation refuses a self-harm turn (R1 tripwire)', async () => {
+    const m = baseMocks();
+    m.aiProvider.detectRisk.mockRejectedValue(new ModerationSignalError({
+      source: 'azure_content_filter', blocked: true,
+      categories: [{ category: 'self_harm', level: 'medium' }],
+    }));
+    const escalation = { raise: vi.fn() };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo, undefined,
+      escalation, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.risk).toMatchObject({
+      assessed: false, reason: 'moderation_blocked', severity: 'critical',
+      riskType: 'potential_self_harm', immediateResponseRequired: true, tripwireRaised: true,
+    });
+    expect(result.mode).toBe('crisis');
+    expect(escalation.raise).toHaveBeenCalledOnce();
+    expect(escalation.raise.mock.calls[0]?.[0]).toMatchObject({
+      severity: 'critical', riskType: 'potential_self_harm', messageIds: [INPUT.messageId],
+      details: { assessed: false, tripwireRaised: true, unassessedReason: 'moderation_blocked' },
+    });
+  });
+
+  it('still escalates when classification fails on a turn the provider moderation refused', async () => {
+    const m = baseMocks();
+    const blocked = { source: 'azure_content_filter' as const, blocked: true,
+      categories: [{ category: 'self_harm' as const, level: 'high' as const }] };
+    m.aiProvider.classifySituation.mockRejectedValue(Object.assign(new Error('content_filter'), { status: 400 }));
+    m.aiProvider.detectRisk.mockRejectedValue(new ModerationSignalError(blocked));
+    const escalation = { raise: vi.fn() };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo, undefined,
+      escalation, m.featureFlags, undefined, undefined,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('content_filter');
+    expect(escalation.raise).toHaveBeenCalledOnce();
+    expect(escalation.raise.mock.calls[0]?.[0]).toMatchObject({ severity: 'critical' });
+  });
+
+  it('escalates a critical risk before reply generation, even when generation fails', async () => {
+    const m = baseMocks();
+    m.aiProvider.detectRisk.mockResolvedValue({
+      ...NO_RISK, riskType: 'potential_self_harm', severity: 'critical', immediateResponseRequired: true,
+    });
+    m.aiProvider.generateResponse.mockRejectedValue(new Error('generation failed'));
+    const escalation = { raise: vi.fn() };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo, undefined,
+      escalation, m.featureFlags, undefined, undefined,
+    );
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow();
+    expect(escalation.raise).toHaveBeenCalledOnce();
+    expect(escalation.raise.mock.calls[0]?.[0]).toMatchObject({
+      severity: 'critical', details: { assessed: true, tripwireRaised: false },
+    });
+  });
+
+  it('never lowers model severity from a weaker moderation signal', async () => {
+    const m = baseMocks();
+    m.aiProvider.detectRisk.mockResolvedValue({
+      ...NO_RISK, riskType: 'potential_self_harm', severity: 'critical', immediateResponseRequired: true,
+      escalationRecommended: true, surveyMustBeBlocked: true, proactiveMessagesMustBePaused: true,
+      moderation: { source: 'openai_moderation', blocked: false, categories: [{ category: 'violence', level: null }] },
+    });
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.risk).toMatchObject({
+      assessed: true, severity: 'critical', riskType: 'potential_self_harm', tripwireRaised: false,
+    });
+    expect(result.mode).toBe('crisis');
   });
 
   it('keeps safety support authoritative when the dialogue act is closing', async () => {
