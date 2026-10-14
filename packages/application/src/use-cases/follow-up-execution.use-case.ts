@@ -6,6 +6,7 @@ import type { FollowUpContextPort } from '../ports/follow-up-context.port';
 import type { OutboxPort, FollowUpExecutionPayload } from '../ports/outbox.port';
 import { isInQuietHours, getLocalHour } from '../utils/quiet-hours';
 import { resolveLanguagePolicy } from '../utils/language-policy';
+import { modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 
 export interface FollowUpExecutionInput {
   scheduledActionId: string;
@@ -121,7 +122,9 @@ export class FollowUpExecutionUseCase {
     }
 
     // Generate personalized follow-up message
-    const recentMessages = await this.conversationRepo.findRecentMessages(ctx.conversation.id, 8);
+    const recentMessages = modelMessagesAfterContentFilter(
+      await this.conversationRepo.findRecentMessages(ctx.conversation.id, 8),
+    );
     const turns: ConversationTurn[] = recentMessages.map((m) => ({
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       content: m.text,

@@ -1,3 +1,5 @@
+export { ProviderContentFilterError } from './ports/provider-error';
+export type { ProviderContentFilterDirection } from './ports/provider-error';
 export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, MemoryContext, ResponseContext, ReplyBrief, ReplyPlan, LanguagePolicy, SurveyQuestionForEvaluation, SurveyEvidenceEvaluationOptions } from './ports/ai-provider.port';
 export type { AgentRuntimePort, ProcessMessageInput, ProcessMessageRequest, ProcessMessageResult, RuntimeBoundaryProcessMessageRequest } from './ports/agent-runtime.port';
 export { AGENT_RUNTIME_PORT, isRuntimeBoundaryProcessMessageRequest, runtimeBoundaryProcessMessageRequestInvalidFields } from './ports/agent-runtime.port';

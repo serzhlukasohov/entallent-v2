@@ -160,6 +160,23 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     });
   });
 
+  it('settles a committed input-filter outcome without reading absent model decisions', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => ({
+        outcome: 'input_filtered', outboundMessageId: 'outbound-1', responseText: 'Please restate',
+      })),
+    };
+    const { processor, conversationRepo, llmRunRepo } = createProcessor({ orchestrator });
+
+    await expect(processor.process({
+      id: 'filtered-job', name: 'process', attemptsMade: 0,
+      opts: { delay: 2_000 }, data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+  });
+
   it('no-ops stale original and retry jobs before orchestration and LLM accounting', async () => {
     const conversationRepo = {
       shouldSkipInboundMessage: vi.fn()

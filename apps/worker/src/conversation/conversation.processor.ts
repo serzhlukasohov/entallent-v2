@@ -164,9 +164,13 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         }
       }
 
-      this.logger.log(
-        `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`,
-      );
+      if ('outcome' in result && result.outcome === 'input_filtered') {
+        this.logger.warn(`Job ${job.id} done — outcome=input_filtered`);
+      } else {
+        this.logger.log(
+          `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`,
+        );
+      }
     } catch (error) {
       status = 'error';
       errorCode = conversationFailureCode(error);

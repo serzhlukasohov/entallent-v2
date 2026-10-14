@@ -2813,6 +2813,13 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: instructions
 - Harness fix: Memory rule `no-lexical-heuristics`; before fixing any understanding bug, look up the signal's inventory row and wave and follow D2.
 - Regression check: `git grep -nE "іїєґ|\\\\bщо\\\\b|_ONLY_WORDS" packages/application/src` returns nothing; S9 changes ship with `src/scenarios/language-eval.sim.test.ts`.
+## 2026-10-08: Content-filter repair initially targeted the wrong source baseline
+
+- Symptom: A locally passing recovery patch was prepared from `origin/main`, while open PR #7 and the active worker used newer V2 turn and dispatch contracts.
+- Expected: A runtime repair and its release plan use the current PR head and verify the active deployment provenance.
+- Root cause layer: context and workflow
+- Harness fix: For an incident touching an open PR, record its head SHA and compare active service source before implementation; reuse its transaction and dispatch ledger.
+- Regression check: Compare `gh pr view 7 --json headRefOid` with the implementation base, then run the focused V2 transaction and worker tests.
 ## 2026-10-06: Simulation gate ignores reported deterministic violations
 
 - Symptom: Source review found that runSample uses subprocess success plus report existence for hardPassed and does not consume report.deterministic.passed. CAP-8 emits the generic report without asserting its generic transcript violations.
@@ -3081,3 +3088,21 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Always deploy from a worktree with `railway up <absolute-worktree-path> --path-as-root --service <name> --detach`; after SUCCESS, check the startup `Mapped {...}` log lines or an endpoint that exists only in the new build before deploying dependent services.
 - Regression check: `railway logs --service api --deployment <id> | grep '<new route>'` returns the route before the dashboard deploy.
 - Status: fixed
+
+## 2026-10-08: PostgreSQL history integration bound a Date as SQL text
+
+- Symptom: The causal recovery query failed with `The "string" argument must be of type string ... Received an instance of Date`.
+- Expected: A late recovery outcome is returned for the next inbound without a query binding error.
+- Root cause layer: verification and tooling
+- Harness fix: Bind the source time as an ISO timestamp with an explicit `timestamptz` cast; test against a migrated isolated PostgreSQL database.
+- Regression check: Run `conversation.repository.privacy.integration.test.ts` on the named isolated database, including the late outcome case.
+- Status: fixed
+
+## 2026-10-13: Database integration test fails on clean main with dispatch-intent immutability
+
+- Symptom: `conversation-turn-effects.integration.test.ts` › "binds one scoped inbound and outbound, and only identifier dispatch targets" fails with `PostgresError: conversation_dispatch_intent_immutable` on local PostgreSQL, both on `main` (`4cc5ba8`) and on the CAP-1 branch.
+- Expected: The database integration suite passes on `main`.
+- Root cause layer: verification (unknown: test isolation against a reused local database, or a trigger/test mismatch)
+- Harness fix: Run the suite against a freshly migrated database to separate state leakage from a real trigger regression; then fix the test or the trigger.
+- Regression check: `DATABASE_URL=<fresh-migrated-db> pnpm --filter @entalent/database test:integration`.
+- Status: open

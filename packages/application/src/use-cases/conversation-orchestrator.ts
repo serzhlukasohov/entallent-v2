@@ -9,6 +9,7 @@ import {
 import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
 import type { ConversationDispatchKind, ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { ConversationUnitOfWorkPort } from '../ports/conversation-unit-of-work.port';
+import { ProviderContentFilterError } from '../ports/provider-error';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type {
@@ -44,6 +45,8 @@ import { validateQuestionBundleComposition } from '../utils/question-bundle-comp
 import { validateQuestionBundleVerdict } from '../utils/question-bundle-verdict';
 import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
 import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
+import { contentFilterExplanation } from '../utils/content-filter-recovery';
+import { modelMessagesForInbound } from '../utils/content-filter-recovery';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isSessionStart } from '../utils/session';
 import { assessRisk, isRiskTurn, mustEscalate, riskBlocksSurvey } from '../utils/risk-policy';
@@ -69,10 +72,12 @@ import type {
 
 export type OrchestrateInput = ProcessMessageRequest;
 /** The active runtime result. Unlike the archived ProcessMessageResult, risk may be unassessed. */
-export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & { risk: RiskAssessment };
+export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & { risk: RiskAssessment; outcome?: 'input_filtered' };
 
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
+
+class InputFilterDuringClassification extends Error {}
 
 type PreparedBundlePhase = {
   confirmedGroup: string | false;
@@ -130,6 +135,74 @@ export class ConversationOrchestrator {
   }
 
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
+    try {
+      return await this.orchestrateModelTurn(input);
+    } catch (error) {
+      if (!(error instanceof InputFilterDuringClassification)) throw error;
+      return this.commitInputFilteredTurn(input);
+    }
+  }
+
+  private async commitInputFilteredTurn(input: OrchestrateInput): Promise<OrchestrateResult> {
+    const conversation = await this.conversationRepo.findById(input.conversationId, input.tenantId);
+    if (!conversation || conversation.userId !== input.userId
+      || conversation.externalConversationId !== input.externalConversationId) {
+      throw new Error('conversation_content_filter_destination_mismatch');
+    }
+    const languagePolicy = resolveLanguagePolicy();
+    const responseText = contentFilterExplanation(languagePolicy.responseLanguage);
+    const persist = async (): Promise<MessageRecord> => {
+      const existing = await this.conversationRepo.findCommittedTurnForInbound?.({
+        inboundMessageId: input.messageId,
+        tenantId: input.tenantId,
+        userId: input.userId,
+        conversationId: input.conversationId,
+        externalWorkspaceId: input.externalWorkspaceId,
+        externalConversationId: input.externalConversationId,
+      });
+      if (existing) return existing;
+      const outbound = await this.conversationRepo.saveMessage({
+        id: conversationOutboundMessageId(input.messageId),
+        conversationId: input.conversationId,
+        tenantId: input.tenantId,
+        userId: input.userId,
+        direction: 'outbound',
+        text: responseText,
+        occurredAt: new Date(),
+        traceId: input.traceId,
+        metadata: {
+          conversationOutcome: 'input_filtered',
+          sourceInboundMessageId: input.messageId,
+          languagePolicy,
+        },
+      });
+      await this.conversationRepo.recordCommittedTurn?.({
+        inboundMessageId: input.messageId,
+        outboundMessageId: outbound.id,
+        tenantId: input.tenantId,
+        userId: input.userId,
+        conversationId: input.conversationId,
+        dispatchKinds: ['message_send'],
+        followUpActions: [],
+        groupReportStateIds: [],
+      });
+      return outbound;
+    };
+    const outbound = this.unitOfWork ? await this.unitOfWork.run(persist) : await persist();
+    await this.dispatchCommittedTurn(input, conversation.channelType, outbound, ['message_send']);
+    // The legacy runtime result requires model decisions even for a turn that never had them.
+    // The active worker branches on outcome before reading these fields.
+    return {
+      outcome: 'input_filtered',
+      outboundMessageId: outbound.id,
+      responseText: outbound.text,
+      mode: undefined as unknown as ProcessMessageResult['mode'],
+      classification: undefined as unknown as ProcessMessageResult['classification'],
+      risk: undefined as unknown as OrchestrateResult['risk'],
+    };
+  }
+
+  private async orchestrateModelTurn(input: OrchestrateInput): Promise<OrchestrateResult> {
     const { conversationId, tenantId, userId, externalWorkspaceId, externalConversationId } =
       input;
 
@@ -169,8 +242,9 @@ export class ConversationOrchestrator {
       Date.now() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000;
     const profileHydrationNeeded = displayNameMissing || tzMissing || tzStale;
 
-    const dbMessages = recentMessages.slice(0, inboundMessageIndex + 1);
-    const inboundMessage = dbMessages[inboundMessageIndex];
+    const { messages: dbMessages, boundaryApplied } = modelMessagesForInbound(recentMessages, inboundMessageIndex);
+    const inboundMessage = recentMessages[inboundMessageIndex]!;
+    const activeTopic = boundaryApplied ? undefined : conversation.activeTopic;
     const deliveredReportingDisclosure = this.surveyRepo
       ? await this.conversationRepo.findLatestDeliveredReportingDisclosure(
         tenantId,
@@ -209,7 +283,12 @@ export class ConversationOrchestrator {
         userName,
         now: currentTurnAt,
         timezone: userTimezone,
-        continuitySummary: conversation.activeTopic?.summary,
+        continuitySummary: activeTopic?.summary,
+      }).catch((error: unknown) => {
+        if (error instanceof ProviderContentFilterError && error.direction === 'input') {
+          throw new InputFilterDuringClassification();
+        }
+        throw error;
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -272,7 +351,7 @@ export class ConversationOrchestrator {
     const closingTurn = classification.dialogueAct === 'closing';
     const pauseTurn = closingTurn || classification.dialogueAct === 'acknowledgement';
 
-    const memoryItems = memoryEnabled ? speculativeMemory : [];
+    const memoryItems = memoryEnabled && !boundaryApplied ? speculativeMemory : [];
     const outboundMessages = dbMessages.filter((message) => message.direction === 'outbound');
     const recentOutbound = outboundMessages.slice(-2);
     const latestReplyShape = recentOutbound.at(-1)?.metadata?.['replyShape'];
@@ -312,7 +391,7 @@ export class ConversationOrchestrator {
     // Pass the OBSERVED user style (u) + weight; the renderer decides which axes to
     // nudge (u vs base) and how strongly (scaled by weight). Passing the pre-blended
     // effective level here would damp the signal below the renderer's threshold.
-    const styleAdaptation = (memoryEnabled && profile)
+    const styleAdaptation = (memoryEnabled && !boundaryApplied && profile)
       ? { dimensions: profile.dimensions, weight: profile.adaptationWeight, phrases: profile.phrases.map((p) => p.text) }
       : undefined;
 
@@ -489,7 +568,7 @@ export class ConversationOrchestrator {
     const safetyTurn = classification.requiresSafetyCheck || isRiskTurn(risk);
     const continuity = resolveContinuity({
       classification,
-      activeTopic: conversation.activeTopic,
+      activeTopic,
       safetyTurn,
       confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
       now: currentTurnAt,
@@ -497,7 +576,7 @@ export class ConversationOrchestrator {
     const continuityDecision = continuity.decision;
     classification = continuity.classification;
 
-    const relevantGoal = selectRelevantGoal(activeGoals, {
+    const relevantGoal = selectRelevantGoal(boundaryApplied ? [] : activeGoals, {
       classification,
       risk,
       confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
@@ -509,7 +588,7 @@ export class ConversationOrchestrator {
       reason: string;
     } = {
       selected: !!relevantGoal,
-      candidateGoalCount: activeGoals.length,
+      candidateGoalCount: boundaryApplied ? 0 : activeGoals.length,
       reason: relevantGoal ? 'exact_active_match' : 'not_selected',
     };
     if (relevantGoal?.id) {
@@ -569,7 +648,7 @@ export class ConversationOrchestrator {
     const strategyWithStyle = applySessionConciseStyle(
       applyTerseStyle(
         confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
-        memoryEnabled ? profile : null,
+        memoryEnabled && !boundaryApplied ? profile : null,
         previousReplyAskedQuestion,
       ),
       conciseSession,
@@ -675,7 +754,7 @@ export class ConversationOrchestrator {
       ? resolvePulseCaptureScope({
           classification,
           messages: dbMessages,
-          currentMessageIndex: inboundMessageIndex,
+          currentMessageIndex: dbMessages.length - 1,
           conversationId,
           tenantId,
           userId,
@@ -822,7 +901,7 @@ export class ConversationOrchestrator {
           includeFollowUpQuestion: applySessionConciseStyle(
             applyTerseStyle(
               buildReplyStrategy(classification, risk, undefined),
-              memoryEnabled ? profile : null,
+              memoryEnabled && !boundaryApplied ? profile : null,
               previousReplyAskedQuestion,
             ),
             conciseSession,
@@ -835,7 +914,7 @@ export class ConversationOrchestrator {
           applySessionConciseStyle(
             applyTerseStyle(
               buildReplyStrategy(classification, risk, undefined),
-              memoryEnabled ? profile : null,
+              memoryEnabled && !boundaryApplied ? profile : null,
               previousReplyAskedQuestion,
             ),
             conciseSession,

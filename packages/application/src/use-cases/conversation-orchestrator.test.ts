@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ModerationSignalError } from '@entalent/contracts';
 import { ConversationOrchestrator } from './conversation-orchestrator';
+import { ProviderContentFilterError } from '../ports/provider-error';
 import {
   REPORTING_DISCLOSURE_VERSION,
   getDataUseExplanationText,
@@ -116,6 +117,119 @@ const ACCEPTED_DEIDENTIFICATION = {
   policyVersion: 'deidentification-v1' as const,
   reasons: [],
 };
+
+describe('ConversationOrchestrator provider input filter', () => {
+  it('explains in English and records the language policy whatever the profile locale', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
+      userDisplayName: 'Sam', userLocale: 'uk', userTimezone: 'UTC',
+    });
+    m.aiProvider.classifySituation.mockRejectedValue(new ProviderContentFilterError('input'));
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).toContain('model service rejected');
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ languagePolicy: { responseLanguage: 'en', source: 'product_default' } }),
+    }));
+  });
+
+  it('commits one explanatory outbound and only its send dispatch', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockRejectedValue(new ProviderContentFilterError('input'));
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.outcome).toBe('input_filtered');
+    expect(result.responseText).toContain('model service rejected');
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      id: expect.any(String),
+      metadata: {
+        conversationOutcome: 'input_filtered',
+        sourceInboundMessageId: 'm-1',
+        languagePolicy: { responseLanguage: 'en', source: 'product_default' },
+      },
+    }));
+    expect(m.conversationRepo.recordCommittedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      inboundMessageId: 'm-1', dispatchKinds: ['message_send'], followUpActions: [], groupReportStateIds: [],
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+    expect(m.outbox.enqueueMemoryExtraction).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueStyleAnalysis).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it('reuses a committed outcome after a retry', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockRejectedValue(new ProviderContentFilterError('input'));
+    const existing = {
+      id: 'out-1', ...OWNERSHIP, direction: 'outbound', text: 'previous explanation',
+      occurredAt: INBOUND_OCCURRED_AT,
+      metadata: { conversationOutcome: 'input_filtered', sourceInboundMessageId: 'm-1' },
+    };
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(existing);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).toBe('previous explanation');
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not convert an output filter into an input explanation', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockRejectedValue(new ProviderContentFilterError('output'));
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow(ProviderContentFilterError);
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a fresh-context recovery after response preparation has begun', async () => {
+    const m = baseMocks();
+    m.aiProvider.generateResponse.mockRejectedValue(new ProviderContentFilterError('input'));
+
+    await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow(ProviderContentFilterError);
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('starts the next model request after the persisted recovery boundary', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack',
+      externalConversationId: 'ec', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      activeTopic: { summary: 'old private topic', status: 'active', updatedAt: INBOUND_OCCURRED_AT },
+    });
+    m.conversationRepo.findMessagesThrough = vi.fn().mockResolvedValue([
+      { id: 'recovery', ...OWNERSHIP, direction: 'outbound', text: 'Please restate',
+        occurredAt: new Date('2026-09-03T10:00:02Z'),
+        metadata: { conversationOutcome: 'input_filtered', sourceInboundMessageId: 'blocked' } },
+      { id: 'blocked', ...OWNERSHIP, direction: 'inbound', text: 'old private topic',
+        occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'Hello',
+        occurredAt: new Date('2026-09-03T10:00:01Z'), metadata: undefined },
+    ]);
+
+    await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.classifySituation.mock.calls[0][0].map((turn: { content: string }) => turn.content))
+      .toEqual(['Please restate', 'Hello']);
+    expect(m.aiProvider.classifySituation.mock.calls[0][1].continuitySummary).toBeUndefined();
+    expect(m.aiProvider.generateResponse.mock.calls[0][0].map((turn: { content: string }) => turn.content))
+      .toEqual(['Please restate', 'Hello']);
+  });
+});
 
 function surveyReadyHistory() {
   return [

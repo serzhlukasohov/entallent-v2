@@ -31,6 +31,21 @@ describe('StyleAnalysisUseCase', () => {
     expect(d.styleRepo.upsert).not.toHaveBeenCalled();
   });
 
+  it('analyzes only new user turns after a persisted filter recovery', async () => {
+    const d = deps(5);
+    const older = msgs(10);
+    const newer = msgs(10).map((entry, index) => ({ ...entry, id: `new-${index}`, text: `new ${index}` }));
+    d.conversationRepo.findRecentMessages.mockResolvedValue([
+      ...older,
+      { ...older[1], id: 'recovery', text: 'The model service rejected the request.', metadata: {
+        conversationOutcome: 'input_filtered', sourceInboundMessageId: older[8].id,
+      } },
+      ...newer,
+    ]);
+    await new StyleAnalysisUseCase(d.ai, d.conversationRepo, d.styleRepo).execute(INPUT);
+    expect(d.ai.analyzeStyle).toHaveBeenCalledWith(['new 0', 'new 2', 'new 4', 'new 6', 'new 8']);
+  });
+
   it('completes a committed source with insufficient turns without calling the model', async () => {
     const d = deps(2);
     d.conversationRepo.findMessagesThrough = vi.fn().mockResolvedValue(msgs(4));

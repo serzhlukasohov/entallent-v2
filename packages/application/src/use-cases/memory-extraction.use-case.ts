@@ -5,6 +5,7 @@ import type { MemoryRepositoryPort, SaveMemoryItemParams } from '../ports/memory
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
 import type { MemoryItemRecord } from '../types/records';
 import { contentSimilarity } from '../utils/text-similarity';
+import { modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 
 /** Above this, a proposed item is considered the same fact as an existing one */
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.6;
@@ -42,9 +43,10 @@ export class MemoryExtractionUseCase {
   }
 
   async prepare(input: MemoryExtractionInput): Promise<PreparedMemoryExtraction | null> {
-    const dbMessages = this.conversationRepo.findMessagesThrough && this.conversationRepo.findMessageById
+    const loadedMessages = this.conversationRepo.findMessagesThrough && this.conversationRepo.findMessageById
       ? await this.findSourceBoundMessages(input)
       : await this.conversationRepo.findRecentMessages(input.conversationId, 20);
+    const dbMessages = modelMessagesAfterContentFilter(loadedMessages);
     if (dbMessages.length === 0) return null;
     const closesConversation = dbMessages.some(
       (message) =>

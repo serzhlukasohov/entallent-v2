@@ -14,6 +14,7 @@ vi.mock('openai', () => {
 
 import { OpenAiProvider } from './openai-provider';
 import { ReplyStrategy, isModerationSignalError, type ModerationSignalError } from '@entalent/contracts';
+import type { CircuitBreaker } from './circuit-breaker';
 import type { LanguagePolicy, MemoryContext, ResponseContext } from '@entalent/application';
 
 function makeProvider() {
@@ -2438,5 +2439,77 @@ describe('OpenAiProvider detectRisk (ADR-013 R1)', () => {
     moderationMock.mockResolvedValue({ results: [{ flagged: false, categories: {} }] });
 
     await expect(makeProvider().detectRisk(turns, { userName: 'Ana' })).rejects.toThrow('timeout');
+  });
+});
+
+describe('OpenAiProvider Azure content filter boundary', () => {
+  beforeEach(() => createMock.mockReset());
+
+  function azureProvider() {
+    return new OpenAiProvider({
+      azure: true,
+      endpoint: 'https://example.openai.azure.com',
+      apiKey: 'test',
+      apiVersion: '2024-10-21',
+      deploymentName: 'test-deployment',
+    });
+  }
+
+  function breakerState(provider: OpenAiProvider) {
+    return (provider as unknown as { breaker: CircuitBreaker }).breaker.getState();
+  }
+
+  it('maps only a confirmed prompt policy rejection to input_filtered', async () => {
+    const filtered = Object.assign(new Error('filtered'), {
+      status: 400,
+      code: 'content_filter',
+      param: 'prompt',
+      innererror: { code: 'ResponsibleAIPolicyViolation' },
+    });
+    createMock.mockImplementationOnce(() => { throw filtered; });
+    const provider = azureProvider();
+    await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({
+      name: 'ProviderContentFilterError', direction: 'input', code: 'content_filter',
+    });
+  });
+
+  it('maps a completion finish reason to output_filtered', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'content_filter', message: { content: null } }],
+    });
+    const provider = azureProvider();
+    await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({
+      name: 'ProviderContentFilterError', direction: 'output', code: 'content_filter',
+    });
+  });
+
+  it('preserves an unrelated or opaque 400 without a policy claim', async () => {
+    const error = { status: 400, code: 'invalid_request_error' };
+    createMock.mockImplementationOnce(() => { throw error; });
+    const provider = azureProvider();
+    await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toBe(error);
+
+    const opaque = { status: 400, code: 'content_filter' };
+    createMock.mockImplementationOnce(() => { throw opaque; });
+    await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toBe(opaque);
+  });
+
+  it('does not open the breaker for confirmed filters or permanent 400 errors', async () => {
+    const provider = azureProvider();
+    for (let i = 0; i < 6; i++) {
+      createMock.mockImplementationOnce(() => {
+        throw { status: 400, code: 'content_filter', param: 'prompt' };
+      });
+      await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({
+        name: 'ProviderContentFilterError', direction: 'input',
+      });
+    }
+    expect(breakerState(provider)).toBe('CLOSED');
+
+    for (let i = 0; i < 5; i++) {
+      createMock.mockImplementationOnce(() => { throw { status: 503 }; });
+      await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({ status: 503 });
+    }
+    expect(breakerState(provider)).toBe('OPEN');
   });
 });

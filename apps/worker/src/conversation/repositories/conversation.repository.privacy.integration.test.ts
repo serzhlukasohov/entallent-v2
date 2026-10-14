@@ -193,6 +193,34 @@ describe.skipIf(!localDatabase)('employee conversation history scope on migrated
     })).resolves.toEqual([]);
   });
 
+  it('includes a filtered outcome committed after a newer inbound by its source', async () => {
+    if (!client || !repository) return;
+    const [tenant] = await client.db.insert(tenants).values({ name: `Late recovery ${randomUUID()}` }).returning();
+    tenantIds.push(tenant!.id);
+    const [person] = await client.db.insert(users).values({ tenantId: tenant!.id }).returning();
+    const [conversation] = await client.db.insert(conversations).values({
+      tenantId: tenant!.id, userId: person!.id,
+      channelType: 'dev', externalConversationId: randomUUID(),
+    }).returning();
+    const base = { tenantId: tenant!.id, userId: person!.id, conversationId: conversation!.id };
+    const [blocked, next] = await client.db.insert(messages).values([
+      { ...base, direction: 'inbound', senderType: 'user', text: 'Blocked request',
+        occurredAt: new Date('2026-09-29T00:00:00Z') },
+      { ...base, direction: 'inbound', senderType: 'user', text: 'Hello',
+        occurredAt: new Date('2026-09-29T00:00:01Z') },
+    ]).returning();
+    const [recovery] = await client.db.insert(messages).values({
+      ...base, direction: 'outbound', senderType: 'agent', text: 'Please restate',
+      occurredAt: new Date('2026-09-29T00:00:02Z'),
+      metadata: { conversationOutcome: 'input_filtered', sourceInboundMessageId: blocked!.id },
+    }).returning();
+
+    const history = await repository.findMessagesThrough({
+      ...base, inboundMessageId: next!.id, limit: 20,
+    });
+    expect(history.map((message) => message.id)).toEqual([recovery!.id, blocked!.id, next!.id]);
+  });
+
   it('does not infer same-time order from UUIDs when external IDs are absent', async () => {
     if (!client || !repository) return;
     const [tenant] = await client.db.insert(tenants).values({ name: `Same-time source ${randomUUID()}` }).returning();
