@@ -345,7 +345,7 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     const privateText = 'private employee meaning about Project Atlas';
     const orchestrator = {
       orchestrate: vi.fn(async () => {
-        throw new Error(privateText);
+        throw new SyntaxError(privateText);
       }),
     };
     const llmRunRepo = {
@@ -369,6 +369,7 @@ describe('ConversationProcessor TypeScript-only routing', () => {
 
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
       status: 'error',
+      errorCode: 'conversation_invalid_json',
       traceId: 'trace-1',
     }));
     expect(conversationRepo.markInboundConversationJobProcessed).not.toHaveBeenCalled();
