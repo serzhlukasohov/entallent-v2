@@ -38,6 +38,14 @@
       "manualReviewRequired": false
     },
     {
+      "id": "resolved-detail-question-planning",
+      "name": "resolved-detail question planning",
+      "file": "src/scenarios/resolved-detail-question-planning.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 5,
+      "manualReviewRequired": false
+    },
+    {
       "id": "pulse-capture-exact-message",
       "name": "CAP-8 exact-message pulse capture",
       "file": "src/scenarios/pulse-capture-exact-message.sim.test.ts",
