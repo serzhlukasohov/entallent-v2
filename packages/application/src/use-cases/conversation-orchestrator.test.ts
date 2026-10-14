@@ -118,6 +118,54 @@ const ACCEPTED_DEIDENTIFICATION = {
   reasons: [],
 };
 
+describe('ConversationOrchestrator failed-turn fallback (GC round 2 CAP-1)', () => {
+  const committedTurnMocks = (m: ReturnType<typeof baseMocks>, existing: unknown = null) => {
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(existing);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+  };
+
+  it('commits one English fallback with the failure code and only its send dispatch', async () => {
+    const m = baseMocks();
+    committedTurnMocks(m);
+
+    const result = await makeOrchestrator(m).commitFailedTurn(INPUT, 'conversation_app_v2_confirmation_bundle_stale');
+
+    expect(result.responseText).toContain('could not process your last message');
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'outbound',
+      metadata: {
+        conversationOutcome: 'processing_failed',
+        sourceInboundMessageId: 'm-1',
+        failureCode: 'conversation_app_v2_confirmation_bundle_stale',
+        languagePolicy: { responseLanguage: 'en', source: 'product_default' },
+      },
+    }));
+    expect(m.conversationRepo.recordCommittedTurn).toHaveBeenCalledWith(expect.objectContaining({
+      inboundMessageId: 'm-1', dispatchKinds: ['message_send'], followUpActions: [], groupReportStateIds: [],
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+    expect(m.outbox.enqueueMemoryExtraction).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it('reuses an already committed turn instead of saving a second reply', async () => {
+    const m = baseMocks();
+    committedTurnMocks(m, {
+      id: 'out-1', ...OWNERSHIP, direction: 'outbound', text: 'previous fallback',
+      occurredAt: INBOUND_OCCURRED_AT,
+      metadata: { conversationOutcome: 'processing_failed', sourceInboundMessageId: 'm-1' },
+    });
+
+    const result = await makeOrchestrator(m).commitFailedTurn(INPUT, 'conversation_unclassified_error');
+
+    expect(result.outboundMessageId).toBe('out-1');
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('ConversationOrchestrator provider input filter', () => {
   it('explains in English and records the language policy whatever the profile locale', async () => {
     const m = baseMocks();

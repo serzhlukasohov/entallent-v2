@@ -243,6 +243,12 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     } as never);
     const bundleText = `I hear that ${statements.join(' ')} Is that fair?`;
     const ai = {
+      // Wave 1 runs risk assessment on every turn; an unassessed risk blocks the survey.
+      detectRisk: vi.fn(async () => ({
+        severity: 'none', confidence: 0.9, reasoningSummary: 'synthetic', riskType: null, evidence: [],
+        immediateResponseRequired: false, escalationRecommended: false,
+        surveyMustBeBlocked: false, proactiveMessagesMustBePaused: false,
+      })),
       classifySituation: vi.fn(async (turns: Array<{ content: string }>) => ({
         primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
         urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
@@ -250,10 +256,11 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
         dialogueAct: turns.at(-1)?.content.startsWith('Yes') ? 'acknowledgement' : 'new_substance',
         latestUserSubstance: turns.at(-1)?.content ?? '', topicAnchor: null,
       })),
-      composeQuestionBundle: vi.fn(async () => ({
+      // Like the live model (measured valid 15/15), map statements to the ids actually requested.
+      composeQuestionBundle: vi.fn(async (_turns: unknown, requested: Array<{ surveyQuestionId: string }>) => ({
         text: bundleText,
-        statements: groupQuestions.map((question, index) => ({
-          surveyQuestionId: question.id, statement: statements[index],
+        statements: requested.map((question, index) => ({
+          surveyQuestionId: question.surveyQuestionId, statement: statements[index]!,
         })),
       })),
       interpretQuestionBundleResponse: vi.fn(async () => verdictKind === 'partial'
@@ -312,13 +319,16 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     const followUpJobs: Array<{ scheduledActionId: string; dueAt: Date }> = [];
     let failAfterReplyEnqueue = false;
     let failBeforeReplyEnqueue = false;
+    // How many consecutive send enqueues fail; the fallback reply also enqueues a send.
+    let failBeforeReplyEnqueueRemaining = 1;
     const outbox = {
       enqueueMessageSend: async (payload: {
         messageId: string; tenantId: string; conversationId: string;
         channelType: string; externalWorkspaceId: string; externalChannelId: string;
       }) => {
         if (failBeforeReplyEnqueue) {
-          failBeforeReplyEnqueue = false;
+          failBeforeReplyEnqueueRemaining -= 1;
+          if (failBeforeReplyEnqueueRemaining <= 0) failBeforeReplyEnqueue = false;
           throw new Error('synthetic_redis_send_enqueue_failure');
         }
         const jobId = `message-send-${payload.messageId}`;
@@ -522,7 +532,12 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       }
       if (afterCutoff && !missedEnqueue && !lostMessageJob) failReceiptForMessageId = thirdInbound!.id;
       if (deliveryEnqueuedThenError) failAfterReplyEnqueue = true;
-      if (lostMessageJob) failBeforeReplyEnqueue = true;
+      if (lostMessageJob) {
+        // Redis stays unavailable for the whole job, so even the last-attempt fallback cannot
+        // enqueue; recovery must then come from the cutoff scanner.
+        failBeforeReplyEnqueue = true;
+        failBeforeReplyEnqueueRemaining = 2;
+      }
       if (afterVerdictBeforeOutboundError) failBeforeOutboundForMessageId = thirdInbound!.id;
       if (afterVerdictBeforeOutboundError && verdictKind === 'agree') {
         await expect(db.insert(surveyQuestionVerdictReceipts).values({
@@ -970,8 +985,37 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
           .where(eq(surveyQuestionInsights.surveyWindowId, window!.id))).toHaveLength(2);
         expect(scoreConfirmedMeaning).toHaveBeenCalledTimes(2);
       }
-      const purged = await db.select().from(surveyQuestionWorkingInsights)
-        .where(eq(surveyQuestionWorkingInsights.surveyWindowId, window!.id));
+      if (verdictKind === 'agree' && !afterCutoff) {
+        // GC round 2 CAP-1: production went silent on the first turn after a group was
+        // confirmed and finalized (conversation_unclassified_error x3). The next turn must reply.
+        const [lastReply] = await db.select().from(messages)
+          .where(eq(messages.id, sentJobs.at(-1)!.data.messageId));
+        const [afterConfirmation] = await db.insert(messages).values({
+          tenantId, userId, conversationId, direction: 'inbound', senderType: 'user',
+          text: 'Quick update: wrapped up the API review today, feeling decent about it.',
+          occurredAt: new Date((lastReply!.sentAt ?? lastReply!.occurredAt).getTime() + 1_000),
+        }).returning();
+        // Production participants also had another group's meanings ready at this point.
+        const nextGroup = questions.filter((question) => question.questionGroup !== questionGroup
+          && question.responseType === 'open_ended' && question.questionGroup !== 'engagement')
+          .filter((question, _index, all) => question.questionGroup === all[0]!.questionGroup);
+        expect(nextGroup).toHaveLength(3);
+        await db.insert(surveyQuestionWorkingInsights).values(nextGroup.map((question) => ({
+          tenantId, userId, surveyWindowId: window!.id, surveyQuestionId: question.id,
+          questionVersion: question.version, status: 'collecting', readyForConfirmation: true,
+          workingSummary: `Synthetic ready meaning for ${question.stableKey}.`,
+          sourceMessageIds: [firstInbound!.id],
+        })));
+        await admit(afterConfirmation!.id);
+        const sentBefore = sentJobs.length;
+        const afterJob = await conversationQueue.add('process',
+          jobData(afterConfirmation!.id, 'v2-after-confirmation'), { attempts: 1 });
+        await afterJob.waitUntilFinished(conversationEvents, 10_000);
+        expect(sentJobs.length).toBe(sentBefore + 1);
+      }
+      const purged = (await db.select().from(surveyQuestionWorkingInsights)
+        .where(eq(surveyQuestionWorkingInsights.surveyWindowId, window!.id)))
+        .filter((row) => groupQuestions.some((question) => question.id === row.surveyQuestionId));
       expect(purged.every((row) => row.workingSummary === null
         && row.confirmedSemanticSummary === null && row.sourceMessageIds.length === 0)).toBe(true);
       const [purgedBundle] = await db.select().from(surveyQuestionConfirmationBundles)

@@ -3105,4 +3105,14 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Root cause layer: verification (unknown: test isolation against a reused local database, or a trigger/test mismatch)
 - Harness fix: Run the suite against a freshly migrated database to separate state leakage from a real trigger regression; then fix the test or the trigger.
 - Regression check: `DATABASE_URL=<fresh-migrated-db> pnpm --filter @entalent/database test:integration`.
+- Update 2026-10-14: in a full `pnpm test:integration` run `survey-cycle-policy-activation` also failed once (`…_unapproved` instead of `…_incomplete`) but passes alone on main and on the branch, twice. Treat the database suite as order/state-dependent on a reused local DB until it runs against a fresh database.
 - Status: open
+
+## 2026-10-14: V2 queue integration suite silently broken after Wave 1
+
+- Symptom: `v2-conversation-flow.integration.test.ts` failed in every scenario (no confirmation bundle offered) because its synthetic AI had no `detectRisk`; Wave 1 runs risk on every turn and an unassessed risk blocks the survey. CI never runs the suite (it needs `V2_CONVERSATION_QUEUE_TEST=1` and Redis db `/15`), so the break was invisible.
+- Expected: Contract-changing work (Wave 1) updates every synthetic AI fixture, and the V2 queue suite runs somewhere before merge.
+- Root cause layer: verification
+- Harness fix: Fixture now provides `detectRisk`; run the suite with `V2_CONVERSATION_QUEUE_TEST=1 DATABASE_URL=<local> REDIS_URL=redis://localhost:6380/15` for changes to the orchestrator, risk, or survey paths. Consider wiring it into CI.
+- Regression check: `cd apps/worker && V2_CONVERSATION_QUEUE_TEST=1 DATABASE_URL=postgresql://postgres:postgres@localhost:5434/entalent REDIS_URL=redis://localhost:6380/15 npx vitest run src/conversation/v2-conversation-flow.integration.test.ts`.
+- Status: fixed

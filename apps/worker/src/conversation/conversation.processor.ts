@@ -175,6 +175,9 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       status = 'error';
       errorCode = conversationFailureCode(error);
       this.logger.error(`Job ${job.id} failed (attempt ${job.attemptsMade}): ${errorCode}`);
+      // Earlier attempts rethrow so a retry can still answer. On the last attempt the employee
+      // gets one explicit fallback reply instead of silence (GC round 2 CAP-1).
+      if (isFinalAttempt(job) && await this.commitFailedTurnFallback(job, errorCode, pendingQuestionReply)) return;
       throw new Error('conversation_processing_failed');
     } finally {
       await this.llmRunRepo
@@ -194,6 +197,27 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     }
   }
 
+  private async commitFailedTurnFallback(
+    job: Job<ConversationJob>,
+    failureCode: string,
+    pendingQuestionReply: boolean,
+  ): Promise<boolean> {
+    try {
+      await this.orchestrator.commitFailedTurn(job.data, failureCode);
+    } catch {
+      this.logger.error(`Job ${job.id} fallback reply failed: conversation_fallback_commit_failed`);
+      return false;
+    }
+    this.logger.warn(`Job ${job.id} done — outcome=processing_failed failure=${failureCode}`);
+    try {
+      await this.settleInbound(job.data, pendingQuestionReply);
+    } catch {
+      // The fallback turn is committed and dispatched; a missing receipt only delays cutoff accounting.
+      this.logger.error(`Job ${job.id} fallback receipt deferred: receipt_store_failed`);
+    }
+    return true;
+  }
+
   private async settleInbound(input: ReceiptRetryJob, pendingQuestionReply: boolean): Promise<void> {
     await this.conversationRepo.markInboundConversationJobProcessed(input);
     if (!pendingQuestionReply) return;
@@ -209,10 +233,32 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
   }
 }
 
+function isFinalAttempt(job: Job): boolean {
+  return job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+}
+
+/**
+ * Our own failures carry constant English messages; map them to stable codes. Message text is
+ * never logged as-is, because provider or parser errors can echo employee content.
+ */
+const KNOWN_FAILURE_MESSAGES: ReadonlyArray<[string, string]> = [
+  ['Generated response exceeds the question limit', 'conversation_reply_question_limit'],
+  ['OpenAI returned a noncompliant numeric survey probe', 'conversation_reply_numeric_probe_invalid'],
+  ['Confirmation response requires', 'conversation_reply_confirmation_invalid'],
+  ['OpenAI response truncated', 'conversation_model_truncated'],
+  ['OpenAI returned an empty response', 'conversation_model_empty'],
+  ['Circuit OPEN', 'conversation_provider_circuit_open'],
+];
+const APPLICATION_ERROR_CODE = /^[a-z][a-z0-9_]{2,80}$/;
+
 function conversationFailureCode(error: unknown): string {
   if (error instanceof SyntaxError) return 'conversation_invalid_json';
   if (typeof error !== 'object' || error === null) return 'conversation_unknown_error';
   if ('name' in error && error.name === 'ZodError') return 'conversation_invalid_model_shape';
+  if ('name' in error && error.name === 'ProviderContentFilterError'
+    && 'direction' in error && (error.direction === 'input' || error.direction === 'output')) {
+    return `conversation_provider_content_filter_${error.direction}`;
+  }
   if ('status' in error && typeof error.status === 'number'
     && Number.isInteger(error.status) && error.status >= 400 && error.status <= 599) {
     return `conversation_provider_http_${error.status}`;
@@ -220,6 +266,10 @@ function conversationFailureCode(error: unknown): string {
   if ('code' in error && typeof error.code === 'string' && /^[0-9A-Z]{5}$/.test(error.code)) {
     return `conversation_database_${error.code}`;
   }
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  if (APPLICATION_ERROR_CODE.test(message)) return `conversation_app_${message}`;
+  const known = KNOWN_FAILURE_MESSAGES.find(([prefix]) => message.startsWith(prefix));
+  if (known) return known[1];
   return 'conversation_unclassified_error';
 }
 
