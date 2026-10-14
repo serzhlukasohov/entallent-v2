@@ -90,7 +90,10 @@ export class CoachHarness {
   readonly escalation = new RecordingEscalation();
   readonly outbox: InlineOutbox;
   readonly turns: OrchestrateResult[] = [];
+  /** All calls, including regeneration attempts; this is not indexed by conversation turn. */
   readonly generateResponseCalls: GenerateResponseCall[] = [];
+  /** Final generation call for each completed send; null when the response bypassed generation. */
+  readonly responseCallsByTurn: Array<GenerateResponseCall | null> = [];
 
   private readonly orchestrator: ConversationOrchestrator;
 
@@ -158,6 +161,7 @@ export class CoachHarness {
 
   /** Delivers one user message and returns the coach's reply. */
   async send(text: string): Promise<string> {
+    const generationStart = this.generateResponseCalls.length;
     const inbound = await this.conversationRepo.saveMessage({
       conversationId: CONVERSATION_ID,
       tenantId: TENANT_ID,
@@ -176,6 +180,11 @@ export class CoachHarness {
       traceId: `sim-turn-${this.turns.length + 1}`,
     });
 
+    this.responseCallsByTurn.push(
+      this.generateResponseCalls.length > generationStart
+        ? this.generateResponseCalls[this.generateResponseCalls.length - 1]!
+        : null,
+    );
     this.turns.push(result);
     return result.responseText;
   }

@@ -905,14 +905,6 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: `pnpm --filter @entalent/application test -- conversation-orchestrator.test.ts`
 - Status: fixed
 
-## 2026-08-20: TSX IPC socket blocks full pre-push inside sandbox
-- Symptom: `pnpm prepush` passes monorepo typecheck, lint, and package tests, then `test:scripts` fails with `listen EPERM` for the TSX IPC socket. On 2026-08-29 the escalation also exposed that the default script suite still included a retired live-MAF smoke test.
-- Expected: Complete ordinary pre-push verification without invoking retired MAF tooling.
-- Root cause layer: workflow
-- Harness fix: Remove the retired live-MAF test from `test:scripts`; rerun `pnpm prepush` outside the sandbox only for the remaining TypeScript-owned script checks when TSX IPC is denied.
-- Regression check: `pnpm test:scripts`
-- Status: fixed
-
 ## 2026-08-19: Story 11.2 consumer typecheck read stale declarations
 - Symptom: The focused `ai-openai` typecheck rejected new `ReplyPlan` reasons before `application` declarations were rebuilt.
 - Expected: Consumer verification should use declarations generated from the current source.
@@ -2541,6 +2533,10 @@ These entries are retained as historical evidence but are not active work becaus
 - Regression check: Run the focused Annna scenario and inspect both the judge verdict and post-report Vitest assertions; the 2026-09-29 run remains failed.
 - Status: open
 
+- Evidence-layer repair on 2026-10-06: report snapshots now capture late assertions and cleanup failures; the live model/architecture failure remains open and was not rerun.
+
+- Live reproduction on 2026-10-06: gate `2026-10-06T10-53-49-148Z-c31f092` (dirty working tree, one sample) passed the judge but failed the first correction reply-plan assertion at `annna-intent-fidelity.sim.test.ts:74`. The report displayed `dialogueAct=closing` / `responseMove=close_or_pause` beside user turn 11; later investigation established that this plan belonged to actual final turn 15 because positional generation indexes were misaligned. Actual turns 11 and 13 were correction. The final report correctly records `deterministic.passed=false` and `test-failure`; no infrastructure retry. Investigate the classification/planning boundary before changing prompts or expectations; runtime root cause is not yet isolated.
+
 ## 2026-09-29: Memory-recall judge disagreed across identical one-run gates
 
 - Symptom: The first PR #7 one-run model gate passed memory recall, while the second passed all hard assertions but its judge rejected a question about the source of Igor's nervousness as re-asking the already known Friday defense.
@@ -2775,6 +2771,119 @@ These entries are retained as historical evidence but are not active work becaus
 - Harness fix: Resolve and decrypt the active tenant's workspace connection through `WorkspaceConnectionRepository`, then use that token for read-only DM checks; do not assume a global bot token exists.
 - Regression check: After named PostgreSQL/Redis preflight, read the configured DM with `SlackAdapter.getDirectMessageUser` and compare it to the linked active hierarchy manager user ID.
 - Status: fixed
+## 2026-10-06: Simulation gate ignores reported deterministic violations
+
+- Symptom: Source review found that runSample uses subprocess success plus report existence for hardPassed and does not consume report.deterministic.passed. CAP-8 emits the generic report without asserting its generic transcript violations.
+- Expected: Any reported deterministic violation fails the hard gate, even if the test process exits successfully.
+- Root cause layer: verification
+- Harness fix: Include deterministic report status in hardPassed and add a gate regression for a successful subprocess with a failing report.
+- Regression check: A fixture with exitCode=0, one report and deterministic.passed=false must yield hard_failed.
+- Status: fixed
+
+- Fixed on 2026-10-06: gate classification and hardPassed consume deterministic flags and nonempty violations; offline tests cover exit 0, contradictory report status, specific failure reasons and no infrastructure retry.
+
+## 2026-10-06: Resolved-detail live regression is omitted from the simulation gate
+
+- Symptom: Source/config review found resolved-detail-question-planning.sim.test.ts among the live scenarios but absent from gate.config.json.
+- Expected: The release AI gate includes approved critical live regressions or explicitly documents their exclusion.
+- Root cause layer: verification
+- Harness fix: Add the resolved-detail scenario with an explicit judge policy and assert critical live scenario membership in gate configuration.
+- Regression check: Compare the critical live scenario manifest with gate.config.json and fail on an unexplained omission.
+- Status: fixed
+
+- Fixed on 2026-10-06: existing scenario included with 5/5 hard and judge thresholds; both tests report before assertions and a configuration regression verifies membership.
+
+## 2026-10-06: Report finalizer could precede a failing cleanup hook
+
+- Symptom: Edge review found that Vitest reverses onTestFinished callbacks; an earlier cleanup callback could fail after the report finalizer and leave all-clear evidence.
+- Expected: Final saved reports capture hard assertion and cleanup failures regardless of registration order.
+- Root cause layer: verification
+- Harness fix: Persist failures with onTestFailed after cleanup and isolate report snapshots to prevent shared-object failure leakage.
+- Regression check: Existing failure-classifier subprocess fixture emits two reports before both assertion and cleanup failures, preserves judge evidence and verifies a later passing report stays clean.
+- Status: fixed
+
+## 2026-10-06: Deterministic harness could select live simulation files
+
+- Symptom: Harness appends changed test paths to the package test command; live scenario paths could invoke external models during an ordinary deterministic check.
+- Expected: Ordinary test/harness checks stay offline, while sim and sim:gate explicitly run live scenarios.
+- Root cause layer: workflow
+- Harness fix: Exclude the six existing live scenario files from the package test command; retain normal sim/gate selection.
+- Regression check: Offline focused test command with resolved-detail live path appended executes structural/gate tests only.
+- Status: fixed
+
+## 2026-10-06: Simulation reply plans were indexed by generation count
+
+- Symptom: The Annna report placed the final turn 15 closing plan beside turn 11 and positional assertions failed despite the actual corrections being classified correctly in that run.
+- Expected: Every completed orchestration turn has its own reply-plan slot; ready-made deterministic replies have null and do not shift later evidence.
+- Root cause layer: verification
+- Harness fix: CoachHarness keeps responseCallsByTurn with one final generation call or null per completed send; report and every positional consumer use it. Raw calls remain diagnostic only. Check alignment before attributing a simulation failure to production classification.
+- Regression check: Existing offline tests cover generated -> data-use/CAP-8 bypass -> generated, multiple-generation deidentification retry, failed send recovery, and JSON/Markdown plan association.
+- Status: fixed
+
+## 2026-10-06: Correctly aligned acknowledgment correction retained request act
+
+- Symptom: After repairing alignment, actual Annna turn 11 classified as request with maxQuestions=1 rather than correction with maxQuestions=0. Actual turn13 correction and final turn15 closing were correctly associated.
+- Expected: A direct restated request followed by explicit rejection of the mentor interpretation is a correction even with a leading acknowledgment.
+- Root cause layer: architecture
+- Harness fix: Classifier prompt explains the distinction; provider conservatively normalizes evidenced request/ack cases with direct restatement and terminal rejection, preserving safety and primary intent. New guard preserves model closing and excludes quoted/source/transformation content. Existing tests include independent positive/negative forms and known review edge cases.
+- Regression check: Exact aligned input with model request/substance and request/null must become correction; genuine closings and source text stay unchanged. Full AI tests and unchanged live replay verify separate evidence layers.
+- Status: fixed
+
+- Verification: final aligned Annna focused replay sample-3 passes hard assertions and judge; actual turns11/13 are correction and turn15 closing. Diagnostic timeout was explicitly raised to 900000ms for the focused retry; actual test duration was ~67s. This is one sample, not a stability pass-rate.
+
+## 2026-10-06: Temporary subprocess fixture raced source typecheck
+
+- Symptom: Parallel typecheck and gate-regression tests included a temporary src/gate .ts fixture that was removed before TypeScript read it (TS6053).
+- Expected: Verification fixtures do not enter production source globs or race ordinary typechecking.
+- Root cause layer: tooling
+- Harness fix: The existing real-Vitest subprocess fixture lives in a package-root temporary directory outside src/**/*.ts, uses its own config and absolute report import, and is removed afterward.
+- Regression check: Gate late-assertion/cleanup tests and package typecheck pass; inspect fixture placement outside the TypeScript include glob.
+- Status: fixed
+
+## 2026-10-06: Valid correction acknowledgments failed a phrase catalog
+
+- Symptom: Aligned live responses explicitly admitted an added story or overreaching but the hard acknowledgment regex rejected their wording. A judge also treated grounded empty survey state as an invented personal inference without fixture context.
+- Expected: Evaluate acknowledgment meaning while preserving hard routing/topic/question/memory checks; judge has the actual fixture facts needed to distinguish system state from personal assumptions.
+- Root cause layer: verification
+- Harness fix: Keep the existing immediate-correction acknowledgment judge criterion and unchanged 4/5 aggregate judge threshold; remove the redundant phrase catalog. Describe empty persisted Pulse fixture state and system-authored disclosures. No generic acknowledgment whitelist.
+- Regression check: Final captured Annna sample-3 has hard=true, judge=true, correct plans and no violations; final review checks acknowledgment criterion and gate threshold remain present.
+- Status: fixed
+
+## 2026-10-06: Resolved-detail live sample omitted a settled fact
+
+- Symptom: Final one-sample broad gate failed D04-03 because resolvedDetails was empty after the employee said the payment call was necessary and they did not regret joining; the negative control remained separate.
+- Expected: Preserve the settled detail so the conversation does not reopen that question.
+- Root cause layer: architecture
+- Harness fix: Diagnose the classifier/continuity boundary against the saved D04 artifact; add an exact fixture before changing prompts or thresholds. Do not treat one live sample as a calibrated pass-rate.
+- Regression check: Existing resolved-detail-question-planning scenario plus labeled classification fixture; gate 2026-10-06T11-57-32-609Z-c31f092.
+- Status: open
+
+## 2026-10-06: Terse next-conversation judge sample failed
+
+- Symptom: Final one-sample gate passed terse hard checks but failed its aggregate judge result; the next-conversation quality verdict requires inspection separately from deterministic style profile evidence.
+- Expected: Learned brevity is evident in the next conversation, with judgments grounded and calibrated.
+- Root cause layer: verification
+- Harness fix: Inspect the saved transcript with human labels, then repeat unchanged models to distinguish judge variance from actual style weakness before changing prompts or thresholds.
+- Regression check: Existing terse-user live scenario with repeated judge observations; gate 2026-10-06T11-57-32-609Z-c31f092.
+- Status: open
+
+## 2026-10-06: Long live replay timed out before reporting
+
+- Symptom: Broad gate's Annna sample exceeded the 300000ms budget and emitted no final JSON; focused diagnostic retry with 900000ms completed around 67s.
+- Expected: Live timeouts remain explicit and cannot masquerade as completed model evaluation.
+- Root cause layer: environment
+- Harness fix: Preserve sample logs; use an explicit diagnostic timeout for isolated retry, without changing ordinary gate acceptance. Investigate provider latency/cancellation if the condition repeats.
+- Regression check: Review sample runtime and reportCount before interpreting hard/judge status; no permanent timeout or threshold change was made.
+- Status: open
+
+## 2026-10-08: Azure content filter rejection left Illia without replies
+
+- Symptom: Six inbound Slack messages from one linked, active user on 2026-10-08 reached PostgreSQL and the worker, but each conversation job exhausted three attempts. The first provider failures were `conversation_provider_http_400`; later attempts also reported `conversation_unclassified_error`. No outbound message was persisted for those turns. Azure Monitor showed `RAIRejectedRequests` for `gpt-5.4-mini` at 14:56, 14:57, and 15:15 UTC with category `Sexual`; `RAIHarmfulRequests` classified these as `Medium` and `USER_REQUEST`. These are aggregate metrics, not per-message records, but their timing matches the worker failures. The first failed turn was a workplace complaint with profanity and no apparent sexual topic; the Azure result is a likely false positive on the full prompt. The classifier includes the latest turn twice (transcript and latest-message block) and keeps it in the 15-turn transcript of later short turns. After five provider errors, the shared circuit breaker opens for 30 seconds, explaining later unclassified retries without new provider calls.
+- Expected: A received, eligible Slack turn either produces a delivered reply or leaves an actionable, privacy-safe failure diagnosis and recovery path.
+- Root cause layer: architecture and verification
+- Harness fix: Capture a bounded, content-free Azure content-filter subtype and request identifier at the TypeScript adapter boundary; classify permanent content-filter 400s separately from retryable provider failures and exclude them from the shared circuit-breaker failure count. Commit an idempotent, localized safe response or explicit reviewed rejection state, and prevent a rejected prior turn from poisoning later classifier prompts while retaining its original in PostgreSQL. Add an operator query or runbook for inbound-to-outbound reconciliation before controlled recovery. Do not lower the Azure safety threshold based on this incident.
+- Regression check: Synthetic content-filter 400 fixture verifies one provider attempt, no shared breaker trip, safe idempotent outcome, and a clean next-turn prompt without leaking message text, credentials, or prompts into logs/receipts; a read-only production reconciliation compares inbound IDs, job errors, Azure aggregate rejection metrics, and outbound deliveries.
+- Status: open
 
 ## 2026-10-04: Temporary pilot command used top-level await in a CommonJS script
 

@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import type { ScenarioRunReport } from '../harness/report';
-import { classifyFailure } from './failure-classifier';
+import { buildFailureReason, classifyFailure, hasDeterministicFailure } from './failure-classifier';
 
 interface GateConfig {
   runs: number;
@@ -248,7 +248,7 @@ function runSample(args: {
 
   const reports = readReports(args.reportDir, args.gateId, args.runId);
   const reportFiles = reports.map((report) => `${report.scenarioSlug}-${slugify(args.runId)}.json`);
-  const hardPassed = command.status === 0 && reports.length > 0;
+  const hardPassed = command.status === 0 && reports.length > 0 && !hasDeterministicFailure(reports);
   const evaluatedJudgeReports = reports.filter((report) => report.judge.evaluated !== false);
   const judgeRequired = args.scenario.judgePasses > 0;
   const judgePassed = judgeRequired
@@ -271,6 +271,7 @@ function runSample(args: {
     exitCode: command.status,
     output,
     reportCount: reports.length,
+    reports,
   });
   const status = hardPassed
     ? 'hard_passed'
@@ -358,35 +359,6 @@ function readGitState(): GateSummary['git'] {
     sha: sha.status === 0 ? sha.stdout.trim() : null,
     dirty: dirty.status === 0 ? dirty.stdout.trim().length > 0 : true,
   };
-}
-
-function buildFailureReason(
-  exitCode: number | null,
-  output: string,
-  reports: ScenarioRunReport[],
-): string | null {
-  if (exitCode === 0 && reports.length > 0) return null;
-  if (reports.length === 0) {
-    return 'Vitest produced no scenario JSON report. See the sample log for the subprocess output.';
-  }
-  const deterministicFailures = reports.flatMap((report) =>
-    report.deterministic.violations.map(
-      (violation) =>
-        `${report.scenarioName} turn ${violation.turn} ${violation.rule}: ${violation.detail}`,
-    ),
-  );
-  if (deterministicFailures.length > 0) return deterministicFailures.join('\n');
-  const assertionLine = output
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line.startsWith('AssertionError'));
-  if (assertionLine) return assertionLine;
-
-  const failLine = output
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line.includes('FAIL  src/'));
-  return failLine ?? `Vitest exited with code ${exitCode ?? 'unknown'}.`;
 }
 
 function buildSummaryMarkdown(summary: GateSummary): string {
