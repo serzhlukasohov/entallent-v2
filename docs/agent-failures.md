@@ -2797,6 +2797,22 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: verification
 - Harness fix: Report provider-filter findings only with the E2E path that reproduces them; the design doc now lists the per-prompt results.
 - Regression check: Run the signed-event Slack E2E (benign / burnout / self-harm) plus a direct `detectRisk` probe before claiming filter behavior.
+## 2026-10-13: Release-lineage check ignored squash merges
+
+- Symptom: The round-2 GC spec claimed all September CAP fixes were absent from `main` (X0) because `git merge-base --is-ancestor <fix-commit> origin/main` failed and a test-name grep missed. A 50-file merge of `codex/grill-session-docs` was started on that premise.
+- Expected: Detect that `main` already contained the branch via squash merge `abb314f` (tree identical to the branch tip) before planning integration.
+- Root cause layer: verification
+- Harness fix: For "is X released?" questions, compare content, not ancestry: `git diff <squash-candidate> <branch-tip>` / `git log --grep '#<PR>' main`, or check that each fix's added test names exist in `git grep` on the target (strip diff `+` prefixes). `git cherry` also misses squashes.
+- Regression check: `git diff --stat abb314f origin/codex/grill-session-docs` is empty; any lineage claim cites a content comparison.
+- Status: fixed
+
+## 2026-10-13: CAP-2 fix reintroduced a lexical heuristic that ADR-013 D2 forbids
+
+- Symptom: The first CAP-2 fix extended `language-policy.ts` with Ukrainian/Russian word lists; the user stopped it ("мы же договорились, что будем избавляться от этого").
+- Expected: Check the signal in `docs/heuristics/signal-inventory.md` (S9, Wave 1) and implement its declared replacement: model `responseLanguage` + structural validation + fallback chain + eval set.
+- Root cause layer: instructions
+- Harness fix: Memory rule `no-lexical-heuristics`; before fixing any understanding bug, look up the signal's inventory row and wave and follow D2.
+- Regression check: `git grep -nE "іїєґ|\\\\bщо\\\\b|_ONLY_WORDS" packages/application/src` returns nothing; S9 changes ship with `src/scenarios/language-eval.sim.test.ts`.
 ## 2026-10-06: Simulation gate ignores reported deterministic violations
 
 - Symptom: Source review found that runSample uses subprocess success plus report existence for hardPassed and does not consume report.deterministic.passed. CAP-8 emits the generic report without asserting its generic transcript violations.

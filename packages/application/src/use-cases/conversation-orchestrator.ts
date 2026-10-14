@@ -626,7 +626,7 @@ export class ConversationOrchestrator {
     const responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
       ? null
       : probeQuestion;
-    const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
+    const languagePolicy = resolveLanguagePolicy();
     const clarificationText = clarificationRequest
       ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
           turns, clarificationRequest, languagePolicy.responseLanguage,

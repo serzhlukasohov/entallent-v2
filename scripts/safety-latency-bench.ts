@@ -103,7 +103,7 @@ async function main(): Promise<void> {
           b = await runBefore();
         }
         const languagePolicy: LanguagePolicy = {
-          responseLanguage: scenario.lang, source: 'tenant_default', confidence: 0.4, shouldUpdateUserLocale: false,
+          responseLanguage: scenario.lang, source: 'product_default',
         };
         const [, generateMs] = await timed(() => provider.generateResponse(turns, {
           mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [],

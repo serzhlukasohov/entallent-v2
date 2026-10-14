@@ -1,89 +1,12 @@
-import type { ConversationTurn, LanguagePolicy } from '../ports/ai-provider.port';
+import type { LanguagePolicy } from '../ports/ai-provider.port';
 
-type LanguageCode = LanguagePolicy['responseLanguage'];
-const LANGUAGE_NAMES = new Intl.DisplayNames(['en'], { type: 'language' });
+/**
+ * Product decision 2026-10-13: customers are English-speaking teams, so the mentor
+ * replies in English regardless of the employee's language. Change it here if that
+ * decision changes; a model-based policy is parked on `codex/parked-model-language`.
+ */
+const PRODUCT_RESPONSE_LANGUAGE = 'en';
 
-export function resolveLanguagePolicy(turns: ConversationTurn[], userLocale?: string): LanguagePolicy {
-  const userTurns = turns.filter((turn) => turn.role === 'user' && turn.content !== '__init__');
-  const current = userTurns[userTurns.length - 1];
-  const normalizedLocale = normalizeLocale(userLocale);
-  const currentLanguage = current ? inferLanguage(current.content, normalizedLocale) : null;
-
-  if (currentLanguage) {
-    return {
-      responseLanguage: currentLanguage,
-      source: 'current_turn',
-      confidence: 0.95,
-      shouldUpdateUserLocale: normalizedLocale !== currentLanguage,
-    };
-  }
-
-  for (const turn of userTurns.slice(0, -1).reverse()) {
-    const recentLanguage = inferLanguage(turn.content, normalizedLocale);
-    if (recentLanguage) {
-      return {
-        responseLanguage: recentLanguage,
-        source: 'recent_turns',
-        confidence: 0.8,
-        shouldUpdateUserLocale: normalizedLocale !== recentLanguage,
-      };
-    }
-  }
-
-  if (normalizedLocale) {
-    return {
-      responseLanguage: normalizedLocale,
-      source: 'user_profile',
-      confidence: 0.6,
-      shouldUpdateUserLocale: false,
-    };
-  }
-
-  return {
-    responseLanguage: 'en',
-    source: 'tenant_default',
-    confidence: 0.4,
-    shouldUpdateUserLocale: false,
-  };
-}
-
-function inferLanguage(text: string, profileLanguage?: LanguageCode | null): LanguageCode | null {
-  const userText = stripNonLanguageArtifacts(text);
-  const cyrillicWords = userText.match(/\p{Script=Cyrillic}+(?:['’ʼ-]\p{Script=Cyrillic}+)*/gu) ?? [];
-  const latinWords = userText.match(/\p{Script=Latin}+(?:['’ʼ/-]\p{Script=Latin}+)*/gu) ?? [];
-  if (cyrillicWords.length === 0 && latinWords.length === 0) return null;
-  if (cyrillicWords.length === latinWords.length) return null;
-  if (cyrillicWords.length > latinWords.length) {
-    if (isLikelyUkrainian(userText) || profileLanguage === 'uk') return 'uk';
-    return 'ru';
-  }
-  const latinLetters = latinWords.join('').replace(/['’ʼ/-]/gu, '').length;
-  if (latinLetters <= 2 || /^[\p{Script=Latin}\d._-]{1,20}$/u.test(userText.trim())) return null;
-  return 'en';
-}
-
-function stripNonLanguageArtifacts(text: string): string {
-  const withoutSlack = text
-    .replace(/\*Sent using\*\s*<@[A-Z0-9]+(?:\|[^>]+)?>/gu, '')
-    .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>/gu, '')
-    .replace(/\b(?:https?:\/\/|www\.)\S+/giu, '')
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, '')
-    .replace(/\b[\p{Script=Latin}\d]+(?:[._][\p{Script=Latin}\d]+)+\b/gu, '')
-    .replace(/\b[A-Z\d]+(?:\/[A-Z\d]+)+\b/gu, '')
-    .replace(/\b(?=[\p{Script=Latin}\d-]*\d)[\p{Script=Latin}\d]+(?:-[\p{Script=Latin}\d]+)+\b/gu, '');
-  return withoutSlack.trim();
-}
-
-function normalizeLocale(locale?: string): LanguageCode | null {
-  const normalized = locale?.trim().toLowerCase().split(/[-_]/)[0];
-  if (!normalized) return null;
-  try {
-    return LANGUAGE_NAMES.of(normalized) ? normalized : null;
-  } catch {
-    return null;
-  }
-}
-
-function isLikelyUkrainian(text: string): boolean {
-  return /[іїєґІЇЄҐ]|\bщо\b/iu.test(text);
+export function resolveLanguagePolicy(): LanguagePolicy {
+  return { responseLanguage: PRODUCT_RESPONSE_LANGUAGE, source: 'product_default' };
 }

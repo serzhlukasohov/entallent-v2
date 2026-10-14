@@ -14,9 +14,7 @@ const strategy: ReplyStrategy = {
 
 const defaultLanguagePolicy: LanguagePolicy = {
   responseLanguage: 'en',
-  source: 'tenant_default',
-  confidence: 0.4,
-  shouldUpdateUserLocale: false,
+  source: 'product_default',
 };
 
 function context(overrides: Omit<ResponseContext, 'languagePolicy'> & Partial<Pick<ResponseContext, 'languagePolicy'>>): ResponseContext {
@@ -43,9 +41,7 @@ describe('buildRespondSystemPrompt confirmation branch', () => {
       userName: 'Test',
       languagePolicy: {
         responseLanguage: 'ru',
-        source: 'current_turn',
-        confidence: 0.95,
-        shouldUpdateUserLocale: true,
+        source: 'product_default',
       },
       confirmationRequest: {
         questionGroup: 'belonging',
@@ -170,9 +166,7 @@ describe('buildRespondSystemPrompt language policy', () => {
       userName: 'T',
       languagePolicy: {
         responseLanguage: 'ru',
-        source: 'current_turn',
-        confidence: 0.95,
-        shouldUpdateUserLocale: true,
+        source: 'product_default',
       },
     }));
 
@@ -185,9 +179,7 @@ describe('buildRespondSystemPrompt language policy', () => {
       userName: 'T',
       languagePolicy: {
         responseLanguage: 'pt',
-        source: 'user_profile',
-        confidence: 0.6,
-        shouldUpdateUserLocale: false,
+        source: 'product_default',
       },
     }));
 
@@ -318,9 +310,7 @@ describe('buildRespondSystemPrompt reply plan', () => {
       userName: 'there',
       languagePolicy: {
         responseLanguage: 'uk',
-        source: 'current_turn',
-        confidence: 0.95,
-        shouldUpdateUserLocale: true,
+        source: 'product_default',
       },
     });
     const systemPrompt = buildRespondSystemPrompt(s(), responseContext);

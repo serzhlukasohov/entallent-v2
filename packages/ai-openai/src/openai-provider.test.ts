@@ -23,9 +23,7 @@ function makeProvider() {
 const turns = [{ role: 'user' as const, content: 'hi', timestamp: new Date() }];
 const defaultLanguagePolicy: LanguagePolicy = {
   responseLanguage: 'en',
-  source: 'tenant_default',
-  confidence: 0.4,
-  shouldUpdateUserLocale: false,
+  source: 'product_default',
 };
 
 function responseContext(overrides: Omit<ResponseContext, 'languagePolicy'> & Partial<Pick<ResponseContext, 'languagePolicy'>>): ResponseContext {

@@ -544,7 +544,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(metadata).not.toHaveProperty('reportingDisclosureVersion');
   });
 
-  it('recovers persisted awaiting confirmation with the localized disclosure', async () => {
+  it('recovers persisted awaiting confirmation with the English disclosure (product default)', async () => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue(surveyReadyHistory());
     m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
@@ -567,12 +567,12 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     const result = await orch.orchestrate(INPUT);
 
-    const expectedText = `Я рядом.\n\n${getReportingDisclosureText('ru')}`;
+    const expectedText = `Я рядом.\n\n${getReportingDisclosureText('en')}`;
     expect(result.responseText).toBe(expectedText);
     expect(m.aiProvider.generateResponse.mock.calls[0][2]).toMatchObject({
       confirmationRequest: undefined,
       surveyProbeQuestion: undefined,
-      reportingDisclosure: getReportingDisclosureText('ru'),
+      reportingDisclosure: getReportingDisclosureText('en'),
     });
     expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
       text: expectedText,
@@ -674,7 +674,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     const result = await orch.orchestrate(INPUT);
 
-    expect(result.responseText).toBe(getReportingExplanationText('ru'));
+    expect(result.responseText).toBe(getReportingExplanationText('en'));
     expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
     expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
     expect(m.surveyRepo.transitionAwaitingGroupState).toHaveBeenCalledWith(
@@ -895,9 +895,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
   it.each([
     ['English', 'What did you capture from onboarding, and remind me tomorrow to send the report?', "I'll remind you as requested."],
-    ['Russian', 'Что ты сохранил из сообщения об онбординге, и напомни мне завтра об отчёте?', 'Хорошо, я напомню об этом.'],
-    ['Ukrainian', 'Що ти зберіг з повідомлення про онбординг, і нагадай мені завтра про звіт?', 'Добре, я нагадаю про це.'],
-  ])('keeps a mixed CAP-8 reminder on the deterministic database-backed path in %s', async (_language, question, acknowledgement) => {
+    ['Russian', 'Что ты сохранил из сообщения об онбординге, и напомни мне завтра об отчёте?', "I'll remind you as requested."],
+    ['Ukrainian', 'Що ти зберіг з повідомлення про онбординг, і нагадай мені завтра про звіт?', "I'll remind you as requested."],
+  ])('keeps a mixed CAP-8 reminder on the deterministic database-backed path, answering in English, for a question in %s', async (_language, question, acknowledgement) => {
     const m = baseMocks();
     const reminderRequest = { intent: 'send the report', dueAt: '2026-09-04T09:00:00.000Z' };
     m.conversationRepo.findRecentMessages.mockResolvedValue([
@@ -1804,23 +1804,21 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       'safety checks', 'product retention rules', 'audited internal admin and debugging access',
     ], /only to reply|depending on (?:the )?setup|human review|model training/],
     ['ru-RU', [
-      'я — ии-помощник, а не человек', 'отвечать в этом разговоре', 'личной памяти',
-      'целей, задач или напоминаний', 'измерения пульса команды', 'после подтверждения и обезличивания',
-      'если оно не отозвано', 'проверок безопасности', 'правилам хранения продукта',
-      'внутренний административный доступ', 'аудируется',
-    ], /только для ответ|в зависимости от настроек|провер(?:ка|яется) человеком|обучени[ея] модел/],
+      'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
+      'goals, tasks, or reminders', 'pulse measurement', 'confirmed, de-identified, and non-withdrawn',
+      'safety checks', 'product retention rules', 'audited internal admin and debugging access',
+    ], /only to reply|depending on (?:the )?setup|human review|model training/],
     ['uk-UA', [
-      'я — ші-помічник, а не людина', 'відповідати в цій розмові', 'приватної пам’яті',
-      'цілей, завдань або нагадувань', 'вимірювання пульсу команди', 'після підтвердження й знеособлення',
-      'якщо його не відкликано', 'перевірок безпеки', 'правилами зберігання продукту',
-      'внутрішній адміністративний доступ', 'аудитується',
-    ], /лише для відпов|залежно від налаштувань|перевір(?:ка|яється) людиною|навчанн[яі] модел/],
+      'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
+      'goals, tasks, or reminders', 'pulse measurement', 'confirmed, de-identified, and non-withdrawn',
+      'safety checks', 'product retention rules', 'audited internal admin and debugging access',
+    ], /only to reply|depending on (?:the )?setup|human review|model training/],
     ['fr-FR', [
       'i am an ai assistant, not a human', 'respond in this conversation', 'private memory',
       'goals, tasks, or reminders', 'pulse measurement', 'confirmed, de-identified, and non-withdrawn',
       'safety checks', 'product retention rules', 'audited internal admin and debugging access',
     ], /only to reply|depending on (?:the )?setup|human review|model training/],
-  ] as const)('localizes the complete CAP-5 policy for %s', async (locale, required, forbidden) => {
+  ] as const)('answers the complete CAP-5 policy in English for profile locale %s (product default)', async (locale, required, forbidden) => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
       id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
@@ -3642,105 +3640,19 @@ describe('ConversationOrchestrator persisted continuity and real goals', () => {
   });
 });
 
-describe('ConversationOrchestrator language policy', () => {
-  it('uses the current Russian inbound turn over an English user profile locale', async () => {
-    const m = baseMocks();
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'Привет', occurredAt: new Date(), metadata: undefined },
-    ]);
-    const orch = new ConversationOrchestrator(
-      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
-      undefined, undefined, m.featureFlags, undefined, undefined,
-    );
-
-    await orch.orchestrate(INPUT);
-
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.languagePolicy).toMatchObject({
-      responseLanguage: 'ru',
-      source: 'current_turn',
-      shouldUpdateUserLocale: true,
-    });
-  });
-
-  it('uses recent Russian user turns when the current turn is ambiguous', async () => {
-    const m = baseMocks();
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-0', ...OWNERSHIP, direction: 'inbound', text: 'Я переживаю из-за Atlas-9', occurredAt: new Date(), metadata: undefined },
-      { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok', occurredAt: new Date(), metadata: undefined },
-    ]);
-    const orch = new ConversationOrchestrator(
-      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
-      undefined, undefined, m.featureFlags, undefined, undefined,
-    );
-
-    await orch.orchestrate(INPUT);
-
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.languagePolicy).toMatchObject({
-      responseLanguage: 'ru',
-      source: 'recent_turns',
-      shouldUpdateUserLocale: true,
-    });
-  });
-
-  it('ignores Slack connector attribution when resolving an ambiguous current turn', async () => {
-    const m = baseMocks();
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-0', ...OWNERSHIP, direction: 'inbound', text: 'Я переживаю из-за Atlas-9', occurredAt: new Date(), metadata: undefined },
-      { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok *Sent using* <@U0BPHHA21GC>', occurredAt: new Date(), metadata: undefined },
-    ]);
-    const orch = new ConversationOrchestrator(
-      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
-      undefined, undefined, m.featureFlags, undefined, undefined,
-    );
-
-    await orch.orchestrate(INPUT);
-
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.languagePolicy).toMatchObject({
-      responseLanguage: 'ru',
-      source: 'recent_turns',
-      shouldUpdateUserLocale: true,
-    });
-  });
-
-  it('treats a Latin product token as ambiguous and keeps recent Russian context', async () => {
-    const m = baseMocks();
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-0', ...OWNERSHIP, direction: 'inbound', text: 'Я переживаю из-за автономии', occurredAt: new Date(), metadata: undefined },
-      { id: 'out-0', direction: 'outbound', text: 'Понимаю.', occurredAt: new Date(), metadata: undefined },
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'Atlas-9', occurredAt: new Date(), metadata: undefined },
-    ]);
-    const orch = new ConversationOrchestrator(
-      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
-      undefined, undefined, m.featureFlags, undefined, undefined,
-    );
-
-    await orch.orchestrate(INPUT);
-
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.languagePolicy).toMatchObject({
-      responseLanguage: 'ru',
-      source: 'recent_turns',
-    });
-  });
-
-  it('preserves Ukrainian profile language for Cyrillic current turns', async () => {
+describe('ConversationOrchestrator language policy (English product default)', () => {
+  it.each([
+    ['a Ukrainian conversation with a Ukrainian profile', 'uk', 'Мені сьогодні важко зосередитися'],
+    ['a Russian conversation with a Russian profile', 'ru', 'Мне сегодня сложно сосредоточиться'],
+    ['an English conversation with a Portuguese profile', 'pt-BR', 'I am struggling to focus today'],
+  ])('replies in English for %s', async (_case, userLocale, text) => {
     const m = baseMocks();
     m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1',
-      tenantId: 't-1',
-      userId: 'u-1',
-      channelType: 'slack', externalConversationId: 'ec',
-      userDisplayName: 'Sam',
-      userLocale: 'uk',
-      userTimezone: 'UTC',
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
+      userDisplayName: 'Sam', userLocale, userTimezone: 'UTC',
     });
     m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'я думаю що це важливо', occurredAt: new Date(), metadata: undefined },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text, occurredAt: new Date(), metadata: undefined },
     ]);
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -3749,67 +3661,8 @@ describe('ConversationOrchestrator language policy', () => {
 
     await orch.orchestrate(INPUT);
 
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.languagePolicy).toMatchObject({
-      responseLanguage: 'uk',
-      source: 'current_turn',
-      shouldUpdateUserLocale: false,
-    });
-  });
-
-  it('uses other valid stored profile languages', async () => {
-    const m = baseMocks();
-    m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1',
-      tenantId: 't-1',
-      userId: 'u-1',
-      channelType: 'slack', externalConversationId: 'ec',
-      userDisplayName: 'Sam',
-      userLocale: 'pt-BR',
-      userTimezone: 'UTC',
-    });
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
-    ]);
-    const orch = new ConversationOrchestrator(
-      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
-      undefined, undefined, m.featureFlags, undefined, undefined,
-    );
-
-    await orch.orchestrate(INPUT);
-
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.languagePolicy).toMatchObject({
-      responseLanguage: 'pt',
-      source: 'user_profile',
-    });
-  });
-
-  it('ignores malformed stored locale values', async () => {
-    const m = baseMocks();
-    m.conversationRepo.findById.mockResolvedValue({
-      id: 'c-1',
-      tenantId: 't-1',
-      userId: 'u-1',
-      channelType: 'slack', externalConversationId: 'ec',
-      userDisplayName: 'Sam',
-      userLocale: '123',
-      userTimezone: 'UTC',
-    });
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: '...', occurredAt: new Date(), metadata: undefined },
-    ]);
-    const orch = new ConversationOrchestrator(
-      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
-      undefined, undefined, m.featureFlags, undefined, undefined,
-    );
-
-    await orch.orchestrate(INPUT);
-
-    const ctxArg = m.aiProvider.generateResponse.mock.calls[0][2];
-    expect(ctxArg.languagePolicy).toMatchObject({
-      responseLanguage: 'en',
-      source: 'tenant_default',
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].languagePolicy).toEqual({
+      responseLanguage: 'en', source: 'product_default',
     });
   });
 });
@@ -4397,7 +4250,7 @@ describe('ConversationOrchestrator style adaptation — structural verbosity', (
         },
         languagePolicy: {
           responseLanguage: 'en',
-          source: 'user_profile',
+          source: 'product_default',
         },
         isSessionStart: true,
         memoryGrounding: {

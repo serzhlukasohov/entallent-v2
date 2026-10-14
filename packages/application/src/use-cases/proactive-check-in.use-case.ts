@@ -86,7 +86,7 @@ export class ProactiveCheckInUseCase {
 
     const userName = conversation.userDisplayName ?? 'there';
     const flagCtx = { tenantId, userId };
-    const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
+    const languagePolicy = resolveLanguagePolicy();
 
     const [memoryEnabled, surveyFlagEnabled] = await Promise.all([
       this.featureFlags
