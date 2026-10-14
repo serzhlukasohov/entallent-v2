@@ -23,6 +23,9 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain('both rejects the mentor\'s prior interpretation and states a corrected request');
     expect(prompt).toContain('use "correction", not "request"');
     expect(prompt).toContain('No, you keep circling. I want you to give me criteria');
+    expect(prompt).toContain('actually ends or abandons the exchange');
+    expect(prompt).toContain('even when that rejection is the final sentence');
+    expect(prompt).toContain('Preserve the restated ask in latestUserSubstance');
     expect(prompt).toContain('Short explicit endings such as "No, forget"');
     expect(prompt).toContain('Do not preserve that premise in latestUserSubstance or topicAnchor');
     expect(prompt).toContain('Dialogue-act choice never lowers safety');

@@ -2,6 +2,7 @@ import type {
   AdminManagerTrendsResponse,
   AdminQueuesResponse,
   AdminV2PilotResponse,
+  AdminV2PilotPeopleResponse,
 } from '@entalent/contracts';
 
 const API_BASE = process.env.API_INTERNAL_URL ?? 'http://localhost:3000/api/v1';
@@ -60,14 +61,21 @@ export function fetchAdminQueues(revalidate = 30): Promise<AdminQueuesResponse |
 }
 
 export function fetchAdminV2Pilot(): Promise<AdminV2PilotResponse | null> {
-  // Temporary QA view: only the approved Test AI Agent tenant and its two
-  // frozen test cohorts are visible on the public dashboard.
+  // Temporary QA view: only the approved Test AI Agent tenant is visible on the
+  // public dashboard. The API picks its most recent V2 cohorts, so a new cycle
+  // shows up without redeploying the dashboard.
   if (TENANT_ID !== '7d1e0163-6d53-4713-bd24-254690cc5090') return Promise.resolve(null);
-  const query = new URLSearchParams({
-    tenantId: TENANT_ID,
-    cohortIds: 'eb12c97a-b298-4694-918f-1d9a971bc504,4a8b471b-94a7-4528-aa2d-5feaf02138ac',
-  });
+  const query = new URLSearchParams({ tenantId: TENANT_ID });
   return fetchApi<AdminV2PilotResponse>(`/admin/v2-pilot?${query}`, 0);
+}
+
+export function fetchAdminV2PilotPeople(): Promise<AdminV2PilotPeopleResponse | null> {
+  if (process.env.QA_PRIVATE_VIEW_ENABLED !== 'true') return Promise.resolve(null);
+  if (TENANT_ID !== '7d1e0163-6d53-4713-bd24-254690cc5090') return Promise.resolve(null);
+  // No cohortId: the API resolves the running cohort by period and reports
+  // its state, so a closed cohort is never presented as the current cycle.
+  const query = new URLSearchParams({ tenantId: TENANT_ID });
+  return fetchApi<AdminV2PilotPeopleResponse>(`/admin/v2-pilot/people?${query}`, 0);
 }
 
 export function postAdminUserReset(userId: string): Promise<UserResetResult> {

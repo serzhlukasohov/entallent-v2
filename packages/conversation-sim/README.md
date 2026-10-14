@@ -36,7 +36,9 @@ Each scenario writes a full report to `packages/conversation-sim/runs/<scenario>
 and `.json` (gitignored, overwritten per run): judge verdict with met and unmet
 criteria, deterministic violations, every reply with its mode, classification,
 `replyPlan` and length, the extracted memory and the learned style profile. The
-same markdown report goes to stdout.
+initial markdown snapshot goes to stdout. After the Vitest test finishes, any
+assertion or cleanup failure updates every report written by that test; the saved JSON and
+Markdown are the final result. The judge verdict remains independent.
 
 Setting `LANGWATCH_API_KEY` additionally streams runs to the LangWatch UI, where the
 conversation is rendered turn by turn as it plays out.
@@ -59,9 +61,15 @@ packages/conversation-sim/runs/gates/<gate-id>/
   <scenario-report>.json
 ```
 
-The default gate is five samples per scenario. Hard gates must pass 5/5. Judge
+The default gate is five samples per scenario. Hard gates must pass 5/5. A failed
+deterministic flag or any recorded violation fails the hard gate even when the
+subprocess exits successfully; report-backed failures are never infrastructure
+retries. Judge
 criteria must pass 4/5 for `burnout` and `memory-recall`, and 3/5 for
-`terse-user`, where the judge is intentionally noisier than the deterministic
+`terse-user`. The existing `resolved-detail-question-planning` regression requires
+5/5 hard and judge passes because its test directly asserts judge success; its
+unresolved-detail control records the judge as not run. For the other scenarios
+above, the judge is intentionally noisier than the deterministic
 contract. Set `SIM_GATE_RUNS=1` for a local smoke run; thresholds scale to the
 sample count for that override.
 
@@ -78,8 +86,11 @@ is available and fall back to the single Azure deployment otherwise.
 | `AZURE_OPENAI_TESTING_DEPLOYMENT` | Azure deployment for the testing agents |
 | `LANGWATCH_API_KEY` | Optional — renders runs in the LangWatch UI |
 
-These simulations are deliberately excluded from `pnpm test`: each run costs real
-tokens and takes tens of seconds. Run them before merging prompt or orchestration
+The package `test` command runs the offline gate tests and explicitly excludes
+the six live scenario files, even when tooling appends their paths. Deterministic
+structural scenarios can be selected explicitly without model calls. Live
+simulations use `sim` or `sim:gate`; each run costs real tokens and takes tens of
+seconds. Run them before merging prompt or orchestration
 changes, and on a schedule.
 
 ## Reading a result
@@ -97,7 +108,8 @@ Every scenario records three independent layers:
    structured `replyPlan` conditioned the prompt.
 3. **Judge verdict** — the subjective criteria that no regex can express. This is
    advisory in these tests: a single judge miss is printed and written to the report,
-   not used to turn Vitest green or red.
+   not used to turn Vitest green or red in the advisory scenarios. The existing
+   resolved-detail regression asserts judge success directly.
 
 `reportRun` records all three, so a red run says *why* rather than just *no*.
 
