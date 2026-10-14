@@ -2571,10 +2571,10 @@ These entries are retained as historical evidence but are not active work becaus
 
 ## 2026-10-01: Production conversation failure hid its cause
 
-- Symptom: One September 30 production conversation job failed on all three attempts; no committed turn or reply followed. The worker logged only `conversation_processing_failed`, and its LLM run rows have no error code.
+- Symptom: One September 30 production conversation job failed on all three attempts; no committed turn or reply followed. On October 5–6, six more jobs for one linked QA account likewise failed after three attempts while a seventh succeeded. The worker logged only `conversation_processing_failed`, and its LLM run rows have no error code.
 - Expected: A failed production turn has a safe, actionable error code and can be distinguished from a V2 scoring failure without reading conversation text.
 - Root cause layer: verification
-- Harness fix: Preserve a sanitized failure code at the conversation processor boundary and add a narrow failure-path check before replaying any production job.
+- Harness fix: The trial worker now records a sanitized failure category in `llm_runs.error_code` and logs only that category. A narrow failure-path test passed locally; diagnostic worker deployment `7052edf6` succeeded on October 6. Wait for a new failed attempt before considering any production replay.
 - Regression check: Review failed conversation jobs against `conversation_turn_effects` and `llm_runs`; require an error code for each uncommitted failed turn.
 - Status: open
 
@@ -2774,4 +2774,159 @@ These entries are retained as historical evidence but are not active work becaus
 - Root cause layer: environment and context
 - Harness fix: Resolve and decrypt the active tenant's workspace connection through `WorkspaceConnectionRepository`, then use that token for read-only DM checks; do not assume a global bot token exists.
 - Regression check: After named PostgreSQL/Redis preflight, read the configured DM with `SlackAdapter.getDirectMessageUser` and compare it to the linked active hierarchy manager user ID.
+- Status: fixed
+
+## 2026-10-04: Temporary pilot command used top-level await in a CommonJS script
+
+- Symptom: The first invitation command stopped during TS transform before database access or Slack delivery.
+- Expected: The temporary operation script starts with the repository's CommonJS `tsx` configuration.
+- Root cause layer: tooling
+- Harness fix: Wrap asynchronous one-off script logic in `main()` before invoking `pnpm exec tsx`.
+- Regression check: Run a no-send compile or startup check for temporary TS operation scripts before a live payload.
+- Status: fixed
+
+## 2026-10-04: Manual pilot invitation looked like product onboarding
+
+- Symptom: Five real Slack DMs received an agent-style pilot invitation, and an ensuing ordinary bot reply asked one participant to confirm a survey summary. The user expected Insight Analysis V2 to be hidden and asked why messages were sent.
+- Expected: Pilot operations distinguish analyst-initiated outreach, the existing conversation runtime, and V2 analytical effects before sending anything. The user can review any intended employee-facing payload and its product purpose.
+- Root cause layer: workflow and product context
+- Harness fix: Add a no-outreach default to the V2 production test plan and explicitly resolve the conflict between the user's passive-analysis direction and SPEC.md IA-006/IA-011 before any further employee-facing V2 test.
+- Regression check: Before a V2 live test, enumerate every possible Slack sender and message type, then confirm the approved employee-facing contract and record recipient/message approval.
+- Status: fixed
+
+## 2026-10-04: Expired V1 window offered and accepted a confirmation
+
+- Symptom: A V1 growth state from a window ending 2026-09-30 surfaced a confirmation on 2026-10-04 and was marked confirmed from the employee's reply.
+- Expected: The reply flow does not present or accept a survey confirmation after the source window cutoff; such state cannot contaminate a V2 acceptance run.
+- Root cause layer: application and persistence lifecycle
+- Harness fix: Guard the V1 pending/awaiting selectors and confirmation write with the durable inbound and prompt timestamps inside the source window; cover late-job and expired-window cases on migrated PostgreSQL.
+- Regression check: Reproduce an expired V1 pending state with a new inbound turn and assert no confirmation prompt, no confirmed group state, and no report input.
+- Status: open
+
+## 2026-10-04: Mistook the intentionally quarantined QA team for a hierarchy defect
+
+- Symptom: A read-only check found five legacy QA team memberships and only one new-hierarchy Employee/placement; the first assessment incorrectly called this a pilot blocker and proposed creating four Person records.
+- Expected: Honor the 2026-09-27 approved quarantine: this five-person QA fixture stays on the legacy reporting roster for the pilot while the manager recipient is independently verified against the active hierarchy and Slack DM. Do not invent corporate identities.
+- Root cause layer: context
+- Harness fix: Read the approved `LEGACY-RECONCILIATION.md` classification before diagnosing a mixed legacy/new hierarchy tenant; distinguish pilot recipient validation from the separately deferred roster cutover.
+- Regression check: Compare the frozen cohort's five legacy memberships and configured recipient with the approved quarantine manifest before requiring new `people`/placement rows for pilot reporting.
+- Status: fixed
+
+## 2026-10-04: Pilot count query omitted cohort ID from its CTE
+
+- Symptom: A read-only status query referenced `c.id` after selecting only tenant and roster columns; PostgreSQL rejected it.
+- Expected: The cohort-scoped count query returns one complete status snapshot or fails the command clearly.
+- Root cause layer: verification
+- Harness fix: Include the cohort ID in the scope CTE and use `psql -v ON_ERROR_STOP=1` for operational reads.
+- Regression check: Re-run the corrected tenant/cohort-scoped query and confirm all expected count labels return with exit code zero.
+- Status: fixed
+
+## 2026-10-04: Production pilot read-only status lost database connectivity
+
+- Symptom: After the last successful cohort count at 15:57 UTC, the Railway PostgreSQL public proxy timed out on a five-second `psql` connect; a longer count read hung until interrupted. API `/api/v1/health/ready` and dashboard `/trends` timed out while simple API `/api/v1/health` later returned 200. Deployment records still said `SUCCESS`.
+- Expected: The pilot monitor can obtain a bounded, tenant-scoped count snapshot or report dependency unavailability promptly without implying deployment status proves readiness.
+- Root cause layer: environment and verification
+- Harness fix: Use bounded PostgreSQL connect/query timeouts in read-only monitoring; distinguish API process health, dependency readiness, and Railway deployment state. Preserve the last successful snapshot when a poll fails.
+- Regression check: Run a five-second read-only PostgreSQL probe and API readiness check before count queries; alert on repeated dependency timeout without changing production data.
+- Status: open
+
+## 2026-10-04: V2 pilot progress had no scoped dashboard path
+
+- Symptom: The deployed Trends page omits V2, so the QA group had no live view of collection, confirmation, scoring, and reporting progress.
+- Expected: The user can inspect the two approved test cycles on the existing dashboard without exposing private employee content or other tenants.
+- Root cause layer: architecture and access control
+- Harness fix: Add an explicitly tenant-and-cohort-scoped V2 read model and temporary public `/pilot` page using the existing server-side admin connection. Select only status metadata; remove the public QA exception before customer launch.
+- Regression check: Build the dashboard, verify the two approved production cohort IDs and twelve question statuses, and inspect the API response for private fields or other tenant data.
+- Status: fixed (API and dashboard trial deployments succeeded; public `/pilot` returned HTTP 200 with both QA cohorts)
+
+## 2026-10-04: Pilot dashboard test commands did not match package tooling
+
+- Symptom: The API package has no `test:focused` script, root `pnpm exec vitest` found no binary, and an initial temporary read probe used unsupported top-level await in CommonJS mode.
+- Expected: Focused checks and the read-only production probe run with the repository's installed launchers.
+- Root cause layer: tooling
+- Harness fix: Inspect package scripts first; run API tests with `pnpm --filter @entalent/api exec vitest`, use bounded HTTP checks for the Next route, and wrap temporary TS probes in an async function.
+- Regression check: Repeat the two focused API test files, the local 401/200 route check, and a bounded cohort-scoped production read.
+- Status: fixed
+
+## 2026-10-04: Pre-push harness compared the entire V2 PR to main
+
+- Symptom: The first dashboard push used the hook's default main-based diff, selected 312 historical PR files, and stopped at a missing local database integration target despite the dashboard-scoped harness passing.
+- Expected: A follow-up commit on the already-approved PR checks its own changed paths without requiring an unrelated production-like integration target.
+- Root cause layer: workflow
+- Harness fix: Set the supported `HARNESS_BASE_SHA` to the verified previous PR head for this follow-up push; preserve the hook and its checks.
+- Regression check: Confirm the push receipt lists the intended 15 changed files and passes typecheck, lint, and focused tests before accepting the remote head.
+- Status: fixed
+
+## 2026-10-04: V2 pilot route omitted from production route snapshot
+
+- Symptom: PR #7 CI `Lint, typecheck, test` failed because `GET admin/v2-pilot` appeared in the mounted production route list but not its reviewed snapshot.
+- Expected: A new production admin endpoint is reviewed in both the route allowlist and its privacy boundary test.
+- Root cause layer: verification
+- Harness fix: Update the mounted-route snapshot with the endpoint in the same change as the controller.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/private-production-route-boundary.test.ts src/admin/private-route-boundary.test.ts src/admin/v2-pilot.read-model.test.ts`.
+- Status: fixed
+
+## 2026-10-04: V2 ready group cannot present Bundle without disclosure receipt
+
+- Symptom: In the clean successor cycle, one participant has a complete three-question ready group and 15/15 processed inbound turns, but zero Confirmation Bundles. A tenant/cohort-scoped metadata query found zero delivered reporting-disclosure receipts for that participant.
+- Expected: The ordinary V2 conversation path provides the required reporting disclosure and then presents a natural Bundle when an Index is ready and the next eligible turn arrives.
+- Root cause layer: application orchestration; `findReadyQuestionBundle` is gated by `reportingDisclosureReceipt`, while `shouldOfferReportingDisclosure` currently requires a reporting explanation or V1 awaiting state. This likely leaves a V2-only conversation without a route to the prerequisite disclosure. Timing of the first ready group still needs verification before attributing the absent Bundle solely to this gate.
+- Harness fix: Add a V2-specific disclosure offer path with consent and safety guards, preserving the ordinary conversation UX; cover a V2-only cycle from clean first DM through delivered disclosure and ready Bundle.
+- Regression check: With an isolated migrated database and V2-only definition, process natural inbound turns through three ready meanings, then assert a delivered disclosure receipt precedes a single Bundle on an eligible later turn.
+- Status: open
+
+## 2026-10-05: Pilot manager target was compared as a user ID
+
+- Symptom: A read-only diagnostic compared `teams.manager_slack_user_id` directly to `channel_accounts.external_user_id` and falsely suggested that the configured recipient had no linked account.
+- Expected: Resolve the configured DM channel to its user with `SlackAdapter.getDirectMessageUser`, then check that user's active tenant, workspace, manager role, and account binding.
+- Root cause layer: context; the target column name obscures that the report processor treats its value as a DM channel ID.
+- Harness fix: For recipient diagnostics, inspect the report processor's target-resolution path before writing SQL; keep channel and user IDs distinct in operator evidence.
+- Regression check: Compare any manager-binding probe with `V2ReportProcessor` and `TeamRepository.isV2ManagerExternalUserId` before reporting its result.
+- Status: fixed
+
+## 2026-10-07: Autonomy pilot conversation ended before three meanings were ready
+
+- Symptom: A participant-initiated five-turn conversation received five delivered replies, but only two Autonomy working questions were collecting, none was confirmed, and the final reply had no follow-up question. The participant expected the agent to initiate and continue Autonomy topics.
+- Expected: The pilot UX expectation and the V2 contract agree on whether and when the agent guides a participant across the remaining Autonomy topics.
+- Root cause layer: product contract and application orchestration; V2 is passive by design, while ordinary reply planning allows but does not require a follow-up question. The final turn was classified as acknowledgement, and no complete three-question group existed for a Bundle.
+- Harness fix: Decide whether a participant-initiated Autonomy discussion should receive a bounded, natural follow-up toward missing meanings; update the contract and add one deterministic conversation scenario if approved.
+- Regression check: Inspect content-free reply metadata and Autonomy working statuses after a participant-initiated partial conversation; assert the agreed follow-up behavior without exposing survey structure.
+- Status: open
+
+## 2026-10-07: Local Railway PostgreSQL probe used an internal hostname
+
+- Symptom: A local `railway run` PostgreSQL probe failed to resolve `postgres.railway.internal`.
+- Expected: A read-only local probe reaches the named production database without exposing credentials.
+- Root cause layer: environment; Railway's internal hostname resolves only inside its private network.
+- Harness fix: For local operator probes, select `DATABASE_PUBLIC_URL` inside the Railway-provided environment and keep five-second connection and ten-second statement limits.
+- Regression check: Run a bounded `SELECT 1` through the public URL before any scoped count query; print no connection string.
+- Status: fixed
+
+## 2026-10-08: QA conversation produced several provisional V2 topic records from one discussion
+
+- Symptom: One participant described a single work topic, while the V2 dashboard showed five collecting question records across Autonomy, Growth, and Purpose. A read-only cohort-scoped check found those five records linked to three inbound messages; only one question was ready, with no Bundle or final insight. The participant could not see the draft interpretation in the overview and questioned its relevance.
+- Expected: Each temporary question meaning is grounded in the participant's stated experience, and the QA view makes provisional, ready, confirmed, and final states distinct.
+- Root cause layer: model evidence classification and dashboard presentation. Exact source review found one message describing tedious data-gathering, one saying the work was easy and the participant would prefer organizing a conference, and one short agreement with the agent's own suggestion about being outside conference decisions. The approved A1 rubric measures control over how work is done, which those turns do not establish, yet A1 is marked ready. The overview shows statuses without draft text.
+- Harness fix: Add a focused cross-topic replay distinguishing task boredom from A1 decision latitude, task ease from G1 skill development, and a short agreement with the agent's interpretation from independent employee evidence; make the QA overview link directly to draft text and explain readiness.
+- Regression check: Check candidate question summaries and readiness against the exact three-turn source and approved rubric; assert A1 is not ready from task boredom alone and no Bundle or finalization occurs before the three-question gate and participant confirmation.
+- Status: open
+
+The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each participant card; evidence-classification and readiness checks remain open.
+
+## 2026-10-11: QA Pulse labelled a closed V2 cohort as the current cycle
+
+- Symptom: The production `/pulse` page ("Темы участников · V2", "Текущий цикл") showed cohort `9b5d3697` (closed 2026-10-08 19:00 Warsaw) while cohort `aa069583` was running; participants with 3/3 scored Autonomy in the active cohort appeared as "Беседа не начата". `/pilot` likewise called the newest of three hardcoded cohorts "Текущий цикл".
+- Expected: The QA views resolve the running cohort for the tenant and never present a closed cohort as current.
+- Root cause layer: architecture. `fetchAdminV2PilotPeople` and `fetchAdminV2Pilot` in the dashboard hardcoded cohort IDs; each new cycle needed a dashboard redeploy, and the page text and `/pilot` (`index === 0`) assumed the hardcoded cohort was current.
+- Harness fix: The API resolves the cohort from the tenant's V2 cohorts by period (`selectCurrentPilotCohort`) and returns a derived `state`; dashboard labels come from that state only.
+- Regression check: `apps/api/src/admin/v2-pilot.read-model.test.ts` (active cohort beside an older closed cohort with more data) and `apps/dashboard/src/app/v2-pilot-progress.test.ts` (`cohortLabel`).
+- Status: fixed
+
+## 2026-10-11: `railway up` from a worktree uploaded the linked main checkout
+
+- Symptom: `railway up --service api --detach` run inside `.claude/worktrees/fix-pulse-current-cohort-e71081` produced api deployment `32361f16` built from `/Users/serzh/Documents/enTalentNew` (the Railway-linked main checkout on another branch with uncommitted changes). Startup logs mapped `company-setup` routes but no `/admin/v2-pilot` routes, so the QA dashboard reads returned 404 until redeploy.
+- Expected: The deploy archive is exactly the reviewed worktree commit.
+- Root cause layer: tooling. Railway CLI 5.41 archives the linked project directory, not the cwd, unless a path and `--path-as-root` are given.
+- Harness fix: Always deploy from a worktree with `railway up <absolute-worktree-path> --path-as-root --service <name> --detach`; after SUCCESS, check the startup `Mapped {...}` log lines or an endpoint that exists only in the new build before deploying dependent services.
+- Regression check: `railway logs --service api --deployment <id> | grep '<new route>'` returns the route before the dashboard deploy.
 - Status: fixed
