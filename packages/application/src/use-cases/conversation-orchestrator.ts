@@ -45,7 +45,7 @@ import { validateQuestionBundleComposition } from '../utils/question-bundle-comp
 import { validateQuestionBundleVerdict } from '../utils/question-bundle-verdict';
 import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
 import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
-import { contentFilterExplanation } from '../utils/content-filter-recovery';
+import { contentFilterExplanation, processingFailureExplanation } from '../utils/content-filter-recovery';
 import { modelMessagesForInbound } from '../utils/content-filter-recovery';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import { isSessionStart } from '../utils/session';
@@ -72,7 +72,10 @@ import type {
 
 export type OrchestrateInput = ProcessMessageRequest;
 /** The active runtime result. Unlike the archived ProcessMessageResult, risk may be unassessed. */
-export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & { risk: RiskAssessment; outcome?: 'input_filtered' };
+export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
+  risk: RiskAssessment;
+  outcome?: 'input_filtered' | 'processing_failed';
+};
 
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
@@ -143,14 +146,33 @@ export class ConversationOrchestrator {
     }
   }
 
+  /**
+   * Last-attempt fallback (GC round 2 CAP-1): the employee gets one explicit reply instead of
+   * silence. Only a bounded failure code is stored; no model decisions or side effects run.
+   */
+  async commitFailedTurn(input: OrchestrateInput, failureCode: string): Promise<OrchestrateResult> {
+    const languagePolicy = resolveLanguagePolicy();
+    return this.commitOutcomeTurn(input, 'processing_failed',
+      processingFailureExplanation(languagePolicy.responseLanguage), { failureCode, languagePolicy });
+  }
+
   private async commitInputFilteredTurn(input: OrchestrateInput): Promise<OrchestrateResult> {
+    const languagePolicy = resolveLanguagePolicy();
+    return this.commitOutcomeTurn(input, 'input_filtered',
+      contentFilterExplanation(languagePolicy.responseLanguage), { languagePolicy });
+  }
+
+  private async commitOutcomeTurn(
+    input: OrchestrateInput,
+    outcome: 'input_filtered' | 'processing_failed',
+    responseText: string,
+    metadata: Record<string, unknown>,
+  ): Promise<OrchestrateResult> {
     const conversation = await this.conversationRepo.findById(input.conversationId, input.tenantId);
     if (!conversation || conversation.userId !== input.userId
       || conversation.externalConversationId !== input.externalConversationId) {
-      throw new Error('conversation_content_filter_destination_mismatch');
+      throw new Error('conversation_outcome_destination_mismatch');
     }
-    const languagePolicy = resolveLanguagePolicy();
-    const responseText = contentFilterExplanation(languagePolicy.responseLanguage);
     const persist = async (): Promise<MessageRecord> => {
       const existing = await this.conversationRepo.findCommittedTurnForInbound?.({
         inboundMessageId: input.messageId,
@@ -171,9 +193,9 @@ export class ConversationOrchestrator {
         occurredAt: new Date(),
         traceId: input.traceId,
         metadata: {
-          conversationOutcome: 'input_filtered',
+          conversationOutcome: outcome,
           sourceInboundMessageId: input.messageId,
-          languagePolicy,
+          ...metadata,
         },
       });
       await this.conversationRepo.recordCommittedTurn?.({
@@ -193,7 +215,7 @@ export class ConversationOrchestrator {
     // The legacy runtime result requires model decisions even for a turn that never had them.
     // The active worker branches on outcome before reading these fields.
     return {
-      outcome: 'input_filtered',
+      outcome,
       outboundMessageId: outbound.id,
       responseText: outbound.text,
       mode: undefined as unknown as ProcessMessageResult['mode'],
@@ -201,6 +223,7 @@ export class ConversationOrchestrator {
       risk: undefined as unknown as OrchestrateResult['risk'],
     };
   }
+
 
   private async orchestrateModelTurn(input: OrchestrateInput): Promise<OrchestrateResult> {
     const { conversationId, tenantId, userId, externalWorkspaceId, externalConversationId } =

@@ -53,3 +53,8 @@ export function contentFilterExplanation(locale?: string): string {
   }
   return 'I could not answer because the model service rejected the request with a content filter. It did not identify which part caused this, so I cannot give a more specific reason. Could you send the main point again as a separate message?';
 }
+
+/** Shown once when an inbound could not be processed after every retry (GC round 2 CAP-1). */
+export function processingFailureExplanation(_language: string): string {
+  return 'Sorry, I could not process your last message because of an internal error on my side. Could you send it again?';
+}

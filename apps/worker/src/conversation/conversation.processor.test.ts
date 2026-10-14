@@ -69,7 +69,7 @@ function tenantQuery(policy: Record<string, unknown> = {}) {
 }
 
 function createProcessor(options: {
-  orchestrator?: { orchestrate: ReturnType<typeof vi.fn> };
+  orchestrator?: { orchestrate: ReturnType<typeof vi.fn>; commitFailedTurn?: ReturnType<typeof vi.fn> };
   checkInUseCase?: { execute: ReturnType<typeof vi.fn> };
   llmRunRepo?: { record: ReturnType<typeof vi.fn> };
   conversationRepo?: Partial<{
@@ -391,6 +391,61 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     }));
     expect(conversationRepo.markInboundConversationJobProcessed).not.toHaveBeenCalled();
     expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
+  });
+
+  describe('final-attempt fallback (GC round 2 CAP-1)', () => {
+    const failingJob = (attemptsMade: number) => ({
+      id: 'job-fail', name: 'process', attemptsMade, opts: { attempts: 3, delay: 2_000 },
+      data: conversationJob,
+    }) as unknown as Job<ConversationJob>;
+    const failingOrchestrator = (error: unknown) => ({
+      orchestrate: vi.fn(async () => { throw error; }),
+      commitFailedTurn: vi.fn(async () => ({ outboundMessageId: 'fallback-1' })),
+    });
+
+    it('rethrows on a non-final attempt so the retry can still answer', async () => {
+      const orchestrator = failingOrchestrator(new Error('v2_confirmation_bundle_stale'));
+      const { processor } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(1))).rejects.toThrow('conversation_processing_failed');
+      expect(orchestrator.commitFailedTurn).not.toHaveBeenCalled();
+    });
+
+    it('commits one fallback reply on the final attempt and completes the job', async () => {
+      const orchestrator = failingOrchestrator(new Error('v2_confirmation_bundle_stale'));
+      const { processor, llmRunRepo, conversationRepo } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(2))).resolves.toBeUndefined();
+
+      expect(orchestrator.commitFailedTurn).toHaveBeenCalledWith(conversationJob, 'conversation_app_v2_confirmation_bundle_stale');
+      expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+      expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'error', errorCode: 'conversation_app_v2_confirmation_bundle_stale',
+      }));
+    });
+
+    it('still fails the job when the fallback itself cannot be committed', async () => {
+      const orchestrator = failingOrchestrator(new Error('v2_confirmation_bundle_stale'));
+      orchestrator.commitFailedTurn.mockRejectedValue(new Error('database down'));
+      const { processor } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(2))).rejects.toThrow('conversation_processing_failed');
+    });
+
+    it.each([
+      [new Error('v2_confirmation_bundle_stale'), 'conversation_app_v2_confirmation_bundle_stale'],
+      [new Error('Generated response exceeds the question limit after one corrective attempt'), 'conversation_reply_question_limit'],
+      [new Error('OpenAI returned a noncompliant numeric survey probe after retry'), 'conversation_reply_numeric_probe_invalid'],
+      [new Error('Circuit OPEN — provider temporarily unavailable'), 'conversation_provider_circuit_open'],
+      [Object.assign(new Error('Provider filtered output'), { name: 'ProviderContentFilterError', direction: 'output' }), 'conversation_provider_content_filter_output'],
+      [new Error('private employee meaning about Project Atlas'), 'conversation_unclassified_error'],
+    ])('names a failure without exposing message text: %s', async (error, code) => {
+      const orchestrator = failingOrchestrator(error);
+      const { processor, llmRunRepo } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(0))).rejects.toThrow('conversation_processing_failed');
+      expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ errorCode: code }));
+    });
   });
 
   it('redacts failed check-in content from queue reasons and logs', async () => {
