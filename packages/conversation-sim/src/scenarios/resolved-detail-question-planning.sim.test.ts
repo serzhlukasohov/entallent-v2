@@ -39,7 +39,9 @@ describe('resolved-detail question planning', () => {
       langwatch: { apiKey: '' },
     });
 
-    const finalPlan = harness.generateResponseCalls[2]?.context.replyPlan;
+    await reportRun('D04-03 resolved-detail replay', harness, result);
+
+    const finalPlan = harness.responseCallsByTurn[2]?.context.replyPlan;
     expect(finalPlan?.resolvedDetails, JSON.stringify(harness.turns[2]?.classification)).toEqual(expect.arrayContaining([
       expect.stringMatching(/reconstruct|rebuild/i),
     ]));
@@ -54,12 +56,11 @@ describe('resolved-detail question planning', () => {
     expect(finalQuestions).not.toMatch(/reconstruct|rebuild|whole flow|where (?:you|they) (?:stopped|left off)|losing your place/i);
     expect(result.success, result.reasoning).toBe(true);
 
-    await reportRun('D04-03 resolved-detail replay', harness, result);
   });
 
   it('keeps one neutral question available when no clarification branch is resolved', async () => {
     const { agent, harness } = createCoachAgent({ userName: 'Ed' });
-    await run({
+    const result = await run({
       name: 'CAP-6 unresolved-detail control',
       description: 'An ambiguous employee statement must keep one neutral clarification available.',
       agents: [agent, userSimulatorAgent({ model: simulatorModel() })],
@@ -68,7 +69,9 @@ describe('resolved-detail question planning', () => {
       langwatch: { apiKey: '' },
     });
 
-    const plan = harness.generateResponseCalls[0]?.context.replyPlan;
+    await reportRun('CAP-6 unresolved-detail control', harness, result, false);
+
+    const plan = harness.responseCallsByTurn[0]?.context.replyPlan;
     expect(plan?.resolvedDetails ?? []).toEqual([]);
     expect(plan?.questionPolicy.maxQuestions).toBe(1);
     expect(countQuestions(harness.replies[0] ?? '')).toBe(1);

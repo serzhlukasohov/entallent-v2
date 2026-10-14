@@ -136,6 +136,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
 
     const start = Date.now();
     let status: 'success' | 'error' = 'success';
+    let errorCode: string | undefined;
 
     try {
       const result = await this.orchestrator.orchestrate(job.data);
@@ -166,9 +167,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       this.logger.log(
         `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`,
       );
-    } catch {
+    } catch (error) {
       status = 'error';
-      this.logger.error(`Job ${job.id} failed (attempt ${job.attemptsMade}): conversation_processing_failed`);
+      errorCode = conversationFailureCode(error);
+      this.logger.error(`Job ${job.id} failed (attempt ${job.attemptsMade}): ${errorCode}`);
       throw new Error('conversation_processing_failed');
     } finally {
       await this.llmRunRepo
@@ -179,6 +181,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           model: 'gpt-4o',
           latencyMs: Date.now() - start,
           status,
+          errorCode,
           traceId: job.data.traceId,
         })
         .catch(() => {
@@ -200,6 +203,20 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       this.logger.error('Post-conversation question cutoff failed: question_cutoff_retry_required');
     }
   }
+}
+
+function conversationFailureCode(error: unknown): string {
+  if (error instanceof SyntaxError) return 'conversation_invalid_json';
+  if (typeof error !== 'object' || error === null) return 'conversation_unknown_error';
+  if ('name' in error && error.name === 'ZodError') return 'conversation_invalid_model_shape';
+  if ('status' in error && typeof error.status === 'number'
+    && Number.isInteger(error.status) && error.status >= 400 && error.status <= 599) {
+    return `conversation_provider_http_${error.status}`;
+  }
+  if ('code' in error && typeof error.code === 'string' && /^[0-9A-Z]{5}$/.test(error.code)) {
+    return `conversation_database_${error.code}`;
+  }
+  return 'conversation_unclassified_error';
 }
 
 function normalizeOptionalString(value: string | null | undefined): string | undefined {

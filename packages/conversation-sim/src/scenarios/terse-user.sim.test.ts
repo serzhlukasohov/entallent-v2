@@ -132,7 +132,9 @@ describe('coach talking to a consistently terse user', () => {
     const violations = findViolations(followupHarness);
     expect(describeViolations(violations)).toBe('');
 
-    const firstGeneration = followupHarness.generateResponseCalls[0];
+    const firstGeneration = followupHarness.responseCallsByTurn[0];
+    expect(firstGeneration, 'first followup turn must use generation').not.toBeNull();
+    if (!firstGeneration) throw new Error('First followup turn has no generation call');
     expect(firstGeneration.context.styleAdaptation).toMatchObject({
       dimensions: { verbosity: learnedProfile!.dimensions.verbosity },
       weight: learnedProfile!.adaptationWeight,

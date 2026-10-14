@@ -33,6 +33,13 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
     const tenantFilter = params.tenantId
       ? sql`AND u.tenant_id = ${params.tenantId}`
       : sql``;
+    const qaCadence = sql`EXISTS (
+      SELECT 1 FROM survey_reporting_cohorts cohort
+      WHERE cohort.id::text = t.proactive_messaging_policy->>'qaThreePerDayCohortId'
+        AND cohort.tenant_id = u.tenant_id
+        AND u.id = ANY(cohort.roster_user_ids)
+        AND now() >= cohort.period_start AND now() < cohort.period_end
+    )`;
 
     const rows = (await this.db.client.execute(sql`
       SELECT
@@ -46,6 +53,7 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
         c.external_conversation_id AS external_conversation_id,
         COALESCE(wc.external_workspace_id, 'dev-workspace') AS external_workspace_id
       FROM users u
+      JOIN tenants t ON t.id = u.tenant_id
       JOIN LATERAL (
         SELECT id, channel_type, external_conversation_id
         FROM conversations
@@ -60,12 +68,14 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
         ${tenantFilter}
         AND NOT EXISTS (
           SELECT 1 FROM messages m
-          WHERE m.user_id = u.id AND m.direction = 'inbound' AND m.text <> '__init__'
-            AND m.occurred_at > now() - make_interval(days => ${params.minSilenceDays})
+          WHERE m.tenant_id = u.tenant_id AND m.user_id = u.id
+            AND m.direction = 'inbound' AND m.text <> '__init__'
+            AND m.occurred_at > now() - CASE WHEN ${qaCadence}
+              THEN interval '2 hours' ELSE make_interval(days => ${params.minSilenceDays}) END
         )
         AND NOT EXISTS (
           SELECT 1 FROM messages m
-          WHERE m.user_id = u.id
+          WHERE m.tenant_id = u.tenant_id AND m.user_id = u.id
             AND (
               (
                 m.direction = 'outbound'
@@ -77,8 +87,28 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
                 AND m.message_type = 'proactive_check_in_request'
               )
             )
-            AND m.occurred_at > now() - make_interval(days => ${params.minCheckInGapDays})
+            AND m.occurred_at > now() - CASE WHEN ${qaCadence}
+              THEN interval '4 hours' ELSE make_interval(days => ${params.minCheckInGapDays}) END
         )
+        AND (NOT ${qaCadence} OR (
+          (SELECT count(*) FROM messages recent
+            WHERE recent.tenant_id = u.tenant_id AND recent.user_id = u.id
+              AND recent.direction = 'outbound'
+              AND recent.message_type IN ('proactive_check_in', 'proactive_follow_up', 'reminder')
+              AND recent.occurred_at > now() - interval '24 hours') < 3
+          AND NOT EXISTS (
+            SELECT 1 FROM messages unanswered
+            WHERE unanswered.tenant_id = u.tenant_id AND unanswered.user_id = u.id
+              AND unanswered.direction = 'outbound'
+              AND unanswered.message_type IN ('proactive_check_in', 'proactive_follow_up', 'reminder')
+              AND NOT EXISTS (
+                SELECT 1 FROM messages reply
+                WHERE reply.tenant_id = u.tenant_id AND reply.user_id = u.id
+                  AND reply.direction = 'inbound' AND reply.text <> '__init__'
+                  AND reply.occurred_at > unanswered.occurred_at
+              )
+          )
+        ))
         AND NOT EXISTS (
           SELECT 1 FROM risk_signals r
           WHERE r.user_id = u.id AND r.status = 'active' AND r.severity IN ('high', 'critical')
