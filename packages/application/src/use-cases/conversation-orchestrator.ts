@@ -5,6 +5,7 @@ import {
   type RiskAssessment,
   type ReplyStrategy,
   type ConversationMode,
+  type GeneratedResponse,
 } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
 import type { ConversationDispatchKind, ConversationRepositoryPort } from '../ports/conversation.repository.port';
@@ -41,7 +42,11 @@ import type {
   SurveyQuestionRecord,
 } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
-import { validateQuestionBundleComposition } from '../utils/question-bundle-composition';
+import {
+  composeBundleReplyText, isBundleReplyInvalidError, validateBundleReply, validateQuestionBundleComposition,
+  type BundleReplyInvalidReason,
+} from '../utils/question-bundle-composition';
+import { maxReplyChars } from '../utils/reply-length';
 import { validateQuestionBundleVerdict } from '../utils/question-bundle-verdict';
 import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
 import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
@@ -75,7 +80,15 @@ export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
   outcome?: 'input_filtered' | 'processing_failed';
   /** Bounded provider category keys behind an `input_filtered` outcome (diagnostics only). */
   contentFilterCategories?: readonly string[];
+  /** How a V2 bundle or clarification turn was delivered (GC round 3 CAP-4). */
+  bundleReply?: BundleReplyOutcome;
+  /** Why the fixed text went alone (diagnostics only). */
+  bundleReplyFallbackReason?: BundleReplyFallbackReason;
 };
+
+/** `answer_then_bundle`: the employee's message was answered before the fixed text; otherwise the fixed text went alone. */
+export type BundleReplyOutcome = 'answer_then_bundle' | 'bundle_without_reply';
+export type BundleReplyFallbackReason = BundleReplyInvalidReason | 'output_filtered';
 
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
@@ -804,23 +817,7 @@ export class ConversationOrchestrator {
           })),
         }
       : undefined;
-    let generated = clarificationText
-      ? { text: clarificationText, confidence: 1, containsSurveyProbe: false }
-      : v2Composition
-      ? { text: v2Composition.text, confidence: 1, containsSurveyProbe: false }
-      : canAnswerDataUseExplanation
-      ? {
-          text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession),
-          confidence: 1,
-          containsSurveyProbe: false,
-        }
-      : canAnswerReportingExplanation
-      ? {
-          text: getReportingExplanationText(languagePolicy.responseLanguage, conciseSession),
-          confidence: 1,
-          containsSurveyProbe: false,
-        }
-      : await this.aiProvider.generateResponse(turns, strategy, {
+    const responseContext: ResponseContext = {
       userName,
       languagePolicy,
       captureFacts,
@@ -847,7 +844,62 @@ export class ConversationOrchestrator {
       isSessionStart: sessionStart,
       replyBrief: replyPlan,
       replyPlan,
+    };
+    // GC round 3 CAP-4: the composed bundle or clarification question is shown last, byte-exact;
+    // the employee's own message is answered first by one structured generation.
+    const trailingBundle: ResponseContext['trailingBundle'] = clarificationText && clarificationRequest
+      ? { kind: 'clarification', text: clarificationText, statements: [clarificationRequest.disputedStatement] }
+      : v2Composition
+        ? {
+            kind: 'confirmation_bundle',
+            text: v2Composition.text,
+            statements: v2Composition.statements.map((statement) => statement.statement),
+          }
+        : undefined;
+    let bundleReply: BundleReplyOutcome | undefined;
+    let bundleReplyFallbackReason: BundleReplyFallbackReason | undefined;
+    let generated: GeneratedResponse;
+    if (trailingBundle) {
+      try {
+        const draft = await this.aiProvider.generateResponse(turns, strategy, {
+          ...responseContext, trailingBundle, surveyProbeQuestion: undefined,
         });
+        const parts = validateBundleReply(draft, trailingBundle.text, {
+          maxReplyChars: maxReplyChars(strategy, responseContext), statements: trailingBundle.statements,
+        });
+        generated = {
+          ...draft, ...parts, text: composeBundleReplyText(parts), containsSurveyProbe: false, surveyProbeQuestionId: undefined,
+        };
+        bundleReply = 'answer_then_bundle';
+      } catch (error) {
+        // The reply part broke its contract after the provider's one repair, or the provider's
+        // output filter blocked it: the validated fixed text goes alone (previous behaviour) with
+        // the reason recorded. Input filters, outages and other failures keep their own handling.
+        if (isBundleReplyInvalidError(error)) {
+          bundleReplyFallbackReason = error.reason;
+        } else if (error instanceof ProviderContentFilterError && error.direction === 'output') {
+          bundleReplyFallbackReason = 'output_filtered';
+        } else {
+          throw error;
+        }
+        generated = { text: trailingBundle.text, confidence: 1, containsSurveyProbe: false };
+        bundleReply = 'bundle_without_reply';
+      }
+    } else {
+      generated = canAnswerDataUseExplanation
+        ? {
+            text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession),
+            confidence: 1,
+            containsSurveyProbe: false,
+          }
+        : canAnswerReportingExplanation
+        ? {
+            text: getReportingExplanationText(languagePolicy.responseLanguage, conciseSession),
+            confidence: 1,
+            containsSurveyProbe: false,
+          }
+        : await this.aiProvider.generateResponse(turns, strategy, responseContext);
+    }
     let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
     let responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
@@ -1019,6 +1071,8 @@ export class ConversationOrchestrator {
             : {}),
           ...(v2Composition ? { v2ConfirmationBundle: true } : {}),
           ...(clarificationText ? { v2ClarificationPrompt: true } : {}),
+          ...(bundleReply ? { v2BundleReply: bundleReply } : {}),
+          ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
           ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
             ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
             : {}),
@@ -1053,7 +1107,7 @@ export class ConversationOrchestrator {
           surveyWindowId: v2BundleRequest.surveyWindowId,
           questionGroup: v2BundleRequest.questionGroup,
           promptMessageId: outbound.id,
-          displayedText: responseText,
+          displayedText: v2Composition.text,
           components: v2Composition.statements.map((statement) => ({
             surveyQuestionId: statement.surveyQuestionId,
             questionVersion: v2BundleRequest.questions.find(
@@ -1071,7 +1125,7 @@ export class ConversationOrchestrator {
           tenantId, userId, conversationId,
           workingInsightId: clarificationRequest.workingInsightId,
           promptMessageId: outbound.id,
-          displayedText: responseText,
+          displayedText: clarificationText,
         });
         if (!staged) throw new Error('v2_clarification_prompt_state_stale');
       }
@@ -1129,6 +1183,8 @@ export class ConversationOrchestrator {
       mode: strategy.mode,
       classification,
       risk,
+      ...(bundleReply ? { bundleReply } : {}),
+      ...(bundleReplyFallbackReason ? { bundleReplyFallbackReason } : {}),
     };
   }
 

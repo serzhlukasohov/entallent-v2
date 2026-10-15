@@ -85,16 +85,18 @@ export class ScriptedAiProvider implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     const callIndex = this.responseCalls++;
-    return readScript(
-      this.options.responses,
-      { turns, strategy, context },
-      callIndex,
-      {
-        text: `${strategy.mode}: ${context.reminderConfirmation ? `reminder set for ${context.reminderConfirmation.intent}` : 'noted'}`,
-        confidence: 0.9,
-        containsSurveyProbe: false,
-      },
-    );
+    const replyText = `${strategy.mode}: ${context.reminderConfirmation ? `reminder set for ${context.reminderConfirmation.intent}` : 'noted'}`;
+    // A bundle or clarification turn answers first, then shows the fixed text (GC round 3 CAP-4).
+    const fallback: GeneratedResponse = context.trailingBundle
+      ? {
+          text: `${replyText}\n\n${context.trailingBundle.text}`,
+          replyText,
+          bundleText: context.trailingBundle.text,
+          confidence: 0.9,
+          containsSurveyProbe: false,
+        }
+      : { text: replyText, confidence: 0.9, containsSurveyProbe: false };
+    return readScript(this.options.responses, { turns, strategy, context }, callIndex, fallback);
   }
 
   async composeQuestionBundle(

@@ -3140,6 +3140,15 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Symptom: In a new git worktree, `vitest` for `packages/application`, `packages/ai-openai`, and `apps/worker` failed at import resolution (`Failed to resolve entry for package "@entalent/contracts"` / `"@entalent/application"` / `"@entalent/database"`) because sibling packages resolve through their `dist` entries and nothing had been built; `pnpm install --offline` reported "Already up to date" without producing `dist`. The first RED run for a worker test was therefore unobservable until `pnpm --filter './packages/*' build` ran.
 - Expected: A worktree session should be able to run a package's unit tests after install, or the harness should tell it which build step is missing.
 - Root cause layer: environment
-- Harness fix: Document in AGENTS.md (Testing Policy) that a fresh worktree needs `pnpm --filter './packages/*' build` before package or app vitest runs; longer term, have `scripts/agent-harness.ts reflection` warn when a workspace package has no `dist` directory.
+- Harness fix: Document in AGENTS.md (Testing Policy) that a fresh worktree needs `pnpm --filter './packages/*' build` before package or app vitest runs; longer term, have `scripts/agent-harness.ts reflection` warn when a workspace package has no `dist` directory. Recurred on 2026-10-15 (S3 worktree: package `node_modules` were also missing, so `pnpm install --offline --frozen-lockfile` had to precede the build); the AGENTS.md Testing Policy rule now records both steps. The reflection warning remains optional.
 - Regression check: In a fresh worktree, `pnpm --filter @entalent/application exec vitest run src/use-cases/conversation-orchestrator.test.ts -t "CAP-5"` must collect tests instead of failing at package resolution.
+- Status: fixed
+
+## 2026-10-15: CodeGraph served another checkout's source for a worktree path
+
+- Symptom: In the worktree `.claude/worktrees/hopeful-fermat-bbf0bf`, `codegraph_node` on `conversation-orchestrator.ts` returned source whose line numbers and content (`getPulseCaptureExplanationText`, removed in PR #18) did not match the file on disk; `grep -n` on the same file disagreed by eight lines. The index belongs to the main checkout, which was at a different state.
+- Expected: CodeGraph answers for the checkout the session works in, or says the path is outside its index.
+- Root cause layer: tooling
+- Harness fix: In a worktree session, confirm the index covers the worktree (compare one `grep -n` hit with the CodeGraph line for the same symbol) before trusting CodeGraph line numbers; fall back to direct reads when they disagree. Longer term: index worktrees separately or have CodeGraph refuse paths outside its root.
+- Regression check: `grep -n "const v2Composition" packages/application/src/use-cases/conversation-orchestrator.ts` and the CodeGraph line for the same symbol must agree.
 - Status: open

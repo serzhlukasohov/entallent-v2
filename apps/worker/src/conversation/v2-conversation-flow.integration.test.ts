@@ -88,8 +88,10 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     { verdictKind: 'decline', questionGroup: 'autonomy', afterVerdictBeforeOutboundError: true },
     { verdictKind: 'reject', questionGroup: 'autonomy', afterVerdictBeforeOutboundError: true },
     { verdictKind: 'partial', questionGroup: 'autonomy', clarificationBeforeOutboundError: true },
+    { verdictKind: 'agree', questionGroup: 'autonomy', questionWithBundle: true },
+    { verdictKind: 'agree', questionGroup: 'autonomy', bundleReplyInvalid: true },
   ] as const)(
-    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies approvedPolicy=$approvedPolicy insufficientEvidence=$insufficientEvidence afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError',
+    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies approvedPolicy=$approvedPolicy insufficientEvidence=$insufficientEvidence afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError questionWithBundle=$questionWithBundle bundleReplyInvalid=$bundleReplyInvalid',
     async (scenario) => {
     const { verdictKind, questionGroup } = scenario;
     const approvedPolicy = 'approvedPolicy' in scenario && scenario.approvedPolicy === true;
@@ -108,6 +110,9 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       && scenario.afterVerdictBeforeOutboundError === true;
     const clarificationBeforeOutboundError = 'clarificationBeforeOutboundError' in scenario
       && scenario.clarificationBeforeOutboundError === true;
+    // GC round 3 CAP-4: the employee's own message is answered before the bundle statements.
+    const questionWithBundle = 'questionWithBundle' in scenario && scenario.questionWithBundle === true;
+    const bundleReplyInvalid = 'bundleReplyInvalid' in scenario && scenario.bundleReplyInvalid === true;
     if (!client || !redisUrl) return;
     const db = client.db;
     const [tenant] = await db.insert(tenants).values({ name: `V2 queue fixture ${randomUUID()}` }).returning();
@@ -242,6 +247,8 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       findTeamByMemberId: async () => null,
     } as never);
     const bundleText = `I hear that ${statements.join(' ')} Is that fair?`;
+    const bundleAnswer = 'Open tomorrow with the retro notes; the checklist can wait until after standup.';
+    const clarificationText = 'What would you change about your priorities?';
     const ai = {
       // Wave 1 runs risk assessment on every turn; an unassessed risk blocks the survey.
       detectRisk: vi.fn(async () => ({
@@ -271,7 +278,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
             ? [groupQuestions[1]!.id] : [],
           declinedQuestionIds: verdictKind === 'decline' ? [groupQuestions[1]!.id] : [] }
         : { kind: verdictKind }),
-      composeQuestionClarification: vi.fn(async () => 'What would you change about your priorities?'),
+      composeQuestionClarification: vi.fn(async () => clarificationText),
       interpretQuestionClarificationResponse: vi.fn(async (turns: Array<{ content: string }>) =>
         turns.at(-1)?.content === 'What is the weather like?'
           ? { kind: 'unrelated' as const }
@@ -291,9 +298,17 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
             assessmentShouldRemainUnknown: false,
           })) : [],
       })),
-      generateResponse: vi.fn(async () => ({
-        text: 'Thanks for confirming.', confidence: 0.9, containsSurveyProbe: false,
-      })),
+      // Under the two-part contract the live model answers the latest message, then copies the
+      // fixed text; the invalid scenario rewrites the fixed text so the orchestrator must fall back.
+      generateResponse: vi.fn(async (_turns: unknown, _strategy: unknown,
+        context: { trailingBundle?: { text: string } }) => context.trailingBundle
+        ? {
+          text: `${bundleAnswer}\n\n${context.trailingBundle.text}`, replyText: bundleAnswer,
+          bundleText: bundleReplyInvalid
+            ? context.trailingBundle.text.replace(/\?$/, ' Is that right?') : context.trailingBundle.text,
+          confidence: 0.9, containsSurveyProbe: false,
+        }
+        : { text: 'Thanks for confirming.', confidence: 0.9, containsSurveyProbe: false }),
     };
     const surveyRepo = {
       findAwaitingConfirmationGroups: async () => [],
@@ -484,7 +499,9 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
         .where(eq(messages.id, sentJobs[0]!.data.messageId));
       const [secondInbound] = await db.insert(messages).values({
         tenantId, userId, conversationId, direction: 'inbound', senderType: 'user',
-        text: 'Could you reflect that back to me?',
+        text: questionWithBundle
+          ? 'Could you reflect that back to me? And one quick thing: should I open tomorrow with the retro notes or the release checklist?'
+          : 'Could you reflect that back to me?',
         occurredAt: new Date(firstReply!.sentAt!.getTime() + 1_000),
       }).returning();
       await admit(secondInbound!.id);
@@ -500,6 +517,19 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
 
       const [deliveredPrompt] = await db.select().from(messages)
         .where(eq(messages.id, bundle!.promptMessageId!));
+      expect(ai.generateResponse).toHaveBeenCalledTimes(2);
+      expect(ai.generateResponse.mock.calls[1]![2]).toMatchObject({
+        trailingBundle: { kind: 'confirmation_bundle', text: bundleText },
+      });
+      if (bundleReplyInvalid) {
+        expect(deliveredPrompt!.text).toBe(bundleText);
+        expect(deliveredPrompt!.metadata).toMatchObject({ v2BundleReply: 'bundle_without_reply' });
+      } else {
+        // The answer to the employee's message comes first, the byte-exact bundle last.
+        expect(deliveredPrompt!.text).toBe(`${bundleAnswer}\n\n${bundleText}`);
+        expect(deliveredPrompt!.text.indexOf(bundleAnswer)).toBeLessThan(deliveredPrompt!.text.indexOf(statements[0]!));
+        expect(deliveredPrompt!.metadata).toMatchObject({ v2BundleReply: 'answer_then_bundle' });
+      }
       const [thirdInbound] = await db.insert(messages).values({
         tenantId, userId, conversationId, direction: 'inbound', senderType: 'user',
         text: verdictKind === 'partial' || verdictKind === 'partial_unrelated'
@@ -775,6 +805,12 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       );
       if (verdictKind === 'partial' || verdictKind === 'partial_unrelated') {
         expect(ai.composeQuestionClarification).toHaveBeenCalledOnce();
+        const [clarificationPrompt] = await db.select().from(messages)
+          .where(eq(messages.id, sentJobs[2]!.data.messageId));
+        expect(clarificationPrompt!.text).toBe(`${bundleAnswer}\n\n${clarificationText}`);
+        expect(clarificationPrompt!.metadata).toMatchObject({
+          v2ClarificationPrompt: true, v2BundleReply: 'answer_then_bundle',
+        });
         const [partialBundle] = await db.select().from(surveyQuestionConfirmationBundles)
           .where(eq(surveyQuestionConfirmationBundles.id, bundle!.id));
         expect(JSON.stringify(partialBundle?.components)).toContain(statements[1]);

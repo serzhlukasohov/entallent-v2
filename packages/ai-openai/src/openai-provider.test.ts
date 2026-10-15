@@ -2541,3 +2541,88 @@ describe('OpenAiProvider Azure content filter boundary', () => {
     expect(breakerState(provider)).toBe('OPEN');
   });
 });
+
+describe('OpenAiProvider.generateResponse trailing bundle (GC round 3 CAP-4)', () => {
+  beforeEach(() => createMock.mockReset());
+  const bundleText = 'I hear that you can choose your methods. You can set priorities. Is that fair?';
+  const replyText = 'Start tomorrow with the retro notes; the checklist can wait until after standup.';
+  const confirmation = {
+    mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [],
+  } as ReplyStrategy;
+  const bundleContext = responseContext({
+    userName: 'X', trailingBundle: { kind: 'confirmation_bundle', text: bundleText },
+  });
+  const draft = (reply: string, bundle: string) => ({
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: `${reply}\n\n${bundle}`, replyText: reply, bundleText: bundle, confidence: 0.9, containsSurveyProbe: false,
+    }) } }],
+  });
+
+  it('returns the answer followed by the exact bundle from one call', async () => {
+    createMock.mockResolvedValue(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+    expect(res.replyText).toBe(replyText);
+    expect(res.bundleText).toBe(bundleText);
+  });
+
+  it('repairs once when the draft rewrites the bundle, then returns the exact bundle', async () => {
+    createMock
+      .mockResolvedValueOnce(draft(replyText, bundleText.replace('fair', 'right')))
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const repairSystemPrompt = createMock.mock.calls[1]![0].messages[0].content as string;
+    expect(repairSystemPrompt).toMatch(/byte-for-byte/i);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+  });
+
+  it('repairs once when the reply part asks a question', async () => {
+    createMock
+      .mockResolvedValueOnce(draft('Retro notes first, or the checklist?', bundleText))
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.replyText).toBe(replyText);
+  });
+
+  it('repairs once when the first bundle draft is not parseable, instead of failing the turn', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text": "half a draft' } }] })
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+  });
+
+  it('fails closed with v2_bundle_reply_invalid when both drafts have the wrong shape', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: `${replyText}\n\n${bundleText}`, replyText: 42, bundleText, confidence: '0.9', containsSurveyProbe: false,
+    }) } }] });
+    const provider = makeProvider();
+    await expect(provider.generateResponse(turns, confirmation, bundleContext)).rejects.toThrow('v2_bundle_reply_invalid');
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed with v2_bundle_reply_invalid after one repair, naming the failed rule', async () => {
+    createMock.mockResolvedValue(draft(replyText, 'Something else entirely?'));
+    const provider = makeProvider();
+    await expect(provider.generateResponse(turns, confirmation, bundleContext))
+      .rejects.toMatchObject({ message: 'v2_bundle_reply_invalid', reason: 'bundle_mismatch' });
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts an empty "text" on a bundle turn and assembles the message itself', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: '', replyText, bundleText, confidence: 0.9, containsSurveyProbe: false,
+    }) } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+  });
+});

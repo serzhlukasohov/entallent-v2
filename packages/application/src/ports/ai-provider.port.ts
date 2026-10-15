@@ -183,6 +183,19 @@ export interface ResponseContext {
   replyBrief?: ReplyBrief;
   /** Typed response policy: what the generator must do, before it decides wording. */
   replyPlan?: ReplyPlan;
+  /**
+   * V2 confirmation bundle or clarification question composed for this turn (GC round 3 CAP-4).
+   * The reply answers the employee's latest message first; this text is shown last, byte-for-byte.
+   */
+  trailingBundle?: TrailingBundle;
+}
+
+export interface TrailingBundle {
+  kind: 'confirmation_bundle' | 'clarification';
+  /** Validated composition text; the only question of the turn lives here. */
+  text: string;
+  /** Bundle statements the reply part must not restate (confirmation bundles only). */
+  statements?: readonly string[];
 }
 
 export interface AiProviderPort {

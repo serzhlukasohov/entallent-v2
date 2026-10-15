@@ -50,10 +50,15 @@ import type {
   QuestionScoreResult,
 } from '@entalent/application';
 import {
+  BundleReplyInvalidError,
+  composeBundleReplyText,
+  maxReplyChars,
+  validateBundleReply,
   validateQuestionBundleComposition,
   validateQuestionBundleVerdict,
   validateQuestionClarificationPrompt,
   validateQuestionClarificationVerdict,
+  type TrailingBundle,
 } from '@entalent/application';
 import { buildClassifySystemPrompt, buildClassifyUserPrompt } from './prompts/classify';
 import { buildStyleAnalyzeSystemPrompt, buildStyleAnalyzeUserPrompt } from './prompts/style-analyze';
@@ -133,6 +138,9 @@ function questionRetryInstruction(maxQuestions: 0 | 1): string {
     : '\n\nYour previous draft asked more than one question. Rewrite with at most one question in the entire reply.';
 }
 
+const BUNDLE_REPLY_RETRY_INSTRUCTION =
+  '\n\nYour previous draft broke the two-part contract. Return "replyText" as 1-3 sentences that answer the employee\'s latest message with no question mark or other question punctuation, within the length limit, and without repeating the fixed text or any of its statements; return "bundleText" as a byte-for-byte copy of the fixed text given above, with nothing added, removed, or changed.';
+
 const CONFIRMATION_RETRY_INSTRUCTION =
   '\n\nYour previous confirmation draft was invalid. Return a non-empty reportable "confirmationSummary" with no question punctuation, copy that exact byte-for-byte string into "text" as a proper substring (never the entire reply), do not expose field labels like "confirmationSummary:", and ask exactly one question in the full "text" outside that summary.';
 
@@ -144,6 +152,28 @@ function stripExposedConfirmationSummaryLabel(response: GeneratedResponse): Gene
   return response.confirmationSummary
     ? { ...response, text: response.text.replace(/\bconfirmationSummary\s*:\s*/i, '') }
     : response;
+}
+
+/** A draft that fails to parse is a contract break like any other: repair once, then fail closed. */
+function assembleBundleReply(
+  raw: string,
+  bundleText: string,
+  options: { maxReplyChars: number; statements?: readonly string[] },
+): GeneratedResponse | BundleReplyInvalidError {
+  let response: GeneratedResponse;
+  try {
+    response = GeneratedResponseSchema.parse(JSON.parse(raw));
+  } catch {
+    return new BundleReplyInvalidError('draft_unparseable');
+  }
+  try {
+    const parts = validateBundleReply(response, bundleText, options);
+    return {
+      ...response, ...parts, text: composeBundleReplyText(parts), containsSurveyProbe: false, surveyProbeQuestionId: undefined,
+    };
+  } catch (error) {
+    return error instanceof BundleReplyInvalidError ? error : new BundleReplyInvalidError('reply_missing');
+  }
 }
 
 function isValidConfirmationResponse(response: GeneratedResponse): boolean {
@@ -161,23 +191,6 @@ function isValidConfirmationResponse(response: GeneratedResponse): boolean {
 function lengthRetryInstruction(maxChars: number): string {
   const words = Math.max(8, Math.round(maxChars / 6));
   return `\n\nYour previous draft was too long for this turn. Rewrite it much shorter — at most ${words} words, one sentence if you can. Keep only the single most useful thing and drop the extra observation.`;
-}
-
-/**
- * Hard length ceiling (characters) per reply-length tier, tightened for a clearly terse
- * user. Verbosity comes from the observed style profile already carried in the response context.
- */
-function maxReplyChars(strategy: ReplyStrategy, context: ResponseContext): number {
-  const verbosity = context.styleAdaptation?.dimensions.verbosity;
-  const terse = typeof verbosity === 'number' && verbosity <= 0.3;
-  switch (strategy.maxResponseLength) {
-    case 'short':
-      return terse ? 140 : 360;
-    case 'medium':
-      return terse ? 340 : 680;
-    default:
-      return 980;
-  }
 }
 
 function countQuestionGroups(text: string): number {
@@ -415,6 +428,9 @@ export class OpenAiProvider implements AiProviderPort {
   ): Promise<GeneratedResponse> {
     const system = buildRespondSystemPrompt(strategy, context);
     const user = buildRespondUserPrompt(turns, context, strategy);
+    if (context.trailingBundle) {
+      return this.generateBundleReply(system, user, strategy, context, context.trailingBundle);
+    }
 
     const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
@@ -457,6 +473,29 @@ export class OpenAiProvider implements AiProviderPort {
       throw new Error('OpenAI returned a noncompliant numeric survey probe after retry');
     }
     return corrected;
+  }
+
+  /**
+   * GC round 3 CAP-4: one structured generation with the answer and a byte-for-byte copy of the
+   * fixed text. The generic length and question gates do not apply to the assembled message; the
+   * reply part is validated on its own, with ONE repair, then fails closed so the orchestrator
+   * can send the fixed text alone.
+   */
+  private async generateBundleReply(
+    system: string,
+    user: string,
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    bundle: TrailingBundle,
+  ): Promise<GeneratedResponse> {
+    const options = { maxReplyChars: maxReplyChars(strategy, context), statements: bundle.statements };
+    const first = assembleBundleReply(await this.complete(system, user, this.generationModel), bundle.text, options);
+    if (!(first instanceof BundleReplyInvalidError)) return first;
+    const corrected = assembleBundleReply(
+      await this.complete(system + BUNDLE_REPLY_RETRY_INSTRUCTION, user, this.generationModel), bundle.text, options,
+    );
+    if (!(corrected instanceof BundleReplyInvalidError)) return corrected;
+    throw corrected;
   }
 
   async composeQuestionBundle(
