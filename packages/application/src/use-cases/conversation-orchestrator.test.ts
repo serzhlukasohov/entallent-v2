@@ -2393,14 +2393,23 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
     expect(result.bundleReply).toBe('bundle_without_reply');
   });
 
-  it('confirms a substantive clarification without a second complete bundle', async () => {
+  it('shows a substantive clarification back for confirmation instead of confirming it silently', async () => {
     const m = baseMocks();
+    const corrected = 'I can decide my work methods, but not my priorities.';
     m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({
-      kind: 'clarified', correctedSummary: 'I can decide my work methods, but not my priorities.',
+      kind: 'clarified', correctedSummary: corrected,
     });
+    // GC round 3 CAP-3: the corrected meaning is composed as a one-statement bundle and shown.
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({
+      text: `So: ${corrected} Is that right?`, statements: [{ surveyQuestionId: 'q-b', statement: corrected }],
+    });
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `Got it.\n\n${context.trailingBundle?.text ?? ''}`, replyText: 'Got it.', bundleText: context.trailingBundle?.text,
+      confidence: 0.9, containsSurveyProbe: false,
+    }));
     const pending = {
       workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
-      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionGroup: 'autonomy',
+      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
       workingSummary: 'I choose all my work.', disputedStatement: 'You choose your work.',
       clarificationPromptMessageId: 'clarify-out',
       clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
@@ -2416,6 +2425,7 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
       findReadyQuestionBundle: vi.fn(),
       stageQuestionConfirmationBundle: vi.fn(),
+      stageCorrectedStatementConfirmation: vi.fn().mockResolvedValue('bundle-3'),
     };
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -2431,9 +2441,12 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
     expect(questionConfirmationRepo.applyQuestionClarificationVerdict).toHaveBeenCalledWith({
       tenantId: 't-1', userId: 'u-1', conversationId: 'c-1',
       workingInsightId: 'working-b', inboundMessageId: 'm-1',
-      verdict: { kind: 'clarified', correctedSummary: 'I can decide my work methods, but not my priorities.' },
+      verdict: { kind: 'clarified', correctedSummary: corrected },
     });
     expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+    expect(questionConfirmationRepo.stageCorrectedStatementConfirmation).toHaveBeenCalledWith(expect.objectContaining({
+      workingInsightId: 'working-b', promptMessageId: 'out-1', statement: corrected, expectedWorkingSummary: corrected,
+    }));
   });
 
   it('does not commit a clarification verdict when response generation fails', async () => {
@@ -5639,5 +5652,430 @@ describe('ConversationOrchestrator answer first, then the bundle (GC round 3 CAP
       text: `${replyText}\n\n${clarificationText}`,
       metadata: expect.objectContaining({ v2ClarificationPrompt: true, v2BundleReply: 'answer_then_bundle' }),
     }));
+  });
+});
+
+describe('GC round 3 CAP-3: shown corrections, topic completion, cycle status', () => {
+  const components = [
+    { surveyQuestionId: 'q-a', questionVersion: 'v2', statement: 'You choose your tasks.' },
+    { surveyQuestionId: 'q-b', questionVersion: 'v2', statement: 'You set your priorities.' },
+    { surveyQuestionId: 'q-c', questionVersion: 'v2', statement: 'You raise concerns.' },
+  ];
+  const awaiting = {
+    id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+    questionGroup: 'autonomy', displayedText: 'Is that fair?', components,
+  };
+  const snapshot = (autonomy: string[]) => ({
+    surveyWindowId: 'w-v2',
+    groups: [
+      { questionGroup: 'autonomy', questions: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId, index) => ({ surveyQuestionId, status: autonomy[index]! })) },
+      { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-d', status: 'no_data' }] },
+      { questionGroup: 'purpose', questions: [{ surveyQuestionId: 'q-e', status: 'no_data' }] },
+      { questionGroup: 'belonging', questions: [{ surveyQuestionId: 'q-f', status: 'no_data' }] },
+    ],
+  });
+
+  function repoMocks(overrides: Record<string, unknown> = {}) {
+    return {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue('bundle-2'),
+      stageCorrectedStatementConfirmation: vi.fn().mockResolvedValue('bundle-3'),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['pending_confirmation', 'pending_confirmation', 'pending_confirmation'])),
+      ...overrides,
+    };
+  }
+
+  function orchestrator(m: ReturnType<typeof baseMocks>, repo: ReturnType<typeof repoMocks>) {
+    return new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, repo,
+    );
+  }
+
+  it('states completion with progress when an agree verdict closes the topic', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'agree' });
+    const repo = repoMocks({ findAwaitingQuestionBundle: vi.fn().mockResolvedValue(awaiting) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.topicConfirmed).toEqual({ questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 });
+    expect(repo.findCycleProgress).toHaveBeenCalledWith({ tenantId: 't-1', userId: 'u-1' });
+  });
+
+  it('closes the topic on a partial verdict that disputes nothing', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({
+      kind: 'partial', acceptedQuestionIds: ['q-a', 'q-b'], disputedQuestionIds: [], declinedQuestionIds: ['q-c'],
+    });
+    const repo = repoMocks({ findAwaitingQuestionBundle: vi.fn().mockResolvedValue(awaiting) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.topicConfirmed).toEqual({ questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 });
+    expect(repo.previewPendingQuestionClarificationAfterBundleVerdict).not.toHaveBeenCalled();
+  });
+
+  it('keeps completion silent while a statement is still disputed', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({
+      kind: 'partial', acceptedQuestionIds: ['q-a', 'q-c'], disputedQuestionIds: ['q-b'], declinedQuestionIds: [],
+    });
+    m.aiProvider.composeQuestionClarification = vi.fn().mockResolvedValue('What would you change about priorities?');
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `Noted.\n\n${context.trailingBundle?.text ?? ''}`, replyText: 'Noted.', bundleText: context.trailingBundle?.text,
+      confidence: 0.9, containsSurveyProbe: false,
+    }));
+    const repo = repoMocks({
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(awaiting),
+      previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue({
+        workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+        surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+        workingSummary: 'I set all priorities.', disputedStatement: 'You set your priorities.',
+        clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+      }),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.topicConfirmed).toBeUndefined();
+    expect(context.trailingBundle).toMatchObject({ kind: 'clarification' });
+  });
+
+  it('shows the corrected statement back after a clarified verdict and stages it for confirmation', async () => {
+    const m = baseMocks();
+    const corrected = 'I can decide my work methods, but not my priorities.';
+    const shown = `So the fair version is: ${corrected} Did I get that right?`;
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'clarified', correctedSummary: corrected });
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({
+      text: shown, statements: [{ surveyQuestionId: 'q-b', statement: corrected }],
+    });
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `Thanks for clearing that up.\n\n${context.trailingBundle?.text ?? ''}`,
+      replyText: 'Thanks for clearing that up.', bundleText: context.trailingBundle?.text,
+      confidence: 0.9, containsSurveyProbe: false,
+    }));
+    const pending = {
+      workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+      workingSummary: 'I choose all my work.', disputedStatement: 'You set your priorities.',
+      clarificationPromptMessageId: 'clarify-out',
+      clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+    };
+    const repo = repoMocks({
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(pending),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_clarification', 'confirmed'])),
+    });
+
+    const result = await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(m.aiProvider.composeQuestionBundle).toHaveBeenCalledWith(
+      expect.any(Array), [{ surveyQuestionId: 'q-b', workingSummary: corrected }], 'en', 'corrected_statement',
+    );
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toEqual({ kind: 'corrected_statement', text: shown, statements: [corrected] });
+    expect(context.topicConfirmed).toBeUndefined();
+    expect(result.responseText).toBe(`Thanks for clearing that up.\n\n${shown}`);
+    expect(repo.applyQuestionClarificationVerdict).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1',
+      workingInsightId: 'working-b', inboundMessageId: 'm-1',
+      verdict: { kind: 'clarified', correctedSummary: corrected },
+    });
+    expect(repo.stageCorrectedStatementConfirmation).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', surveyWindowId: 'w-v2',
+      questionGroup: 'autonomy', workingInsightId: 'working-b', surveyQuestionId: 'q-b', questionVersion: 'v2',
+      promptMessageId: 'out-1', displayedText: shown, statement: corrected, expectedWorkingSummary: corrected,
+    });
+    expect(repo.applyQuestionClarificationVerdict.mock.invocationCallOrder[0])
+      .toBeLessThan(repo.stageCorrectedStatementConfirmation.mock.invocationCallOrder[0]);
+    expect(repo.previewPendingQuestionClarificationAfterVerdict).not.toHaveBeenCalled();
+    expect(repo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ v2CorrectedStatement: true, v2BundleReply: 'answer_then_bundle' }),
+    }));
+  });
+
+  it('answers a cycle-status question from typed progress, and reports no cycle outside one', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'asks what is left',
+      reminderRequest: null, dialogueAct: 'request', latestUserSubstance: 'did I answer everything?', topicAnchor: null,
+      cycleStatusQuestion: true,
+    });
+    const repo = repoMocks({
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'confirmed', 'declined'])),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.cycleProgress).toEqual({
+      inCycle: true, topicsTotal: 4, topicsClosed: 1, openTopics: ['growth', 'purpose', 'belonging'], awaitingReply: false,
+    });
+
+    const m2 = baseMocks();
+    m2.aiProvider.classifySituation = m.aiProvider.classifySituation;
+    const repo2 = repoMocks({ findCycleProgress: vi.fn().mockResolvedValue(null) });
+    await orchestrator(m2, repo2).orchestrate(INPUT);
+    const [, , context2] = m2.aiProvider.generateResponse.mock.calls[0];
+    expect(context2.cycleProgress).toEqual({ inCycle: false, topicsTotal: 0, topicsClosed: 0, openTopics: [], awaitingReply: false });
+  });
+});
+
+describe('GC round 3 CAP-3: review edge cases', () => {
+  const correctedBundle = {
+    id: 'bundle-3', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy',
+    displayedText: 'So the fair version is: you set your own priorities. Right?',
+    components: [{ surveyQuestionId: 'q-b', questionVersion: 'v2', statement: 'you set your own priorities' }],
+  };
+  const snapshot = (autonomy: string[]) => ({
+    surveyWindowId: 'w-v2',
+    groups: [
+      { questionGroup: 'autonomy', questions: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId, index) => ({ surveyQuestionId, status: autonomy[index]! })) },
+      { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-d', status: 'no_data' }] },
+    ],
+  });
+  function repoMocks(overrides: Record<string, unknown> = {}) {
+    return {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue('bundle-2'),
+      stageCorrectedStatementConfirmation: vi.fn().mockResolvedValue('bundle-3'),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_confirmation', 'pending_clarification'])),
+      ...overrides,
+    };
+  }
+  function orchestrator(m: ReturnType<typeof baseMocks>, repo: ReturnType<typeof repoMocks>) {
+    return new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, repo,
+    );
+  }
+
+  it('opens no second clarification while a corrected statement still awaits its verdict', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'unrelated' });
+    const repo = repoMocks({ findAwaitingQuestionBundle: vi.fn().mockResolvedValue(correctedBundle) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.findPendingQuestionClarification).not.toHaveBeenCalled();
+    expect(repo.stageQuestionClarificationPrompt).not.toHaveBeenCalled();
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toBeUndefined();
+  });
+
+  it('answers a cycle-status question with the progress after this turn verdict', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'yes and what is left',
+      reminderRequest: null, dialogueAct: 'request', latestUserSubstance: 'yes, and what is left?', topicAnchor: null,
+      cycleStatusQuestion: true,
+    });
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'agree' });
+    const repo = repoMocks({
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(correctedBundle),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_confirmation', 'confirmed'])),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.topicConfirmed).toEqual({ questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 2 });
+    expect(context.cycleProgress).toEqual({ inCycle: true, topicsTotal: 2, topicsClosed: 1, openTopics: ['growth'], awaitingReply: false });
+  });
+
+  it('replies without the corrected bundle when the window has already ended', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'clarified', correctedSummary: 'I set my own priorities.' });
+    m.aiProvider.composeQuestionBundle = vi.fn();
+    const repo = repoMocks({
+      findPendingQuestionClarification: vi.fn().mockResolvedValue({
+        workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+        surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+        workingSummary: 'I choose all my work.', disputedStatement: 'You set your priorities.',
+        clarificationPromptMessageId: 'clarify-out', clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+      }),
+      findCycleProgress: vi.fn().mockResolvedValue(null),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionClarificationVerdict).toHaveBeenCalledOnce();
+    expect(m.aiProvider.composeQuestionBundle).not.toHaveBeenCalled();
+    expect(repo.stageCorrectedStatementConfirmation).not.toHaveBeenCalled();
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toBeUndefined();
+  });
+
+  it('marks the cycle as waiting when this reply itself ends with a fixed text', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'what is left',
+      reminderRequest: null, dialogueAct: 'request', latestUserSubstance: 'what is left?', topicAnchor: null,
+      cycleStatusQuestion: true,
+    });
+    const statements = [{ surveyQuestionId: 'q-d', statement: 'You want more training time.' }];
+    const bundleText = `I hear that ${statements[0]!.statement} Is that fair?`;
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({ text: bundleText, statements });
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `Nearly there.\n\n${context.trailingBundle?.text ?? ''}`, replyText: 'Nearly there.', bundleText: context.trailingBundle?.text,
+      confidence: 0.9, containsSurveyProbe: false,
+    }));
+    const repo = repoMocks({
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'confirmed', 'confirmed'])),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue({
+        tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'growth',
+        questions: [{ surveyQuestionId: 'q-d', questionVersion: 'v2', workingSummary: statements[0]!.statement }],
+      }),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toMatchObject({ kind: 'confirmation_bundle' });
+    expect(context.cycleProgress).toMatchObject({ inCycle: true, awaitingReply: true });
+  });
+
+  it('gives no cycle-status grounding when the survey is disabled', async () => {
+    const m = baseMocks();
+    m.featureFlags.isEnabled = vi.fn().mockResolvedValue(false);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'clarification', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'what is left',
+      reminderRequest: null, dialogueAct: 'request', latestUserSubstance: 'what is left?', topicAnchor: null,
+      cycleStatusQuestion: true,
+    });
+    const repo = repoMocks();
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.cycleProgress).toBeUndefined();
+    expect(repo.findCycleProgress).not.toHaveBeenCalled();
+  });
+});
+
+describe('GC round 3 CAP-3: review findings round 2', () => {
+  const pending = {
+    workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+    surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+    workingSummary: 'I choose all my work.', disputedStatement: 'You set your priorities.',
+    clarificationPromptMessageId: 'clarify-out', clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+  };
+  const snapshot = (autonomy: string[]) => ({
+    surveyWindowId: 'w-v2',
+    groups: [
+      { questionGroup: 'autonomy', questions: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId, index) => ({ surveyQuestionId, status: autonomy[index]! })) },
+      { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-d', status: 'no_data' }] },
+    ],
+  });
+  function repoMocks(overrides: Record<string, unknown> = {}) {
+    return {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(pending),
+      previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue('bundle-2'),
+      stageCorrectedStatementConfirmation: vi.fn().mockResolvedValue('bundle-3'),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_clarification', 'confirmed'])),
+      ...overrides,
+    };
+  }
+  function orchestrator(m: ReturnType<typeof baseMocks>, repo: ReturnType<typeof repoMocks>) {
+    return new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, repo,
+    );
+  }
+
+  it('states completion when a declined clarification closes the topic', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'declined' });
+    const repo = repoMocks();
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.topicConfirmed).toEqual({ questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 2 });
+    expect(repo.applyQuestionClarificationVerdict).toHaveBeenCalledWith(expect.objectContaining({ verdict: { kind: 'declined' } }));
+  });
+
+  it('does not show the corrected statement on a closing turn; the row stays ready for the ordinary bundle path', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'closing',
+      reminderRequest: null, dialogueAct: 'closing', latestUserSubstance: null, topicAnchor: null,
+    });
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'clarified', correctedSummary: 'I set my own priorities, bye.' });
+    m.aiProvider.composeQuestionBundle = vi.fn();
+    const repo = repoMocks();
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionClarificationVerdict).toHaveBeenCalledOnce();
+    expect(m.aiProvider.composeQuestionBundle).not.toHaveBeenCalled();
+    expect(repo.stageCorrectedStatementConfirmation).not.toHaveBeenCalled();
+  });
+
+  it('does not show the corrected statement when the adapter cannot stage it', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'clarified', correctedSummary: 'I set my own priorities.' });
+    m.aiProvider.composeQuestionBundle = vi.fn();
+    const repo = repoMocks({ stageCorrectedStatementConfirmation: undefined });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionClarificationVerdict).toHaveBeenCalledOnce();
+    expect(m.aiProvider.composeQuestionBundle).not.toHaveBeenCalled();
+  });
+
+  it('withholds cycle-status counting on a turn where the survey is blocked by risk', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'support', secondaryIntents: [], emotionalState: ['distressed'], urgency: 'high',
+      confidence: 0.9, surveyAllowed: false, requiresSafetyCheck: false, reasoningSummary: 'distressed',
+      reminderRequest: null, dialogueAct: 'request', latestUserSubstance: 'did I answer everything, I cannot do this', topicAnchor: null,
+      cycleStatusQuestion: true,
+    });
+    const repo = repoMocks({ findPendingQuestionClarification: vi.fn().mockResolvedValue(null) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.cycleProgress).toBeUndefined();
   });
 });

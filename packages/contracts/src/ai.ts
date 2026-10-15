@@ -108,6 +108,14 @@ export const SituationClassificationSchema = z.object({
       .catch({ type: 'unresolved' })
       .optional(),
   ),
+  /**
+   * The employee asks what is left in the pulse cycle or whether they answered everything
+   * (GC round 3 CAP-3). The reply is then grounded on typed cycle progress.
+   */
+  cycleStatusQuestion: z.preprocess(
+    (value) => value === null || value === undefined ? false : value,
+    z.boolean().catch(false).optional(),
+  ),
 }).transform((classification) => {
   const hasPulseCaptureIntent = classification.primaryIntent === 'pulse_capture_explanation'
     || classification.secondaryIntents.includes('pulse_capture_explanation');

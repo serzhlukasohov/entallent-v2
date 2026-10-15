@@ -36,6 +36,16 @@ describe('Contract: SituationClassificationSchema', () => {
     });
   });
 
+  it('carries the cycle-status question signal and defaults it to false', () => {
+    const base = {
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.8, requiresSafetyCheck: false, surveyAllowed: true, reasoningSummary: 'asks what is left',
+    };
+    expect(SituationClassificationSchema.parse({ ...base, cycleStatusQuestion: true }).cycleStatusQuestion).toBe(true);
+    expect(SituationClassificationSchema.parse(base).cycleStatusQuestion).toBe(false);
+    expect(SituationClassificationSchema.parse({ ...base, cycleStatusQuestion: null }).cycleStatusQuestion).toBe(false);
+  });
+
   it('defaults dialogue-state fields for older classifier payloads', () => {
     const parsed = SituationClassificationSchema.parse({
       primaryIntent: 'support',

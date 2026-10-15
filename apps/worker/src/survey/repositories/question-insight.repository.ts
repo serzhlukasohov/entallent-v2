@@ -33,6 +33,7 @@ import type {
   PendingQuestionClarification,
   QuestionClarificationVerdict,
   AppliedQuestionVerdict,
+  CycleProgressSnapshot,
 } from '@entalent/application';
 import {
   hasCompleteV2ScoringPolicy,
@@ -44,6 +45,8 @@ import {
 } from '@entalent/application';
 import { DatabaseService } from '../../database/database.service';
 import { TeamRepository } from './team.repository';
+
+const V2_QUESTION_GROUPS = ['autonomy', 'growth', 'purpose', 'belonging'] as const;
 
 @Injectable()
 export class QuestionInsightRepository implements QuestionFinalizationRepositoryPort, QuestionInsightInputRepositoryPort, QuestionWorkingCapturePort, QuestionConfirmationPort {
@@ -90,6 +93,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       workingInsightId: surveyQuestionWorkingInsights.id,
       surveyWindowId: surveyQuestionWorkingInsights.surveyWindowId,
       surveyQuestionId: surveyQuestionWorkingInsights.surveyQuestionId,
+      questionVersion: surveyQuestionWorkingInsights.questionVersion,
       workingSummary: surveyQuestionWorkingInsights.workingSummary,
       clarificationPromptMessageId: surveyQuestionWorkingInsights.clarificationPromptMessageId,
       questionGroup: surveyQuestionConfirmationBundles.questionGroup,
@@ -144,6 +148,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       userId: input.userId,
       surveyWindowId: row.surveyWindowId,
       surveyQuestionId: row.surveyQuestionId,
+      questionVersion: row.questionVersion,
       questionGroup: row.questionGroup,
       workingSummary: row.workingSummary,
       disputedStatement: component.statement,
@@ -170,6 +175,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     const rows = await this.db.client.select({
       id: surveyQuestionWorkingInsights.id,
       surveyQuestionId: surveyQuestionWorkingInsights.surveyQuestionId,
+      questionVersion: surveyQuestionWorkingInsights.questionVersion,
       workingSummary: surveyQuestionWorkingInsights.workingSummary,
     }).from(surveyQuestionWorkingInsights)
       .innerJoin(surveyQuestions, eq(surveyQuestions.id, surveyQuestionWorkingInsights.surveyQuestionId))
@@ -195,6 +201,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       userId: input.userId,
       surveyWindowId: awaiting.surveyWindowId,
       surveyQuestionId: first.surveyQuestionId,
+      questionVersion: first.questionVersion,
       questionGroup: awaiting.questionGroup,
       workingSummary: first.workingSummary!,
       disputedStatement: component.statement,
@@ -234,6 +241,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     const [next] = await this.db.client.select({
       id: surveyQuestionWorkingInsights.id,
       surveyQuestionId: surveyQuestionWorkingInsights.surveyQuestionId,
+      questionVersion: surveyQuestionWorkingInsights.questionVersion,
       workingSummary: surveyQuestionWorkingInsights.workingSummary,
       clarificationPromptMessageId: surveyQuestionWorkingInsights.clarificationPromptMessageId,
     }).from(surveyQuestionWorkingInsights)
@@ -259,6 +267,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       userId: input.userId,
       surveyWindowId: current.surveyWindowId,
       surveyQuestionId: next.surveyQuestionId,
+      questionVersion: next.questionVersion,
       questionGroup: current.questionGroup,
       workingSummary: next.workingSummary,
       disputedStatement: component.statement,
@@ -407,12 +416,20 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         throw new Error('v2_clarification_reply_scope_mismatch');
       }
       if (input.verdict.kind === 'clarified') {
+        // GC round 3 CAP-3: the corrected meaning is not confirmed yet. It returns to collecting,
+        // ready to be shown back as a one-statement bundle in the same reply; the correction
+        // message joins its sources.
         await tx.update(surveyQuestionWorkingInsights).set({
-          status: 'confirmed',
-          confirmedSemanticSummary: input.verdict.correctedSummary.trim(),
-          confirmationMessageId: input.inboundMessageId,
-          confirmedAt: inbound.occurredAt,
-          readyForConfirmation: false,
+          status: 'collecting',
+          workingSummary: input.verdict.correctedSummary.trim(),
+          sourceMessageIds: [...new Set([...working.sourceMessageIds, input.inboundMessageId])],
+          confirmedSemanticSummary: null,
+          confirmationMessageId: null,
+          confirmedAt: null,
+          // The old bundle link stays until the receipt below is written (its DB guard walks
+          // working -> bundle -> prompt); staging the corrected statement replaces it.
+          clarificationPromptMessageId: null,
+          readyForConfirmation: true,
           updatedAt: inbound.occurredAt,
         }).where(eq(surveyQuestionWorkingInsights.id, working.id));
       } else {
@@ -881,6 +898,158 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     });
   }
 
+  /**
+   * GC round 3 CAP-3: after a `clarified` verdict the corrected statement is shown back as a
+   * one-statement bundle linked to the same working row; other statements of the group may still
+   * wait for clarification. The bundle then follows the ordinary verdict path.
+   */
+  async stageCorrectedStatementConfirmation(input: {
+    tenantId: string;
+    userId: string;
+    conversationId: string;
+    surveyWindowId: string;
+    questionGroup: string;
+    workingInsightId: string;
+    surveyQuestionId: string;
+    questionVersion: string;
+    promptMessageId: string;
+    displayedText: string;
+    statement: string;
+    expectedWorkingSummary: string;
+  }): Promise<string> {
+    if (!(V2_QUESTION_GROUPS as readonly string[]).includes(input.questionGroup)
+      || !input.displayedText.trim() || !input.statement.trim() || !input.expectedWorkingSummary.trim()
+      || !input.questionVersion.trim() || input.displayedText.split(input.statement).length !== 2) {
+      throw new Error('v2_corrected_statement_invalid_composition');
+    }
+    return this.db.client.transaction(async (tx) => {
+      const [scope] = await tx.select({
+        windowStatus: surveyWindows.status,
+        periodEnd: surveyWindows.periodEnd,
+        messageText: messages.text,
+        messageSentAt: messages.sentAt,
+      }).from(surveyWindows)
+        .innerJoin(surveyWindowScoringPolicies,
+          eq(surveyWindowScoringPolicies.surveyWindowId, surveyWindows.id))
+        .innerJoin(messages, eq(messages.id, input.promptMessageId))
+        .where(and(
+          eq(surveyWindows.id, input.surveyWindowId),
+          eq(surveyWindows.tenantId, input.tenantId),
+          eq(surveyWindows.userId, input.userId),
+          eq(surveyWindowScoringPolicies.tenantId, input.tenantId),
+          eq(messages.tenantId, input.tenantId),
+          eq(messages.userId, input.userId),
+          eq(messages.conversationId, input.conversationId),
+          eq(messages.direction, 'outbound'),
+          isNull(messages.deletedAt),
+        )).for('update').limit(1);
+      if (!scope || scope.windowStatus !== 'active' || scope.periodEnd <= new Date()
+        || scope.messageSentAt || !isBundleShownIn(scope.messageText, input.displayedText, {
+          statements: [input.statement],
+        })) {
+        throw new Error('v2_corrected_statement_scope_mismatch');
+      }
+      const [anotherBundle] = await tx.select({ id: surveyQuestionConfirmationBundles.id })
+        .from(surveyQuestionConfirmationBundles).where(and(
+          eq(surveyQuestionConfirmationBundles.tenantId, input.tenantId),
+          eq(surveyQuestionConfirmationBundles.userId, input.userId),
+          eq(surveyQuestionConfirmationBundles.surveyWindowId, input.surveyWindowId),
+          inArray(surveyQuestionConfirmationBundles.status, ['pending_delivery', 'awaiting_confirmation']),
+        )).limit(1);
+      if (anotherBundle) throw new Error('v2_corrected_statement_already_unresolved');
+      const [working] = await tx.select().from(surveyQuestionWorkingInsights).where(and(
+        eq(surveyQuestionWorkingInsights.id, input.workingInsightId),
+        eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+        eq(surveyQuestionWorkingInsights.userId, input.userId),
+        eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
+      )).for('update').limit(1);
+      if (!working || working.surveyQuestionId !== input.surveyQuestionId
+        || working.questionVersion !== input.questionVersion
+        || working.status !== 'collecting' || !working.readyForConfirmation
+        || working.workingSummary !== input.expectedWorkingSummary
+        || working.purgedAt !== null || working.sourceMessageIds.length === 0) {
+        throw new Error('v2_corrected_statement_working_state_stale');
+      }
+      const [bundle] = await tx.insert(surveyQuestionConfirmationBundles).values({
+        tenantId: input.tenantId,
+        userId: input.userId,
+        surveyWindowId: input.surveyWindowId,
+        questionGroup: input.questionGroup,
+        version: `message:${input.promptMessageId}`,
+        displayedText: input.displayedText,
+        components: [{
+          surveyQuestionId: input.surveyQuestionId,
+          questionVersion: input.questionVersion,
+          statement: input.statement,
+          sourceMessageIds: working.sourceMessageIds,
+        }],
+        promptMessageId: input.promptMessageId,
+      }).returning({ id: surveyQuestionConfirmationBundles.id });
+      await tx.update(surveyQuestionWorkingInsights).set({
+        status: 'pending_confirmation',
+        confirmationBundleId: bundle.id,
+        updatedAt: new Date(),
+      }).where(eq(surveyQuestionWorkingInsights.id, working.id));
+      return bundle.id;
+    });
+  }
+
+  /** GC round 3 CAP-3: per-question statuses of the active V2 window; null without one. */
+  async findCycleProgress(input: { tenantId: string; userId: string }): Promise<CycleProgressSnapshot | null> {
+    const windows = await this.db.client.select({
+      id: surveyWindows.id,
+      surveyDefinitionId: surveyWindows.surveyDefinitionId,
+      periodEnd: surveyWindows.periodEnd,
+    }).from(surveyWindows)
+      .innerJoin(surveyWindowScoringPolicies,
+        eq(surveyWindowScoringPolicies.surveyWindowId, surveyWindows.id))
+      .where(and(
+        eq(surveyWindows.tenantId, input.tenantId),
+        eq(surveyWindows.userId, input.userId),
+        eq(surveyWindows.status, 'active'),
+        eq(surveyWindowScoringPolicies.tenantId, input.tenantId),
+      )).limit(2);
+    if (windows.length === 0) return null;
+    if (windows.length !== 1) throw new Error('v2_multiple_active_survey_windows');
+    const window = windows[0]!;
+    if (window.periodEnd <= new Date()) return null;
+    if (await this.getWindowMode({ ...input, surveyWindowId: window.id }) !== 'v2') return null;
+    const questions = await this.db.client.select({
+      id: surveyQuestions.id,
+      questionGroup: surveyQuestions.questionGroup,
+      displayOrder: surveyQuestions.displayOrder,
+    }).from(surveyQuestions).where(and(
+      eq(surveyQuestions.surveyDefinitionId, window.surveyDefinitionId),
+      eq(surveyQuestions.responseType, 'open_ended'),
+      inArray(surveyQuestions.questionGroup, [...V2_QUESTION_GROUPS]),
+    ));
+    const working = await this.db.client.select({
+      surveyQuestionId: surveyQuestionWorkingInsights.surveyQuestionId,
+      status: surveyQuestionWorkingInsights.status,
+    }).from(surveyQuestionWorkingInsights).where(and(
+      eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+      eq(surveyQuestionWorkingInsights.userId, input.userId),
+      eq(surveyQuestionWorkingInsights.surveyWindowId, window.id),
+    ));
+    const statusByQuestion = new Map(working.map((row) => [row.surveyQuestionId, row.status]));
+    return {
+      surveyWindowId: window.id,
+      // Mirrors findReadyQuestionBundle: a group is a topic of this cycle only with its three questions.
+      groups: V2_QUESTION_GROUPS.flatMap((questionGroup) => {
+        const groupQuestions = questions.filter((question) => question.questionGroup === questionGroup)
+          .sort((a, b) => a.displayOrder - b.displayOrder);
+        return groupQuestions.length === 3
+          ? [{
+              questionGroup,
+              questions: groupQuestions.map((question) => ({
+                surveyQuestionId: question.id, status: statusByQuestion.get(question.id) ?? 'no_data',
+              })),
+            }]
+          : [];
+      }),
+    };
+  }
+
   async activateDeliveredQuestionBundle(input: {
     promptMessageId: string; tenantId: string; conversationId: string; deliveredAt: Date;
   }): Promise<void> {
@@ -1298,6 +1467,17 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyScoringPolicies.tenantId, input.tenantId),
       )).limit(1);
     if (!row?.working.confirmedAt) return null;
+    // GC round 3 CAP-3: proof that the employee saw and confirmed this exact statement.
+    const [receipt] = row.working.confirmationBundleId && row.working.confirmationMessageId
+      ? await this.db.client.select({ inboundMessageId: surveyQuestionVerdictReceipts.inboundMessageId })
+        .from(surveyQuestionVerdictReceipts).where(and(
+          eq(surveyQuestionVerdictReceipts.tenantId, input.tenantId),
+          eq(surveyQuestionVerdictReceipts.userId, input.userId),
+          eq(surveyQuestionVerdictReceipts.bundleId, row.working.confirmationBundleId),
+          eq(surveyQuestionVerdictReceipts.inboundMessageId, row.working.confirmationMessageId),
+          inArray(surveyQuestionVerdictReceipts.verdictKind, ['agree', 'partial']),
+        )).limit(1)
+      : [];
     const [existing] = await this.db.client.select({ id: surveyQuestionInsights.id })
       .from(surveyQuestionInsights).where(and(
         eq(surveyQuestionInsights.workingInsightId, row.working.id),
@@ -1340,6 +1520,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         ...row.working.sourceMessageIds,
         ...externalSources.flatMap((source) => source.externalMessageId?.trim() ? [source.externalMessageId.trim()] : []),
       ])],
+      shownStatementReceipt: receipt !== undefined,
     };
   }
 
@@ -1430,17 +1611,31 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyAssessments.surveyQuestionId, final.surveyQuestionId),
       ));
 
-      if (working.confirmationBundleId) {
+      // A bundle is purged once every row it confirmed is purged. A corrected statement moves its
+      // row to a later one-statement bundle (GC round 3 CAP-3), so the earlier resolved bundle is
+      // checked here as well, not only the one this row points at.
+      const candidateBundles = await tx.select({
+        id: surveyQuestionConfirmationBundles.id,
+        components: surveyQuestionConfirmationBundles.components,
+      }).from(surveyQuestionConfirmationBundles).where(and(
+          eq(surveyQuestionConfirmationBundles.tenantId, final.tenantId),
+          eq(surveyQuestionConfirmationBundles.userId, final.userId),
+          eq(surveyQuestionConfirmationBundles.surveyWindowId, final.surveyWindowId),
+          eq(surveyQuestionConfirmationBundles.status, 'resolved'),
+        ));
+      for (const bundle of candidateBundles) {
+        // Components stay on a resolved bundle only while a dispute is still being clarified.
+        if (bundle.components !== null && bundle.components !== undefined) continue;
         const bundleQuestions = await tx.select({ purgedAt: surveyQuestionWorkingInsights.purgedAt })
           .from(surveyQuestionWorkingInsights)
-          .where(eq(surveyQuestionWorkingInsights.confirmationBundleId, working.confirmationBundleId));
+          .where(eq(surveyQuestionWorkingInsights.confirmationBundleId, bundle.id));
         if (bundleQuestions.every((question) => question.purgedAt !== null)) {
           await tx.update(surveyQuestionConfirmationBundles).set({
             displayedText: null,
             components: null,
             status: 'purged',
             purgedAt,
-          }).where(eq(surveyQuestionConfirmationBundles.id, working.confirmationBundleId));
+          }).where(eq(surveyQuestionConfirmationBundles.id, bundle.id));
         }
       }
       return existing ? 'already_finalized' : 'finalized';

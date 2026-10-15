@@ -240,3 +240,12 @@
   status: done
   completed_by: `packages/conversation-sim/src/scenarios/answer-then-bundle.sim.test.ts` (gate id `answer-then-bundle`, 2026-10-15)
   evidence: Blind Hunter review of S3 (2026-10-15); the fix-plan verification matrix lists only the V2 queue suite and the next live cycle for S3.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4-confirmation-completion.md`
+  summary: Working rows confirmed by the pre-S4 `clarified` path (receipt `verdictKind='clarified'`, no `bundleId`, confirmed text never shown) are now refused by finalization forever and re-listed by `listPendingConfirmedQuestions` on every run without being purged; before deploying S4, check production for `survey_question_working_insights` rows in `confirmed` status with `purged_at is null` and either backfill them to `collecting` + ready so they are shown back, or purge them, with user approval.
+  evidence: Blind Hunter and Edge Case Hunter reviews of S4 (2026-10-15); as of 2026-10-15 no V2 cycle is active and the closed cycle's rows are finalized and purged, so the current risk is nil, but the check is required at deploy time.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4-confirmation-completion.md`
+  summary: A `reject` verdict on a one-statement corrected bundle ("no, that's still wrong") keeps the ordinary semantics (reset: the correction is wiped and the question re-collected from scratch) because the bundle interpreter cannot tell a corrected bundle from an ordinary one-statement bundle; the product owner must decide whether such a reply should instead reopen the clarification question, which needs a bundle kind marker.
+  evidence: Blind Hunter review of S4 (2026-10-15); the spec listed this as an Ask First item and the orchestrator maps the verdict unchanged.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4-confirmation-completion.md`
+  summary: The V2 queue suite's bundle interpreter stub answers `agree` for every one-statement bundle, so "disputed again" on a corrected statement, `reject` on a corrected statement, a clarified statement while a second statement of the group is still disputed, and a retry after the corrected turn committed are covered only by orchestrator unit tests, not end to end.
+  evidence: Blind Hunter review of S4 (2026-10-15); `apps/worker/src/conversation/v2-conversation-flow.integration.test.ts` interpretQuestionBundleResponse mock.

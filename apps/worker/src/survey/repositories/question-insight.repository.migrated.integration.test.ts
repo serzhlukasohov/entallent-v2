@@ -6,7 +6,8 @@ import { and, eq } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import {
   conversations, messages, pulseBacklog, surveyDefinitions, surveyQuestions,
-  surveyQuestionInsights, surveyQuestionWorkingInsights, surveyScoringPolicies, surveyWindowScoringPolicies,
+  surveyQuestionConfirmationBundles, surveyQuestionInsights, surveyQuestionVerdictReceipts,
+  surveyQuestionWorkingInsights, surveyScoringPolicies, surveyWindowScoringPolicies,
   surveyWindows, tenants, users,
 } from '@entalent/database';
 import { FinalizeQuestionInsightUseCase, RecoverConfirmedQuestionInsightsUseCase, SelectQuestionInsightInputsUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY } from '@entalent/application';
@@ -147,6 +148,28 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       ? 'Growth opportunities were limited until 28 сентября.'
       : 'Growth opportunities were limited.' };
     const finalizer = new FinalizeQuestionInsightUseCase(repository, scorer, deidentifier);
+    // GC round 3 CAP-3: a confirmed meaning the employee never saw and confirmed is refused.
+    expect(loaded && loaded !== 'already_finalized' ? loaded.shownStatementReceipt : null).toBe(false);
+    expect(await finalizer.executePending({ tenantId, userId: user!.id })).toBe(0);
+    expect(await db.select().from(surveyQuestionInsights)
+      .where(eq(surveyQuestionInsights.surveyQuestionId, confirmedQuestion.id))).toHaveLength(0);
+    const [shownPrompt] = await db.insert(messages).values({
+      tenantId, userId: user!.id, conversationId: conversation!.id,
+      direction: 'outbound', senderType: 'agent', text: 'Project Atlas offered limited growth opportunities. Is that fair?',
+      occurredAt: new Date(newMessage!.occurredAt.getTime() - 1_000),
+      sentAt: new Date(newMessage!.occurredAt.getTime() - 1_000),
+    }).returning();
+    const [shownBundle] = await db.insert(surveyQuestionConfirmationBundles).values({
+      tenantId, userId: user!.id, surveyWindowId: window!.id, questionGroup: confirmedQuestion.questionGroup,
+      version: `message:${shownPrompt!.id}`, status: 'resolved', promptMessageId: shownPrompt!.id,
+    }).returning({ id: surveyQuestionConfirmationBundles.id });
+    await db.insert(surveyQuestionVerdictReceipts).values({
+      inboundMessageId: newMessage!.id, tenantId, userId: user!.id, conversationId: conversation!.id,
+      questionGroup: confirmedQuestion.questionGroup, verdictKind: 'agree', bundleId: shownBundle!.id,
+    });
+    await db.update(surveyQuestionWorkingInsights)
+      .set({ confirmationBundleId: shownBundle!.id, confirmationMessageId: newMessage!.id })
+      .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, confirmedQuestion.id));
     const processor = new SurveyEvidenceProcessor({
       assertConversationOwner: async () => undefined,
       execute: async () => { throw new Error('private evidence-model output'); },
@@ -338,6 +361,8 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
           surveyQuestionId: item.id, questionVersion: item.version,
           status: 'confirmed', confirmedSemanticSummary: 'Growth opportunities were limited.',
           sourceMessageIds: [newMessage!.id], confirmedAt: newMessage!.occurredAt,
+          // GC round 3 CAP-3: finalization needs the shown-and-confirmed receipt link.
+          confirmationBundleId: shownBundle!.id, confirmationMessageId: newMessage!.id,
         })),
     );
     expect(await repository.listPendingConfirmedUsers()).toContainEqual({ tenantId, userId: user!.id });
