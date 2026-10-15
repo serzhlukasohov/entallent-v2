@@ -86,9 +86,10 @@ is available and fall back to the single Azure deployment otherwise.
 | `AZURE_OPENAI_TESTING_DEPLOYMENT` | Azure deployment for the testing agents |
 | `LANGWATCH_API_KEY` | Optional — renders runs in the LangWatch UI |
 
-The package `test` command runs the offline gate tests and explicitly excludes
-the six live scenario files, even when tooling appends their paths. Deterministic
-structural scenarios can be selected explicitly without model calls. Live
+The package `test` command runs the offline gate and harness tests plus the
+offline structural scenario `simulation-repositories.sim.test.ts`, and explicitly
+excludes the live scenario files, even when tooling appends their paths. Add any
+new offline `.sim.test.ts` to that include list so the harness gate runs it. Live
 simulations use `sim` or `sim:gate`; each run costs real tokens and takes tens of
 seconds. Run them before merging prompt or orchestration
 changes, and on a schedule.
