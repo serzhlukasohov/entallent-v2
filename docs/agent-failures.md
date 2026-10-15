@@ -3128,12 +3128,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 
 ## 2026-10-15: Route privacy snapshot stale on main after dashboard rework
 
-- Symptom: On `main` at 6afbd1f, `src/private-production-route-boundary.test.ts` fails: the reviewed-route snapshot lacks `GET admin/team-hierarchy`, `GET admin/v2-pilot/people`, `GET admin/v2-pilot/team-signals`, and `GET admin/v2-pilot/qa/team-signals`, which PR #16 mounted.
-- Expected: A change that mounts an admin route updates the reviewed-route snapshot in the same PR, and the API suite is green before merge.
+- Symptom: After PR #16 merged, `src/private-production-route-boundary.test.ts` failed on `main` (`6afbd1f`): the reviewed admin-route snapshot lacked `GET admin/team-hierarchy`, `GET admin/v2-pilot/people`, `GET admin/v2-pilot/team-signals`, and `GET admin/v2-pilot/qa/team-signals`, so the API suite stayed red.
+- Expected: New production admin routes get a privacy review and a snapshot update in the same PR that mounts them (same class as the 2026-10-04 `GET admin/v2-pilot` entry).
 - Root cause layer: verification
-- Harness fix: Update the snapshot after a human privacy review of the four routes; make the API test suite a required check for PRs touching `apps/api/src/admin`.
+- Harness fix: Reviewed the four routes (all `ApiKeyGuard` + `assertInternalDashboardEnabled`, default off; `Cache-Control: private, no-store`; tenant-scoped queries; hierarchy exposes names/roles only, team-signals carries no participant/insight ids, identifying data only on `people` and the QA-only `qa/team-signals`) and added them to the snapshot. Second occurrence of this class: run the boundary test whenever a controller under `apps/api/src/admin/` changes, and make the API test suite a required check for PRs touching `apps/api/src/admin`.
 - Regression check: `pnpm --filter @entalent/api exec vitest run src/private-production-route-boundary.test.ts`.
-- Status: open
+- Status: fixed
 
 ## 2026-10-15: Fresh worktree cannot run package tests until workspace packages are built
 
