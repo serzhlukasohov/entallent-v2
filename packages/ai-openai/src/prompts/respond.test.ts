@@ -903,3 +903,185 @@ describe('buildRespondSystemPrompt qualified goal background', () => {
     expect(userPrompt).not.toContain('UNTRUSTED PREQUALIFIED GOAL BACKGROUND');
   });
 });
+
+describe('buildRespondSystemPrompt grounded pulse-capture facts (GC round 3 CAP-5)', () => {
+  const requestStrategy: ReplyStrategy = { ...strategy, mode: 'normal' };
+  const answerPlan: NonNullable<ResponseContext['replyPlan']> = {
+    dialogueAct: 'request',
+    responseMove: 'answer_request',
+    latestUserSubstance: 'what did you capture?',
+    topicAnchor: null,
+    memoryAnchors: [],
+    requiredGrounding: [],
+    resolvedDetails: [],
+    questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+    mayInferFromBrevity: false,
+    forbiddenMoves: ['unsupported_interpretation'],
+  };
+
+  it('tells the model to answer from the listed captures with the privacy meaning of each status', () => {
+    const prompt = buildRespondSystemPrompt(requestStrategy, context({
+      userName: 'Sam',
+      replyPlan: answerPlan,
+      captureFacts: {
+        scope: 'conversation',
+        captures: [
+          { evidenceSummary: 'Onboarding feels positive.', status: 'temporary' },
+          { evidenceSummary: 'Workload is manageable.', status: 'confirmed' },
+          { evidenceSummary: 'Old note.', status: 'withdrawn' },
+        ],
+      },
+    }));
+
+    expect(prompt).toMatch(/in your own words/i);
+    expect(prompt).toMatch(/temporary.*not reportable/i);
+    expect(prompt).toMatch(/confirmed.*de-identified.*aggregated team/i);
+    expect(prompt).toMatch(/withdrawn.*not deleted/i);
+    expect(prompt).toMatch(/do not (?:invent|add)/i);
+    expect(prompt).not.toContain('Onboarding feels positive.');
+  });
+
+  it('places the captures in the user prompt as untrusted grounded facts', () => {
+    const user = buildRespondUserPrompt(
+      [{ role: 'user', content: 'what did you capture?', timestamp: new Date() }],
+      context({
+        userName: 'Sam',
+        replyPlan: answerPlan,
+        captureFacts: { scope: 'exact', captures: [{ evidenceSummary: 'Onboarding feels positive.', status: 'temporary' }] },
+      }),
+      requestStrategy,
+    );
+
+    expect(user).toMatch(/UNTRUSTED PULSE CAPTURE FACTS START/);
+    expect(user).toContain('Onboarding feels positive.');
+    expect(user).toMatch(/temporary/);
+    expect(user).toMatch(/UNTRUSTED PULSE CAPTURE FACTS END/);
+  });
+
+  it('states the absent and unresolved cases without claiming nothing was ever stored', () => {
+    const absent = buildRespondSystemPrompt(requestStrategy, context({
+      userName: 'Sam', replyPlan: answerPlan, captureFacts: { scope: 'conversation', captures: [] },
+    }));
+    const unresolved = buildRespondSystemPrompt(requestStrategy, context({
+      userName: 'Sam', replyPlan: answerPlan, captureFacts: { scope: 'unresolved', captures: [] },
+    }));
+
+    expect(absent).toMatch(/no persisted pulse evidence/i);
+    expect(absent).toMatch(/may not have been evaluated yet/i);
+    expect(absent).toMatch(/never say/i);
+    expect(unresolved).toMatch(/could not identify/i);
+    expect(unresolved).toMatch(/quote/i);
+  });
+
+  it('asks the model to explain a term plainly when the employee asks what a word means', () => {
+    const prompt = buildRespondSystemPrompt(requestStrategy, context({
+      userName: 'Sam', replyPlan: answerPlan, captureFacts: { scope: 'conversation', captures: [] },
+    }));
+    expect(prompt).toMatch(/what a term means/i);
+  });
+
+  it('emits no capture block otherwise', () => {
+    const prompt = buildRespondSystemPrompt(requestStrategy, context({ userName: 'Sam', replyPlan: answerPlan }));
+    expect(prompt).not.toMatch(/pulse capture facts/i);
+  });
+});
+
+describe('buildRespondSystemPrompt identity and capability statement (GC round 3 CAP-7)', () => {
+  const requestStrategy: ReplyStrategy = { ...strategy, mode: 'normal' };
+  const requestPlan: NonNullable<ResponseContext['replyPlan']> = {
+    dialogueAct: 'request',
+    responseMove: 'answer_request',
+    latestUserSubstance: 'who are you and what do you do here?',
+    topicAnchor: null,
+    memoryAnchors: [],
+    requiredGrounding: [],
+    resolvedDetails: [],
+    questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+    mayInferFromBrevity: false,
+    forbiddenMoves: ['unsupported_interpretation'],
+  };
+
+  it('names the EnTalent role on every turn: private support plus a confirmed, de-identified team pulse', () => {
+    const prompt = buildRespondSystemPrompt(requestStrategy, context({ userName: 'Sam' }));
+
+    expect(prompt).toMatch(/EnTalent/);
+    expect(prompt).toMatch(/team pulse/i);
+    expect(prompt).toMatch(/de-identified/i);
+    expect(prompt).toMatch(/only after .*confirm/i);
+    expect(prompt).toMatch(/not a human|an AI/i);
+    expect(prompt).toMatch(/never present yourself as a generic/i);
+  });
+
+  it('states the capability limits: no browsing, links, workspace, calendar or acting for anyone', () => {
+    const prompt = buildRespondSystemPrompt(requestStrategy, context({ userName: 'Sam' }));
+
+    expect(prompt).toMatch(/cannot[^.]*browse/i);
+    expect(prompt).toMatch(/open or fetch links/i);
+    expect(prompt).toMatch(/Slack channels/i);
+    expect(prompt).toMatch(/calendar/i);
+    expect(prompt).toMatch(/act on anyone['’]s behalf/i);
+  });
+
+  it('requires a request that needs a missing capability to be declined in the first sentence', () => {
+    const prompt = buildRespondSystemPrompt(requestStrategy, context({ userName: 'Sam', replyPlan: requestPlan }));
+
+    expect(prompt).toMatch(/Request contract:[^]*first sentence/i);
+    expect(prompt).toMatch(/never say (?:that )?you can do it and then ask for a detail/i);
+  });
+});
+
+describe('buildRespondSystemPrompt trailing bundle (GC round 3 CAP-4)', () => {
+  const bundleText = 'I hear that you can choose your methods. You can set priorities. Is that fair?';
+
+  const turns = [{ role: 'user' as const, content: 'Should I start with the retro notes?', timestamp: new Date() }];
+
+  it('requires answering the latest message first and copying the bundle byte-for-byte', () => {
+    const ctx = context({ userName: 'Test', trailingBundle: { kind: 'confirmation_bundle', text: bundleText } });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).toContain('"replyText"');
+    expect(prompt).toContain('"bundleText"');
+    expect(prompt).toMatch(/byte-for-byte/i);
+    expect(prompt).toMatch(/latest message/i);
+    expect(prompt.indexOf('"replyText"')).toBeLessThan(prompt.indexOf('"bundleText"'));
+    expect(prompt).toMatch(/"text": return an empty string/);
+    expect(prompt).toMatch(/Do not add a lead-in/);
+    // The fixed text derives from employee messages: it travels in the untrusted user prompt, not the system prompt.
+    expect(prompt).not.toContain(bundleText);
+    const user = buildRespondUserPrompt(turns, ctx, strategy);
+    expect(user).toContain('--- UNTRUSTED FIXED TEXT START ---');
+    expect(user).toContain(bundleText);
+    expect(user.indexOf('--- UNTRUSTED FIXED TEXT START ---')).toBeLessThan(user.indexOf(bundleText));
+  });
+
+  it('describes the clarification variant as one fixed follow-up question', () => {
+    const ctx = context({
+      userName: 'Test',
+      trailingBundle: { kind: 'clarification', text: 'What would you change about your priorities?' },
+    });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).toMatch(/follow-up question/i);
+    expect(prompt).toContain('"bundleText"');
+    expect(buildRespondUserPrompt(turns, ctx, strategy)).toContain('What would you change about your priorities?');
+  });
+
+  it('suppresses memory and goal hints on a bundle turn so the answer stays on the latest message', () => {
+    const ctx = context({
+      userName: 'Test',
+      trailingBundle: { kind: 'confirmation_bundle', text: bundleText },
+      memoryContext: {
+        items: [{ id: 'mem-1', category: 'stressor', content: 'A stale memory about the old team', importance: 0.5 }],
+        goals: [{ id: 'g-1', title: 'Lead the migration', status: 'active' }],
+      },
+    });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).not.toContain('Things you already know about');
+    expect(prompt).not.toContain('prequalified active goal');
+    expect(buildRespondUserPrompt(turns, ctx, strategy)).not.toContain('PREQUALIFIED GOAL');
+  });
+
+  it('omits the two-part contract on ordinary turns', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
+    expect(prompt).not.toContain('"bundleText"');
+    expect(prompt).not.toContain('"replyText"');
+  });
+});

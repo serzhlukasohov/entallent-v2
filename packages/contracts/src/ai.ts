@@ -370,9 +370,15 @@ export const ReplyStrategySchema = z.object({
 });
 export type ReplyStrategy = z.infer<typeof ReplyStrategySchema>;
 
+const optionalNullableText = z.preprocess((value) => value === null ? undefined : value, z.string().optional());
+
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
   confirmationSummary: z.string().optional(),
+  /** Two-part reply on a V2 bundle or clarification turn (GC round 3 CAP-4): the answer to the latest message. */
+  replyText: optionalNullableText,
+  /** The composed bundle or clarification text the model must return byte-for-byte. */
+  bundleText: optionalNullableText,
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
   surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),

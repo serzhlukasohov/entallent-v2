@@ -85,14 +85,18 @@ describe('CAP-8 exact-message pulse capture', () => {
       expect(findPulseCaptureForConversation).toHaveBeenCalledWith(
         expect.objectContaining({ sourceMessageId: source.id }),
       );
-      expect(reply).toContain(sourceSummary);
+      // GC round 3 CAP-5: the reply is the model's own words, grounded only in the exact-message
+      // captures; the other message's evidence must never reach the employee.
+      const captureFacts = harness.responseCallsByTurn[0]?.context.captureFacts;
+      expect(captureFacts?.scope).toBe('exact');
+      expect(captureFacts?.captures.map((capture) => capture.evidenceSummary)).toEqual(
+        mixedStatus ? [sourceSummary, mixedSummary] : [sourceSummary],
+      );
+      expect(captureFacts?.captures.map((capture) => capture.status)).toEqual(
+        mixedStatus ? ['confirmed', 'temporary'] : ['temporary'],
+      );
       expect(reply).not.toContain(otherSummary);
-      if (mixedStatus) {
-        expect(reply).toMatch(/The shared workspace feels welcoming\. — confirmed/);
-        expect(reply).toMatch(
-          /The shared workspace and release plan have mixed signals\. — temporary/,
-        );
-      }
+      expect(reply).not.toMatch(/release/i);
       expect(outbound?.metadata?.pulseCaptureSourceMessageId).toBe(source.id);
       await reportRun(scenarioName, harness, result, false);
     },

@@ -521,7 +521,7 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.reminderRequest).toBeNull();
   });
 
-  it('recognizes the exact D05-03 pulse capture explanation question', async () => {
+  it('keeps the model label for the D05-03 wording instead of promoting it lexically (ADR-013 D2)', async () => {
     const content = 'but i don’t understand what exact information you already picked from our discussion?';
     createMock.mockResolvedValue({
       choices: [{
@@ -550,8 +550,8 @@ describe('OpenAiProvider.classifySituation', () => {
       { userName: 'Annna' },
     );
 
-    expect(result.primaryIntent).toBe('pulse_capture_explanation');
-    expect(result.surveyAllowed).toBe(false);
+    expect(result.primaryIntent).toBe('clarification');
+    expect(result.surveyAllowed).toBe(true);
   });
 
   it('preserves a typed exact-message CAP-8 scope from the classifier', async () => {
@@ -937,7 +937,7 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.pulseCaptureScope).toEqual({ type: 'previous_exact' });
   });
 
-  it('forces conversation scope for the deterministic conversation-wide matcher on corrections', async () => {
+  it('does not force conversation scope lexically; a previous_exact correction stays typed by the model', async () => {
     const content = 'What exact pulse information did you capture from this conversation?';
     createMock.mockResolvedValue({
       choices: [{
@@ -967,7 +967,8 @@ describe('OpenAiProvider.classifySituation', () => {
       { userName: 'Annna' },
     );
 
-    expect(result.pulseCaptureScope).toEqual({ type: 'conversation' });
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'previous_exact' });
   });
 
   it('labels the bounded transcript with stable absolute turn indices', async () => {
@@ -1235,7 +1236,7 @@ describe('OpenAiProvider.classifySituation', () => {
     {
       content: 'Help me understand what exact pulse information you captured from this conversation?',
       modelIntent: 'clarification',
-      expectedIntent: 'pulse_capture_explanation',
+      expectedIntent: 'clarification',
     },
     {
       content: 'Translate: "What exact pulse information did you pick up from this discussion?"',
@@ -2473,6 +2474,33 @@ describe('OpenAiProvider Azure content filter boundary', () => {
     });
   });
 
+  it('carries the Azure categories that filtered the prompt as bounded keys (GC round 3 CAP-11)', async () => {
+    // Real Azure shape: the policy violation body sits under `error`.
+    const filtered = Object.assign(new Error('filtered'), {
+      status: 400,
+      code: 'content_filter',
+      param: 'prompt',
+      error: {
+        innererror: {
+          code: 'ResponsibleAIPolicyViolation',
+          content_filter_result: {
+            hate: { filtered: false, severity: 'safe' },
+            jailbreak: { filtered: true, detected: true },
+            self_harm: { filtered: true, severity: 'medium' },
+            'weird key; drop table': { filtered: true },
+          },
+        },
+      },
+    });
+    createMock.mockImplementationOnce(() => { throw filtered; });
+    const provider = azureProvider();
+    await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({
+      name: 'ProviderContentFilterError', direction: 'input',
+      filteredCategories: ['jailbreak', 'self_harm'],
+      categories: [{ category: 'self_harm', level: 'medium' }],
+    });
+  });
+
   it('maps a completion finish reason to output_filtered', async () => {
     createMock.mockResolvedValue({
       choices: [{ finish_reason: 'content_filter', message: { content: null } }],
@@ -2511,5 +2539,90 @@ describe('OpenAiProvider Azure content filter boundary', () => {
       await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({ status: 503 });
     }
     expect(breakerState(provider)).toBe('OPEN');
+  });
+});
+
+describe('OpenAiProvider.generateResponse trailing bundle (GC round 3 CAP-4)', () => {
+  beforeEach(() => createMock.mockReset());
+  const bundleText = 'I hear that you can choose your methods. You can set priorities. Is that fair?';
+  const replyText = 'Start tomorrow with the retro notes; the checklist can wait until after standup.';
+  const confirmation = {
+    mode: 'confirmation', tone: 'warm', includeFollowUpQuestion: false, maxResponseLength: 'medium', forbiddenPatterns: [],
+  } as ReplyStrategy;
+  const bundleContext = responseContext({
+    userName: 'X', trailingBundle: { kind: 'confirmation_bundle', text: bundleText },
+  });
+  const draft = (reply: string, bundle: string) => ({
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: `${reply}\n\n${bundle}`, replyText: reply, bundleText: bundle, confidence: 0.9, containsSurveyProbe: false,
+    }) } }],
+  });
+
+  it('returns the answer followed by the exact bundle from one call', async () => {
+    createMock.mockResolvedValue(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+    expect(res.replyText).toBe(replyText);
+    expect(res.bundleText).toBe(bundleText);
+  });
+
+  it('repairs once when the draft rewrites the bundle, then returns the exact bundle', async () => {
+    createMock
+      .mockResolvedValueOnce(draft(replyText, bundleText.replace('fair', 'right')))
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const repairSystemPrompt = createMock.mock.calls[1]![0].messages[0].content as string;
+    expect(repairSystemPrompt).toMatch(/byte-for-byte/i);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+  });
+
+  it('repairs once when the reply part asks a question', async () => {
+    createMock
+      .mockResolvedValueOnce(draft('Retro notes first, or the checklist?', bundleText))
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.replyText).toBe(replyText);
+  });
+
+  it('repairs once when the first bundle draft is not parseable, instead of failing the turn', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text": "half a draft' } }] })
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+  });
+
+  it('fails closed with v2_bundle_reply_invalid when both drafts have the wrong shape', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: `${replyText}\n\n${bundleText}`, replyText: 42, bundleText, confidence: '0.9', containsSurveyProbe: false,
+    }) } }] });
+    const provider = makeProvider();
+    await expect(provider.generateResponse(turns, confirmation, bundleContext)).rejects.toThrow('v2_bundle_reply_invalid');
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed with v2_bundle_reply_invalid after one repair, naming the failed rule', async () => {
+    createMock.mockResolvedValue(draft(replyText, 'Something else entirely?'));
+    const provider = makeProvider();
+    await expect(provider.generateResponse(turns, confirmation, bundleContext))
+      .rejects.toMatchObject({ message: 'v2_bundle_reply_invalid', reason: 'bundle_mismatch' });
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts an empty "text" on a bundle turn and assembles the message itself', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: '', replyText, bundleText, confidence: 0.9, containsSurveyProbe: false,
+    }) } }] });
+    const provider = makeProvider();
+    const res = await provider.generateResponse(turns, confirmation, bundleContext);
+    expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
   });
 });

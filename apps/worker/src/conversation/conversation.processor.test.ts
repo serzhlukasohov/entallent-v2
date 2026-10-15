@@ -177,6 +177,25 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
   });
 
+  it('records the provider filter categories in the llm_runs error code of a committed input-filtered turn (GC round 3 CAP-11)', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => ({
+        outcome: 'input_filtered', outboundMessageId: 'outbound-1', responseText: 'Please restate',
+        contentFilterCategories: ['jailbreak'],
+      })),
+    };
+    const { processor, llmRunRepo } = createProcessor({ orchestrator });
+
+    await expect(processor.process({
+      id: 'filtered-job', name: 'process', attemptsMade: 0,
+      opts: { delay: 2_000 }, data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'success', errorCode: 'conversation_provider_content_filter_input:jailbreak',
+    }));
+  });
+
   it('no-ops stale original and retry jobs before orchestration and LLM accounting', async () => {
     const conversationRepo = {
       shouldSkipInboundMessage: vi.fn()
@@ -421,6 +440,21 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
       expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
         status: 'error', errorCode: 'conversation_app_v2_confirmation_bundle_stale',
+      }));
+    });
+
+    it('does not retry a provider input filter: one fallback on the first attempt (GC round 3 CAP-11)', async () => {
+      const orchestrator = failingOrchestrator(
+        Object.assign(new Error('Provider filtered input'), { name: 'ProviderContentFilterError', direction: 'input' }),
+      );
+      const { processor, llmRunRepo, conversationRepo } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(0))).resolves.toBeUndefined();
+
+      expect(orchestrator.commitFailedTurn).toHaveBeenCalledWith(conversationJob, 'conversation_provider_content_filter_input');
+      expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+      expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'error', errorCode: 'conversation_provider_content_filter_input',
       }));
     });
 

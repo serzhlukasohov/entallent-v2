@@ -5,6 +5,7 @@ import {
   type RiskAssessment,
   type ReplyStrategy,
   type ConversationMode,
+  type GeneratedResponse,
 } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
 import type { ConversationDispatchKind, ConversationRepositoryPort } from '../ports/conversation.repository.port';
@@ -41,7 +42,11 @@ import type {
   SurveyQuestionRecord,
 } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
-import { validateQuestionBundleComposition } from '../utils/question-bundle-composition';
+import {
+  composeBundleReplyText, isBundleReplyInvalidError, validateBundleReply, validateQuestionBundleComposition,
+  type BundleReplyInvalidReason,
+} from '../utils/question-bundle-composition';
+import { maxReplyChars } from '../utils/reply-length';
 import { validateQuestionBundleVerdict } from '../utils/question-bundle-verdict';
 import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
 import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
@@ -55,8 +60,6 @@ import {
   REPORTING_DISCLOSURE_VERSION,
   appendReportingDisclosure,
   getDataUseExplanationText,
-  getPulseCaptureExplanationText,
-  isExplicitPulseCaptureRequest,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
@@ -75,12 +78,20 @@ export type OrchestrateInput = ProcessMessageRequest;
 export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
   risk: RiskAssessment;
   outcome?: 'input_filtered' | 'processing_failed';
+  /** Bounded provider category keys behind an `input_filtered` outcome (diagnostics only). */
+  contentFilterCategories?: readonly string[];
+  /** How a V2 bundle or clarification turn was delivered (GC round 3 CAP-4). */
+  bundleReply?: BundleReplyOutcome;
+  /** Why the fixed text went alone (diagnostics only). */
+  bundleReplyFallbackReason?: BundleReplyFallbackReason;
 };
+
+/** `answer_then_bundle`: the employee's message was answered before the fixed text; otherwise the fixed text went alone. */
+export type BundleReplyOutcome = 'answer_then_bundle' | 'bundle_without_reply';
+export type BundleReplyFallbackReason = BundleReplyInvalidReason | 'output_filtered';
 
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
-
-class InputFilterDuringClassification extends Error {}
 
 type PreparedBundlePhase = {
   confirmedGroup: string | false;
@@ -137,12 +148,17 @@ export class ConversationOrchestrator {
     return true;
   }
 
+  /**
+   * A provider input filter raised by any model call in the turn (classification, reply, repair)
+   * becomes the one filtered-input explanation on the first attempt (GC round 3 CAP-11). Anything
+   * the turn persisted before the filter is only read state; durable writes happen after generation.
+   */
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
     try {
       return await this.orchestrateModelTurn(input);
     } catch (error) {
-      if (!(error instanceof InputFilterDuringClassification)) throw error;
-      return this.commitInputFilteredTurn(input);
+      if (!(error instanceof ProviderContentFilterError) || error.direction !== 'input') throw error;
+      return this.commitInputFilteredTurn(input, error.filteredCategories);
     }
   }
 
@@ -156,10 +172,19 @@ export class ConversationOrchestrator {
       processingFailureExplanation(languagePolicy.responseLanguage), { failureCode, languagePolicy });
   }
 
-  private async commitInputFilteredTurn(input: OrchestrateInput): Promise<OrchestrateResult> {
+  private async commitInputFilteredTurn(
+    input: OrchestrateInput,
+    contentFilterCategories: readonly string[],
+  ): Promise<OrchestrateResult> {
     const languagePolicy = resolveLanguagePolicy();
-    return this.commitOutcomeTurn(input, 'input_filtered',
-      contentFilterExplanation(languagePolicy.responseLanguage), { languagePolicy });
+    const result = await this.commitOutcomeTurn(input, 'input_filtered',
+      contentFilterExplanation(languagePolicy.responseLanguage), {
+        languagePolicy,
+        ...(contentFilterCategories.length > 0 ? { contentFilterCategories: [...contentFilterCategories] } : {}),
+      });
+    return contentFilterCategories.length > 0
+      ? { ...result, contentFilterCategories: [...contentFilterCategories] }
+      : result;
   }
 
   private async commitOutcomeTurn(
@@ -307,11 +332,6 @@ export class ConversationOrchestrator {
         now: currentTurnAt,
         timezone: userTimezone,
         continuitySummary: activeTopic?.summary,
-      }).catch((error: unknown) => {
-        if (error instanceof ProviderContentFilterError && error.direction === 'input') {
-          throw new InputFilterDuringClassification();
-        }
-        throw error;
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -346,21 +366,6 @@ export class ConversationOrchestrator {
     let classification: SituationClassification = hasSafetyIntent
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
-    const explicitPulseCaptureRequest = isExplicitPulseCaptureRequest(inboundMessage.text);
-    if (explicitPulseCaptureRequest && !hasSafetyIntent) {
-      classification = {
-        ...classification,
-        pulseCaptureScope: { type: 'conversation' },
-        primaryIntent: 'pulse_capture_explanation',
-        secondaryIntents: classification.secondaryIntents.filter(
-          (intent) => intent !== 'pulse_capture_explanation'
-            && intent !== 'reporting_explanation'
-            && intent !== 'data_use_explanation',
-        ),
-        surveyAllowed: false,
-        reminderRequest: null,
-      };
-    }
     const reportingExplanationRequested =
       !(reportingDisclosureReceipt
         && classification.dialogueAct === 'acknowledgement'
@@ -802,47 +807,20 @@ export class ConversationOrchestrator {
             : {}),
         })
       : [];
-    const pulseReminderAcknowledgement = reminderConfirmation
-      ? languagePolicy.responseLanguage.toLowerCase().startsWith('ru')
-        ? ' Хорошо, я напомню об этом.'
-        : languagePolicy.responseLanguage.toLowerCase().startsWith('uk')
-          ? ' Добре, я нагадаю про це.'
-          : " I'll remind you as requested."
-      : '';
-    let generated = clarificationText
-      ? { text: clarificationText, confidence: 1, containsSurveyProbe: false }
-      : v2Composition
-      ? { text: v2Composition.text, confidence: 1, containsSurveyProbe: false }
-      : canAnswerPulseCaptureExplanation
+    // CAP-5 (GC round 3): capture state is grounding for the model, never the reply itself.
+    const captureFacts: ResponseContext['captureFacts'] = canAnswerPulseCaptureExplanation
       ? {
-          text: `${getPulseCaptureExplanationText(
-            pulseCapture,
-            languagePolicy.responseLanguage,
-            conciseSession,
-            pulseCaptureResolution.type === 'exact'
-              ? 'exact'
-              : pulseCaptureResolution.type === 'unresolved'
-                ? 'unresolved'
-                : 'conversation',
-          )}${pulseReminderAcknowledgement}`,
-          confidence: 1,
-          containsSurveyProbe: false,
+          scope: pulseCaptureResolution.type,
+          captures: pulseCapture.map((capture) => ({
+            evidenceSummary: capture.evidenceSummary,
+            status: capture.status,
+          })),
         }
-      : canAnswerDataUseExplanation
-      ? {
-          text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession),
-          confidence: 1,
-          containsSurveyProbe: false,
-        }
-      : canAnswerReportingExplanation
-      ? {
-          text: getReportingExplanationText(languagePolicy.responseLanguage, conciseSession),
-          confidence: 1,
-          containsSurveyProbe: false,
-        }
-      : await this.aiProvider.generateResponse(turns, strategy, {
+      : undefined;
+    const responseContext: ResponseContext = {
       userName,
       languagePolicy,
+      captureFacts,
       memoryContext: memoryContext.items.length > 0 || memoryContext.goals.length > 0
         ? memoryContext
         : undefined,
@@ -866,7 +844,62 @@ export class ConversationOrchestrator {
       isSessionStart: sessionStart,
       replyBrief: replyPlan,
       replyPlan,
+    };
+    // GC round 3 CAP-4: the composed bundle or clarification question is shown last, byte-exact;
+    // the employee's own message is answered first by one structured generation.
+    const trailingBundle: ResponseContext['trailingBundle'] = clarificationText && clarificationRequest
+      ? { kind: 'clarification', text: clarificationText, statements: [clarificationRequest.disputedStatement] }
+      : v2Composition
+        ? {
+            kind: 'confirmation_bundle',
+            text: v2Composition.text,
+            statements: v2Composition.statements.map((statement) => statement.statement),
+          }
+        : undefined;
+    let bundleReply: BundleReplyOutcome | undefined;
+    let bundleReplyFallbackReason: BundleReplyFallbackReason | undefined;
+    let generated: GeneratedResponse;
+    if (trailingBundle) {
+      try {
+        const draft = await this.aiProvider.generateResponse(turns, strategy, {
+          ...responseContext, trailingBundle, surveyProbeQuestion: undefined,
         });
+        const parts = validateBundleReply(draft, trailingBundle.text, {
+          maxReplyChars: maxReplyChars(strategy, responseContext), statements: trailingBundle.statements,
+        });
+        generated = {
+          ...draft, ...parts, text: composeBundleReplyText(parts), containsSurveyProbe: false, surveyProbeQuestionId: undefined,
+        };
+        bundleReply = 'answer_then_bundle';
+      } catch (error) {
+        // The reply part broke its contract after the provider's one repair, or the provider's
+        // output filter blocked it: the validated fixed text goes alone (previous behaviour) with
+        // the reason recorded. Input filters, outages and other failures keep their own handling.
+        if (isBundleReplyInvalidError(error)) {
+          bundleReplyFallbackReason = error.reason;
+        } else if (error instanceof ProviderContentFilterError && error.direction === 'output') {
+          bundleReplyFallbackReason = 'output_filtered';
+        } else {
+          throw error;
+        }
+        generated = { text: trailingBundle.text, confidence: 1, containsSurveyProbe: false };
+        bundleReply = 'bundle_without_reply';
+      }
+    } else {
+      generated = canAnswerDataUseExplanation
+        ? {
+            text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession),
+            confidence: 1,
+            containsSurveyProbe: false,
+          }
+        : canAnswerReportingExplanation
+        ? {
+            text: getReportingExplanationText(languagePolicy.responseLanguage, conciseSession),
+            confidence: 1,
+            containsSurveyProbe: false,
+          }
+        : await this.aiProvider.generateResponse(turns, strategy, responseContext);
+    }
     let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
     let responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
@@ -1038,6 +1071,8 @@ export class ConversationOrchestrator {
             : {}),
           ...(v2Composition ? { v2ConfirmationBundle: true } : {}),
           ...(clarificationText ? { v2ClarificationPrompt: true } : {}),
+          ...(bundleReply ? { v2BundleReply: bundleReply } : {}),
+          ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
           ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
             ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
             : {}),
@@ -1072,7 +1107,7 @@ export class ConversationOrchestrator {
           surveyWindowId: v2BundleRequest.surveyWindowId,
           questionGroup: v2BundleRequest.questionGroup,
           promptMessageId: outbound.id,
-          displayedText: responseText,
+          displayedText: v2Composition.text,
           components: v2Composition.statements.map((statement) => ({
             surveyQuestionId: statement.surveyQuestionId,
             questionVersion: v2BundleRequest.questions.find(
@@ -1090,7 +1125,7 @@ export class ConversationOrchestrator {
           tenantId, userId, conversationId,
           workingInsightId: clarificationRequest.workingInsightId,
           promptMessageId: outbound.id,
-          displayedText: responseText,
+          displayedText: clarificationText,
         });
         if (!staged) throw new Error('v2_clarification_prompt_state_stale');
       }
@@ -1148,6 +1183,8 @@ export class ConversationOrchestrator {
       mode: strategy.mode,
       classification,
       risk,
+      ...(bundleReply ? { bundleReply } : {}),
+      ...(bundleReplyFallbackReason ? { bundleReplyFallbackReason } : {}),
     };
   }
 
@@ -1569,8 +1606,7 @@ function resolvePulseCaptureScope(input: {
     .test(currentMessage.text);
   const hasLabeledQuote = /message:\s*[“"«]/iu.test(currentMessage.text);
   if (scope?.type === 'conversation'
-    && (isExplicitPulseCaptureRequest(currentMessage.text)
-      || (!excludesWholeConversation && !namesOneMessage && !hasLabeledQuote))) {
+    && !excludesWholeConversation && !namesOneMessage && !hasLabeledQuote) {
     return { type: 'conversation' };
   }
 

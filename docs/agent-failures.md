@@ -3131,6 +3131,42 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Symptom: After PR #16 merged, `src/private-production-route-boundary.test.ts` failed on `main` (`6afbd1f`): the reviewed admin-route snapshot lacked `GET admin/team-hierarchy`, `GET admin/v2-pilot/people`, `GET admin/v2-pilot/team-signals`, and `GET admin/v2-pilot/qa/team-signals`, so the API suite stayed red.
 - Expected: New production admin routes get a privacy review and a snapshot update in the same PR that mounts them (same class as the 2026-10-04 `GET admin/v2-pilot` entry).
 - Root cause layer: verification
-- Harness fix: Reviewed the four routes (all `ApiKeyGuard` + `assertInternalDashboardEnabled`, default off; `Cache-Control: private, no-store`; tenant-scoped queries; hierarchy exposes names/roles only, team-signals carries no participant/insight ids, identifying data only on `people` and the QA-only `qa/team-signals`) and added them to the snapshot. Second occurrence of this class: run the boundary test whenever a controller under `apps/api/src/admin/` changes.
+- Harness fix: Reviewed the four routes (all `ApiKeyGuard` + `assertInternalDashboardEnabled`, default off; `Cache-Control: private, no-store`; tenant-scoped queries; hierarchy exposes names/roles only, team-signals carries no participant/insight ids, identifying data only on `people` and the QA-only `qa/team-signals`) and added them to the snapshot. Second occurrence of this class: run the boundary test whenever a controller under `apps/api/src/admin/` changes, and make the API test suite a required check for PRs touching `apps/api/src/admin`.
 - Regression check: `pnpm --filter @entalent/api exec vitest run src/private-production-route-boundary.test.ts`.
+- Status: fixed
+
+## 2026-10-15: Fresh worktree cannot run package tests until workspace packages are built
+
+- Symptom: In a new git worktree, `vitest` for `packages/application`, `packages/ai-openai`, and `apps/worker` failed at import resolution (`Failed to resolve entry for package "@entalent/contracts"` / `"@entalent/application"` / `"@entalent/database"`) because sibling packages resolve through their `dist` entries and nothing had been built; `pnpm install --offline` reported "Already up to date" without producing `dist`. The first RED run for a worker test was therefore unobservable until `pnpm --filter './packages/*' build` ran.
+- Expected: A worktree session should be able to run a package's unit tests after install, or the harness should tell it which build step is missing.
+- Root cause layer: environment
+- Harness fix: Document in AGENTS.md (Testing Policy) that a fresh worktree needs `pnpm --filter './packages/*' build` before package or app vitest runs; longer term, have `scripts/agent-harness.ts reflection` warn when a workspace package has no `dist` directory. Recurred on 2026-10-15 (S3 worktree: package `node_modules` were also missing, so `pnpm install --offline --frozen-lockfile` had to precede the build); the AGENTS.md Testing Policy rule now records both steps. The reflection warning remains optional.
+- Regression check: In a fresh worktree, `pnpm --filter @entalent/application exec vitest run src/use-cases/conversation-orchestrator.test.ts -t "CAP-5"` must collect tests instead of failing at package resolution.
+- Status: fixed
+
+## 2026-10-15: CodeGraph served another checkout's source for a worktree path
+
+- Symptom: In the worktree `.claude/worktrees/hopeful-fermat-bbf0bf`, `codegraph_node` on `conversation-orchestrator.ts` returned source whose line numbers and content (`getPulseCaptureExplanationText`, removed in PR #18) did not match the file on disk; `grep -n` on the same file disagreed by eight lines. The index belongs to the main checkout, which was at a different state.
+- Expected: CodeGraph answers for the checkout the session works in, or says the path is outside its index.
+- Root cause layer: tooling
+- Harness fix: In a worktree session, confirm the index covers the worktree (compare one `grep -n` hit with the CodeGraph line for the same symbol) before trusting CodeGraph line numbers; fall back to direct reads when they disagree. Longer term: index worktrees separately or have CodeGraph refuse paths outside its root.
+- Regression check: `grep -n "const v2Composition" packages/application/src/use-cases/conversation-orchestrator.ts` and the CodeGraph line for the same symbol must agree.
+- Status: open
+
+## 2026-10-15: Live sim failure detail lost to a filtered verification command
+
+- Symptom: While re-verifying the `answer-then-bundle` scenario after a rebase, one live sample reported `Tests 1 failed (1)` with no judge line and no `runs/*-main-1.json` report, so the exception happened inside the agent turn before `reportRun`; the vitest output had been piped through `grep -E "judge verdict|Tests  |..."` and the stack trace was discarded. The failure could not be classified (invalid live bundle composition, provider error, or scenario-library error); 13 further samples passed.
+- Expected: A failed live sample always leaves its full vitest output and, when the turn completes, a per-sample report, so the failure class is readable afterwards.
+- Root cause layer: verification
+- Harness fix: Write full vitest output of every live sim run to a log file first and filter from the file (`vitest run ... > "$LOG" 2>&1; grep ... "$LOG"`); never pipe a live run directly into `grep`. Durable fix (2026-10-15): `CoachHarness.send` catches orchestrator exceptions, records them in `harness.failures` and rethrows; `reportRun` writes each as a `deterministic.violations` entry with rule `agent-turn-error` plus an `agentTurnErrors` block with the stack; the harness registers a fallback `onTestFailed` report at construction so `runs/<scenario>.json` exists even when `run()` rethrows before `reportRun`; `classifyFailure` keeps `agent-turn-error` a hard failure unless the recorded message matches the transport classifier.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/harness/coach-harness.test.ts` (a throwing provider leaves a report with rule `agent-turn-error`, with and without `reportRun`) and the `agent-turn-error` case in `src/gate/failure-classifier.test.ts`.
+- Status: fixed
+
+## 2026-10-15: Offline sim scenario went red on main because the package test script never ran it
+
+- Symptom: `simulation-repositories.sim.test.ts` (offline, `ScriptedAiProvider` only) failed on `main` after GC round 3 CAP-5 (PR #18): its `pulse_capture_explanation` case still asserted a bypass (`replyPlan: null`, two generation calls), but the orchestrator now answers pulse-capture questions from the model with `captureFacts`, so turn 2 carried a reply plan and three calls were made. Neither CAP-5's own verification nor `pnpm harness:check` caught it, because the conversation-sim `test` script only ran `src/gate`.
+- Expected: Every offline scenario in `packages/conversation-sim/src/scenarios/` runs under `pnpm --filter @entalent/conversation-sim test` and therefore under the harness gate, so a behaviour change in the orchestrator cannot leave it red on `main`.
+- Root cause layer: verification
+- Harness fix: The conversation-sim `test` script now includes `src/scenarios/simulation-repositories.sim.test.ts` next to `src/gate`; the pulse-capture case is rewritten to assert the CAP-5 behaviour (generation call with grounded `captureFacts`, report plan aligned to that call) and the data-use bypass stays a separate test. Any future offline `.sim.test.ts` must be added to the `test` script's include list, not only excluded from the live set.
+- Regression check: `pnpm --filter @entalent/conversation-sim test` must report `simulation-repositories.sim.test.ts` among the passing files (6 tests).
 - Status: fixed

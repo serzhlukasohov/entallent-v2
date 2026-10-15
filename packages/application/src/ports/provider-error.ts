@@ -13,6 +13,11 @@ export class ProviderContentFilterError extends Error {
   constructor(
     readonly direction: ProviderContentFilterDirection,
     readonly categories: ReadonlyArray<ModerationSignal['categories'][number]> = [],
+    /**
+     * Bounded provider category keys that fired the filter (for example `jailbreak`), for
+     * diagnostics only (GC round 3 CAP-11). Never text.
+     */
+    readonly filteredCategories: ReadonlyArray<string> = [],
   ) {
     super(`Provider filtered ${direction}`);
     this.name = 'ProviderContentFilterError';

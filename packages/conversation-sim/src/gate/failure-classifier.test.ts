@@ -71,6 +71,22 @@ describe('report-backed hard gate', () => {
     expect(buildFailureReason(0, '', [report(), failedReport])).toContain('fixture: deterministic checks failed');
   });
 
+  it('treats an agent-turn-error as a hard failure unless its message is a transport failure', () => {
+    const agentError = (detail: string, extra: ScenarioRunReport['deterministic']['violations'] = []) =>
+      report(false, [{ turn: 1, rule: 'agent-turn-error', detail }, ...extra]);
+    const testFailure = (detail: string) => ({ turn: 0, rule: 'test-failure', detail });
+
+    const invalidBundle = agentError('Error: bundle composition returned 2 statements for 3 questions');
+    expect(classifyFailure({ exitCode: 1, output: 'ECONNRESET elsewhere in the log', reportCount: 1, reports: [invalidBundle] })).toBe('product');
+    expect(buildFailureReason(1, '', [invalidBundle])).toContain('turn 1 agent-turn-error: Error: bundle composition');
+
+    const transport = agentError('TypeError: fetch failed caused by ECONNRESET', [testFailure('fetch failed caused by ECONNRESET')]);
+    expect(classifyFailure({ exitCode: 1, output: '', reportCount: 1, reports: [transport] })).toBe('infrastructure');
+
+    const transportThenProductViolation = agentError('TypeError: fetch failed', [{ turn: 2, rule: 'too-many-questions', detail: 'a? b?' }]);
+    expect(classifyFailure({ exitCode: 1, output: '', reportCount: 1, reports: [transportThenProductViolation] })).toBe('product');
+  });
+
   it('keeps judge-only failures separate and retains assertion diagnostics', () => {
     const judgeFailure = report();
     judgeFailure.judge.passed = false;

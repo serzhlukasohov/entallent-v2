@@ -1,6 +1,6 @@
 export { ProviderContentFilterError } from './ports/provider-error';
 export type { ProviderContentFilterDirection } from './ports/provider-error';
-export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, MemoryContext, ResponseContext, ReplyBrief, ReplyPlan, LanguagePolicy, SurveyQuestionForEvaluation, SurveyEvidenceEvaluationOptions } from './ports/ai-provider.port';
+export type { AiProviderPort, ConversationTurn, ClassifyContext, RiskContext, MemoryContext, ResponseContext, PulseCaptureFacts, ReplyBrief, ReplyPlan, LanguagePolicy, SurveyQuestionForEvaluation, SurveyEvidenceEvaluationOptions } from './ports/ai-provider.port';
 export type { AgentRuntimePort, ProcessMessageInput, ProcessMessageRequest, ProcessMessageResult, RuntimeBoundaryProcessMessageRequest } from './ports/agent-runtime.port';
 export { AGENT_RUNTIME_PORT, isRuntimeBoundaryProcessMessageRequest, runtimeBoundaryProcessMessageRequestInvalidFields } from './ports/agent-runtime.port';
 export type { ConversationDispatchKind, ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
@@ -19,7 +19,13 @@ export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePola
 export type { QuestionWorkingCapturePort, CaptureQuestionMeaningInput } from './ports/question-working-capture.port';
 export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict } from './ports/question-confirmation.port';
 export type { QuestionBundleComposition } from './ports/ai-provider.port';
-export { validateQuestionBundleComposition } from './utils/question-bundle-composition';
+export {
+  validateQuestionBundleComposition, validateBundleReply, composeBundleReplyText, isBundleShownIn,
+  isBundleReplyInvalidError, BundleReplyInvalidError, BUNDLE_REPLY_INVALID,
+} from './utils/question-bundle-composition';
+export type { BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason } from './utils/question-bundle-composition';
+export { maxReplyChars } from './utils/reply-length';
+export type { TrailingBundle } from './ports/ai-provider.port';
 export { validateQuestionBundleVerdict } from './utils/question-bundle-verdict';
 export { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from './utils/question-clarification';
 export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';
@@ -66,7 +72,6 @@ export type { ProactiveScanConfig, ProactiveScanResult } from './use-cases/proac
 export { isInQuietHours, getLocalHour } from './utils/quiet-hours';
 export { BASE_STYLE } from './utils/style-adaptation';
 export { buildReplyPlan } from './utils/reply-plan';
-export { isExplicitPulseCaptureRequest } from './utils/reporting-disclosure';
 export type { ReplyPlanInput } from './utils/reply-plan';
 export type { QuietHours } from './utils/quiet-hours';
 export { MemoryExtractionUseCase } from './use-cases/memory-extraction.use-case';

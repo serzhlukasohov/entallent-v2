@@ -86,9 +86,10 @@ is available and fall back to the single Azure deployment otherwise.
 | `AZURE_OPENAI_TESTING_DEPLOYMENT` | Azure deployment for the testing agents |
 | `LANGWATCH_API_KEY` | Optional — renders runs in the LangWatch UI |
 
-The package `test` command runs the offline gate tests and explicitly excludes
-the six live scenario files, even when tooling appends their paths. Deterministic
-structural scenarios can be selected explicitly without model calls. Live
+The package `test` command runs the offline gate and harness tests plus the
+offline structural scenario `simulation-repositories.sim.test.ts`, and explicitly
+excludes the live scenario files, even when tooling appends their paths. Add any
+new offline `.sim.test.ts` to that include list so the harness gate runs it. Live
 simulations use `sim` or `sim:gate`; each run costs real tokens and takes tens of
 seconds. Run them before merging prompt or orchestration
 changes, and on a schedule.
@@ -112,6 +113,21 @@ Every scenario records three independent layers:
    resolved-detail regression asserts judge success directly.
 
 `reportRun` records all three, so a red run says *why* rather than just *no*.
+
+A report exists even when the agent turn itself throws. `CoachHarness.send` catches any
+error from the orchestrator, records it in `harness.failures` (turn, error name, message,
+stack, generation calls made before the throw) and rethrows, so the scenario still fails.
+`reportRun` turns each recorded failure into a `deterministic.violations` entry with rule
+`agent-turn-error` (detail `Name: message`) and an `agentTurnErrors` block with the stack.
+Because `run()` rethrows a non-assertion agent error before the scenario reaches `reportRun`,
+the harness registers a fallback finalizer at construction: if the test fails and no report
+was written for that harness, `runs/<test name>.json` and `.md` are written from the turns
+completed so far, the recorded `agent-turn-error` entries and the Vitest `test-failure`,
+with the judge marked not run. Read a sample with no judge line by opening that JSON; the
+`Agent turn errors` section of the markdown carries the trimmed stack. `pnpm sim:gate`
+counts an `agent-turn-error` as a hard failure; only an error whose message matches the
+transport classifier (`ECONNRESET`, `fetch failed`, 429, 5xx, ...) is retried as
+infrastructure.
 
 ## Non-determinism
 
@@ -173,6 +189,13 @@ conversation.
 structural scenarios that use the real orchestrator with scripted AI outputs. They
 verify safety/privacy state and produce local reports without depending on live
 model credentials. Their reports mark the LLM judge as not run.
+
+`answer-then-bundle` gates GC round 3 CAP-4: with a ready V2 confirmation bundle and a
+substantive employee message that asks a question, the live model must return the answer
+and a byte-for-byte copy of the composed bundle in one generation. The test asserts the
+`answer_then_bundle` outcome on the outbound metadata, the staged bundle text shown exactly
+once at the end after a non-empty answer, and a judge rubric on whether the answer part
+addresses the question. A `bundle_without_reply` fallback is a hard failure here.
 
 `proactivity-reminders` and `planning-memory` are deterministic structural
 scenarios for action discipline, reminder deduplication, delayed follow-up policy,
