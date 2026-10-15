@@ -51,6 +51,21 @@ type TeamSignalRow = {
 
 type QaTeamSignalRow = TeamSignalRow & { userId: string; displayName: string };
 
+/** V2 cohorts only: a cohort without a cycle scoring policy is not part of the pilot. */
+export async function listV2PilotCohorts(db: DatabaseService, tenantId: string): Promise<PilotCohortCandidate[]> {
+  return await db.client.execute(sql`
+    SELECT c.id AS "cohortId", c.period_start AS "periodStart", c.period_end AS "periodEnd"
+    FROM survey_reporting_cohorts c
+    WHERE c.tenant_id = ${tenantId}
+      AND EXISTS (
+        SELECT 1 FROM survey_cycle_scoring_policies cp
+        WHERE cp.tenant_id = c.tenant_id AND cp.survey_definition_id = c.survey_definition_id
+          AND cp.period_start = c.period_start AND cp.period_end = c.period_end
+      )
+    ORDER BY c.period_start DESC, c.id
+  `) as unknown as PilotCohortCandidate[];
+}
+
 @Injectable()
 export class V2PilotReadModel {
   constructor(private readonly db: DatabaseService) {}
@@ -169,19 +184,8 @@ export class V2PilotReadModel {
     return { tenantId, cohort };
   }
 
-  /** V2 cohorts only: a cohort without a cycle scoring policy is not part of the pilot. */
-  private async listCohorts(tenantId: string): Promise<PilotCohortCandidate[]> {
-    return await this.db.client.execute(sql`
-      SELECT c.id AS "cohortId", c.period_start AS "periodStart", c.period_end AS "periodEnd"
-      FROM survey_reporting_cohorts c
-      WHERE c.tenant_id = ${tenantId}
-        AND EXISTS (
-          SELECT 1 FROM survey_cycle_scoring_policies cp
-          WHERE cp.tenant_id = c.tenant_id AND cp.survey_definition_id = c.survey_definition_id
-            AND cp.period_start = c.period_start AND cp.period_end = c.period_end
-        )
-      ORDER BY c.period_start DESC, c.id
-    `) as unknown as PilotCohortCandidate[];
+  private listCohorts(tenantId: string): Promise<PilotCohortCandidate[]> {
+    return listV2PilotCohorts(this.db, tenantId);
   }
 
   async getStatus(tenantId: unknown, cohortIdsRaw: unknown): Promise<AdminV2PilotResponse> {

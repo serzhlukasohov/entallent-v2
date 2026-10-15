@@ -3125,3 +3125,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: During BMad spec drafting, any field added to a contract documented as de-identified requires a stated re-identification check in the spec's Boundaries; identifying needs go to a separate QA-only route.
 - Regression check: `pnpm --filter @entalent/api exec vitest run src/admin/v2-pilot.read-model.test.ts` (team-signals projection/select list assert no user id, insight id, or author).
 - Status: fixed
+
+## 2026-10-15: Route privacy snapshot stale on main after dashboard rework
+
+- Symptom: On `main` at 6afbd1f, `src/private-production-route-boundary.test.ts` fails: the reviewed-route snapshot lacks `GET admin/team-hierarchy`, `GET admin/v2-pilot/people`, `GET admin/v2-pilot/team-signals`, and `GET admin/v2-pilot/qa/team-signals`, which PR #16 mounted.
+- Expected: A change that mounts an admin route updates the reviewed-route snapshot in the same PR, and the API suite is green before merge.
+- Root cause layer: verification
+- Harness fix: Update the snapshot after a human privacy review of the four routes; make the API test suite a required check for PRs touching `apps/api/src/admin`.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/private-production-route-boundary.test.ts`.
+- Status: open

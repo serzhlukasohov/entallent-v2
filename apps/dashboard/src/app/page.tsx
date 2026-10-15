@@ -1,6 +1,6 @@
 import type {
   AdminTeamHierarchyManager, AdminTeamHierarchyPerson, AdminTeamHierarchyRole, AdminTeamHierarchySource,
-  AdminTeamHierarchyUnit,
+  AdminTeamHierarchyUnit, AdminTeamHierarchyUnplacedPerson,
 } from '@entalent/contracts';
 import { Nav } from './components/Nav';
 import { Badge, Card, Initials, Notice, PageHeader } from './components/ui';
@@ -74,28 +74,61 @@ function UnitCard({ unit }: { unit: AdminTeamHierarchyUnit }) {
   </Card>;
 }
 
+function legacyHome(person: AdminTeamHierarchyUnplacedPerson): string {
+  if (!person.legacyTeam) return 'Нет старой команды';
+  const manager = person.legacyTeam.manager?.displayName ?? 'не назначен';
+  return `Старая команда: ${person.legacyTeam.name} · Руководитель: ${manager}`;
+}
+
+function UnplacedCard({ people }: { people: AdminTeamHierarchyUnplacedPerson[] }) {
+  return <Card>
+    <div className="row" style={{ justifyContent: 'space-between' }}>
+      <h2>Не в оргструктуре</h2>
+      <Badge tone="warning">Человек: {people.length}</Badge>
+    </div>
+    <div className="muted small" style={{ marginTop: 4 }}>
+      Участники старых команд Slack и текущей V2-когорты без места в оргструктуре.
+    </div>
+    <ul className="people" style={{ marginTop: 8 }}>
+      {people.map((person) => <li key={person.id}>
+        <div className="person">
+          <Initials name={person.displayName} />
+          <span className="person-name">{person.displayName}</span>
+          {person.inCurrentCohort && <Badge tone="accent">V2-когорта</Badge>}
+        </div>
+        <div className="muted small">{legacyHome(person)}</div>
+      </li>)}
+    </ul>
+  </Card>;
+}
+
 export default async function DashboardPage() {
   const qaEnabled = qaPrivateViewEnabled();
   const data = await fetchAdminTeamHierarchy();
+  // Tolerates an API deployed before `unplaced` existed.
+  const unplaced = data?.unplaced ?? [];
+  const hasPeople = Boolean(data && (data.units.length > 0 || unplaced.length > 0));
 
   return (
     <main className="page">
       <Nav active="team" />
       <PageHeader
         title="Команда"
-        subtitle={qaEnabled && data && data.units.length > 0
+        subtitle={qaEnabled && data && hasPeople
           ? `Кто кому подчиняется. Источник: ${SOURCE_LABELS[data.source]}.`
+            + (unplaced.length > 0 ? ` Вне оргструктуры: ${unplaced.length}.` : '')
           : undefined}
       />
       {!qaEnabled ? (
         <Notice>Состав команды с именами доступен только в закрытом QA-режиме.</Notice>
       ) : !data ? (
         <Notice>Иерархия команды сейчас недоступна.</Notice>
-      ) : data.units.length === 0 ? (
+      ) : !hasPeople ? (
         <Notice>Иерархия ещё не настроена.</Notice>
       ) : (
         <div className="unit-grid">
           {data.units.map((unit) => <UnitCard key={unit.id} unit={unit} />)}
+          {unplaced.length > 0 && <UnplacedCard people={unplaced} />}
         </div>
       )}
     </main>

@@ -36,9 +36,23 @@ export interface AdminTeamHierarchyUnit {
   directMembers: AdminTeamHierarchyPerson[];
 }
 
+/**
+ * An active tenant user who belongs on the team (active legacy team member or
+ * current V2 cohort participant) but appears nowhere in `units`.
+ */
+export interface AdminTeamHierarchyUnplacedPerson {
+  id: string;
+  displayName: string;
+  /** The person's active legacy team, when they have one. */
+  legacyTeam: { name: string; manager: AdminTeamHierarchyManager | null } | null;
+  inCurrentCohort: boolean;
+}
+
 export interface AdminTeamHierarchyResponse {
   tenantId: string;
   source: AdminTeamHierarchySource;
   checkedAt: string;
   units: AdminTeamHierarchyUnit[];
+  /** People missing from `units`, sorted by name. */
+  unplaced: AdminTeamHierarchyUnplacedPerson[];
 }

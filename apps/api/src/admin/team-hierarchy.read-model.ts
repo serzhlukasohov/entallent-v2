@@ -2,9 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type {
   AdminTeamHierarchyManager, AdminTeamHierarchyPerson, AdminTeamHierarchyResponse, AdminTeamHierarchyRole,
-  AdminTeamHierarchyTeam, AdminTeamHierarchyUnit,
+  AdminTeamHierarchyTeam, AdminTeamHierarchyUnit, AdminTeamHierarchyUnplacedPerson,
 } from '@entalent/contracts';
 import { DatabaseService } from '../database/database.service';
+import { listV2PilotCohorts, selectCurrentPilotCohort } from './v2-pilot.read-model';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -24,6 +25,11 @@ export type LegacyTeamRow = {
   managerUserId: string | null; managerName: string | null;
 };
 export type LegacyMemberRow = { teamId: string; userId: string; displayName: string | null };
+export type UnplacedCandidateRow = {
+  userId: string; displayName: string | null; inCurrentCohort: boolean;
+  legacyTeamName: string | null; managerSlackUserId: string | null;
+  managerUserId: string | null; managerName: string | null;
+};
 
 const byName = (a: { displayName: string }, b: { displayName: string }) =>
   a.displayName.localeCompare(b.displayName, 'ru');
@@ -64,13 +70,20 @@ export function buildOrgHierarchy(
   }).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
 }
 
+/** A legacy manager resolved through Slack, else the raw manager Slack id (the documented exception). */
+function legacyManager(
+  managerUserId: string | null, managerName: string | null, managerSlackUserId: string | null,
+): AdminTeamHierarchyManager | null {
+  const slackId = nameOf(managerSlackUserId);
+  return managerUserId
+    ? { id: managerUserId, displayName: nameOf(managerName) ?? slackId ?? 'Руководитель', role: 'manager' }
+    : slackId ? { id: null, displayName: slackId, role: 'manager' } : null;
+}
+
 /** Each legacy team becomes one unit; its active members are the unit's direct members. */
 export function buildLegacyHierarchy(teams: LegacyTeamRow[], members: LegacyMemberRow[]): AdminTeamHierarchyUnit[] {
   return teams.map((team) => {
-    const slackId = nameOf(team.managerSlackUserId);
-    const manager: AdminTeamHierarchyManager | null = team.managerUserId
-      ? { id: team.managerUserId, displayName: nameOf(team.managerName) ?? slackId ?? 'Руководитель', role: 'manager' }
-      : slackId ? { id: null, displayName: slackId, role: 'manager' } : null;
+    const manager = legacyManager(team.managerUserId, team.managerName, team.managerSlackUserId);
     const seen = new Set<string>();
     let unnamed = 0;
     const directMembers = members
@@ -81,6 +94,41 @@ export function buildLegacyHierarchy(teams: LegacyTeamRow[], members: LegacyMemb
       .sort(byName);
     return { id: team.id, name: team.name, manager, teams: [], directMembers };
   }).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
+function shownIds(units: AdminTeamHierarchyUnit[]): Set<string> {
+  const ids = new Set<string>();
+  for (const unit of units) {
+    if (unit.manager?.id) ids.add(unit.manager.id);
+    for (const team of unit.teams) {
+      if (team.lead) ids.add(team.lead.id);
+      for (const member of team.members) ids.add(member.id);
+    }
+    for (const member of unit.directMembers) ids.add(member.id);
+  }
+  return ids;
+}
+
+/** Candidates (legacy members, current cohort) who appear nowhere in the tree, whatever its source. */
+export function buildUnplaced(
+  units: AdminTeamHierarchyUnit[], candidates: UnplacedCandidateRow[],
+): AdminTeamHierarchyUnplacedPerson[] {
+  const shown = shownIds(units);
+  const seen = new Set<string>();
+  let unnamed = 0;
+  return candidates
+    .filter((row) => !shown.has(row.userId) && !seen.has(row.userId) && Boolean(seen.add(row.userId)))
+    .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0))
+    .map((row) => ({
+      id: row.userId,
+      displayName: nameOf(row.displayName) ?? `Участник ${++unnamed}`,
+      legacyTeam: row.legacyTeamName === null ? null : {
+        name: row.legacyTeamName,
+        manager: legacyManager(row.managerUserId, row.managerName, row.managerSlackUserId),
+      },
+      inCurrentCohort: row.inCurrentCohort === true,
+    }))
+    .sort(byName);
 }
 
 @Injectable()
@@ -120,7 +168,7 @@ export class TeamHierarchyReadModel {
           AND pe.lifecycle_status = 'active'
         WHERE p.tenant_id = ${tenantId} AND p.lifecycle_status = 'active'
       `) as unknown as OrgPlacementRow[];
-      return { tenantId, source: 'org', checkedAt, units: buildOrgHierarchy(units, teams, placements) };
+      return this.withUnplaced({ tenantId, source: 'org', checkedAt, units: buildOrgHierarchy(units, teams, placements) });
     }
 
     const legacyTeams = await this.db.client.execute(sql`
@@ -137,7 +185,7 @@ export class TeamHierarchyReadModel {
       ) mgr ON true
       WHERE t.tenant_id = ${tenantId}
     `) as unknown as LegacyTeamRow[];
-    if (legacyTeams.length === 0) return { tenantId, source: 'none', checkedAt, units: [] };
+    if (legacyTeams.length === 0) return this.withUnplaced({ tenantId, source: 'none', checkedAt, units: [] });
 
     const members = await this.db.client.execute(sql`
       SELECT m.team_id AS "teamId", m.user_id AS "userId", acc.display_name AS "displayName"
@@ -153,6 +201,56 @@ export class TeamHierarchyReadModel {
       ) acc ON true
       WHERE m.left_at IS NULL AND m.role = 'member'
     `) as unknown as LegacyMemberRow[];
-    return { tenantId, source: 'legacy', checkedAt, units: buildLegacyHierarchy(legacyTeams, members) };
+    return this.withUnplaced({
+      tenantId, source: 'legacy', checkedAt, units: buildLegacyHierarchy(legacyTeams, members),
+    });
+  }
+
+  private async withUnplaced(
+    tree: Omit<AdminTeamHierarchyResponse, 'unplaced'>,
+  ): Promise<AdminTeamHierarchyResponse> {
+    const { tenantId } = tree;
+    // Same cohort rule as the V2 pilot views: the running cohort, else the most recently started.
+    const cohortId = selectCurrentPilotCohort(await listV2PilotCohorts(this.db, tenantId), new Date())?.cohortId ?? null;
+    // Names, legacy team and manager only; never email, employee id, or employee Slack id.
+    const candidates = await this.db.client.execute(sql`
+      WITH roster AS (
+        SELECT DISTINCT r.user_id FROM survey_reporting_cohorts c
+        CROSS JOIN LATERAL unnest(c.roster_user_ids) AS r(user_id)
+        WHERE c.tenant_id = ${tenantId} AND c.id = ${cohortId}
+      ), legacy AS (
+        SELECT m.user_id, m.team_id FROM team_memberships m
+        JOIN teams t ON t.id = m.team_id AND t.tenant_id = ${tenantId}
+        WHERE m.left_at IS NULL AND m.role = 'member'
+      ), candidate AS (
+        SELECT user_id FROM roster UNION SELECT user_id FROM legacy
+      )
+      SELECT u.id AS "userId",
+             COALESCE(NULLIF(btrim(acc.display_name), ''), pe.display_name) AS "displayName",
+             EXISTS (SELECT 1 FROM roster r WHERE r.user_id = u.id) AS "inCurrentCohort",
+             lt.name AS "legacyTeamName", lt.manager_slack_user_id AS "managerSlackUserId",
+             mgr.user_id AS "managerUserId", mgr.display_name AS "managerName"
+      FROM candidate cand
+      JOIN users u ON u.id = cand.user_id AND u.tenant_id = ${tenantId}
+        AND u.deleted_at IS NULL AND u.status = 'active'
+      LEFT JOIN people pe ON pe.id = u.id AND pe.tenant_id = u.tenant_id AND pe.lifecycle_status = 'active'
+      LEFT JOIN LATERAL (
+        SELECT ca.display_name FROM channel_accounts ca
+        WHERE ca.tenant_id = ${tenantId} AND ca.user_id = u.id AND ca.channel_type = 'slack'
+          AND ca.link_status = 'linked'
+        ORDER BY ca.updated_at DESC LIMIT 1
+      ) acc ON true
+      LEFT JOIN legacy lm ON lm.user_id = u.id
+      LEFT JOIN teams lt ON lt.id = lm.team_id AND lt.tenant_id = ${tenantId}
+      LEFT JOIN LATERAL (
+        SELECT ca.user_id, ca.display_name FROM channel_accounts ca
+        JOIN users mu ON mu.id = ca.user_id AND mu.tenant_id = ca.tenant_id
+          AND mu.deleted_at IS NULL AND mu.status = 'active'
+        WHERE ca.tenant_id = ${tenantId} AND ca.channel_type = 'slack' AND ca.link_status = 'linked'
+          AND ca.external_user_id = lt.manager_slack_user_id
+        ORDER BY ca.updated_at DESC LIMIT 1
+      ) mgr ON true
+    `) as unknown as UnplacedCandidateRow[];
+    return { ...tree, unplaced: buildUnplaced(tree.units, candidates) };
   }
 }
