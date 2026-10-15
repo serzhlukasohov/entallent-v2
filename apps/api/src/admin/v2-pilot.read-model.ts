@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { sql } from 'drizzle-orm';
 import type {
   AdminV2PilotCohortState, AdminV2PilotCycle, AdminV2PilotPeopleResponse, AdminV2PilotPersonQuestion,
-  AdminV2PilotQuestion, AdminV2PilotResponse,
+  AdminV2PilotQaTeamSignalsResponse, AdminV2PilotQuestion, AdminV2PilotResponse, AdminV2PilotTeamSignal,
+  AdminV2PilotTeamSignalsResponse,
 } from '@entalent/contracts';
 import { DatabaseService } from '../database/database.service';
 
@@ -24,6 +25,7 @@ type PersonQuestionRow = {
   userId: string;
   displayName: string;
   inbound: number;
+  lastInboundAt: Date | string | null;
   stableKey: string;
   title: string;
   group: string;
@@ -35,6 +37,20 @@ type PersonQuestionRow = {
   score: string | null;
 };
 
+type TeamSignalRow = {
+  stableKey: string;
+  title: string;
+  group: string;
+  summary: string;
+  outcome: string;
+  score: string | null;
+  direction: string;
+  severity: string;
+  rootCause: string;
+};
+
+type QaTeamSignalRow = TeamSignalRow & { userId: string; displayName: string };
+
 @Injectable()
 export class V2PilotReadModel {
   constructor(private readonly db: DatabaseService) {}
@@ -45,16 +61,8 @@ export class V2PilotReadModel {
    * reported with state 'closed' so callers never label it as current.
    */
   async getPeople(tenantId: unknown, cohortIdRaw: unknown): Promise<AdminV2PilotPeopleResponse> {
-    if (typeof tenantId !== 'string' || !UUID.test(tenantId)
-      || (cohortIdRaw !== undefined && (typeof cohortIdRaw !== 'string' || !UUID.test(cohortIdRaw)))) {
-      throw new BadRequestException('tenantId and cohortId must be UUIDs');
-    }
     const now = new Date();
-    const candidates = await this.listCohorts(tenantId);
-    const cohort = cohortIdRaw === undefined
-      ? selectCurrentPilotCohort(candidates, now)
-      : candidates.find((candidate) => candidate.cohortId === cohortIdRaw) ?? null;
-    if (!cohort) throw new NotFoundException('No V2 pilot cohort for this tenant');
+    const { tenantId: tenant, cohort } = await this.resolveCohort(tenantId, cohortIdRaw, now);
     const cohortId = cohort.cohortId;
 
     // The frozen cohort is the only source of members. Never select message text,
@@ -62,7 +70,7 @@ export class V2PilotReadModel {
     const rows = await this.db.client.execute(sql`
       SELECT member.user_id AS "userId",
              coalesce(account.display_name, 'Participant ' || member.position::text) AS "displayName",
-             activity.inbound,
+             activity.inbound, activity."lastInboundAt",
              q.stable_key AS "stableKey", q.title, q.question_group AS "group",
              wi.status AS "workingStatus", wi.ready_for_confirmation AS ready,
              CASE WHEN wi.purged_at IS NULL THEN coalesce(wi.confirmed_semantic_summary, wi.working_summary)
@@ -80,7 +88,7 @@ export class V2PilotReadModel {
         ORDER BY a.updated_at DESC LIMIT 1
       ) account ON true
       LEFT JOIN LATERAL (
-        SELECT count(*)::int AS inbound FROM messages m
+        SELECT count(*)::int AS inbound, max(m.occurred_at) AS "lastInboundAt" FROM messages m
         WHERE m.tenant_id = c.tenant_id AND m.user_id = member.user_id
           AND m.direction = 'inbound' AND m.deleted_at IS NULL
           AND m.occurred_at >= c.period_start AND m.occurred_at < c.period_end
@@ -107,11 +115,58 @@ export class V2PilotReadModel {
           AND i.is_current AND i.withdrawn_at IS NULL
         ORDER BY i.scored_at DESC LIMIT 1
       ) insight ON true
-      WHERE c.tenant_id = ${tenantId} AND c.id = ${cohortId}
+      WHERE c.tenant_id = ${tenant} AND c.id = ${cohortId}
       ORDER BY member.position, q.display_order
     `) as unknown as PersonQuestionRow[];
 
     return projectPilotPeople(cohort, rows, now);
+  }
+
+  /**
+   * Participant-confirmed, de-identified insights of the cohort: no person,
+   * insight, window, working-insight or source identifiers, and no private
+   * working text. The population matches getPeople (frozen roster, latest
+   * window, latest current insight per topic). Ordered by topic then summary
+   * so the order cannot be mapped to the roster.
+   */
+  async getTeamSignals(tenantId: unknown, cohortIdRaw: unknown): Promise<AdminV2PilotTeamSignalsResponse> {
+    const now = new Date();
+    const { tenantId: tenant, cohort } = await this.resolveCohort(tenantId, cohortIdRaw, now);
+    const rows = await this.db.client.execute(
+      teamSignalsQuery(tenant, cohort.cohortId, false),
+    ) as unknown as TeamSignalRow[];
+    return projectPilotTeamSignals(cohort, rows, now);
+  }
+
+  /**
+   * QA-only: the same signals as getTeamSignals plus each author, resolved in
+   * the same query. Identifies participants; never serve it to manager views.
+   */
+  async getQaTeamSignals(tenantId: unknown, cohortIdRaw: unknown): Promise<AdminV2PilotQaTeamSignalsResponse> {
+    const now = new Date();
+    const { tenantId: tenant, cohort } = await this.resolveCohort(tenantId, cohortIdRaw, now);
+    const rows = await this.db.client.execute(
+      teamSignalsQuery(tenant, cohort.cohortId, true),
+    ) as unknown as QaTeamSignalRow[];
+    return projectPilotQaTeamSignals(cohort, rows, now);
+  }
+
+  /** Shared by the people and Team Signals views so both resolve the same cohort. */
+  private async resolveCohort(
+    tenantId: unknown,
+    cohortIdRaw: unknown,
+    now: Date,
+  ): Promise<{ tenantId: string; cohort: PilotCohortCandidate }> {
+    if (typeof tenantId !== 'string' || !UUID.test(tenantId)
+      || (cohortIdRaw !== undefined && (typeof cohortIdRaw !== 'string' || !UUID.test(cohortIdRaw)))) {
+      throw new BadRequestException('tenantId and cohortId must be UUIDs');
+    }
+    const candidates = await this.listCohorts(tenantId);
+    const cohort = cohortIdRaw === undefined
+      ? selectCurrentPilotCohort(candidates, now)
+      : candidates.find((candidate) => candidate.cohortId === cohortIdRaw) ?? null;
+    if (!cohort) throw new NotFoundException('No V2 pilot cohort for this tenant');
+    return { tenantId, cohort };
   }
 
   /** V2 cohorts only: a cohort without a cycle scoring policy is not part of the pilot. */
@@ -346,7 +401,13 @@ export function projectPilotPeople(
   for (const row of rows) {
     let person = people.get(row.userId);
     if (!person) {
-      person = { userId: row.userId, displayName: row.displayName, inbound: row.inbound, questions: [] };
+      person = {
+        userId: row.userId,
+        displayName: row.displayName,
+        inbound: row.inbound,
+        lastInboundAt: row.lastInboundAt ? new Date(row.lastInboundAt).toISOString() : null,
+        questions: [],
+      };
       people.set(row.userId, person);
     }
     const question: AdminV2PilotPersonQuestion = {
@@ -369,6 +430,106 @@ export function projectPilotPeople(
     state: cohortState(cohort, now),
     checkedAt: now.toISOString(),
     people: [...people.values()],
+  };
+}
+
+/**
+ * Team Signals SQL shared by the de-identified and QA views. Only the QA
+ * variant selects the roster member and its display name (same lateral as
+ * getPeople); the de-identified variant selects no person column.
+ */
+function teamSignalsQuery(tenantId: string, cohortId: string, includeAuthor: boolean) {
+  const author = includeAuthor
+    ? sql`member.user_id AS "userId",
+             coalesce(account.display_name, 'Participant ' || member.position::text) AS "displayName",
+             `
+    : sql``;
+  const roster = includeAuthor
+    ? sql`unnest(c.roster_user_ids) WITH ORDINALITY AS member(user_id, position)`
+    : sql`unnest(c.roster_user_ids) AS member(user_id)`;
+  const account = includeAuthor
+    ? sql`LEFT JOIN LATERAL (
+        SELECT a.display_name FROM channel_accounts a
+        WHERE a.tenant_id = c.tenant_id AND a.user_id = member.user_id
+          AND a.channel_type = 'slack' AND a.link_status = 'linked'
+        ORDER BY a.updated_at DESC LIMIT 1
+      ) account ON true`
+    : sql``;
+  return sql`
+      SELECT ${author}q.stable_key AS "stableKey", q.title, q.question_group AS "group",
+             insight.deidentified_summary AS summary, insight.outcome, insight.score,
+             insight.signal_direction AS direction, insight.signal_severity AS severity,
+             insight.root_cause_category AS "rootCause"
+      FROM survey_reporting_cohorts c
+      CROSS JOIN LATERAL ${roster}
+      JOIN survey_questions q ON q.survey_definition_id = c.survey_definition_id
+        AND q.response_type = 'open_ended'
+      JOIN LATERAL (
+        SELECT w.id FROM survey_windows w
+        WHERE w.tenant_id = c.tenant_id AND w.user_id = member.user_id
+          AND w.reporting_cohort_id = c.id
+        ORDER BY w.period_start DESC LIMIT 1
+      ) window_row ON true
+      JOIN LATERAL (
+        SELECT i.deidentified_summary, i.outcome, i.score,
+               i.signal_direction, i.signal_severity, i.root_cause_category
+        FROM survey_question_insights i
+        WHERE i.tenant_id = c.tenant_id AND i.user_id = member.user_id
+          AND i.survey_window_id = window_row.id AND i.survey_question_id = q.id
+          AND i.is_current AND i.withdrawn_at IS NULL AND i.working_insight_id IS NOT NULL
+        ORDER BY i.scored_at DESC LIMIT 1
+      ) insight ON true
+      ${account}
+      WHERE c.tenant_id = ${tenantId} AND c.id = ${cohortId}
+      ORDER BY q.display_order, insight.deidentified_summary
+    `;
+}
+
+function cohortEnvelope(cohort: PilotCohortCandidate, now: Date) {
+  return {
+    cohortId: cohort.cohortId,
+    periodStart: new Date(cohort.periodStart).toISOString(),
+    periodEnd: new Date(cohort.periodEnd).toISOString(),
+    state: cohortState(cohort, now),
+    checkedAt: now.toISOString(),
+  };
+}
+
+/** Copies only the signal fields, so extra columns on a row can never leak. */
+function projectSignal(row: TeamSignalRow): AdminV2PilotTeamSignal {
+  return {
+    stableKey: row.stableKey,
+    title: row.title,
+    group: row.group,
+    summary: row.summary,
+    outcome: row.outcome,
+    score: row.score === null ? null : Number(row.score),
+    direction: row.direction,
+    severity: row.severity,
+    rootCause: row.rootCause,
+  };
+}
+
+export function projectPilotTeamSignals(
+  cohort: PilotCohortCandidate,
+  rows: TeamSignalRow[],
+  now: Date = new Date(),
+): AdminV2PilotTeamSignalsResponse {
+  return { ...cohortEnvelope(cohort, now), signals: rows.map(projectSignal) };
+}
+
+/** QA-only: the de-identified signal fields plus the author; other row columns are dropped. */
+export function projectPilotQaTeamSignals(
+  cohort: PilotCohortCandidate,
+  rows: QaTeamSignalRow[],
+  now: Date = new Date(),
+): AdminV2PilotQaTeamSignalsResponse {
+  return {
+    ...cohortEnvelope(cohort, now),
+    signals: rows.map((row) => ({
+      ...projectSignal(row),
+      author: { userId: row.userId, displayName: row.displayName },
+    })),
   };
 }
 

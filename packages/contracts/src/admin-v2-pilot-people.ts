@@ -16,6 +16,8 @@ export interface AdminV2PilotPerson {
   userId: string;
   displayName: string;
   inbound: number;
+  /** Latest inbound message inside the cycle period. */
+  lastInboundAt: string | null;
   questions: AdminV2PilotPersonQuestion[];
 }
 

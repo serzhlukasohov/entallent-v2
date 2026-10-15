@@ -12,3 +12,5 @@ export * from './admin-manager-trends';
 export * from './admin-profile-hydration';
 export * from './admin-v2-pilot';
 export * from './admin-v2-pilot-people';
+export * from './admin-v2-pilot-team-signals';
+export * from './admin-team-hierarchy';

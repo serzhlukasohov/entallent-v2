@@ -3116,3 +3116,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Fixture now provides `detectRisk`; run the suite with `V2_CONVERSATION_QUEUE_TEST=1 DATABASE_URL=<local> REDIS_URL=redis://localhost:6380/15` for changes to the orchestrator, risk, or survey paths. Consider wiring it into CI.
 - Regression check: `cd apps/worker && V2_CONVERSATION_QUEUE_TEST=1 DATABASE_URL=postgresql://postgres:postgres@localhost:5434/entalent REDIS_URL=redis://localhost:6380/15 npx vitest run src/conversation/v2-conversation-flow.integration.test.ts`.
 - Status: fixed
+
+## 2026-10-15: QA spec added a join key to a de-identified contract
+
+- Symptom: The approved QA-aids spec added `insightId` to the de-identified `/admin/v2-pilot/team-signals` payload so the dashboard could join authors; with `/people` exposing the same id, every signal became re-identifiable with one join.
+- Expected: Identifying data for QA should live on an explicitly QA-only route; de-identified contracts must not gain join keys to identity.
+- Root cause layer: instructions
+- Harness fix: During BMad spec drafting, any field added to a contract documented as de-identified requires a stated re-identification check in the spec's Boundaries; identifying needs go to a separate QA-only route.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/admin/v2-pilot.read-model.test.ts` (team-signals projection/select list assert no user id, insight id, or author).
+- Status: fixed
