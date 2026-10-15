@@ -113,6 +113,21 @@ Every scenario records three independent layers:
 
 `reportRun` records all three, so a red run says *why* rather than just *no*.
 
+A report exists even when the agent turn itself throws. `CoachHarness.send` catches any
+error from the orchestrator, records it in `harness.failures` (turn, error name, message,
+stack, generation calls made before the throw) and rethrows, so the scenario still fails.
+`reportRun` turns each recorded failure into a `deterministic.violations` entry with rule
+`agent-turn-error` (detail `Name: message`) and an `agentTurnErrors` block with the stack.
+Because `run()` rethrows a non-assertion agent error before the scenario reaches `reportRun`,
+the harness registers a fallback finalizer at construction: if the test fails and no report
+was written for that harness, `runs/<test name>.json` and `.md` are written from the turns
+completed so far, the recorded `agent-turn-error` entries and the Vitest `test-failure`,
+with the judge marked not run. Read a sample with no judge line by opening that JSON; the
+`Agent turn errors` section of the markdown carries the trimmed stack. `pnpm sim:gate`
+counts an `agent-turn-error` as a hard failure; only an error whose message matches the
+transport classifier (`ECONNRESET`, `fetch failed`, 429, 5xx, ...) is retried as
+infrastructure.
+
 ## Non-determinism
 
 A single run is a sample, not a verdict. `pnpm sim:gate` turns the samples into a
