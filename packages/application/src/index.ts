@@ -19,7 +19,13 @@ export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePola
 export type { QuestionWorkingCapturePort, CaptureQuestionMeaningInput } from './ports/question-working-capture.port';
 export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict } from './ports/question-confirmation.port';
 export type { QuestionBundleComposition } from './ports/ai-provider.port';
-export { validateQuestionBundleComposition } from './utils/question-bundle-composition';
+export {
+  validateQuestionBundleComposition, validateBundleReply, composeBundleReplyText, isBundleShownIn,
+  isBundleReplyInvalidError, BundleReplyInvalidError, BUNDLE_REPLY_INVALID,
+} from './utils/question-bundle-composition';
+export type { BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason } from './utils/question-bundle-composition';
+export { maxReplyChars } from './utils/reply-length';
+export type { TrailingBundle } from './ports/ai-provider.port';
 export { validateQuestionBundleVerdict } from './utils/question-bundle-verdict';
 export { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from './utils/question-clarification';
 export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';

@@ -1029,3 +1029,59 @@ describe('buildRespondSystemPrompt identity and capability statement (GC round 3
     expect(prompt).toMatch(/never say (?:that )?you can do it and then ask for a detail/i);
   });
 });
+
+describe('buildRespondSystemPrompt trailing bundle (GC round 3 CAP-4)', () => {
+  const bundleText = 'I hear that you can choose your methods. You can set priorities. Is that fair?';
+
+  const turns = [{ role: 'user' as const, content: 'Should I start with the retro notes?', timestamp: new Date() }];
+
+  it('requires answering the latest message first and copying the bundle byte-for-byte', () => {
+    const ctx = context({ userName: 'Test', trailingBundle: { kind: 'confirmation_bundle', text: bundleText } });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).toContain('"replyText"');
+    expect(prompt).toContain('"bundleText"');
+    expect(prompt).toMatch(/byte-for-byte/i);
+    expect(prompt).toMatch(/latest message/i);
+    expect(prompt.indexOf('"replyText"')).toBeLessThan(prompt.indexOf('"bundleText"'));
+    expect(prompt).toMatch(/"text": return an empty string/);
+    expect(prompt).toMatch(/Do not add a lead-in/);
+    // The fixed text derives from employee messages: it travels in the untrusted user prompt, not the system prompt.
+    expect(prompt).not.toContain(bundleText);
+    const user = buildRespondUserPrompt(turns, ctx, strategy);
+    expect(user).toContain('--- UNTRUSTED FIXED TEXT START ---');
+    expect(user).toContain(bundleText);
+    expect(user.indexOf('--- UNTRUSTED FIXED TEXT START ---')).toBeLessThan(user.indexOf(bundleText));
+  });
+
+  it('describes the clarification variant as one fixed follow-up question', () => {
+    const ctx = context({
+      userName: 'Test',
+      trailingBundle: { kind: 'clarification', text: 'What would you change about your priorities?' },
+    });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).toMatch(/follow-up question/i);
+    expect(prompt).toContain('"bundleText"');
+    expect(buildRespondUserPrompt(turns, ctx, strategy)).toContain('What would you change about your priorities?');
+  });
+
+  it('suppresses memory and goal hints on a bundle turn so the answer stays on the latest message', () => {
+    const ctx = context({
+      userName: 'Test',
+      trailingBundle: { kind: 'confirmation_bundle', text: bundleText },
+      memoryContext: {
+        items: [{ id: 'mem-1', category: 'stressor', content: 'A stale memory about the old team', importance: 0.5 }],
+        goals: [{ id: 'g-1', title: 'Lead the migration', status: 'active' }],
+      },
+    });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).not.toContain('Things you already know about');
+    expect(prompt).not.toContain('prequalified active goal');
+    expect(buildRespondUserPrompt(turns, ctx, strategy)).not.toContain('PREQUALIFIED GOAL');
+  });
+
+  it('omits the two-part contract on ordinary turns', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
+    expect(prompt).not.toContain('"bundleText"');
+    expect(prompt).not.toContain('"replyText"');
+  });
+});

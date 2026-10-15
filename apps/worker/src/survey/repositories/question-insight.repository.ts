@@ -38,6 +38,7 @@ import {
   hasCompleteV2ScoringPolicy,
   hasLegacyV2ScoringPolicy,
   isApprovedQuestionRubric,
+  isBundleShownIn,
   validateQuestionBundleVerdict,
   validateQuestionClarificationPrompt,
 } from '@entalent/application';
@@ -319,8 +320,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(messages.direction, 'outbound'),
           isNull(messages.deletedAt),
         )).limit(1);
+      // The delivered message may answer the employee first (GC round 3 CAP-4); the staged
+      // question must still be shown exactly once, at the end.
       if (!scope || scope.windowStatus !== 'active' || scope.periodEnd <= new Date()
-        || scope.messageSentAt || scope.messageText !== input.displayedText) {
+        || scope.messageSentAt || !isBundleShownIn(scope.messageText, input.displayedText)) {
         throw new Error('v2_clarification_prompt_scope_mismatch');
       }
       await tx.update(surveyQuestionWorkingInsights).set({
@@ -792,8 +795,12 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(messages.direction, 'outbound'),
           isNull(messages.deletedAt),
         )).for('update').limit(1);
+      // The delivered message may answer the employee first (GC round 3 CAP-4); the staged
+      // bundle must still be shown exactly once, at the end.
       if (!scope || scope.windowStatus !== 'active' || scope.periodEnd <= new Date()
-        || scope.messageSentAt || scope.messageText !== input.displayedText) {
+        || scope.messageSentAt || !isBundleShownIn(scope.messageText, input.displayedText, {
+          statements: input.components.map((component) => component.statement),
+        })) {
         throw new Error('v2_confirmation_bundle_scope_mismatch');
       }
       const [anotherBundle] = await tx.select({ id: surveyQuestionConfirmationBundles.id })

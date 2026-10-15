@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ModerationSignalError } from '@entalent/contracts';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import { ProviderContentFilterError } from '../ports/provider-error';
+import { BundleReplyInvalidError } from '../utils/question-bundle-composition';
 import {
   REPORTING_DISCLOSURE_VERSION,
   getDataUseExplanationText,
@@ -2388,7 +2389,8 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       .toBeLessThan(m.outbox.enqueueMessageSend.mock.invocationCallOrder[0]);
     expect(m.aiProvider.composeQuestionClarification.mock.invocationCallOrder[0])
       .toBeLessThan(questionConfirmationRepo.applyQuestionBundleVerdict.mock.invocationCallOrder[0]);
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.bundleReply).toBe('bundle_without_reply');
   });
 
   it('confirms a substantive clarification without a second complete bundle', async () => {
@@ -2641,7 +2643,9 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
     const result = await orch.orchestrate(INPUT);
 
     expect(result.responseText).toBe(text);
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(result.bundleReplyFallbackReason).toBe('reply_missing');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
     expect(questionConfirmationRepo.stageQuestionConfirmationBundle).toHaveBeenCalledWith({
       tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', surveyWindowId: 'w-v2',
       questionGroup: 'autonomy', promptMessageId: 'out-1', displayedText: text,
@@ -5409,5 +5413,231 @@ describe('ConversationOrchestrator pulse-capture questions answered by the model
     expect(result.classification.primaryIntent).toBe('clarification');
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.aiProvider.generateResponse.mock.calls[0][2].captureFacts).toBeUndefined();
+  });
+});
+
+describe('ConversationOrchestrator answer first, then the bundle (GC round 3 CAP-4)', () => {
+  const statements = [
+    { surveyQuestionId: 'q-a', statement: 'You can choose your methods.' },
+    { surveyQuestionId: 'q-b', statement: 'You can set priorities.' },
+    { surveyQuestionId: 'q-c', statement: 'You can challenge decisions.' },
+  ];
+  const bundleText = `I hear that ${statements.map((item) => item.statement).join(' ')} Is that fair?`;
+  const replyText = 'Start tomorrow with the retro notes; the checklist can wait until after standup.';
+  const question = 'Should I start tomorrow with the retro notes or the release checklist?';
+
+  function bundleMocks() {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'test',
+      reminderRequest: null, dialogueAct: 'new_substance', latestUserSubstance: question, topicAnchor: null,
+    });
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({ text: bundleText, statements });
+    // Like the live model under the two-part contract: answer, then the fixed text.
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `${replyText}\n\n${context.trailingBundle?.text ?? ''}`,
+      replyText,
+      bundleText: context.trailingBundle?.text,
+      confidence: 0.9,
+      containsSurveyProbe: false,
+    }));
+    const questionConfirmationRepo = {
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn(),
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue({
+        tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy',
+        questions: statements.map((statement) => ({
+          surveyQuestionId: statement.surveyQuestionId, questionVersion: 'v2', workingSummary: statement.statement,
+        })),
+      }),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue('bundle-1'),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+    return { m, questionConfirmationRepo, orch };
+  }
+
+  it('answers the employee question before the byte-exact bundle in one outbound', async () => {
+    const { m, questionConfirmationRepo, orch } = bundleMocks();
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(`${replyText}\n\n${bundleText}`);
+    expect(result.bundleReply).toBe('answer_then_bundle');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    const [, strategy, context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toEqual({
+      kind: 'confirmation_bundle', text: bundleText, statements: statements.map((statement) => statement.statement),
+    });
+    expect(context.replyPlan).toBeUndefined();
+    expect(strategy.includeFollowUpQuestion).toBe(false);
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).toHaveBeenCalledWith(expect.objectContaining({
+      promptMessageId: 'out-1', displayedText: bundleText,
+      components: statements.map((statement) => ({
+        ...statement, questionVersion: 'v2', expectedWorkingSummary: statement.statement,
+      })),
+    }));
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: `${replyText}\n\n${bundleText}`,
+      metadata: expect.objectContaining({ v2ConfirmationBundle: true, v2BundleReply: 'answer_then_bundle' }),
+    }));
+  });
+
+  it('sends the bundle alone and records bundle_without_reply when the reply breaks the contract', async () => {
+    const { m, questionConfirmationRepo, orch } = bundleMocks();
+    m.aiProvider.generateResponse = vi.fn().mockResolvedValue({
+      text: `${replyText}\n\n${bundleText.replace('fair', 'right')}`,
+      replyText, bundleText: bundleText.replace('fair', 'right'), confidence: 0.9, containsSurveyProbe: false,
+    });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(bundleText);
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).toHaveBeenCalledWith(expect.objectContaining({
+      displayedText: bundleText,
+    }));
+    expect(result.bundleReplyFallbackReason).toBe('bundle_mismatch');
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: bundleText,
+      metadata: expect.objectContaining({
+        v2ConfirmationBundle: true, v2BundleReply: 'bundle_without_reply', v2BundleReplyFallbackReason: 'bundle_mismatch',
+      }),
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back with the adapter reason when the provider fails closed after its repair', async () => {
+    const { m, orch } = bundleMocks();
+    m.aiProvider.generateResponse = vi.fn().mockRejectedValue(new BundleReplyInvalidError('reply_question'));
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(bundleText);
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(result.bundleReplyFallbackReason).toBe('reply_question');
+  });
+
+  it('sends the bundle alone when the provider output filter blocks the reply part', async () => {
+    const { m, orch } = bundleMocks();
+    m.aiProvider.generateResponse = vi.fn().mockRejectedValue(new ProviderContentFilterError('output'));
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(bundleText);
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(result.bundleReplyFallbackReason).toBe('output_filtered');
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back when the reply part repeats a bundle statement', async () => {
+    const { m, orch } = bundleMocks();
+    m.aiProvider.generateResponse = vi.fn().mockResolvedValue({
+      text: `Noted: ${statements[1]!.statement}\n\n${bundleText}`,
+      replyText: `Noted: ${statements[1]!.statement}`, bundleText, confidence: 0.9, containsSurveyProbe: false,
+    });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(bundleText);
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(result.bundleReplyFallbackReason).toBe('reply_restates_statement');
+  });
+
+  it('falls back when the reply part exceeds the application-owned length budget', async () => {
+    const { m, orch } = bundleMocks();
+    const longReply = 'Start with the retro notes. '.repeat(40).trim();
+    m.aiProvider.generateResponse = vi.fn().mockResolvedValue({
+      text: `${longReply}\n\n${bundleText}`, replyText: longReply, bundleText, confidence: 0.9, containsSurveyProbe: false,
+    });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(bundleText);
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(result.bundleReplyFallbackReason).toBe('reply_too_long');
+  });
+
+  it('keeps the one filtered-input turn when the reply call trips the provider input filter', async () => {
+    const { m, questionConfirmationRepo, orch } = bundleMocks();
+    m.aiProvider.generateResponse = vi.fn().mockRejectedValue(new ProviderContentFilterError('input', [], ['jailbreak']));
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.outcome).toBe('input_filtered');
+    expect(result.responseText).not.toContain(bundleText);
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+  });
+
+  it('answers the employee before the one clarification question and stages only the question', async () => {
+    const m = baseMocks();
+    const clarificationText = 'What did I miss about your freedom to choose?';
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({
+      kind: 'partial', acceptedQuestionIds: ['q-a'], disputedQuestionIds: ['q-b'], declinedQuestionIds: ['q-c'],
+    });
+    m.aiProvider.composeQuestionClarification = vi.fn().mockResolvedValue(clarificationText);
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `${replyText}\n\n${context.trailingBundle?.text ?? ''}`,
+      replyText, bundleText: context.trailingBundle?.text, confidence: 0.9, containsSurveyProbe: false,
+    }));
+    const pending = {
+      workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionGroup: 'autonomy',
+      workingSummary: 'Can choose tasks.', disputedStatement: 'You can choose tasks.',
+      clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+    };
+    const questionConfirmationRepo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue({
+        id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+        questionGroup: 'autonomy', displayedText: 'Is that fair?',
+        components: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId) => ({
+          surveyQuestionId, questionVersion: 'v2', statement: surveyQuestionId,
+        })),
+      }),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue(pending),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn(),
+      stageQuestionConfirmationBundle: vi.fn(),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, questionConfirmationRepo,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(`${replyText}\n\n${clarificationText}`);
+    expect(result.bundleReply).toBe('answer_then_bundle');
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].trailingBundle)
+      .toEqual({ kind: 'clarification', text: clarificationText, statements: ['You can choose tasks.'] });
+    expect(questionConfirmationRepo.stageQuestionClarificationPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      workingInsightId: 'working-b', promptMessageId: 'out-1', displayedText: clarificationText,
+    }));
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: `${replyText}\n\n${clarificationText}`,
+      metadata: expect.objectContaining({ v2ClarificationPrompt: true, v2BundleReply: 'answer_then_bundle' }),
+    }));
   });
 });

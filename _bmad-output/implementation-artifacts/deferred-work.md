@@ -232,3 +232,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-team-hierarchy.md`
   summary: Audit-log identifiable admin reads (`/admin/team-hierarchy`, `/admin/v2-pilot/people`) and restrict them server-side to approved tenants.
   evidence: AGENTS.md requires auditability for identifiable manager/admin surfaces; these endpoints return names for any tenant UUID to any `ADMIN_API_KEY` holder with no `audit_logs` row, and the pilot-tenant gate exists only in the dashboard.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s3-answer-then-bundle.md`
+  summary: `AiProviderWithFallback.withFallback` swallows the primary provider's typed failures (including `BundleReplyInvalidError` and confirmation fail-closed errors), so a fallback provider reruns the same contract and the orchestrator may see the fallback's unrelated error instead; the router is exported but not wired in apps today.
+  evidence: Blind Hunter review of S3 (2026-10-15); `packages/ai-openai/src/ai-provider-router.ts` rethrows only the last error.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s3-answer-then-bundle.md`
+  summary: Add a live sim scenario for tester item T4 (substantive message with a question while a bundle is ready) so `pnpm sim:gate` exercises the answer-then-bundle prompt contract with the real model; the scripted fake now honours `trailingBundle` but no scenario asserts the reply part.
+  evidence: Blind Hunter review of S3 (2026-10-15); the fix-plan verification matrix lists only the V2 queue suite and the next live cycle for S3.

@@ -170,9 +170,14 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         errorCode = inputFilteredErrorCode(result.contentFilterCategories);
         this.logger.warn(`Job ${job.id} done — outcome=input_filtered code=${errorCode}`);
       } else {
-        this.logger.log(
-          `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`,
-        );
+        const done = `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`
+          + (result.bundleReply ? ` bundleReply=${result.bundleReply}` : '');
+        if (result.bundleReply === 'bundle_without_reply') {
+          // The fixed text went alone (GC round 3 CAP-4 fallback); keep the reason visible.
+          this.logger.warn(`${done} reason=${result.bundleReplyFallbackReason ?? 'unknown'}`);
+        } else {
+          this.logger.log(done);
+        }
       }
     } catch (error) {
       status = 'error';
