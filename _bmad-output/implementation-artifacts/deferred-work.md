@@ -237,4 +237,6 @@
   evidence: Blind Hunter review of S3 (2026-10-15); `packages/ai-openai/src/ai-provider-router.ts` rethrows only the last error.
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc-s3-answer-then-bundle.md`
   summary: Add a live sim scenario for tester item T4 (substantive message with a question while a bundle is ready) so `pnpm sim:gate` exercises the answer-then-bundle prompt contract with the real model; the scripted fake now honours `trailingBundle` but no scenario asserts the reply part.
+  status: done
+  completed_by: `packages/conversation-sim/src/scenarios/answer-then-bundle.sim.test.ts` (gate id `answer-then-bundle`, 2026-10-15)
   evidence: Blind Hunter review of S3 (2026-10-15); the fix-plan verification matrix lists only the V2 queue suite and the next live cycle for S3.
