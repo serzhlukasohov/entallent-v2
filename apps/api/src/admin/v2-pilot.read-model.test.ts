@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  projectPilotCycle, projectPilotPeople, selectCurrentPilotCohort, V2PilotReadModel,
+  projectPilotCycle, projectPilotPeople, projectPilotQaTeamSignals, projectPilotTeamSignals, selectCurrentPilotCohort, V2PilotReadModel,
 } from './v2-pilot.read-model';
 
 const TENANT = '7d1e0163-6d53-4713-bd24-254690cc5090';
@@ -18,9 +18,16 @@ const DURING_ACTIVE = new Date('2026-10-11T19:15:00Z');
 
 function personRow(userId: string, outcome: string | null) {
   return {
-    userId, displayName: userId, inbound: 3, stableKey: 'autonomy_control_work', title: 'Control',
+    userId, displayName: userId, inbound: 3, lastInboundAt: null, stableKey: 'autonomy_control_work', title: 'Control',
     group: 'autonomy', workingStatus: outcome ? 'confirmed' : 'collecting', ready: !outcome,
     workingSummary: null, finalSummary: null, outcome, score: outcome ? '70' : null,
+  };
+}
+
+function signalRow(summary: string, outcome = 'scored', score: string | null = '64') {
+  return {
+    stableKey: 'autonomy_control_work', title: 'Control', group: 'autonomy', summary, outcome, score,
+    direction: 'mixed', severity: 'moderate', rootCause: 'autonomy',
   };
 }
 
@@ -30,7 +37,7 @@ describe('V2 pilot operator projection', () => {
     await expect(readModel.getPeople('bad-tenant', '9b5d3697-229c-4243-9481-bd6f1456faec'))
       .rejects.toThrow('UUIDs');
     const result = projectPilotPeople(CLOSED, [{
-      userId: 'qa-user', displayName: 'QA', inbound: 1, stableKey: 'autonomy_control_work',
+      userId: 'qa-user', displayName: 'QA', inbound: 1, lastInboundAt: null, stableKey: 'autonomy_control_work',
       title: 'Control', group: 'autonomy', workingStatus: 'confirmed', ready: false,
       workingSummary: 'erased private text', finalSummary: 'Generalized summary',
       outcome: 'scored', score: '73', sourceMessageIds: ['source-id'],
@@ -151,5 +158,121 @@ describe('V2 pilot operator projection', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('validates Team Signals input before querying', async () => {
+    const execute = vi.fn();
+    const readModel = new V2PilotReadModel({ client: { execute } } as never);
+    await expect(readModel.getTeamSignals('bad-tenant', undefined)).rejects.toThrow('UUIDs');
+    await expect(readModel.getTeamSignals(TENANT, 'not-a-uuid')).rejects.toThrow('UUIDs');
+    expect(execute).not.toHaveBeenCalled();
+    execute.mockResolvedValueOnce([]);
+    await expect(readModel.getTeamSignals(TENANT, undefined)).rejects.toThrow('No V2 pilot cohort');
+  });
+
+  it('serves Team Signals for the running cohort by default without identity joins', async () => {
+    vi.useFakeTimers({ now: DURING_ACTIVE, toFake: ['Date'] });
+    try {
+      const execute = vi.fn()
+        .mockResolvedValueOnce([CLOSED, ACTIVE])
+        .mockResolvedValueOnce([signalRow('Team wants clearer priorities')]);
+      const readModel = new V2PilotReadModel({ client: { execute } } as never);
+
+      const current = await readModel.getTeamSignals(TENANT, undefined);
+      expect(current).toMatchObject({ cohortId: ACTIVE.cohortId, state: 'active' });
+      expect(current.signals).toEqual([expect.objectContaining({ summary: 'Team wants clearer priorities', score: 64 })]);
+      const query = JSON.stringify(execute.mock.calls[1]?.[0]);
+      expect(query).toContain(ACTIVE.cohortId);
+      expect(query).not.toContain(CLOSED.cohortId);
+      // Same population as the people view: frozen roster, participant-confirmed rows only.
+      expect(query).toMatch(/unnest\(c\.roster_user_ids\)/);
+      expect(query).toMatch(/i\.working_insight_id IS NOT NULL/);
+      expect(query).not.toContain('channel_accounts');
+      expect(query.slice(0, query.indexOf('FROM'))).not.toContain('user_id');
+
+      execute.mockResolvedValueOnce([CLOSED, ACTIVE]).mockResolvedValueOnce([]);
+      const closed = await readModel.getTeamSignals(TENANT, CLOSED.cohortId);
+      expect(closed).toMatchObject({ cohortId: CLOSED.cohortId, state: 'closed', signals: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('projects Team Signals without private fields and keeps a missing score null', () => {
+    const result = projectPilotTeamSignals(ACTIVE, [
+      { ...signalRow('Generalized summary'), userId: 'qa-user', displayName: 'Serhii',
+        surveyWindowId: 'window-id', workingInsightId: 'working-id', sourceMessageIds: ['source-id'],
+        workingSummary: 'private working text' } as never,
+      signalRow('Not enough evidence', 'insufficient_evidence', null),
+    ], DURING_ACTIVE);
+    expect(result.signals[0]).toEqual({
+      stableKey: 'autonomy_control_work', title: 'Control', group: 'autonomy', summary: 'Generalized summary',
+      outcome: 'scored', score: 64, direction: 'mixed', severity: 'moderate', rootCause: 'autonomy',
+    });
+    expect(result.signals[1]).toMatchObject({ outcome: 'insufficient_evidence', score: null });
+    const json = JSON.stringify(result);
+    for (const leaked of ['qa-user', 'Serhii', 'window-id', 'working-id', 'source-id', 'private working text']) {
+      expect(json).not.toContain(leaked);
+    }
+  });
+
+  it('projects the latest inbound time per person and no insight id', () => {
+    const result = projectPilotPeople(ACTIVE, [
+      { ...personRow('anna', 'scored'), lastInboundAt: new Date('2026-10-11T08:30:00Z'), insightId: 'insight-anna' } as never,
+      { ...personRow('anna', null), stableKey: 'autonomy_pace' },
+      personRow('vera', null),
+    ], DURING_ACTIVE);
+    expect(result.people.map((person) => [person.userId, person.lastInboundAt])).toEqual([
+      ['anna', '2026-10-11T08:30:00.000Z'], ['vera', null],
+    ]);
+    expect(JSON.stringify(result)).not.toContain('insight');
+  });
+
+  it('keeps the de-identified Team Signals query and projection free of authors and insight ids', async () => {
+    const execute = vi.fn().mockResolvedValueOnce([ACTIVE]).mockResolvedValueOnce([
+      { ...signalRow('Summary'), insightId: 'insight-1', userId: 'qa-user', displayName: 'Anna' },
+    ]);
+    const readModel = new V2PilotReadModel({ client: { execute } } as never);
+    const result = await readModel.getTeamSignals(TENANT, ACTIVE.cohortId);
+    expect(result.signals[0]).not.toHaveProperty('insightId');
+    expect(result.signals[0]).not.toHaveProperty('author');
+    expect(JSON.stringify(result)).not.toMatch(/insight-1|qa-user|Anna/);
+    const query = JSON.stringify(execute.mock.calls[1]?.[0]);
+    const selectList = query.slice(0, query.indexOf('FROM'));
+    expect(selectList).not.toContain('user_id');
+    expect(selectList).not.toContain('insightId');
+    expect(selectList).not.toMatch(/\bi(nsight)?\.id\b/);
+  });
+
+  it('serves QA Team Signals with the author from the roster and the linked Slack name', async () => {
+    const execute = vi.fn().mockResolvedValueOnce([ACTIVE]).mockResolvedValueOnce([
+      { ...signalRow('Summary'), userId: 'anna-id', displayName: 'Anna Smirnova' },
+    ]);
+    const readModel = new V2PilotReadModel({ client: { execute } } as never);
+    await expect(readModel.getQaTeamSignals('bad-tenant', undefined)).rejects.toThrow('UUIDs');
+    const result = await readModel.getQaTeamSignals(TENANT, ACTIVE.cohortId);
+    expect(result.cohortId).toBe(ACTIVE.cohortId);
+    expect(result.signals[0]).toMatchObject({
+      summary: 'Summary', score: 64, author: { userId: 'anna-id', displayName: 'Anna Smirnova' },
+    });
+    const query = JSON.stringify(execute.mock.calls[1]?.[0]);
+    expect(query).toContain(ACTIVE.cohortId);
+    expect(query).toMatch(/unnest\(c\.roster_user_ids\) WITH ORDINALITY/);
+    expect(query).toContain('channel_accounts');
+    expect(query).toContain("'Participant ' || member.position");
+    expect(query).toMatch(/i\.working_insight_id IS NOT NULL/);
+  });
+
+  it('projects QA Team Signals with the author and drops injected private fields', () => {
+    const result = projectPilotQaTeamSignals(ACTIVE, [
+      { ...signalRow('Generalized summary'), userId: 'anna-id', displayName: 'Anna',
+        sourceMessageIds: ['source-id'], workingSummary: 'private working text', insightId: 'insight-1' } as never,
+    ], DURING_ACTIVE);
+    expect(result.signals[0]).toEqual({
+      stableKey: 'autonomy_control_work', title: 'Control', group: 'autonomy', summary: 'Generalized summary',
+      outcome: 'scored', score: 64, direction: 'mixed', severity: 'moderate', rootCause: 'autonomy',
+      author: { userId: 'anna-id', displayName: 'Anna' },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/source-id|private working text|insight-1/);
   });
 });

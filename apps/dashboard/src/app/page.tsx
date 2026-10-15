@@ -1,53 +1,102 @@
-import Link from 'next/link';
+import type {
+  AdminTeamHierarchyManager, AdminTeamHierarchyPerson, AdminTeamHierarchyRole, AdminTeamHierarchySource,
+  AdminTeamHierarchyUnit,
+} from '@entalent/contracts';
 import { Nav } from './components/Nav';
-import { fetchAdminV2PilotPeople } from './lib';
-import { cohortLabel, personProgress } from './v2-pilot-progress';
+import { Badge, Card, Initials, Notice, PageHeader } from './components/ui';
+import { fetchAdminTeamHierarchy, qaPrivateViewEnabled } from './lib';
+import { roleLabel, type BadgeTone } from './v2-pilot-progress';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+const SOURCE_LABELS: Record<AdminTeamHierarchySource, string> = {
+  org: 'Оргструктура', legacy: 'Старые команды Slack', none: 'Не настроена',
+};
+
+function headcount(unit: AdminTeamHierarchyUnit): number {
+  const ids = new Set<string>();
+  if (unit.manager) ids.add(unit.manager.id ?? `manager:${unit.id}`);
+  for (const team of unit.teams) {
+    if (team.lead) ids.add(team.lead.id);
+    for (const member of team.members) ids.add(member.id);
+  }
+  for (const member of unit.directMembers) ids.add(member.id);
+  return ids.size;
+}
+
+function roleTone(role: AdminTeamHierarchyRole): BadgeTone {
+  return role === 'employee' ? 'neutral' : 'accent';
+}
+
+function PersonLine({ person, showRole = true }: {
+  person: AdminTeamHierarchyPerson | AdminTeamHierarchyManager; showRole?: boolean;
+}) {
+  return <div className="person">
+    <Initials name={person.displayName} />
+    <span className="person-name">{person.displayName}</span>
+    {showRole && <Badge tone={roleTone(person.role)}>{roleLabel(person.role)}</Badge>}
+  </div>;
+}
+
+function People({ people }: { people: AdminTeamHierarchyPerson[] }) {
+  if (people.length === 0) return <div className="muted small">Нет сотрудников</div>;
+  return <ul className="people">
+    {people.map((person) => <li key={person.id}><PersonLine person={person} /></li>)}
+  </ul>;
+}
+
+function Lead({ title, person }: { title: string; person: AdminTeamHierarchyManager | null }) {
+  return <div style={{ marginTop: 8 }}>
+    <div className="muted small">{title}</div>
+    {/* The title already names the role. */}
+    {person ? <PersonLine person={person} showRole={false} /> : <Badge tone="warning">Не назначен</Badge>}
+  </div>;
+}
+
+function UnitCard({ unit }: { unit: AdminTeamHierarchyUnit }) {
+  return <Card>
+    <div className="row" style={{ justifyContent: 'space-between' }}>
+      <h2>{unit.name}</h2>
+      <Badge>Человек: {headcount(unit)}</Badge>
+    </div>
+    <Lead title="Руководитель" person={unit.manager} />
+    {unit.teams.map((team) => <div key={team.id} className="card-inset" style={{ marginTop: 12 }}>
+      <h3>{team.name}</h3>
+      <Lead title="Тимлид" person={team.lead} />
+      <div className="muted small" style={{ marginTop: 8 }}>Участники</div>
+      <People people={team.members} />
+    </div>)}
+    {(unit.directMembers.length > 0 || unit.teams.length === 0) && <div style={{ marginTop: 12 }}>
+      <div className="muted small">Напрямую у руководителя</div>
+      <People people={unit.directMembers} />
+    </div>}
+  </Card>;
+}
+
 export default async function DashboardPage() {
-  const data = await fetchAdminV2PilotPeople();
-  const people = data?.people ?? [];
+  const qaEnabled = qaPrivateViewEnabled();
+  const data = await fetchAdminTeamHierarchy();
 
   return (
-    <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
+    <main className="page">
       <Nav active="team" />
-      <h1 style={{ fontSize: 22, fontWeight: 600 }}>Команда · пилот V2</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-        {data ? `${cohortLabel(data)}. ` : ''}Замороженный состав когорты. Рабочие записи меняются до подтверждения и удаляются после финализации.
-      </p>
-      {!data ? <p style={{ marginTop: 32 }}>Карточки участников сейчас недоступны.</p> : (
-        <>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: '24px 0' }}>
-            <div>Участников: <b>{people.length}</b></div>
-            <div>Начали беседу: <b>{people.filter((person) => person.inbound > 0).length}</b></div>
-            <div>Автономия 3/3: <b>{people.filter((person) => person.questions.filter((q) => q.group === 'autonomy' && q.outcome === 'scored').length === 3).length} / 5</b> для порога отчёта</div>
-          </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-            «Что проверить» — подсказка по сохранённым записям. Доставку сообщений конкретному участнику эта таблица не подтверждает.
-          </p>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ padding: 10 }}>Участник</th><th style={{ padding: 10 }}>Сообщения</th>
-                <th style={{ padding: 10 }}>Этап Автономии</th><th style={{ padding: 10 }}>Что проверить</th>
-                <th style={{ padding: 10 }}>Записи / итоги</th>
-              </tr></thead>
-              <tbody>{people.map((person) => {
-                const progress = personProgress(person);
-                return <tr key={person.userId} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: 10 }}><Link href={`/pulse/${person.userId}`}>{person.displayName}</Link></td>
-                  <td style={{ padding: 10 }}>{person.inbound}</td>
-                  <td style={{ padding: 10 }}>{progress.stage}</td>
-                  <td style={{ padding: 10, color: 'var(--text-muted)' }}>{progress.nextStep}</td>
-                  <td style={{ padding: 10 }}>{person.questions.filter((q) => q.workingSummary).length} / {person.questions.filter((q) => q.outcome).length}</td>
-                </tr>;
-              })}</tbody>
-            </table>
-          </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>«Записи / итоги» считаются по всем 12 темам показанного цикла.</p>
-        </>
+      <PageHeader
+        title="Команда"
+        subtitle={qaEnabled && data && data.units.length > 0
+          ? `Кто кому подчиняется. Источник: ${SOURCE_LABELS[data.source]}.`
+          : undefined}
+      />
+      {!qaEnabled ? (
+        <Notice>Состав команды с именами доступен только в закрытом QA-режиме.</Notice>
+      ) : !data ? (
+        <Notice>Иерархия команды сейчас недоступна.</Notice>
+      ) : data.units.length === 0 ? (
+        <Notice>Иерархия ещё не настроена.</Notice>
+      ) : (
+        <div className="unit-grid">
+          {data.units.map((unit) => <UnitCard key={unit.id} unit={unit} />)}
+        </div>
       )}
     </main>
   );

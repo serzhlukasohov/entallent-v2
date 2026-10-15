@@ -1,16 +1,36 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import type { AdminV2PilotPersonQuestion } from '@entalent/contracts';
 import { Nav } from '../../components/Nav';
+import { Badge, Freshness, Legend, Notice, PageHeader, ViewBadge } from '../../components/ui';
 import { fetchAdminV2PilotPeople } from '../../lib';
-import { cohortLabel, personProgress, questionStatusLabel } from '../../v2-pilot-progress';
+import {
+  cohortLabel, draftStatusBadge, isShownWorking, lastMessageLabel, personProgress, personStageBadge, TOPIC_GROUPS,
+} from '../../v2-pilot-progress';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-const GROUPS = [
-  ['autonomy', 'Автономия'], ['growth', 'Развитие'],
-  ['purpose', 'Смысл'], ['belonging', 'Принадлежность'],
-] as const;
+function TopicCard({ question }: { question: AdminV2PilotPersonQuestion }) {
+  return <article className="card topic-card">
+    <h3>{question.title}</h3>
+    <div className="row">
+      <ViewBadge badge={draftStatusBadge(question.status)} />
+      {question.ready && <Badge tone="accent">Достаточно для подтверждения</Badge>}
+    </div>
+    {isShownWorking(question) ? <div>
+      <div className="topic-card-label">Черновик · может измениться</div>
+      <p>{question.workingSummary}</p>
+    </div> : question.finalSummary ? <div>
+      <div className="topic-card-label">Обезличенный итог</div>
+      <p>{question.finalSummary}</p>
+      {/* Any other outcome is already named by the status badge above. */}
+      {question.outcome === 'scored' && <div className="row" style={{ marginTop: 6 }}>
+        <Badge tone="neutral">{question.score !== null ? `Оценка ${question.score}/100` : 'Оценка —'}</Badge>
+      </div>}
+    </div> : <p className="muted">Текста на этом этапе нет</p>}
+  </article>;
+}
 
 export default async function UserInsightsPage({ params }: { params: Promise<{ userId: string }> }) {
   const { userId } = await params;
@@ -19,35 +39,39 @@ export default async function UserInsightsPage({ params }: { params: Promise<{ u
   if (data && !person) notFound();
 
   return (
-    <main style={{ maxWidth: 1000, margin: '0 auto', padding: '32px 24px' }}>
-      <Nav active="pulse" />
-      <Link href="/pulse" style={{ fontSize: 13 }}>← Pulse Check</Link>
-      <h1 style={{ fontSize: 22, marginTop: 20 }}>{person?.displayName ?? 'Записи недоступны'}</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{data ? `${cohortLabel(data)}. ` : ''}Рабочий смысл показывается до подтверждения; после финализации остаётся обезличенный итог.</p>
-      {person && <p style={{ padding: 12, background: 'var(--surface2)', borderRadius: 8, fontSize: 13 }}>
-        <b>{personProgress(person).stage}</b> · {personProgress(person).nextStep}
-      </p>}
-      {person && GROUPS.map(([group, label]) => {
+    <main className="page">
+      <Nav active="current" />
+      <Link href="/pulse" className="back-link">← Текущий цикл</Link>
+      <PageHeader
+        title={person?.displayName ?? 'Записи недоступны'}
+        subtitle={<>{data ? `${cohortLabel(data)}. ` : ''}Черновик виден до подтверждения; после него остаётся обезличенный итог.</>}
+      >
+        {person && <p className="muted small">{lastMessageLabel(person.lastInboundAt)}</p>}
+        {data && <Freshness checkedAt={[data.checkedAt]} href={`/pulse/${encodeURIComponent(userId)}`} />}
+      </PageHeader>
+      {person && <>
+        <Legend />
+        <div className="notice row">
+          <ViewBadge badge={personStageBadge(person)} />
+          <span>{personProgress(person).nextStep}</span>
+        </div>
+      </>}
+      {person && TOPIC_GROUPS.map(([group, label]) => {
         const questions = person.questions.filter((q) => q.group === group);
-        return <details key={group} open={group === 'autonomy'} style={{ marginTop: 24 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 16, fontWeight: 600 }}>
-            {label} · {questions.filter((q) => q.outcome === 'scored').length}/{questions.length} итоговых · готово к подтверждению: {questions.filter((q) => q.ready).length}
-          </summary>
-          {questions.map((q) => (
-            <div key={q.stableKey} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, marginTop: 10 }}>
-              <b>{q.title}</b>
-              <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6 }}>
-                Состояние записи: {questionStatusLabel(q.status)}.
-                {q.ready && ' Материала достаточно для подтверждения.'}
-              </div>
-              {q.workingSummary && <p style={{ fontSize: 13 }}>Рабочая запись, может измениться: {q.workingSummary}</p>}
-              {q.finalSummary && <p style={{ fontSize: 13 }}>Итог после подтверждения: {q.finalSummary}</p>}
-              {q.score !== null && <p style={{ fontSize: 13 }}>Оценка: {q.score}/100</p>}
-              {!q.workingSummary && !q.finalSummary && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Текст записи недоступен на этом этапе.</p>}
-            </div>
-          ))}
-        </details>;
+        return <section key={group}>
+          <h2 className="section-title">
+            {label}{' '}
+            <span className="muted summary-meta">
+              · итоговых {questions.filter((q) => q.outcome === 'scored').length}/{questions.length}
+              {' · '}готово к подтверждению {questions.filter((q) => q.ready).length}
+            </span>
+          </h2>
+          <div className="topic-map">
+            {questions.map((q) => <TopicCard key={q.stableKey} question={q} />)}
+          </div>
+        </section>;
       })}
+      {!data && <div style={{ marginTop: 16 }}><Notice>Записи участника доступны только в закрытом QA-режиме при работающем API.</Notice></div>}
     </main>
   );
 }

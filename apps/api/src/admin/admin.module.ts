@@ -13,6 +13,8 @@ import { ProfileHydrationStatusController } from './profile-hydration-status.con
 import { ManagerDashboardReadModel } from './manager-dashboard.read-model';
 import { V2PilotController } from './v2-pilot.controller';
 import { V2PilotReadModel } from './v2-pilot.read-model';
+import { TeamHierarchyController } from './team-hierarchy.controller';
+import { TeamHierarchyReadModel } from './team-hierarchy.read-model';
 
 @Module({
   imports: [DatabaseModule, AuditModule],
@@ -26,7 +28,8 @@ import { V2PilotReadModel } from './v2-pilot.read-model';
     ManagerTrendsController,
     ProfileHydrationStatusController,
     V2PilotController,
+    TeamHierarchyController,
   ],
-  providers: [ApiKeyGuard, ManagerDashboardReadModel, V2PilotReadModel],
+  providers: [ApiKeyGuard, ManagerDashboardReadModel, V2PilotReadModel, TeamHierarchyReadModel],
 })
 export class AdminModule {}

@@ -213,3 +213,22 @@
   summary: Make scheduled-action deduplication and follow-up queue admission atomic or durably recoverable.
   status: todo
   evidence: The shared reminder path still performs `existsByDeduplicationKey` before insert and queues execution afterward; concurrent requests or a crash between insert and queue admission can leave a unique-key retry or an unqueued pending action. CAP-8 now acknowledges sequential dedup hits without creating a duplicate, but the cross-runtime atomicity boundary needs a dedicated scheduler slice.
+
+- source_spec: none
+  summary: Show current-cycle working insights next to confirmed, de-identified Team Signals (no names, direction/severity/score, cohort threshold ignored in the QA view).
+  evidence: Split from the 2026-10-14 dashboard cleanup intent as an independently shippable goal; it needs a new API projection and is planned as spec 2 of 3 in the same session.
+- source_spec: none
+  summary: Show the team hierarchy (unit manager -> teams with leads -> employees) from the new org model, falling back to legacy teams/team_memberships when the tenant has no active org units.
+  evidence: Split from the 2026-10-14 dashboard cleanup intent as an independently shippable goal; it needs a new admin read endpoint and is planned as spec 3 of 3 in the same session.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-cleanup-cycles.md`
+  summary: Replace the production dashboard verifier's legacy `/admin/manager/trends` data gate with a `/admin/v2-pilot` check now that no dashboard page reads trends.
+  evidence: `scripts/verify-production-dashboard.ts` still fails verification when a tenant has empty trend series, for a feature the dashboard no longer shows; spec 1 kept it deliberately.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-cleanup-cycles.md`
+  summary: Add render-level tests for dashboard pages (cycle detail 404 vs API-unavailable branching, nav tabs, cohort-scoped roster).
+  evidence: The dashboard has no component/page test harness; only pure helpers in `v2-pilot-progress.ts` are covered, so page-branch regressions are caught only by manual checks.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-current-cycle-team-signals.md`
+  summary: Enforce the QA private-view boundary in the API for `/admin/v2-pilot/people` and `/admin/v2-pilot/team-signals` (server-side flag or cohort-size floor), not only in the dashboard.
+  evidence: Both endpoints are protected only by `ADMIN_API_KEY` + `INTERNAL_DASHBOARD_ENABLED`; any key holder can read un-thresholded per-cohort data even when the dashboard's `QA_PRIVATE_VIEW_ENABLED` is off.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-team-hierarchy.md`
+  summary: Audit-log identifiable admin reads (`/admin/team-hierarchy`, `/admin/v2-pilot/people`) and restrict them server-side to approved tenants.
+  evidence: AGENTS.md requires auditability for identifiable manager/admin surfaces; these endpoints return names for any tenant UUID to any `ADMIN_API_KEY` holder with no `audit_logs` row, and the pilot-tenant gate exists only in the dashboard.

@@ -54,19 +54,18 @@ async function main(): Promise<void> {
   const home = await fetchHtml(`${dashboardBase}/`, 'dashboard home');
   assertDynamicDashboardRoute(home, 'dashboard home');
   assertNoDashboardFallback(home, 'dashboard home');
-  assertHtmlIncludes(home.body, 'Trends', 'dashboard home redirect target');
+  assertHtmlIncludes(home.body, 'Циклы', 'dashboard home cycles tab');
   verifiedRoutes.push('/');
 
-  const trendsPage = await fetchHtml(`${dashboardBase}/trends`, 'dashboard trends');
-  assertDynamicDashboardRoute(trendsPage, 'dashboard trends');
-  assertNoDashboardFallback(trendsPage, 'dashboard trends');
-  assertHtmlIncludes(trendsPage.body, 'Trends', 'dashboard trends title');
-  assertHtmlIncludes(trendsPage.body, trends.rangeStart, 'dashboard trends range start');
-  assertHtmlIncludes(trendsPage.body, trends.rangeEnd, 'dashboard trends range end');
-  verifiedRoutes.push('/trends');
+  const cyclesPage = await fetchHtml(`${dashboardBase}/cycles`, 'dashboard cycles');
+  assertDynamicDashboardRoute(cyclesPage, 'dashboard cycles');
+  assertNoDashboardFallback(cyclesPage, 'dashboard cycles');
+  assertHtmlIncludes(cyclesPage.body, 'Циклы V2', 'dashboard cycles title');
+  if (!cyclesPage.body.includes('Период') && !cyclesPage.body.includes('Циклов V2 пока нет')) {
+    fail('dashboard cycles rendered neither the cycle table nor the empty state');
+  }
+  verifiedRoutes.push('/cycles');
 
-  await assertNotFound(`${dashboardBase}/pulse`, undefined, 'dashboard pulse');
-  await assertNotFound(`${dashboardBase}/pulse/${NONEXISTENT_USER_ID}`, undefined, 'dashboard user insights');
 
   const summary: VerificationSummary = {
     apiBase,
@@ -74,7 +73,7 @@ async function main(): Promise<void> {
     tenantId,
     trendsDays,
     dashboardRoutes: verifiedRoutes,
-    privateRoutesBlocked: [...privateApiPaths, '/internal/maf/context/read', '/pulse', '/pulse/[userId]'],
+    privateRoutesBlocked: [...privateApiPaths, '/internal/maf/context/read'],
   };
 
   console.log('Production dashboard verification passed');
@@ -172,7 +171,7 @@ function assertDynamicDashboardRoute(result: HttpResult, label: string): void {
 }
 
 function assertNoDashboardFallback(result: HttpResult, label: string): void {
-  if (result.body.includes('Failed to load data')) {
+  if (result.body.includes('Failed to load data') || result.body.includes('Данные недоступны')) {
     fail(`${label} rendered the data-load fallback`);
   }
 }

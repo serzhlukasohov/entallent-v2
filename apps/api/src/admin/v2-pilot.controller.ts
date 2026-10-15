@@ -1,7 +1,10 @@
 import { Controller, Get, Header, Query, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '@entalent/config';
-import type { AdminV2PilotPeopleResponse, AdminV2PilotResponse } from '@entalent/contracts';
+import type {
+  AdminV2PilotPeopleResponse, AdminV2PilotQaTeamSignalsResponse, AdminV2PilotResponse,
+  AdminV2PilotTeamSignalsResponse,
+} from '@entalent/contracts';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { assertInternalDashboardEnabled } from './internal-dashboard-gate';
 import { V2PilotReadModel } from './v2-pilot.read-model';
@@ -32,5 +35,26 @@ export class V2PilotController {
   ): Promise<AdminV2PilotPeopleResponse> {
     assertInternalDashboardEnabled(this.config);
     return this.readModel.getPeople(tenantId, cohortId);
+  }
+
+  @Get('team-signals')
+  @Header('Cache-Control', 'private, no-store')
+  async getTeamSignals(
+    @Query('tenantId') tenantId?: string,
+    @Query('cohortId') cohortId?: string,
+  ): Promise<AdminV2PilotTeamSignalsResponse> {
+    assertInternalDashboardEnabled(this.config);
+    return this.readModel.getTeamSignals(tenantId, cohortId);
+  }
+
+  /** QA-only: Team Signals with their authors. Same guards as people. */
+  @Get('qa/team-signals')
+  @Header('Cache-Control', 'private, no-store')
+  async getQaTeamSignals(
+    @Query('tenantId') tenantId?: string,
+    @Query('cohortId') cohortId?: string,
+  ): Promise<AdminV2PilotQaTeamSignalsResponse> {
+    assertInternalDashboardEnabled(this.config);
+    return this.readModel.getQaTeamSignals(tenantId, cohortId);
   }
 }
