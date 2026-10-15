@@ -174,6 +174,13 @@ structural scenarios that use the real orchestrator with scripted AI outputs. Th
 verify safety/privacy state and produce local reports without depending on live
 model credentials. Their reports mark the LLM judge as not run.
 
+`answer-then-bundle` gates GC round 3 CAP-4: with a ready V2 confirmation bundle and a
+substantive employee message that asks a question, the live model must return the answer
+and a byte-for-byte copy of the composed bundle in one generation. The test asserts the
+`answer_then_bundle` outcome on the outbound metadata, the staged bundle text shown exactly
+once at the end after a non-empty answer, and a judge rubric on whether the answer part
+addresses the question. A `bundle_without_reply` fallback is a hard failure here.
+
 `proactivity-reminders` and `planning-memory` are deterministic structural
 scenarios for action discipline, reminder deduplication, delayed follow-up policy,
 assessment preparation, goal state, memory extraction, memory correction, and

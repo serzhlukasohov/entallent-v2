@@ -20,6 +20,7 @@ import {
   type QuestionBundleVerdict,
   type PendingQuestionClarification,
   type QuestionClarificationVerdict,
+  type QuestionConfirmationPort,
   type StyleProfileRecord,
 } from '@entalent/application';
 import type {
@@ -60,6 +61,8 @@ export interface CoachHarnessOptions {
   aiProvider?: AiProviderPort;
   scheduledActionRepo?: ScheduledActionRepositoryPort;
   surveyRepo?: SurveyRepositoryPort;
+  /** V2 question-confirmation state (ready bundles, clarifications); omitted means no V2 turns. */
+  questionConfirmationRepo?: QuestionConfirmationPort;
 }
 
 export interface GenerateResponseCall {
@@ -156,6 +159,7 @@ export class CoachHarness {
       undefined,
       this.styleRepo,
       this.goalRepo,
+      options.questionConfirmationRepo,
     );
   }
 
