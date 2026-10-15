@@ -55,8 +55,6 @@ import {
   REPORTING_DISCLOSURE_VERSION,
   appendReportingDisclosure,
   getDataUseExplanationText,
-  getPulseCaptureExplanationText,
-  isExplicitPulseCaptureRequest,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
@@ -75,12 +73,12 @@ export type OrchestrateInput = ProcessMessageRequest;
 export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
   risk: RiskAssessment;
   outcome?: 'input_filtered' | 'processing_failed';
+  /** Bounded provider category keys behind an `input_filtered` outcome (diagnostics only). */
+  contentFilterCategories?: readonly string[];
 };
 
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
-
-class InputFilterDuringClassification extends Error {}
 
 type PreparedBundlePhase = {
   confirmedGroup: string | false;
@@ -137,12 +135,17 @@ export class ConversationOrchestrator {
     return true;
   }
 
+  /**
+   * A provider input filter raised by any model call in the turn (classification, reply, repair)
+   * becomes the one filtered-input explanation on the first attempt (GC round 3 CAP-11). Anything
+   * the turn persisted before the filter is only read state; durable writes happen after generation.
+   */
   async orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
     try {
       return await this.orchestrateModelTurn(input);
     } catch (error) {
-      if (!(error instanceof InputFilterDuringClassification)) throw error;
-      return this.commitInputFilteredTurn(input);
+      if (!(error instanceof ProviderContentFilterError) || error.direction !== 'input') throw error;
+      return this.commitInputFilteredTurn(input, error.filteredCategories);
     }
   }
 
@@ -156,10 +159,19 @@ export class ConversationOrchestrator {
       processingFailureExplanation(languagePolicy.responseLanguage), { failureCode, languagePolicy });
   }
 
-  private async commitInputFilteredTurn(input: OrchestrateInput): Promise<OrchestrateResult> {
+  private async commitInputFilteredTurn(
+    input: OrchestrateInput,
+    contentFilterCategories: readonly string[],
+  ): Promise<OrchestrateResult> {
     const languagePolicy = resolveLanguagePolicy();
-    return this.commitOutcomeTurn(input, 'input_filtered',
-      contentFilterExplanation(languagePolicy.responseLanguage), { languagePolicy });
+    const result = await this.commitOutcomeTurn(input, 'input_filtered',
+      contentFilterExplanation(languagePolicy.responseLanguage), {
+        languagePolicy,
+        ...(contentFilterCategories.length > 0 ? { contentFilterCategories: [...contentFilterCategories] } : {}),
+      });
+    return contentFilterCategories.length > 0
+      ? { ...result, contentFilterCategories: [...contentFilterCategories] }
+      : result;
   }
 
   private async commitOutcomeTurn(
@@ -307,11 +319,6 @@ export class ConversationOrchestrator {
         now: currentTurnAt,
         timezone: userTimezone,
         continuitySummary: activeTopic?.summary,
-      }).catch((error: unknown) => {
-        if (error instanceof ProviderContentFilterError && error.direction === 'input') {
-          throw new InputFilterDuringClassification();
-        }
-        throw error;
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -346,21 +353,6 @@ export class ConversationOrchestrator {
     let classification: SituationClassification = hasSafetyIntent
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
-    const explicitPulseCaptureRequest = isExplicitPulseCaptureRequest(inboundMessage.text);
-    if (explicitPulseCaptureRequest && !hasSafetyIntent) {
-      classification = {
-        ...classification,
-        pulseCaptureScope: { type: 'conversation' },
-        primaryIntent: 'pulse_capture_explanation',
-        secondaryIntents: classification.secondaryIntents.filter(
-          (intent) => intent !== 'pulse_capture_explanation'
-            && intent !== 'reporting_explanation'
-            && intent !== 'data_use_explanation',
-        ),
-        surveyAllowed: false,
-        reminderRequest: null,
-      };
-    }
     const reportingExplanationRequested =
       !(reportingDisclosureReceipt
         && classification.dialogueAct === 'acknowledgement'
@@ -802,32 +794,20 @@ export class ConversationOrchestrator {
             : {}),
         })
       : [];
-    const pulseReminderAcknowledgement = reminderConfirmation
-      ? languagePolicy.responseLanguage.toLowerCase().startsWith('ru')
-        ? ' Хорошо, я напомню об этом.'
-        : languagePolicy.responseLanguage.toLowerCase().startsWith('uk')
-          ? ' Добре, я нагадаю про це.'
-          : " I'll remind you as requested."
-      : '';
+    // CAP-5 (GC round 3): capture state is grounding for the model, never the reply itself.
+    const captureFacts: ResponseContext['captureFacts'] = canAnswerPulseCaptureExplanation
+      ? {
+          scope: pulseCaptureResolution.type,
+          captures: pulseCapture.map((capture) => ({
+            evidenceSummary: capture.evidenceSummary,
+            status: capture.status,
+          })),
+        }
+      : undefined;
     let generated = clarificationText
       ? { text: clarificationText, confidence: 1, containsSurveyProbe: false }
       : v2Composition
       ? { text: v2Composition.text, confidence: 1, containsSurveyProbe: false }
-      : canAnswerPulseCaptureExplanation
-      ? {
-          text: `${getPulseCaptureExplanationText(
-            pulseCapture,
-            languagePolicy.responseLanguage,
-            conciseSession,
-            pulseCaptureResolution.type === 'exact'
-              ? 'exact'
-              : pulseCaptureResolution.type === 'unresolved'
-                ? 'unresolved'
-                : 'conversation',
-          )}${pulseReminderAcknowledgement}`,
-          confidence: 1,
-          containsSurveyProbe: false,
-        }
       : canAnswerDataUseExplanation
       ? {
           text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession),
@@ -843,6 +823,7 @@ export class ConversationOrchestrator {
       : await this.aiProvider.generateResponse(turns, strategy, {
       userName,
       languagePolicy,
+      captureFacts,
       memoryContext: memoryContext.items.length > 0 || memoryContext.goals.length > 0
         ? memoryContext
         : undefined,
@@ -1569,8 +1550,7 @@ function resolvePulseCaptureScope(input: {
     .test(currentMessage.text);
   const hasLabeledQuote = /message:\s*[“"«]/iu.test(currentMessage.text);
   if (scope?.type === 'conversation'
-    && (isExplicitPulseCaptureRequest(currentMessage.text)
-      || (!excludesWholeConversation && !namesOneMessage && !hasLabeledQuote))) {
+    && !excludesWholeConversation && !namesOneMessage && !hasLabeledQuote) {
     return { type: 'conversation' };
   }
 

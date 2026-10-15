@@ -50,7 +50,6 @@ import type {
   QuestionScoreResult,
 } from '@entalent/application';
 import {
-  isExplicitPulseCaptureRequest,
   validateQuestionBundleComposition,
   validateQuestionBundleVerdict,
   validateQuestionClarificationPrompt,
@@ -616,7 +615,11 @@ export class OpenAiProvider implements AiProviderPort {
         });
       } catch (error) {
         if (this.azure && isConfirmedAzureInputFilter(error)) {
-          throw new ProviderContentFilterError('input', azureContentFilterSignal(error)?.categories ?? []);
+          throw new ProviderContentFilterError(
+            'input',
+            azureContentFilterSignal(error)?.categories ?? [],
+            azureFilteredCategoryKeys(error),
+          );
         }
         throw error;
       }
@@ -654,6 +657,28 @@ function azureFilterCategories(result: AzureFilterResult | undefined): Moderatio
     if (level === 'low' || level === 'medium' || level === 'high') categories.push({ category, level });
   }
   return categories;
+}
+
+const AZURE_FILTER_KEY = /^[a-z_]{1,32}$/;
+const AZURE_FILTER_KEY_LIMIT = 8;
+
+/**
+ * The provider category keys whose result says the prompt was filtered or a shield detected it.
+ * Keys are format-validated and capped so the value stays a bounded diagnostic (ADR-013 D2).
+ */
+function azureFilteredCategoryKeys(error: unknown): string[] {
+  const outer = errorFields(error);
+  const body = errorFields(outer['error']);
+  const inner = errorFields(outer['innererror'] ?? body['innererror']);
+  const result = inner['content_filter_result'];
+  if (typeof result !== 'object' || result === null) return [];
+  return Object.entries(result as Record<string, unknown>)
+    .filter(([key, value]) => AZURE_FILTER_KEY.test(key)
+      && typeof value === 'object' && value !== null
+      && ((value as { filtered?: unknown }).filtered === true || (value as { detected?: unknown }).detected === true))
+    .map(([key]) => key)
+    .sort()
+    .slice(0, AZURE_FILTER_KEY_LIMIT);
 }
 
 function isAzureContentFilterError(err: unknown): boolean {
@@ -752,7 +777,6 @@ function normalizePulseCaptureExplanation(
   const isControlRequest = EXPLICIT_TEXT_TRANSFORM_REQUEST.test(latestEmployeeText)
     || EXPLICIT_CHATBOT_EVALUATION_REQUEST.test(latestEmployeeText)
     || /^the\s+employee\s+(?:wrote|said|asked)\b/iu.test(latestEmployeeText);
-  const explicitRequest = isExplicitPulseCaptureRequest(latestEmployeeText);
   const safetyRequest = safetyIntent !== undefined
     && PULSE_CAPTURE_QUESTION_FRAGMENT.test(latestEmployeeText);
   const explicitReminderRequest = EXPLICIT_REMINDER_REQUEST.test(latestEmployeeText);
@@ -769,21 +793,18 @@ function normalizePulseCaptureExplanation(
   const helpUnderstandRemainder = latestEmployeeText.replace(HELP_UNDERSTAND_PREFIX, '');
   const mixedActionRequest = MIXED_ACTION_REQUEST.test(
     helpUnderstandRemainder === latestEmployeeText ? latestEmployeeText : helpUnderstandRemainder,
-  ) && !explicitRequest;
+  );
   const additionalActionRequest = helpUnderstandRemainder
     .split(/[,.!?;\n]+|\b(?:and|also|plus|then|afterwards|и|та|і|затем|потом|тоді)\b/iu)
     .some((part) => MIXED_ACTION_REQUEST.test(part) && !EXPLICIT_REMINDER_REQUEST.test(part));
   if (
     !isControlRequest
     && (!mixedActionRequest || (typedReminderRequest && !additionalActionRequest))
-    && (explicitRequest || safetyRequest || typedRequest)
+    && (safetyRequest || typedRequest)
   ) {
     if (safetyIntent) {
       return {
         ...classification,
-        pulseCaptureScope: explicitRequest
-          ? { type: 'conversation' }
-          : classification.pulseCaptureScope,
         surveyAllowed: false,
         primaryIntent: safetyIntent,
         secondaryIntents: [
@@ -796,9 +817,6 @@ function normalizePulseCaptureExplanation(
     }
     return {
       ...classification,
-      pulseCaptureScope: explicitRequest
-        ? { type: 'conversation' }
-        : classification.pulseCaptureScope,
       surveyAllowed: false,
       reminderRequest: typedReminderRequest ? classification.reminderRequest : null,
       primaryIntent: 'pulse_capture_explanation',
