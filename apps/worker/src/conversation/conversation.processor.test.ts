@@ -177,6 +177,23 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
   });
 
+  it('records a skipped V2 bundle composition in the llm_runs error code of a successful turn', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => ({ ...runtimeResult, bundleCompositionFallbackReason: 'question_count' })),
+    };
+    const { processor, conversationRepo, llmRunRepo } = createProcessor({ orchestrator });
+
+    await expect(processor.process({
+      id: 'skipped-bundle-job', name: 'process', attemptsMade: 0,
+      opts: { delay: 2_000 }, data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'success', errorCode: 'conversation_v2_bundle_composition_invalid:question_count',
+    }));
+  });
+
   it('records the provider filter categories in the llm_runs error code of a committed input-filtered turn (GC round 3 CAP-11)', async () => {
     const orchestrator = {
       orchestrate: vi.fn(async () => ({

@@ -50,8 +50,10 @@ import type {
   QuestionScoreResult,
 } from '@entalent/application';
 import {
+  BundleCompositionInvalidError,
   BundleReplyInvalidError,
   composeBundleReplyText,
+  isBundleCompositionInvalidError,
   maxReplyChars,
   validateBundleReply,
   validateQuestionBundleComposition,
@@ -67,7 +69,9 @@ import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
 import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey';
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
-import { buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt } from './prompts/question-bundle';
+import {
+  buildQuestionBundleRepairInstruction, buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt,
+} from './prompts/question-bundle';
 import { buildQuestionBundleInterpretSystemPrompt, buildQuestionBundleInterpretUserPrompt } from './prompts/question-bundle-interpret';
 import {
   buildQuestionClarificationSystemPrompt,
@@ -232,6 +236,16 @@ function keepValid<T>(value: unknown, schema: SafeParser<T>): T[] {
     if (result.success) out.push(result.data);
   }
   return out;
+}
+
+/** A draft that is not JSON is a composition failure the model can repair, not a parser crash. */
+function parseCompositionDraft(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new BundleCompositionInvalidError('draft_unparseable');
+    throw error;
+  }
 }
 
 export class OpenAiProvider implements AiProviderPort {
@@ -503,16 +517,26 @@ export class OpenAiProvider implements AiProviderPort {
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
   ): Promise<QuestionBundleComposition> {
-    const raw = await this.complete(
-      buildQuestionBundleSystemPrompt(responseLanguage, questions.length),
-      buildQuestionBundleUserPrompt(turns, questions),
-      this.generationModel,
-      2048,
-    );
-    return validateQuestionBundleComposition(
-      JSON.parse(raw) as unknown,
-      questions.map((question) => question.surveyQuestionId),
-    );
+    const system = buildQuestionBundleSystemPrompt(responseLanguage, questions.length);
+    const user = buildQuestionBundleUserPrompt(turns, questions);
+    const questionIds = questions.map((question) => question.surveyQuestionId);
+    try {
+      return validateQuestionBundleComposition(
+        parseCompositionDraft(await this.complete(system, user, this.generationModel, 2048)),
+        questionIds,
+      );
+    } catch (error) {
+      if (!isBundleCompositionInvalidError(error)) throw error;
+      // ONE corrective recomposition naming the broken rule, then fail closed with the reason
+      // of the second draft so the turn can degrade diagnosably.
+      const repaired = await this.complete(
+        system + buildQuestionBundleRepairInstruction(error.reason),
+        user,
+        this.generationModel,
+        2048,
+      );
+      return validateQuestionBundleComposition(parseCompositionDraft(repaired), questionIds);
+    }
   }
 
   async interpretQuestionBundleResponse(

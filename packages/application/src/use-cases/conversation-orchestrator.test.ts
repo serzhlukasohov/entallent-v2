@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ModerationSignalError } from '@entalent/contracts';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import { ProviderContentFilterError } from '../ports/provider-error';
-import { BundleReplyInvalidError } from '../utils/question-bundle-composition';
+import { BundleCompositionInvalidError, BundleReplyInvalidError } from '../utils/question-bundle-composition';
 import {
   REPORTING_DISCLOSURE_VERSION,
   getDataUseExplanationText,
@@ -5528,6 +5528,55 @@ describe('ConversationOrchestrator answer first, then the bundle (GC round 3 CAP
     expect(result.responseText).toBe(bundleText);
     expect(result.bundleReply).toBe('bundle_without_reply');
     expect(result.bundleReplyFallbackReason).toBe('reply_question');
+  });
+
+  it('skips the bundle and answers normally when the provider composition fails closed, recording the reason', async () => {
+    const { m, questionConfirmationRepo, orch } = bundleMocks();
+    m.aiProvider.composeQuestionBundle = vi.fn().mockRejectedValue(new BundleCompositionInvalidError('question_count'));
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toContain(replyText);
+    expect(result.responseText).not.toContain(bundleText);
+    expect(result.bundleReply).toBeUndefined();
+    expect(result.bundleCompositionFallbackReason).toBe('question_count');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    const [, strategy, context] = m.aiProvider.generateResponse.mock.calls[0]!;
+    expect(strategy.mode).not.toBe('confirmation');
+    expect(context.trailingBundle).toBeUndefined();
+    expect(context.replyPlan).toBeDefined();
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'outbound',
+      metadata: expect.objectContaining({ v2BundleCompositionFallbackReason: 'question_count' }),
+    }));
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ v2ConfirmationBundle: true }),
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the bundle when its own re-validation rejects what the adapter returned', async () => {
+    const { m, questionConfirmationRepo, orch } = bundleMocks();
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({
+      text: `${bundleText} Anything else?`, statements,
+    });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.bundleCompositionFallbackReason).toBe('question_count');
+    expect(result.responseText).not.toContain('Is that fair?');
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+  });
+
+  it('still fails the turn when composition hits a transport or provider failure', async () => {
+    const { m, orch } = bundleMocks();
+    m.aiProvider.composeQuestionBundle = vi.fn().mockRejectedValue(new Error('fetch failed'));
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('fetch failed');
+
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueMessageSend).not.toHaveBeenCalled();
   });
 
   it('sends the bundle alone when the provider output filter blocks the reply part', async () => {
