@@ -3152,3 +3152,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: In a worktree session, confirm the index covers the worktree (compare one `grep -n` hit with the CodeGraph line for the same symbol) before trusting CodeGraph line numbers; fall back to direct reads when they disagree. Longer term: index worktrees separately or have CodeGraph refuse paths outside its root.
 - Regression check: `grep -n "const v2Composition" packages/application/src/use-cases/conversation-orchestrator.ts` and the CodeGraph line for the same symbol must agree.
 - Status: open
+
+## 2026-10-15: Live sim failure detail lost to a filtered verification command
+
+- Symptom: While re-verifying the `answer-then-bundle` scenario after a rebase, one live sample reported `Tests 1 failed (1)` with no judge line and no `runs/*-main-1.json` report, so the exception happened inside the agent turn before `reportRun`; the vitest output had been piped through `grep -E "judge verdict|Tests  |..."` and the stack trace was discarded. The failure could not be classified (invalid live bundle composition, provider error, or scenario-library error); 13 further samples passed.
+- Expected: A failed live sample always leaves its full vitest output and, when the turn completes, a per-sample report, so the failure class is readable afterwards.
+- Root cause layer: verification
+- Harness fix: Write full vitest output of every live sim run to a log file first and filter from the file (`vitest run ... > "$LOG" 2>&1; grep ... "$LOG"`); never pipe a live run directly into `grep`. Longer term: have `CoachHarness.send` catch orchestrator exceptions, record them on the harness (so `reportRun` can still write a report with the error), and rethrow.
+- Regression check: After any live sim run, the full log file must exist and contain either `judge verdict:` or a stack trace; a `Tests 1 failed` line with neither is the symptom.
+- Status: open
