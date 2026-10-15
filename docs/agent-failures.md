@@ -3158,9 +3158,9 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Symptom: While re-verifying the `answer-then-bundle` scenario after a rebase, one live sample reported `Tests 1 failed (1)` with no judge line and no `runs/*-main-1.json` report, so the exception happened inside the agent turn before `reportRun`; the vitest output had been piped through `grep -E "judge verdict|Tests  |..."` and the stack trace was discarded. The failure could not be classified (invalid live bundle composition, provider error, or scenario-library error); 13 further samples passed.
 - Expected: A failed live sample always leaves its full vitest output and, when the turn completes, a per-sample report, so the failure class is readable afterwards.
 - Root cause layer: verification
-- Harness fix: Write full vitest output of every live sim run to a log file first and filter from the file (`vitest run ... > "$LOG" 2>&1; grep ... "$LOG"`); never pipe a live run directly into `grep`. Longer term: have `CoachHarness.send` catch orchestrator exceptions, record them on the harness (so `reportRun` can still write a report with the error), and rethrow.
-- Regression check: After any live sim run, the full log file must exist and contain either `judge verdict:` or a stack trace; a `Tests 1 failed` line with neither is the symptom.
-- Status: open
+- Harness fix: Write full vitest output of every live sim run to a log file first and filter from the file (`vitest run ... > "$LOG" 2>&1; grep ... "$LOG"`); never pipe a live run directly into `grep`. Durable fix (2026-10-15): `CoachHarness.send` catches orchestrator exceptions, records them in `harness.failures` and rethrows; `reportRun` writes each as a `deterministic.violations` entry with rule `agent-turn-error` plus an `agentTurnErrors` block with the stack; the harness registers a fallback `onTestFailed` report at construction so `runs/<scenario>.json` exists even when `run()` rethrows before `reportRun`; `classifyFailure` keeps `agent-turn-error` a hard failure unless the recorded message matches the transport classifier.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/harness/coach-harness.test.ts` (a throwing provider leaves a report with rule `agent-turn-error`, with and without `reportRun`) and the `agent-turn-error` case in `src/gate/failure-classifier.test.ts`.
+- Status: fixed
 
 ## 2026-10-15: Offline sim scenario went red on main because the package test script never ran it
 

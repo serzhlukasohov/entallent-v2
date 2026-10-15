@@ -43,6 +43,7 @@ import {
   InMemoryStyleProfileRepository,
 } from '../fakes/repositories';
 import { InlineOutbox } from '../fakes/inline-outbox';
+import { registerFallbackReport } from './report';
 
 const TENANT_ID = 'sim-tenant';
 const USER_ID = 'sim-user';
@@ -71,6 +72,17 @@ export interface GenerateResponseCall {
   context: ResponseContext;
 }
 
+/** An exception that escaped `ConversationOrchestrator.orchestrate` during one `send`. */
+export interface AgentTurnFailure {
+  /** 1-based position the turn would have had in `turns`; nothing is pushed there for it. */
+  turn: number;
+  name: string;
+  message: string;
+  stack: string | null;
+  /** Generation attempts made for this turn before the throw (see `generateResponseCalls`). */
+  generationCalls: number;
+}
+
 class RecordingEscalation implements EscalationPort {
   readonly events: EscalationEvent[] = [];
 
@@ -97,6 +109,11 @@ export class CoachHarness {
   readonly generateResponseCalls: GenerateResponseCall[] = [];
   /** Final generation call for each completed send; null when the response bypassed generation. */
   readonly responseCallsByTurn: Array<GenerateResponseCall | null> = [];
+  /**
+   * Errors thrown by the orchestrator, in order. `send` records and rethrows, so the scenario
+   * still fails while the report keeps the error class instead of losing it with the stack trace.
+   */
+  readonly failures: AgentTurnFailure[] = [];
 
   private readonly orchestrator: ConversationOrchestrator;
 
@@ -161,6 +178,9 @@ export class CoachHarness {
       this.goalRepo,
       options.questionConfirmationRepo,
     );
+
+    // A report must exist even when the scenario aborts before `reportRun` is reached.
+    registerFallbackReport(this);
   }
 
   /** Delivers one user message and returns the coach's reply. */
@@ -174,15 +194,22 @@ export class CoachHarness {
       text,
     });
 
-    const result = await this.orchestrator.orchestrate({
-      messageId: inbound.id,
-      conversationId: CONVERSATION_ID,
-      userId: USER_ID,
-      tenantId: TENANT_ID,
-      externalWorkspaceId: 'sim-workspace',
-      externalConversationId: 'sim-channel',
-      traceId: `sim-turn-${this.turns.length + 1}`,
-    });
+    const turn = this.turns.length + 1;
+    let result: OrchestrateResult;
+    try {
+      result = await this.orchestrator.orchestrate({
+        messageId: inbound.id,
+        conversationId: CONVERSATION_ID,
+        userId: USER_ID,
+        tenantId: TENANT_ID,
+        externalWorkspaceId: 'sim-workspace',
+        externalConversationId: 'sim-channel',
+        traceId: `sim-turn-${turn}`,
+      });
+    } catch (error) {
+      this.failures.push(describeFailure(error, turn, this.generateResponseCalls.length - generationStart));
+      throw error;
+    }
 
     this.responseCallsByTurn.push(
       this.generateResponseCalls.length > generationStart
@@ -308,6 +335,13 @@ class RecordingAiProvider implements AiProviderPort {
   analyzeStyle(userTurns: string[]): Promise<ObservedStyle> {
     return this.delegate.analyzeStyle(userTurns);
   }
+}
+
+function describeFailure(error: unknown, turn: number, generationCalls: number): AgentTurnFailure {
+  if (error instanceof Error) {
+    return { turn, name: error.name, message: error.message, stack: error.stack ?? null, generationCalls };
+  }
+  return { turn, name: typeof error, message: String(error), stack: null, generationCalls };
 }
 
 /** Mirrors `AiService` in the worker so simulations exercise the shipped provider setup. */
