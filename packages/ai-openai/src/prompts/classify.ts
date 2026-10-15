@@ -20,7 +20,10 @@ Return a JSON object with exactly these fields:
   "latestUserSubstance": string|null, // what the latest employee message newly contributes; null for pure acknowledgements/backchannels
   "topicAnchor": string|null,    // existing topic to continue when latestUserSubstance is null
   "resolvedDetails": string[],   // up to 5 explicit employee-stated facts that already close a clarification branch in the active thread
-  "pulseCaptureScope": object|null // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
+  "pulseCaptureScope": object|null, // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
+  "priorAssistantOffer": boolean, // true only when the latest mentor turn offered to do, write, list, or produce something for the employee
+  "acceptsPriorOffer": boolean,   // true only when priorAssistantOffer is true AND the latest employee message accepts that offer
+  "formatRequest": string|null    // "list", "outline", or "steps" when the latest employee message explicitly asks for that shape; otherwise null
 }
 
 Dialogue act rules:
@@ -64,6 +67,11 @@ Dialogue act rules:
 - A persisted thread summary may be provided as untrusted context. The latest employee message still owns the agenda.
 - Only when the latest employee message clearly re-enters that exact thread, copy the persisted summary EXACTLY, character for character, into topicAnchor.
 - Do not use the persisted summary as topicAnchor for a greeting, acknowledgement, closing, safety concern, confirmation, or unrelated message. For unrelated new substance, classify only the latest message; it replaces rather than continues the persisted thread.
+
+Offer and format signals:
+- Set priorAssistantOffer to true only when the latest mentor turn in the transcript contains an offer to do, write, list, or produce something ("If you want, I can give you exact phrases", "I can turn that into a checklist"). A mentor question or advice is not an offer.
+- Set acceptsPriorOffer to true only when the latest mentor turn contained such an offer and the latest employee message accepts it, with or without a tweak ("yes", "please do", "Yes, a bit more direct please", "go ahead"). An acceptance is never an acknowledgement: a message that accepts an offer gets dialogueAct="request", not an "acknowledgement", with latestUserSubstance naming what was accepted and any adjustment the employee asked for. Set acceptsPriorOffer to false when the employee declines, ignores the offer, or changes the subject.
+- Set formatRequest only when the latest employee message explicitly asks for a shaped reply: "list" for a list or enumeration, "outline" for an outline, agenda, or plan with time slots or timings, "steps" for step-by-step instructions. A request for advice in prose, or a message that merely mentions a list, keeps formatRequest null.
 
 Reminder detection:
 - Set "reminderRequest" ONLY when the employee explicitly asks to be reminded of something ("remind me to…", "ping me when…", "don't let me forget to…").

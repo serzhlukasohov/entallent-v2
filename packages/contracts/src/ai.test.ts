@@ -542,3 +542,71 @@ describe('ConfirmationResponseSchema', () => {
     expect(ConversationModeSchema.parse('confirmation')).toBe('confirmation');
   });
 });
+
+describe('Contract: SituationClassificationSchema offer and format signals (GC round 3 CAP-6/CAP-9)', () => {
+  const payload = (extra: Record<string, unknown> = {}) => ({
+    primaryIntent: 'coaching',
+    secondaryIntents: [],
+    emotionalState: [],
+    urgency: 'low',
+    confidence: 0.9,
+    requiresSafetyCheck: false,
+    surveyAllowed: true,
+    reasoningSummary: 'test',
+    dialogueAct: 'request',
+    latestUserSubstance: 'yes, a bit more direct please',
+    topicAnchor: null,
+    ...extra,
+  });
+
+  it('leaves the offer and format signals absent for older classifier payloads', () => {
+    const parsed = SituationClassificationSchema.parse(payload());
+
+    expect(parsed.priorAssistantOffer).toBeUndefined();
+    expect(parsed.acceptsPriorOffer).toBeUndefined();
+    expect(parsed.formatRequest).toBeUndefined();
+  });
+
+  it('keeps an explicit null format request as null', () => {
+    const parsed = SituationClassificationSchema.parse(payload({ formatRequest: null }));
+
+    expect(parsed.formatRequest).toBeNull();
+  });
+
+  it('keeps an accepted offer when the latest assistant turn contained one', () => {
+    const parsed = SituationClassificationSchema.parse(payload({
+      priorAssistantOffer: true,
+      acceptsPriorOffer: true,
+      formatRequest: 'list',
+    }));
+
+    expect(parsed.priorAssistantOffer).toBe(true);
+    expect(parsed.acceptsPriorOffer).toBe(true);
+    expect(parsed.formatRequest).toBe('list');
+  });
+
+  it('fails an acceptance closed when no prior offer was reported', () => {
+    const parsed = SituationClassificationSchema.parse(payload({
+      priorAssistantOffer: false,
+      acceptsPriorOffer: true,
+    }));
+
+    expect(parsed.acceptsPriorOffer).toBe(false);
+  });
+
+  it.each(['table', 'bullets', 42, {}])('fails an unknown format request closed to null: %j', (formatRequest) => {
+    const parsed = SituationClassificationSchema.parse(payload({ formatRequest }));
+
+    expect(parsed.formatRequest).toBeNull();
+  });
+
+  it('fails malformed offer flags closed to false', () => {
+    const parsed = SituationClassificationSchema.parse(payload({
+      priorAssistantOffer: 'yes',
+      acceptsPriorOffer: 'yes',
+    }));
+
+    expect(parsed.priorAssistantOffer).toBe(false);
+    expect(parsed.acceptsPriorOffer).toBe(false);
+  });
+});
