@@ -521,7 +521,7 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.reminderRequest).toBeNull();
   });
 
-  it('recognizes the exact D05-03 pulse capture explanation question', async () => {
+  it('keeps the model label for the D05-03 wording instead of promoting it lexically (ADR-013 D2)', async () => {
     const content = 'but i don’t understand what exact information you already picked from our discussion?';
     createMock.mockResolvedValue({
       choices: [{
@@ -550,8 +550,8 @@ describe('OpenAiProvider.classifySituation', () => {
       { userName: 'Annna' },
     );
 
-    expect(result.primaryIntent).toBe('pulse_capture_explanation');
-    expect(result.surveyAllowed).toBe(false);
+    expect(result.primaryIntent).toBe('clarification');
+    expect(result.surveyAllowed).toBe(true);
   });
 
   it('preserves a typed exact-message CAP-8 scope from the classifier', async () => {
@@ -937,7 +937,7 @@ describe('OpenAiProvider.classifySituation', () => {
     expect(result.pulseCaptureScope).toEqual({ type: 'previous_exact' });
   });
 
-  it('forces conversation scope for the deterministic conversation-wide matcher on corrections', async () => {
+  it('does not force conversation scope lexically; a previous_exact correction stays typed by the model', async () => {
     const content = 'What exact pulse information did you capture from this conversation?';
     createMock.mockResolvedValue({
       choices: [{
@@ -967,7 +967,8 @@ describe('OpenAiProvider.classifySituation', () => {
       { userName: 'Annna' },
     );
 
-    expect(result.pulseCaptureScope).toEqual({ type: 'conversation' });
+    expect(result.primaryIntent).toBe('pulse_capture_explanation');
+    expect(result.pulseCaptureScope).toEqual({ type: 'previous_exact' });
   });
 
   it('labels the bounded transcript with stable absolute turn indices', async () => {
@@ -1235,7 +1236,7 @@ describe('OpenAiProvider.classifySituation', () => {
     {
       content: 'Help me understand what exact pulse information you captured from this conversation?',
       modelIntent: 'clarification',
-      expectedIntent: 'pulse_capture_explanation',
+      expectedIntent: 'clarification',
     },
     {
       content: 'Translate: "What exact pulse information did you pick up from this discussion?"',
@@ -2470,6 +2471,33 @@ describe('OpenAiProvider Azure content filter boundary', () => {
     const provider = azureProvider();
     await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({
       name: 'ProviderContentFilterError', direction: 'input', code: 'content_filter',
+    });
+  });
+
+  it('carries the Azure categories that filtered the prompt as bounded keys (GC round 3 CAP-11)', async () => {
+    // Real Azure shape: the policy violation body sits under `error`.
+    const filtered = Object.assign(new Error('filtered'), {
+      status: 400,
+      code: 'content_filter',
+      param: 'prompt',
+      error: {
+        innererror: {
+          code: 'ResponsibleAIPolicyViolation',
+          content_filter_result: {
+            hate: { filtered: false, severity: 'safe' },
+            jailbreak: { filtered: true, detected: true },
+            self_harm: { filtered: true, severity: 'medium' },
+            'weird key; drop table': { filtered: true },
+          },
+        },
+      },
+    });
+    createMock.mockImplementationOnce(() => { throw filtered; });
+    const provider = azureProvider();
+    await expect(provider.evaluateSurveyEvidence(turns, questions)).rejects.toMatchObject({
+      name: 'ProviderContentFilterError', direction: 'input',
+      filteredCategories: ['jailbreak', 'self_harm'],
+      categories: [{ category: 'self_harm', level: 'medium' }],
     });
   });
 

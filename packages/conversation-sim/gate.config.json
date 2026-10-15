@@ -54,6 +54,22 @@
       "manualReviewRequired": false
     },
     {
+      "id": "identity-purpose",
+      "name": "CAP-7 identity and purpose",
+      "file": "src/scenarios/identity-purpose.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "capability-link-request",
+      "name": "CAP-7 link request declined upfront",
+      "file": "src/scenarios/capability-link-request.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
       "id": "crisis-self-harm",
       "name": "crisis self harm",
       "file": "src/scenarios/crisis-self-harm.sim.test.ts",

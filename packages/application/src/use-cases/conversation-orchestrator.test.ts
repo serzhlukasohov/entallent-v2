@@ -5,7 +5,6 @@ import { ProviderContentFilterError } from '../ports/provider-error';
 import {
   REPORTING_DISCLOSURE_VERSION,
   getDataUseExplanationText,
-  getPulseCaptureExplanationText,
   getReportingDisclosureText,
   getReportingExplanationText,
 } from '../utils/reporting-disclosure';
@@ -111,6 +110,19 @@ function makeOrchestrator(m: ReturnType<typeof baseMocks>): ConversationOrchestr
     undefined, undefined, m.featureFlags, m.scheduledActionRepo, undefined,
   );
 }
+
+/** Grounded facts handed to the reply model on the latest generation call (GC round 3 CAP-5). */
+function captureFactsOf(m: ReturnType<typeof baseMocks>) {
+  const calls = m.aiProvider.generateResponse.mock.calls;
+  return calls[calls.length - 1]?.[2]?.captureFacts;
+}
+
+function reminderConfirmationOf(m: ReturnType<typeof baseMocks>) {
+  const calls = m.aiProvider.generateResponse.mock.calls;
+  return calls[calls.length - 1]?.[2]?.reminderConfirmation;
+}
+
+const UNRESOLVED_FACTS = { scope: 'unresolved', captures: [] };
 
 const ACCEPTED_DEIDENTIFICATION = {
   status: 'accepted' as const,
@@ -244,12 +256,43 @@ describe('ConversationOrchestrator provider input filter', () => {
     expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
   });
 
-  it('does not claim a fresh-context recovery after response preparation has begun', async () => {
+  it('commits the one filtered-input explanation when the reply call trips the input filter (GC round 3 CAP-11)', async () => {
     const m = baseMocks();
-    m.aiProvider.generateResponse.mockRejectedValue(new ProviderContentFilterError('input'));
+    m.aiProvider.generateResponse.mockRejectedValue(new ProviderContentFilterError('input', [], ['jailbreak']));
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
 
-    await expect(makeOrchestrator(m).orchestrate(INPUT)).rejects.toThrow(ProviderContentFilterError);
-    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalled();
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.outcome).toBe('input_filtered');
+    expect(result.contentFilterCategories).toEqual(['jailbreak']);
+    expect(result.responseText).toContain('model service rejected');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledTimes(1);
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        conversationOutcome: 'input_filtered', sourceInboundMessageId: 'm-1', contentFilterCategories: ['jailbreak'],
+      }),
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+    expect(m.outbox.enqueueMemoryExtraction).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('records the provider filter categories on a classification-time input filter too', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockRejectedValue(new ProviderContentFilterError('input', [], ['jailbreak', 'hate']));
+    m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+    m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+    m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+    m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.outcome).toBe('input_filtered');
+    expect(result.contentFilterCategories).toEqual(['jailbreak', 'hate']);
   });
 
   it('starts the next model request after the persisted recovery boundary', async () => {
@@ -996,23 +1039,20 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
       surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
       dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+      pulseCaptureScope: { type: 'conversation' },
     });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
       undefined, undefined, m.featureFlags, undefined, undefined,
     );
 
-    const result = await orch.orchestrate(INPUT);
-    const answer = result.responseText.toLowerCase();
+    await orch.orchestrate(INPUT);
 
     expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith({
       tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', beforeOccurredAt: INBOUND_OCCURRED_AT,
     });
-    expect(answer).toContain('no current persisted pulse evidence');
-    expect(answer).toContain('linked to your earlier messages in this conversation');
-    expect(answer).toContain('may not have been evaluated yet');
-    expect(answer).not.toMatch(/never stored|nothing (?:was|is) stored/);
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(captureFactsOf(m)).toEqual({ scope: 'conversation', captures: [] });
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
     expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
     expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
     expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
@@ -1040,26 +1080,26 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       status: 'temporary',
     }]);
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText).toContain('Onboarding feels positive.');
-    expect(result.responseText).toContain('this exact message');
-    expect(result.responseText).not.toContain('your earlier messages in this conversation');
+    expect(captureFactsOf(m)).toEqual({
+      scope: 'exact', captures: [{ evidenceSummary: 'Onboarding feels positive.', status: 'temporary' }],
+    });
     expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith({
       tenantId: 't-1', userId: 'u-1', conversationId: 'c-1',
       beforeOccurredAt: INBOUND_OCCURRED_AT, sourceMessageId: CAP8_SOURCE_ID,
     });
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .toHaveProperty('pulseCaptureSourceMessageId', CAP8_SOURCE_ID);
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
     expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['English', 'What did you capture from onboarding, and remind me tomorrow to send the report?', "I'll remind you as requested."],
-    ['Russian', 'Что ты сохранил из сообщения об онбординге, и напомни мне завтра об отчёте?', "I'll remind you as requested."],
-    ['Ukrainian', 'Що ти зберіг з повідомлення про онбординг, і нагадай мені завтра про звіт?', "I'll remind you as requested."],
-  ])('keeps a mixed CAP-8 reminder on the deterministic database-backed path, answering in English, for a question in %s', async (_language, question, acknowledgement) => {
+    ['English', 'What did you capture from onboarding, and remind me tomorrow to send the report?'],
+    ['Russian', 'Что ты сохранил из сообщения об онбординге, и напомни мне завтра об отчёте?'],
+    ['Ukrainian', 'Що ти зберіг з повідомлення про онбординг, і нагадай мені завтра про звіт?'],
+  ])('grounds a mixed CAP-8 reminder for the model and schedules it, for a question in %s', async (_language, question) => {
     const m = baseMocks();
     const reminderRequest = { intent: 'send the report', dueAt: '2026-09-04T09:00:00.000Z' };
     m.conversationRepo.findRecentMessages.mockResolvedValue([
@@ -1080,8 +1120,10 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
 
     const result = await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText).toContain('Onboarding feels positive.');
-    expect(result.responseText).toContain(acknowledgement);
+    expect(captureFactsOf(m)).toEqual({
+      scope: 'exact', captures: [{ evidenceSummary: 'Onboarding feels positive.', status: 'temporary' }],
+    });
+    expect(reminderConfirmationOf(m)).toEqual(expect.objectContaining({ intent: 'send the report' }));
     expect(result.classification.reminderRequest).toEqual(reminderRequest);
     expect(m.scheduledActionRepo.save).toHaveBeenCalledWith(expect.objectContaining({
       type: 'user_reminder',
@@ -1093,7 +1135,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       tenantId: 't-1',
       userId: 'u-1',
     }));
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
     expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
   });
 
@@ -1114,12 +1156,12 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'message', messageIndex: 0 },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText).toContain("I'll remind you as requested.");
+    expect(reminderConfirmationOf(m)).toEqual(expect.objectContaining({ intent: 'send the report' }));
     expect(m.scheduledActionRepo.save).not.toHaveBeenCalled();
     expect(m.outbox.enqueueFollowUpExecution).not.toHaveBeenCalled();
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
   });
 
   it('reports exact-message absence without widening to unrelated conversation evidence', async () => {
@@ -1137,14 +1179,13 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'message', messageIndex: 0 },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText).toContain('this exact message');
-    expect(result.responseText).not.toContain('linked to your earlier messages in this conversation');
+    expect(captureFactsOf(m)).toEqual({ scope: 'exact', captures: [] });
     expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith(expect.objectContaining({
       sourceMessageId: CAP8_SOURCE_ID,
     }));
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
   });
 
   it.each(['unresolved', 'conversation'] as const)('resolves a uniquely quoted prior message when the CAP-8 classifier says %s', async (scope) => {
@@ -1167,9 +1208,11 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       sourceMessageIds: [CAP8_SOURCE_ID], status: 'temporary',
     }]);
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText).toContain('The onboarding meeting was scheduled.');
+    expect(captureFactsOf(m)).toEqual({
+      scope: 'exact', captures: [{ evidenceSummary: 'The onboarding meeting was scheduled.', status: 'temporary' }],
+    });
     expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith(expect.objectContaining({
       sourceMessageId: CAP8_SOURCE_ID,
     }));
@@ -1194,9 +1237,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'conversation' },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
@@ -1219,9 +1262,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'unresolved' },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
@@ -1249,9 +1292,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       ...(pulseCaptureScope ? { pulseCaptureScope } : {}),
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
   });
 
@@ -1275,11 +1318,11 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       ...(pulseCaptureScope === undefined ? {} : { pulseCaptureScope }),
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
   });
@@ -1306,9 +1349,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'message', messageIndex: 4 },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
@@ -1329,9 +1372,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'message', messageIndex: 0 },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
   });
 
@@ -1350,11 +1393,11 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'message', messageIndex: 0 },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1400,9 +1443,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'previous_exact' },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
@@ -1428,15 +1471,17 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       sourceMessageIds: [CAP8_SOURCE_ID], status: 'confirmed',
     }]);
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText).toContain('Current onboarding status.');
+    expect(captureFactsOf(m)).toEqual({
+      scope: 'exact', captures: [{ evidenceSummary: 'Current onboarding status.', status: 'confirmed' }],
+    });
     expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith(expect.objectContaining({
       sourceMessageId: CAP8_SOURCE_ID,
     }));
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .toHaveProperty('pulseCaptureSourceMessageId', CAP8_SOURCE_ID);
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1477,9 +1522,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'previous_exact' },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
@@ -1509,9 +1554,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       sourceMessageIds: ['m-evicted-source'], status: 'confirmed',
     }]);
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
@@ -1576,17 +1621,19 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       }]);
     const orchestrator = makeOrchestrator(m);
 
-    const initial = await orchestrator.orchestrate(INPUT);
-    const followUp = await orchestrator.orchestrate({
+    await orchestrator.orchestrate(INPUT);
+    await orchestrator.orchestrate({
       ...INPUT,
       messageId: 'm-2',
       traceId: 'tr-followup',
     });
 
-    expect(initial.responseText).toContain('Onboarding is a temporary interpretation.');
-    expect(initial.responseText).toContain('temporary working interpretation');
-    expect(followUp.responseText).toContain('Onboarding is now confirmed.');
-    expect(followUp.responseText).toContain('eligible for aggregated team reporting');
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].captureFacts).toEqual({
+      scope: 'exact', captures: [{ evidenceSummary: 'Onboarding is a temporary interpretation.', status: 'temporary' }],
+    });
+    expect(m.aiProvider.generateResponse.mock.calls[1][2].captureFacts).toEqual({
+      scope: 'exact', captures: [{ evidenceSummary: 'Onboarding is now confirmed.', status: 'confirmed' }],
+    });
     expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenNthCalledWith(1, expect.objectContaining({
       sourceMessageId: CAP8_SOURCE_ID,
     }));
@@ -1618,9 +1665,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       pulseCaptureScope: { type: 'previous_exact' },
     });
 
-    const result = await makeOrchestrator(m).orchestrate(INPUT);
+    await makeOrchestrator(m).orchestrate(INPUT);
 
-    expect(result.responseText.toLowerCase()).toMatch(/identify|quote/);
+    expect(captureFactsOf(m)).toEqual(UNRESOLVED_FACTS);
     expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
       .not.toHaveProperty('pulseCaptureSourceMessageId');
@@ -1713,34 +1760,6 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     },
   );
 
-  it('keeps a natural CAP-8 request deterministic when the model calls it clarification', async () => {
-    const m = baseMocks();
-    const question = 'Help me understand what exact pulse information you captured from this conversation? *Sent using* <@U0BPHHA21GC>';
-    m.conversationRepo.findRecentMessages.mockResolvedValue([
-      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
-    ]);
-    m.aiProvider.classifySituation.mockResolvedValue({
-      primaryIntent: 'clarification', secondaryIntents: [], urgency: 'low',
-      emotionalState: [], confidence: 0.9, reasoningSummary: 'production classifier result',
-      surveyAllowed: true, requiresSafetyCheck: false, reminderRequest: null,
-      dialogueAct: 'new_substance', latestUserSubstance: question, topicAnchor: null,
-    });
-    const orch = new ConversationOrchestrator(
-      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
-      undefined, undefined, m.featureFlags, undefined, undefined,
-    );
-
-    const result = await orch.orchestrate(INPUT);
-
-    expect(result.classification.primaryIntent).toBe('pulse_capture_explanation');
-    expect(result.classification.surveyAllowed).toBe(false);
-    expect(result.classification.reminderRequest).toBeNull();
-    expect(result.responseText).toContain('There is no current persisted pulse evidence');
-    expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledOnce();
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
-    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
-  });
-
   it('fails closed when CAP-8 provenance storage is unavailable', async () => {
     const m = baseMocks();
     const question = 'What exact pulse information did you pick up from this discussion?';
@@ -1752,6 +1771,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
       surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
       dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+      pulseCaptureScope: { type: 'conversation' },
     });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, undefined,
@@ -1763,7 +1783,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
     expect(m.outbox.enqueueMessageSend).not.toHaveBeenCalled();
   });
 
-  it('shows linked temporary evidence verbatim without making it reportable', async () => {
+  it('grounds linked temporary evidence for the model without touching survey state', async () => {
     const m = baseMocks();
     const question = 'What exact pulse information did you pick up from this discussion?';
     m.conversationRepo.findRecentMessages.mockResolvedValue([
@@ -1778,6 +1798,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
       surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
       dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+      pulseCaptureScope: { type: 'conversation' },
     });
     m.surveyRepo.findPulseCaptureForConversation.mockResolvedValue([
       {
@@ -1799,13 +1820,13 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       undefined, undefined, m.featureFlags, undefined, undefined,
     );
 
-    const result = await orch.orchestrate(INPUT);
-    const answer = result.responseText.toLowerCase();
+    await orch.orchestrate(INPUT);
 
-    expect(result.responseText).toContain('The employee views onboarding positively.');
-    expect(answer).toContain('temporary');
-    expect(answer).toContain('not reportable');
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(captureFactsOf(m)).toEqual({
+      scope: 'conversation',
+      captures: [{ evidenceSummary: 'The employee views onboarding positively.', status: 'temporary' }],
+    });
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
     expect(m.aiProvider.interpretConfirmationResponse).not.toHaveBeenCalled();
     expect(m.surveyRepo.findAwaitingConfirmationGroups).not.toHaveBeenCalled();
     expect(m.surveyRepo.findPendingConfirmationGroups).not.toHaveBeenCalled();
@@ -1819,9 +1840,9 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
   });
 
   it.each([
-    ['confirmed', 'Exact confirmed summary.', 'eligible for aggregated team reporting', 'does not mean it was included in a report'],
-    ['withdrawn', 'Exact withdrawn summary.', 'withdrawn from future reporting', 'does not mean the underlying message was deleted'],
-  ] as const)('renders linked %s pulse evidence without generation', async (status, summary, boundary, qualification) => {
+    ['confirmed', 'Exact confirmed summary.'],
+    ['withdrawn', 'Exact withdrawn summary.'],
+  ] as const)('grounds linked %s pulse evidence with its status for the model', async (status, summary) => {
     const m = baseMocks();
     const question = 'What exact pulse information did you pick up from this discussion?';
     m.conversationRepo.findRecentMessages.mockResolvedValue([
@@ -1836,6 +1857,7 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
       surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
       dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+      pulseCaptureScope: { type: 'conversation' },
     });
     m.surveyRepo.findPulseCaptureForConversation.mockResolvedValue([
       { evidenceSummary: summary, questionGroup: 'belonging', sourceMessageIds: ['m-prior'], status },
@@ -1845,47 +1867,11 @@ describe('ConversationOrchestrator reporting disclosure gate', () => {
       undefined, undefined, m.featureFlags, undefined, undefined,
     );
 
-    const result = await orch.orchestrate(INPUT);
+    await orch.orchestrate(INPUT);
 
-    expect(result.responseText).toContain(summary);
-    expect(result.responseText).toContain(boundary);
-    expect(result.responseText).toContain(qualification);
-    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(captureFactsOf(m)).toEqual({ scope: 'conversation', captures: [{ evidenceSummary: summary, status }] });
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
     expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
-  });
-
-  it('renders multi-group conflicting statuses as separate items', () => {
-    const response = getPulseCaptureExplanationText([
-      { evidenceSummary: 'Shared summary', questionGroup: 'growth', sourceMessageIds: ['m-1'], status: 'temporary' },
-      { evidenceSummary: 'Shared summary', questionGroup: 'belonging', sourceMessageIds: ['m-2'], status: 'confirmed' },
-      { evidenceSummary: 'Shared summary', questionGroup: 'purpose', sourceMessageIds: ['m-3'], status: 'withdrawn' },
-    ], 'en');
-
-    expect(response.match(/^- /gm)).toHaveLength(3);
-    expect(response).toContain('temporary working interpretation; not reportable');
-    expect(response).toContain('eligible for aggregated team reporting');
-    expect(response).toContain('withdrawn from future reporting');
-  });
-
-  it.each([
-    ['ru-RU', 'Вот сохранённая информация пульс-опроса', 'временная рабочая интерпретация; не подлежит отчётности'],
-    ['uk-UA', 'Ось збережена інформація пульс-опитування', 'тимчасова робоча інтерпретація; не підлягає звітності'],
-    ['fr-FR', 'Here is the current persisted pulse information', 'temporary working interpretation; not reportable'],
-  ])('localizes CAP-8 copy with English fallback for %s', (locale, intro, status) => {
-    const response = getPulseCaptureExplanationText([
-      { evidenceSummary: 'Summary', questionGroup: 'growth', sourceMessageIds: ['m-1'], status: 'temporary' },
-    ], locale);
-    expect(response).toContain(intro);
-    expect(response).toContain(status);
-  });
-
-  it.each([
-    ['en-US', 'this exact message', 'identify or quote'],
-    ['ru-RU', 'этого конкретного сообщения', 'уточни или процитируй'],
-    ['uk-UA', 'цього конкретного повідомлення', 'уточни або процитуй'],
-  ])('localizes exact-absent and unresolved CAP-8 copy for %s', (locale, exactAbsent, unresolved) => {
-    expect(getPulseCaptureExplanationText([], locale, false, 'exact').toLowerCase()).toContain(exactAbsent);
-    expect(getPulseCaptureExplanationText([], locale, false, 'unresolved').toLowerCase()).toContain(unresolved);
   });
 
   it('keeps safety primary and performs no CAP-8 provenance lookup', async () => {
@@ -4798,12 +4784,6 @@ describe('ConversationOrchestrator session concise mode', () => {
       concise: () => getDataUseExplanationText('en', true),
       full: () => getDataUseExplanationText('en'),
     },
-    {
-      intent: 'pulse_capture_explanation',
-      text: 'What exact pulse information did you capture from this conversation? Keep it short.',
-      concise: () => getPulseCaptureExplanationText([], 'en', true),
-      full: () => getPulseCaptureExplanationText([], 'en'),
-    },
   ])('uses deterministic concise $intent copy without model generation', async ({ intent, text, concise, full }) => {
     const m = baseMocks();
     m.conversationRepo.findRecentMessages.mockResolvedValue([
@@ -4813,9 +4793,6 @@ describe('ConversationOrchestrator session concise mode', () => {
       primaryIntent: intent, secondaryIntents: [], emotionalState: [], urgency: 'low', confidence: 0.95,
       surveyAllowed: false, requiresSafetyCheck: false, reasoningSummary: 'explicit trust question',
       reminderRequest: null, dialogueAct: 'request', latestUserSubstance: text, topicAnchor: null,
-      ...(intent === 'pulse_capture_explanation'
-        ? { pulseCaptureScope: { type: 'conversation' } }
-        : {}),
     });
     const orch = new ConversationOrchestrator(
       m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
@@ -4836,40 +4813,25 @@ describe('concise deterministic trust copy', () => {
       locale: 'en-US',
       reporting: [/shown de-identified summary/i, /grants no access/i, /managers\/hr/i, /messages\/answers\/summary\/tasks\/goals\/identity/i, /audited internal access/i, /conversation\/temp.*(?:isn’t|not) reportable/i, /unconfirmed pulse data.*scores\/aggregation\/themes\/recommendations\/reports/i, /confirmed, non-withdrawn summary.*team report/i],
       dataUse: [/ai, not human/i, /replies, private memory, goals\/tasks\/reminders, pulse measurement, and safety checks/i, /private memory\/unconfirmed data.*not reportable/i, /confirmed, de-identified, non-withdrawn summary.*team reports/i, /retention rules/i, /audited admin\/debug access.*authorized staff/i],
-      pulse: [/no persisted pulse evidence/i, /earlier messages/i, /recent messages may not be evaluated/i, /temporary.*not reportable/i, /confirmed.*de-identified.*team reporting.*not proof of inclusion/i, /withdrawn.*source message not deleted.*past reports unchanged/i],
     },
     {
       locale: 'ru-RU',
       reporting: [/показанн.*обезличенн/i, /доступа не даёт/i, /менеджер.*hr/i, /сообщени.*ответ.*резюме.*задач.*цел.*личност/i, /аудируем.*внутренн.*доступ/i, /разговор\/временные данные не отчётны/i, /неподтверждённ.*оцен.*агрегац.*тем.*рекомендац.*отчёт/i, /подтверждённ.*неотозванн.*командн/i],
       dataUse: [/ии, не человек/i, /ответ.*приватн.*памят.*цел.*задач.*напоминан.*пульс.*безопасн/i, /память\/неподтверждённ.*не отчётны/i, /подтверждённ.*обезличенн.*неотозванн.*командн/i, /сроки хранения/i, /аудируем.*админ.*отладочн.*доступ.*уполномоченн/i],
-      pulse: [/нет сохранённ.*пульс/i, /предыдущ.*сообщен/i, /последние сообщения могли ещё не быть обработаны/i, /временн.*не подлежит отчётности/i, /подтверждено.*обезличенн.*командн.*не доказывает включение/i, /отозвано.*исходное сообщение не удалено.*прошлые отчёты не меняются/i],
     },
     {
       locale: 'uk-UA',
       reporting: [/показан.*знеособлен/i, /доступу.*не надає/i, /менеджер.*hr/i, /повідомлен.*відповід.*резюме.*завдан.*ціл.*особ/i, /аудитован.*внутрішн.*доступ/i, /розмова\/тимчасові дані не звітні/i, /непідтверджен.*оцін.*агрегац.*тем.*рекомендац.*звіт/i, /підтверджен.*невідкликан.*командн/i],
       dataUse: [/ші, не людина/i, /відповід.*приватн.*пам’ят.*ціл.*завдан.*нагадуван.*пульс.*безпек/i, /пам’ять\/непідтверджен.*не звітні/i, /підтверджен.*знеособлен.*невідкликан.*командн/i, /строки зберігання/i, /аудитован.*адмін.*налагоджувальн.*доступ.*уповноважен/i],
-      pulse: [/немає збережен.*пульс/i, /попередн.*повідомл/i, /останні повідомлення могли ще не бути оброблені/i, /тимчасов.*не придатне для звітності/i, /підтверджено.*знеособлен.*командн.*не доводить включення/i, /відкликано.*вихідне повідомлення не видалено.*минулі звіти не змінюються/i],
     },
-  ])('keeps complete concise trust boundaries for $locale', ({ locale, reporting, dataUse, pulse }) => {
+  ])('keeps complete concise trust boundaries for $locale', ({ locale, reporting, dataUse }) => {
     const reportingText = getReportingExplanationText(locale, true);
     const dataUseText = getDataUseExplanationText(locale, true);
-    const absentPulseText = getPulseCaptureExplanationText([], locale, true);
-    const capturedPulseText = getPulseCaptureExplanationText([
-      { evidenceSummary: 'Temporary item', questionGroup: 'growth', sourceMessageIds: ['m-1'], status: 'temporary' },
-      { evidenceSummary: 'Confirmed item', questionGroup: 'growth', sourceMessageIds: ['m-2'], status: 'confirmed' },
-      { evidenceSummary: 'Withdrawn item', questionGroup: 'growth', sourceMessageIds: ['m-3'], status: 'withdrawn' },
-    ], locale, true);
 
     expect(reportingText.length).toBeLessThanOrEqual(360);
     expect(dataUseText.length).toBeLessThanOrEqual(360);
-    expect(absentPulseText.length).toBeLessThanOrEqual(360);
     for (const pattern of reporting) expect(reportingText).toMatch(pattern);
     for (const pattern of dataUse) expect(dataUseText).toMatch(pattern);
-    for (const pattern of pulse.slice(0, 3)) expect(absentPulseText).toMatch(pattern);
-    for (const pattern of pulse.slice(3)) expect(capturedPulseText).toMatch(pattern);
-    expect(capturedPulseText).toContain('Temporary item');
-    expect(capturedPulseText).toContain('Confirmed item');
-    expect(capturedPulseText).toContain('Withdrawn item');
   });
 });
 
@@ -5311,5 +5273,141 @@ describe('ConversationOrchestrator resolved-detail carry-over', () => {
     await orchestrator(m).orchestrate(INPUT);
 
     expect(m.aiProvider.generateResponse.mock.calls[0][2].replyPlan.resolvedDetails).toEqual(current);
+  });
+});
+
+describe('ConversationOrchestrator pulse-capture questions answered by the model (GC round 3 CAP-5)', () => {
+  const PREVIOUS_SYSTEM_REPLY = 'There is no current persisted pulse evidence linked to your earlier messages in this conversation. Pulse extraction can finish after a reply, so your most recent messages may not have been evaluated yet.';
+  const captureClassification = (question: string, extra: Record<string, unknown> = {}) => ({
+    primaryIntent: 'pulse_capture_explanation', secondaryIntents: [], urgency: 'low',
+    emotionalState: [], confidence: 0.95, reasoningSummary: 'pulse capture transparency',
+    surveyAllowed: false, requiresSafetyCheck: false, reminderRequest: null,
+    dialogueAct: 'request', latestUserSubstance: question, topicAnchor: null,
+    ...extra,
+  });
+
+  it('answers a follow-up about the previous capture answer in its own words, never repeating it', async () => {
+    const m = baseMocks();
+    const question = 'What do you mean by "pulse evidence"? Just explain the term to me.';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-ask', ...OWNERSHIP, direction: 'inbound', text: 'what exact information did you pick up from our conversation?', occurredAt: new Date('2026-09-03T09:58:00.000Z') },
+      { id: 'out-ask', ...OWNERSHIP, direction: 'outbound', text: PREVIOUS_SYSTEM_REPLY, occurredAt: new Date('2026-09-03T09:58:05.000Z'), metadata: { sourceInboundMessageId: 'm-ask' } },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue(
+      captureClassification(question, { pulseCaptureScope: { type: 'conversation' } }),
+    );
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'By pulse evidence I mean a short working note about how work feels for you; nothing from this chat is saved as one yet.',
+      confidence: 0.9, containsSurveyProbe: false,
+    });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).not.toBe(PREVIOUS_SYSTEM_REPLY);
+    expect(result.responseText).toContain('By pulse evidence I mean');
+    expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', beforeOccurredAt: INBOUND_OCCURRED_AT,
+    });
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    const context = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(context.captureFacts).toEqual({ scope: 'conversation', captures: [] });
+    expect(context.replyPlan?.responseMove).toBe('answer_request');
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('grounds persisted captures as facts with their status instead of rendering them as the reply', async () => {
+    const m = baseMocks();
+    const question = 'What did you capture from my onboarding message?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: CAP8_SOURCE_ID, ...OWNERSHIP, direction: 'inbound', text: 'The onboarding is great.', occurredAt: new Date('2026-09-03T09:57:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue(
+      captureClassification(question, { pulseCaptureScope: { type: 'message', messageIndex: 0 } }),
+    );
+    m.surveyRepo.findPulseCaptureForConversation.mockResolvedValue([
+      { evidenceSummary: 'Onboarding feels positive.', questionGroup: 'belonging', sourceMessageIds: [CAP8_SOURCE_ID], status: 'temporary' },
+      { evidenceSummary: 'Onboarding support was confirmed.', questionGroup: 'belonging', sourceMessageIds: [CAP8_SOURCE_ID], status: 'confirmed' },
+    ]);
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'model answer', confidence: 0.9, containsSurveyProbe: false });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).toBe('model answer');
+    expect(m.surveyRepo.findPulseCaptureForConversation).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1',
+      beforeOccurredAt: INBOUND_OCCURRED_AT, sourceMessageId: CAP8_SOURCE_ID,
+    });
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].captureFacts).toEqual({
+      scope: 'exact',
+      captures: [
+        { evidenceSummary: 'Onboarding feels positive.', status: 'temporary' },
+        { evidenceSummary: 'Onboarding support was confirmed.', status: 'confirmed' },
+      ],
+    });
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .toHaveProperty('pulseCaptureSourceMessageId', CAP8_SOURCE_ID);
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('grounds an unresolved scope as a fact without reading the repository', async () => {
+    const m = baseMocks();
+    const question = 'What did you capture from that message?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-prior', ...OWNERSHIP, direction: 'inbound', text: 'Earlier context.', occurredAt: new Date('2026-09-03T09:59:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue(
+      captureClassification(question, { pulseCaptureScope: { type: 'unresolved' } }),
+    );
+
+    await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].captureFacts).toEqual({ scope: 'unresolved', captures: [] });
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata)
+      .not.toHaveProperty('pulseCaptureSourceMessageId');
+  });
+
+  it('lets a reminder in the same turn reach the model as reminder context, not as appended text', async () => {
+    const m = baseMocks();
+    const question = 'What did you capture from onboarding, and remind me tomorrow to send the report?';
+    const reminderRequest = { intent: 'send the report', dueAt: '2026-09-04T09:00:00.000Z' };
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: CAP8_SOURCE_ID, ...OWNERSHIP, direction: 'inbound', text: 'The onboarding is great.', occurredAt: new Date('2026-09-03T09:57:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue(captureClassification(question, {
+      reminderRequest, dialogueAct: 'new_substance', pulseCaptureScope: { type: 'message', messageIndex: 0 },
+    }));
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'model answer with reminder', confidence: 0.9, containsSurveyProbe: false });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).toBe('model answer with reminder');
+    const context = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(context.captureFacts?.scope).toBe('exact');
+    expect(context.reminderConfirmation).toEqual(expect.objectContaining({ intent: 'send the report' }));
+    expect(m.scheduledActionRepo.save).toHaveBeenCalledWith(expect.objectContaining({ type: 'user_reminder', intent: 'send the report' }));
+  });
+
+  it('does not promote a capture question lexically when the classifier labelled it otherwise (ADR-013 D2)', async () => {
+    const m = baseMocks();
+    const question = 'but i don’t understand what exact information you already picked from our discussion?';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-prior', ...OWNERSHIP, direction: 'inbound', text: 'The onboarding is great.', occurredAt: new Date('2026-09-03T09:59:00.000Z') },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: question, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...captureClassification(question), primaryIntent: 'clarification', surveyAllowed: true,
+    });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.classification.primaryIntent).toBe('clarification');
+    expect(m.surveyRepo.findPulseCaptureForConversation).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].captureFacts).toBeUndefined();
   });
 });

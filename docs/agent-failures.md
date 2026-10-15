@@ -3134,3 +3134,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Update the snapshot after a human privacy review of the four routes; make the API test suite a required check for PRs touching `apps/api/src/admin`.
 - Regression check: `pnpm --filter @entalent/api exec vitest run src/private-production-route-boundary.test.ts`.
 - Status: open
+
+## 2026-10-15: Fresh worktree cannot run package tests until workspace packages are built
+
+- Symptom: In a new git worktree, `vitest` for `packages/application`, `packages/ai-openai`, and `apps/worker` failed at import resolution (`Failed to resolve entry for package "@entalent/contracts"` / `"@entalent/application"` / `"@entalent/database"`) because sibling packages resolve through their `dist` entries and nothing had been built; `pnpm install --offline` reported "Already up to date" without producing `dist`. The first RED run for a worker test was therefore unobservable until `pnpm --filter './packages/*' build` ran.
+- Expected: A worktree session should be able to run a package's unit tests after install, or the harness should tell it which build step is missing.
+- Root cause layer: environment
+- Harness fix: Document in AGENTS.md (Testing Policy) that a fresh worktree needs `pnpm --filter './packages/*' build` before package or app vitest runs; longer term, have `scripts/agent-harness.ts reflection` warn when a workspace package has no `dist` directory.
+- Regression check: In a fresh worktree, `pnpm --filter @entalent/application exec vitest run src/use-cases/conversation-orchestrator.test.ts -t "CAP-5"` must collect tests instead of failing at package resolution.
+- Status: open

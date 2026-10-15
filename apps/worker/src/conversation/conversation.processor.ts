@@ -165,7 +165,10 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       }
 
       if ('outcome' in result && result.outcome === 'input_filtered') {
-        this.logger.warn(`Job ${job.id} done — outcome=input_filtered`);
+        // The employee got the filtered-input explanation; the categories make the trigger
+        // visible in llm_runs.error_code without storing any text (GC round 3 CAP-11).
+        errorCode = inputFilteredErrorCode(result.contentFilterCategories);
+        this.logger.warn(`Job ${job.id} done — outcome=input_filtered code=${errorCode}`);
       } else {
         this.logger.log(
           `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`,
@@ -175,9 +178,11 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       status = 'error';
       errorCode = conversationFailureCode(error);
       this.logger.error(`Job ${job.id} failed (attempt ${job.attemptsMade}): ${errorCode}`);
-      // Earlier attempts rethrow so a retry can still answer. On the last attempt the employee
-      // gets one explicit fallback reply instead of silence (GC round 2 CAP-1).
-      if (isFinalAttempt(job) && await this.commitFailedTurnFallback(job, errorCode, pendingQuestionReply)) return;
+      // Earlier attempts rethrow so a retry can still answer. On the last attempt, or for a failure
+      // a retry cannot change, the employee gets one explicit fallback reply instead of silence
+      // (GC round 2 CAP-1, round 3 CAP-11).
+      if ((isFinalAttempt(job) || !isRetryableFailure(errorCode))
+        && await this.commitFailedTurnFallback(job, errorCode, pendingQuestionReply)) return;
       throw new Error('conversation_processing_failed');
     } finally {
       await this.llmRunRepo
@@ -235,6 +240,22 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
 
 function isFinalAttempt(job: Job): boolean {
   return job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+}
+
+const CONTENT_FILTER_INPUT_FAILURE_CODE = 'conversation_provider_content_filter_input';
+
+/** A provider input filter is a property of the message, so a retry would only repeat it. */
+const NON_RETRYABLE_FAILURE_CODES: ReadonlySet<string> = new Set([CONTENT_FILTER_INPUT_FAILURE_CODE]);
+
+function isRetryableFailure(errorCode: string): boolean {
+  return !NON_RETRYABLE_FAILURE_CODES.has(errorCode);
+}
+
+function inputFilteredErrorCode(categories: readonly string[] | undefined): string {
+  const bounded = (categories ?? []).filter((category) => /^[a-z_]{1,32}$/.test(category)).slice(0, 8);
+  return bounded.length > 0
+    ? `${CONTENT_FILTER_INPUT_FAILURE_CODE}:${bounded.join('+')}`
+    : CONTENT_FILTER_INPUT_FAILURE_CODE;
 }
 
 /**
