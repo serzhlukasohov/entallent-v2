@@ -3161,3 +3161,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Write full vitest output of every live sim run to a log file first and filter from the file (`vitest run ... > "$LOG" 2>&1; grep ... "$LOG"`); never pipe a live run directly into `grep`. Longer term: have `CoachHarness.send` catch orchestrator exceptions, record them on the harness (so `reportRun` can still write a report with the error), and rethrow.
 - Regression check: After any live sim run, the full log file must exist and contain either `judge verdict:` or a stack trace; a `Tests 1 failed` line with neither is the symptom.
 - Status: open
+
+## 2026-10-15: Offline sim scenario went red on main because the package test script never ran it
+
+- Symptom: `simulation-repositories.sim.test.ts` (offline, `ScriptedAiProvider` only) failed on `main` after GC round 3 CAP-5 (PR #18): its `pulse_capture_explanation` case still asserted a bypass (`replyPlan: null`, two generation calls), but the orchestrator now answers pulse-capture questions from the model with `captureFacts`, so turn 2 carried a reply plan and three calls were made. Neither CAP-5's own verification nor `pnpm harness:check` caught it, because the conversation-sim `test` script only ran `src/gate`.
+- Expected: Every offline scenario in `packages/conversation-sim/src/scenarios/` runs under `pnpm --filter @entalent/conversation-sim test` and therefore under the harness gate, so a behaviour change in the orchestrator cannot leave it red on `main`.
+- Root cause layer: verification
+- Harness fix: The conversation-sim `test` script now includes `src/scenarios/simulation-repositories.sim.test.ts` next to `src/gate`; the pulse-capture case is rewritten to assert the CAP-5 behaviour (generation call with grounded `captureFacts`, report plan aligned to that call) and the data-use bypass stays a separate test. Any future offline `.sim.test.ts` must be added to the `test` script's include list, not only excluded from the live set.
+- Regression check: `pnpm --filter @entalent/conversation-sim test` must report `simulation-repositories.sim.test.ts` among the passing files (6 tests).
+- Status: fixed

@@ -134,42 +134,92 @@ describe('simulation turn-aligned generation evidence', () => {
     expect(report.turns[0]?.replyPlan).toEqual(harness.generateResponseCalls[1]?.context.replyPlan);
   });
 
-  it.each(['data_use_explanation', 'pulse_capture_explanation'] as const)(
-    'keeps report plans and assertions aligned across a %s bypass', async (primaryIntent) => {
-      const first = 'Help me prepare a meeting.';
-      const bypass = primaryIntent === 'data_use_explanation'
-        ? 'How do you use my messages?'
-        : 'What exact pulse information did you capture from this discussion?';
-      const third = 'No, I was asking for meeting preparation advice.';
-      const harness = new CoachHarness({
-        aiProvider: new ScriptedAiProvider({
-          classifications: [
-            makeClassification({ dialogueAct: 'request', latestUserSubstance: first }),
-            makeClassification({ primaryIntent, dialogueAct: 'request', latestUserSubstance: bypass,
-              pulseCaptureScope: primaryIntent === 'pulse_capture_explanation' ? { type: 'conversation' } : undefined,
-              surveyAllowed: false }),
-            makeClassification({ dialogueAct: 'correction', latestUserSubstance: third }),
-          ],
-        }),
-      });
-      await harness.send(first);
-      await harness.send(bypass);
-      await harness.send(third);
+  it('keeps report plans and assertions aligned across a data_use_explanation bypass', async () => {
+    const primaryIntent = 'data_use_explanation';
+    const first = 'Help me prepare a meeting.';
+    const bypass = 'How do you use my messages?';
+    const third = 'No, I was asking for meeting preparation advice.';
+    const harness = new CoachHarness({
+      aiProvider: new ScriptedAiProvider({
+        classifications: [
+          makeClassification({ dialogueAct: 'request', latestUserSubstance: first }),
+          makeClassification({ primaryIntent, dialogueAct: 'request', latestUserSubstance: bypass, surveyAllowed: false }),
+          makeClassification({ dialogueAct: 'correction', latestUserSubstance: third }),
+        ],
+      }),
+    });
+    await harness.send(first);
+    await harness.send(bypass);
+    await harness.send(third);
 
-      const { report, markdown } = await readReport(harness);
-      expect(report.turns).toHaveLength(3);
-      expect(report.turns[0]?.replyPlan?.latestUserSubstance).toBe(first);
-      expect(report.turns[1]).toMatchObject({ primaryIntent, replyPlan: null, replyBrief: null });
-      expect(report.turns[2]?.replyPlan).toMatchObject({ dialogueAct: 'correction', latestUserSubstance: third });
-      expect(markdown).toMatch(new RegExp(`\\*\\*2\\. \\[.*${primaryIntent}.*\\nreplyPlan=none`));
-      expect(markdown).toContain(`substance=${third}`);
+    const { report, markdown } = await readReport(harness);
+    expect(report.turns).toHaveLength(3);
+    expect(report.turns[0]?.replyPlan?.latestUserSubstance).toBe(first);
+    expect(report.turns[1]).toMatchObject({ primaryIntent, replyPlan: null, replyBrief: null });
+    expect(report.turns[2]?.replyPlan).toMatchObject({ dialogueAct: 'correction', latestUserSubstance: third });
+    expect(markdown).toMatch(new RegExp(`\\*\\*2\\. \\[.*${primaryIntent}.*\\nreplyPlan=none`));
+    expect(markdown).toContain(`substance=${third}`);
 
-      expect(harness.generateResponseCalls).toHaveLength(2);
-      expect(harness.responseCallsByTurn).toHaveLength(harness.turns.length);
-      expect(harness.responseCallsByTurn[0]).toBe(harness.generateResponseCalls[0]);
-      expect(harness.responseCallsByTurn[1]).toBeNull();
-      expect(harness.responseCallsByTurn[2]).toBe(harness.generateResponseCalls[1]);
-      expect(harness.responseCallsByTurn[2]?.turns.at(-1)?.content).toBe(third);
-    },
-  );
+    expect(harness.generateResponseCalls).toHaveLength(2);
+    expect(harness.responseCallsByTurn).toHaveLength(harness.turns.length);
+    expect(harness.responseCallsByTurn[0]).toBe(harness.generateResponseCalls[0]);
+    expect(harness.responseCallsByTurn[1]).toBeNull();
+    expect(harness.responseCallsByTurn[2]).toBe(harness.generateResponseCalls[1]);
+    expect(harness.responseCallsByTurn[2]?.turns.at(-1)?.content).toBe(third);
+  });
+
+  // GC round 3 CAP-5: a pulse-capture question is answered by the model from captureFacts, so the
+  // turn is generated (not bypassed) and the report must carry that generation call's plan.
+  it('aligns a generated pulse_capture_explanation turn with its captureFacts generation call', async () => {
+    const primaryIntent = 'pulse_capture_explanation';
+    const first = 'Help me prepare a meeting.';
+    const question = 'What exact pulse information did you capture from this discussion?';
+    const third = 'No, I was asking for meeting preparation advice.';
+    const findPulseCaptureForConversation = vi.fn().mockResolvedValue([{
+      evidenceSummary: 'Meeting preparation feels rushed.', questionGroup: 'workload',
+      sourceMessageIds: ['source-1'], status: 'temporary',
+    }]);
+    const harness = new CoachHarness({
+      surveyRepo: {
+        findPulseCaptureForConversation,
+        findAwaitingConfirmationGroups: async () => [],
+        findPendingConfirmationGroups: async () => [],
+      } as unknown as SurveyRepositoryPort,
+      aiProvider: new ScriptedAiProvider({
+        classifications: [
+          makeClassification({ dialogueAct: 'request', latestUserSubstance: first }),
+          makeClassification({ primaryIntent, dialogueAct: 'request', latestUserSubstance: question,
+            pulseCaptureScope: { type: 'conversation' }, surveyAllowed: false }),
+          makeClassification({ dialogueAct: 'correction', latestUserSubstance: third }),
+        ],
+      }),
+    });
+    await harness.send(first);
+    await harness.send(question);
+    await harness.send(third);
+
+    expect(harness.generateResponseCalls).toHaveLength(3);
+    expect(harness.responseCallsByTurn).toEqual(harness.generateResponseCalls);
+    expect(findPulseCaptureForConversation).toHaveBeenCalledTimes(1);
+    expect(harness.generateResponseCalls[1]?.turns.at(-1)?.content).toBe(question);
+    expect(harness.generateResponseCalls[1]?.context.captureFacts).toEqual({
+      scope: 'conversation',
+      captures: [{ evidenceSummary: 'Meeting preparation feels rushed.', status: 'temporary' }],
+    });
+    expect(harness.generateResponseCalls[0]?.context.captureFacts).toBeUndefined();
+    expect(harness.generateResponseCalls[2]?.context.captureFacts).toBeUndefined();
+
+    const { report, markdown } = await readReport(harness);
+    expect(report.turns).toHaveLength(3);
+    expect(report.turns[0]?.replyPlan?.latestUserSubstance).toBe(first);
+    expect(report.turns[1]).toMatchObject({
+      primaryIntent,
+      replyPlan: { dialogueAct: 'request', responseMove: 'answer_request', latestUserSubstance: question },
+    });
+    expect(report.turns[1]?.replyPlan).toEqual(harness.generateResponseCalls[1]?.context.replyPlan);
+    expect(report.turns[2]?.replyPlan).toMatchObject({ dialogueAct: 'correction', latestUserSubstance: third });
+    expect(markdown).toMatch(new RegExp(`\\*\\*2\\. \\[.*${primaryIntent}.*\\nreplyPlan=request/answer_request`));
+    expect(markdown).toContain(`substance=${question}`);
+    expect(markdown).not.toContain('replyPlan=none');
+  });
 });
