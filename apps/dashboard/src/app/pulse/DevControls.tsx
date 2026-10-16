@@ -12,7 +12,10 @@ export function DevControls({ userId, tenantId }: { userId: string; tenantId: st
     setMsg('');
     try {
       const result = await resetUser(userId, tenantId, deep);
-      setMsg(`Reset: backlog ${result.pulseBacklog}, evidence ${result.surveyEvidence}, memory ${result.memoryItems}${deep ? `, messages ${result.messages}` : ''}`);
+      const onboarding = result.onboarding.introQueued
+        ? 'onboarding restarted, intro queued'
+        : 'onboarding restarted, no delivery to re-send';
+      setMsg(`Reset: backlog ${result.pulseBacklog}, evidence ${result.surveyEvidence}, memory ${result.memoryItems}${deep ? `, messages ${result.messages}` : ''}; ${onboarding}`);
       setStatus('done');
     } catch (e) {
       setMsg(String(e));

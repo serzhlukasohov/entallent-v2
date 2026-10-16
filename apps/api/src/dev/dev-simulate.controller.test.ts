@@ -70,6 +70,54 @@ describe('DevSimulateController security', () => {
   });
 });
 
+describe('DevSimulateController reset-user', () => {
+  const resetResult = {
+    conversations: 1, messages: 2, memoryItems: 3, userGoals: 4, scheduledActions: 5, riskSignals: 6, surveyWindows: 7,
+    surveyAssessments: 8, surveyEvidence: 9, surveyGroupStates: 10, pulseBacklog: 11, userStyleProfiles: 12, llmRuns: 13,
+  };
+
+  function makeResetController(restartResult: { stateDeleted: boolean; deliveryRequeued: boolean; unitId: string | null }) {
+    const resetUser = vi.fn().mockResolvedValue(resetResult);
+    const restart = vi.fn().mockResolvedValue(restartResult);
+    const scanAdd = vi.fn().mockResolvedValue(undefined);
+    const controller = new DevSimulateController(
+      {} as never,
+      {} as never,
+      {} as never,
+      { add: scanAdd } as never,
+      {} as never,
+      { resetUser } as never,
+      { restart } as never,
+    );
+    return { controller, resetUser, restart, scanAdd };
+  }
+
+  it('restarts onboarding after the user reset and queues the intro dispatch for the delivery unit', async () => {
+    const { controller, resetUser, restart, scanAdd } = makeResetController({ stateDeleted: true, deliveryRequeued: true, unitId: 'unit-1' });
+
+    const result = await controller.resetUser({ userId: 'person-1', tenantId: validTenantId, deep: false });
+
+    expect(resetUser).toHaveBeenCalledWith({ tenantId: validTenantId, userId: 'person-1', deleteConversationHistory: false });
+    expect(restart).toHaveBeenCalledWith({ tenantId: validTenantId, personId: 'person-1' });
+    expect(scanAdd).toHaveBeenCalledWith(
+      'onboarding-only',
+      { tenantId: validTenantId, unitId: 'unit-1' },
+      expect.objectContaining({ attempts: 1, jobId: expect.stringContaining('person-1') }),
+    );
+    expect(result).toEqual({ ...resetResult, onboarding: { stateDeleted: true, deliveryRequeued: true, introQueued: true } });
+  });
+
+  it('queues no dispatch when the person has no onboarding delivery to requeue', async () => {
+    const { controller, restart, scanAdd } = makeResetController({ stateDeleted: true, deliveryRequeued: false, unitId: null });
+
+    const result = await controller.resetUser({ userId: 'person-2', tenantId: validTenantId, deep: true });
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(scanAdd).not.toHaveBeenCalled();
+    expect(result.onboarding).toEqual({ stateDeleted: true, deliveryRequeued: false, introQueued: false });
+  });
+});
+
 function makeController() {
   const dbTouched = vi.fn(() => {
     throw new Error('db should not be touched');
@@ -91,6 +139,7 @@ function makeController() {
     {} as never,
     {} as never,
     { resetUser: vi.fn() } as never,
+    { restart: vi.fn() } as never,
   );
 
   return { controller, dbTouched, queueAdd };

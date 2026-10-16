@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import type { UserResetResult } from '../lib';
 import { devControlsEnabled } from './dev-controls-gate';
 
 const API_BASE = process.env.API_INTERNAL_URL ?? 'http://localhost:3000/api/v1';
@@ -20,10 +21,15 @@ async function devPost(path: string, body: unknown) {
   return res.json();
 }
 
-export async function resetUser(userId: string, tenantId: string, deep: boolean) {
+export interface DevResetResult extends UserResetResult {
+  /** Onboarding v2 restart that every dev reset performs; introQueued means the intro is being re-sent now. */
+  onboarding: { stateDeleted: boolean; deliveryRequeued: boolean; introQueued: boolean };
+}
+
+export async function resetUser(userId: string, tenantId: string, deep: boolean): Promise<DevResetResult> {
   const result = await devPost('/dev/reset-user', { userId, tenantId, deep });
   revalidatePath('/pulse');
-  return result as Record<string, number>;
+  return result as DevResetResult;
 }
 
 export async function forceCheckIn(userId: string, tenantId: string) {
