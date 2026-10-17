@@ -14,6 +14,7 @@ import { ProviderContentFilterError } from '../ports/provider-error';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type {
+  AppliedQuestionVerdict,
   QuestionConfirmationPort,
   QuestionBundleVerdict,
   QuestionClarificationVerdict,
@@ -32,6 +33,7 @@ import type {
 } from '../types/records';
 import { BASE_STYLE, STYLE_CONFIDENCE_FLOOR, STYLE_OFF_BASE_MARGIN } from '../utils/style-adaptation';
 import { buildReplyPlan } from '../utils/reply-plan';
+import { predictCycleProgress, type CycleProgress } from '../utils/cycle-progress';
 import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
@@ -101,6 +103,8 @@ const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
 type PreparedBundlePhase = {
   confirmedGroup: string | false;
   awaitingPresent: boolean;
+  /** Cycle progress after this turn's verdict (GC round 3 CAP-3); undefined when the adapter has no snapshot. */
+  progress?: CycleProgress;
   commitLegacy?: () => Promise<LegacyGroupReportIntent | null>;
   verdictProposal?: {
     bundleId: string;
@@ -472,11 +476,7 @@ export class ConversationOrchestrator {
     // ── Group confirmation interpretation (Phase B) ─────────────────────────
     // Safety classification must resolve before any survey state can change.
     const v2PhaseB: PreparedBundlePhase = appliedQuestionVerdict?.kind === 'bundle'
-      ? {
-          confirmedGroup: appliedQuestionVerdict.verdictKind === 'agree'
-            ? appliedQuestionVerdict.questionGroup : false as string | false,
-          awaitingPresent: true,
-        }
+      ? await this.replayAppliedBundleVerdict(appliedQuestionVerdict, { tenantId, userId })
       : this.questionConfirmationRepo && surveyEnabled
       && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested
@@ -490,7 +490,12 @@ export class ConversationOrchestrator {
       workingInsightId: string;
       verdict: Exclude<QuestionClarificationVerdict, { kind: 'unrelated' }>;
     } | null = null;
+    let correctedStatementRequest: (PendingQuestionClarification & { correctedSummary: string }) | null = null;
+    let clarificationPhase: PreparedBundlePhase | null = null;
+    // A bundle that still awaits its verdict (for example a corrected statement) keeps the floor:
+    // no second employee question is opened until that verdict is applied this turn.
     if (!clarificationWasPresent && this.questionConfirmationRepo && surveyEnabled
+      && (!v2PhaseB.awaitingPresent || v2PhaseB.verdictProposal !== undefined)
       && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested && !pulseCaptureExplanationRequested) {
       pendingClarification = await this.questionConfirmationRepo.findPendingQuestionClarification({
@@ -505,15 +510,51 @@ export class ConversationOrchestrator {
           await this.aiProvider.interpretQuestionClarificationResponse(turns, pendingClarification),
         );
         if (clarificationVerdict.kind !== 'unrelated') {
+          const resolvedClarification = pendingClarification;
           clarificationVerdictProposal = {
             workingInsightId: pendingClarification.workingInsightId,
             verdict: clarificationVerdict,
           };
-          pendingClarification = await this.questionConfirmationRepo
-            .previewPendingQuestionClarificationAfterVerdict?.({
-              tenantId, userId, conversationId,
-              workingInsightId: clarificationVerdictProposal.workingInsightId,
-            }) ?? null;
+          if (clarificationVerdict.kind === 'declined' && this.questionConfirmationRepo.findCycleProgress) {
+            // A declined statement can be the last open one of its topic: state completion then too.
+            const snapshot = await this.questionConfirmationRepo.findCycleProgress({ tenantId, userId });
+            if (snapshot) {
+              const progress = predictCycleProgress(snapshot, {
+                questionGroup: resolvedClarification.questionGroup,
+                componentQuestionIds: [resolvedClarification.surveyQuestionId],
+                verdict: {
+                  kind: 'partial', acceptedQuestionIds: [], disputedQuestionIds: [],
+                  declinedQuestionIds: [resolvedClarification.surveyQuestionId],
+                },
+              });
+              clarificationPhase = { confirmedGroup: progress.closedNow ?? false, awaitingPresent: true, progress };
+            }
+          }
+          if (clarificationVerdict.kind === 'clarified') {
+            // GC round 3 CAP-3: the corrected meaning is shown back in this reply and waits for
+            // the employee's verdict; any other disputed statement follows after that verdict.
+            correctedStatementRequest = {
+              ...pendingClarification,
+              correctedSummary: clarificationVerdict.correctedSummary,
+            };
+            pendingClarification = null;
+            // The corrected statement is shown only on a turn that can carry a question and only
+            // when the adapter can stage it; otherwise the row stays ready and the ordinary bundle
+            // path shows it later. Staging checks the window by wall clock while the verdict is
+            // checked by reply time, so an ended window also drops it (cutoff expires the row).
+            if (!this.questionConfirmationRepo.stageCorrectedStatementConfirmation
+              || closingTurn || pauseTurn || classification.reminderRequest || reportingExplanationRequested
+              || (this.questionConfirmationRepo.findCycleProgress
+                && !(await this.questionConfirmationRepo.findCycleProgress({ tenantId, userId })))) {
+              correctedStatementRequest = null;
+            }
+          } else {
+            pendingClarification = await this.questionConfirmationRepo
+              .previewPendingQuestionClarificationAfterVerdict?.({
+                tenantId, userId, conversationId,
+                workingInsightId: clarificationVerdictProposal.workingInsightId,
+              }) ?? null;
+          }
         }
       }
     }
@@ -529,7 +570,7 @@ export class ConversationOrchestrator {
     const phaseB: PreparedBundlePhase = v2PhaseB.awaitingPresent
       ? v2PhaseB
       : clarificationWasPresent
-        ? { confirmedGroup: false as string | false, awaitingPresent: true }
+        ? clarificationPhase ?? { confirmedGroup: false as string | false, awaitingPresent: true }
       : this.surveyRepo && surveyEnabled
       && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested
@@ -629,7 +670,7 @@ export class ConversationOrchestrator {
       classification,
       activeTopic,
       safetyTurn,
-      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null,
       now: currentTurnAt,
     });
     const continuityDecision = continuity.decision;
@@ -638,7 +679,7 @@ export class ConversationOrchestrator {
     const relevantGoal = selectRelevantGoal(boundaryApplied ? [] : activeGoals, {
       classification,
       risk,
-      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null,
     });
     const goalDecision: {
       selected: boolean;
@@ -695,7 +736,7 @@ export class ConversationOrchestrator {
       }
     }
 
-    const baseStrategy = confirmationRequest || v2BundleRequest || clarificationRequest
+    const baseStrategy = confirmationRequest || v2BundleRequest || clarificationRequest || correctedStatementRequest
       ? { mode: 'confirmation' as const, tone: 'warm' as const, includeFollowUpQuestion: false, maxResponseLength: 'medium' as const, forbiddenPatterns: [] }
       : buildReplyStrategy(classification, risk, probeQuestion?.id);
     const probeStrategy = probeQuestion && baseStrategy.mode !== 'crisis' && baseStrategy.mode !== 'sensitive'
@@ -731,7 +772,8 @@ export class ConversationOrchestrator {
       && !safetyTurn
       && !phaseB.awaitingPresent
       && confirmationRequest === undefined
-      && v2BundleRequest === null;
+      && v2BundleRequest === null
+      && correctedStatementRequest === null;
     const replacedResolvedThread = classification.dialogueAct !== 'acknowledgement'
       && continuityDecision.action === 'replace';
     const classifiedResolvedDetails = normalizeResolvedDetails(classification.resolvedDetails);
@@ -749,7 +791,7 @@ export class ConversationOrchestrator {
         : [],
     };
 
-    let replyPlan = confirmationRequest || v2BundleRequest || clarificationRequest
+    let replyPlan = confirmationRequest || v2BundleRequest || clarificationRequest || correctedStatementRequest
       ? undefined
       : buildReplyPlan({
           classification: replyPlanClassification,
@@ -768,6 +810,17 @@ export class ConversationOrchestrator {
       ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
           turns, clarificationRequest, languagePolicy.responseLanguage,
         ))
+      : null;
+    const correctedComposition = correctedStatementRequest
+      ? validateQuestionBundleComposition(
+          await this.aiProvider.composeQuestionBundle(
+            turns,
+            [{ surveyQuestionId: correctedStatementRequest.surveyQuestionId, workingSummary: correctedStatementRequest.correctedSummary }],
+            languagePolicy.responseLanguage,
+            'corrected_statement',
+          ),
+          [correctedStatementRequest.surveyQuestionId],
+        )
       : null;
     const shouldOfferReportingDisclosure =
       this.surveyRepo !== undefined
@@ -834,6 +887,18 @@ export class ConversationOrchestrator {
           })),
         }
       : undefined;
+    // GC round 3 CAP-3: a cycle-status question is answered from typed progress, never from prose.
+    const trailingTextFollows = clarificationText !== null || correctedComposition !== null || v2Composition !== null;
+    const cycleProgress = classification.cycleStatusQuestion === true
+      && surveyEnabled && classification.surveyAllowed && !riskBlocksSurvey(risk)
+      && this.questionConfirmationRepo?.findCycleProgress
+      ? cycleProgressContext(
+          phaseB.progress ?? predictCycleProgress(
+            await this.questionConfirmationRepo.findCycleProgress({ tenantId, userId }),
+          ),
+          trailingTextFollows,
+        )
+      : undefined;
     const responseContext: ResponseContext = {
       userName,
       languagePolicy,
@@ -852,9 +917,8 @@ export class ConversationOrchestrator {
             responseType: responseProbeQuestion.responseType,
           }
         : undefined,
-      topicConfirmed: typeof confirmedGroup === 'string'
-        ? { questionGroup: confirmedGroup }
-        : undefined,
+      topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+      cycleProgress,
       confirmationRequest,
       styleAdaptation,
       localTime: describeLocalTime(conversation.userTimezone),
@@ -866,6 +930,12 @@ export class ConversationOrchestrator {
     // the employee's own message is answered first by one structured generation.
     const trailingBundle: ResponseContext['trailingBundle'] = clarificationText && clarificationRequest
       ? { kind: 'clarification', text: clarificationText, statements: [clarificationRequest.disputedStatement] }
+      : correctedComposition
+        ? {
+            kind: 'corrected_statement',
+            text: correctedComposition.text,
+            statements: correctedComposition.statements.map((statement) => statement.statement),
+          }
       : v2Composition
         ? {
             kind: 'confirmation_bundle',
@@ -1001,9 +1071,8 @@ export class ConversationOrchestrator {
             ? memoryContext
             : undefined,
           reminderConfirmation,
-          topicConfirmed: typeof confirmedGroup === 'string'
-            ? { questionGroup: confirmedGroup }
-            : undefined,
+          topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+          cycleProgress,
           styleAdaptation,
           localTime: describeLocalTime(conversation.userTimezone),
           isSessionStart: sessionStart,
@@ -1088,6 +1157,7 @@ export class ConversationOrchestrator {
             : {}),
           ...(v2Composition ? { v2ConfirmationBundle: true } : {}),
           ...(clarificationText ? { v2ClarificationPrompt: true } : {}),
+          ...(correctedComposition ? { v2CorrectedStatement: true } : {}),
           ...(bundleReply ? { v2BundleReply: bundleReply } : {}),
           ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
           ...(bundleCompositionFallbackReason ? { v2BundleCompositionFallbackReason: bundleCompositionFallbackReason } : {}),
@@ -1136,6 +1206,23 @@ export class ConversationOrchestrator {
               (question) => question.surveyQuestionId === statement.surveyQuestionId,
             )!.workingSummary,
           })),
+        });
+      }
+      if (correctedStatementRequest && correctedComposition && this.questionConfirmationRepo) {
+        if (!this.questionConfirmationRepo.stageCorrectedStatementConfirmation) {
+          throw new Error('v2_corrected_statement_staging_unavailable');
+        }
+        await this.questionConfirmationRepo.stageCorrectedStatementConfirmation({
+          tenantId, userId, conversationId,
+          surveyWindowId: correctedStatementRequest.surveyWindowId,
+          questionGroup: correctedStatementRequest.questionGroup,
+          workingInsightId: correctedStatementRequest.workingInsightId,
+          surveyQuestionId: correctedStatementRequest.surveyQuestionId,
+          questionVersion: correctedStatementRequest.questionVersion,
+          promptMessageId: outbound.id,
+          displayedText: correctedComposition.text,
+          statement: correctedComposition.statements[0]!.statement,
+          expectedWorkingSummary: correctedStatementRequest.correctedSummary,
         });
       }
       if (clarificationRequest && clarificationText && this.questionConfirmationRepo) {
@@ -1343,11 +1430,45 @@ export class ConversationOrchestrator {
         disputedQuestionIds: verdict.disputedQuestionIds,
       }) ?? null
       : null;
+    // GC round 3 CAP-3: the topic is complete when no statement of its group stays open after this
+    // verdict, whatever the verdict kind; the reply states it with progress. Without a snapshot
+    // (adapter without progress) the legacy rule applies: only a plain agree closes the topic.
+    const snapshot = await this.questionConfirmationRepo.findCycleProgress?.({
+      tenantId: input.tenantId, userId: input.userId,
+    }) ?? null;
+    const progress = snapshot
+      ? predictCycleProgress(snapshot, {
+          questionGroup: awaiting.questionGroup,
+          componentQuestionIds: awaiting.components.map((component) => component.surveyQuestionId),
+          verdict,
+        })
+      : undefined;
+    const confirmedGroup = progress
+      ? (progress.closedNow ?? false)
+      : verdict.kind === 'agree' ? awaiting.questionGroup : false;
     return {
-      confirmedGroup: verdict.kind === 'agree' ? awaiting.questionGroup : false,
+      confirmedGroup,
       awaitingPresent: true,
       verdictProposal: { bundleId: awaiting.id, verdict },
       nextClarification,
+      ...(progress ? { progress } : {}),
+    };
+  }
+
+  /** A retried job after the verdict was committed: read the stored state for the completion reply. */
+  private async replayAppliedBundleVerdict(
+    applied: Extract<AppliedQuestionVerdict, { kind: 'bundle' }>,
+    scope: { tenantId: string; userId: string },
+  ): Promise<PreparedBundlePhase> {
+    const snapshot = await this.questionConfirmationRepo?.findCycleProgress?.(scope) ?? null;
+    const progress = snapshot ? predictCycleProgress(snapshot) : undefined;
+    const closed = progress
+      ? !progress.openTopics.includes(applied.questionGroup) && applied.verdictKind !== 'reject'
+      : applied.verdictKind === 'agree';
+    return {
+      confirmedGroup: closed ? applied.questionGroup : false,
+      awaitingPresent: true,
+      ...(progress ? { progress } : {}),
     };
   }
 
@@ -1601,6 +1722,30 @@ export class ConversationOrchestrator {
     const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
     return result?.question ?? null;
   }
+}
+
+function cycleProgressContext(
+  progress: CycleProgress,
+  trailingTextFollows: boolean,
+): NonNullable<ResponseContext['cycleProgress']> {
+  return {
+    inCycle: progress.inCycle,
+    topicsTotal: progress.topicsTotal,
+    topicsClosed: progress.topicsClosed,
+    openTopics: progress.openTopics,
+    // A summary or question appended to this very reply also waits for the employee.
+    awaitingReply: progress.awaitingReply || (progress.inCycle && trailingTextFollows),
+  };
+}
+
+function topicConfirmedContext(
+  confirmedGroup: string | false,
+  progress: CycleProgress | undefined,
+): ResponseContext['topicConfirmed'] {
+  if (typeof confirmedGroup !== 'string') return undefined;
+  return progress
+    ? { questionGroup: confirmedGroup, topicsClosed: progress.topicsClosed, topicsTotal: progress.topicsTotal }
+    : { questionGroup: confirmedGroup };
 }
 
 type PulseCaptureResolution =

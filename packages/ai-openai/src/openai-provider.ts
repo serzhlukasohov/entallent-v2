@@ -42,6 +42,7 @@ import type {
   SurveyQuestionForEvaluation,
   SurveyEvidenceEvaluationOptions,
   QuestionBundleComposition,
+  QuestionBundleVariant,
   AwaitingQuestionBundle,
   QuestionBundleVerdict,
   PendingQuestionClarification,
@@ -538,8 +539,9 @@ export class OpenAiProvider implements AiProviderPort {
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
+    variant: QuestionBundleVariant = 'confirmation',
   ): Promise<QuestionBundleComposition> {
-    const system = buildQuestionBundleSystemPrompt(responseLanguage, questions.length);
+    const system = buildQuestionBundleSystemPrompt(responseLanguage, questions.length, variant);
     const user = buildQuestionBundleUserPrompt(turns, questions);
     const questionIds = questions.map((question) => question.surveyQuestionId);
     try {

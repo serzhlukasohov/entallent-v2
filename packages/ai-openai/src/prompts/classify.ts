@@ -21,6 +21,7 @@ Return a JSON object with exactly these fields:
   "topicAnchor": string|null,    // existing topic to continue when latestUserSubstance is null
   "resolvedDetails": string[],   // up to 5 explicit employee-stated facts that already close a clarification branch in the active thread
   "pulseCaptureScope": object|null, // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
+  "cycleStatusQuestion": boolean, // true only when the employee asks what is still left to answer, how many topics remain, or whether they have answered everything the mentor needed
   "priorAssistantOffer": boolean, // true only when the latest mentor turn offered to do, write, list, or produce something for the employee
   "acceptsPriorOffer": boolean,   // true only when priorAssistantOffer is true AND the latest employee message accepts that offer
   "formatRequest": string|null    // "list", "outline", or "steps" when the latest employee message explicitly asks for that shape; otherwise null
@@ -42,6 +43,7 @@ Dialogue act rules:
 - Use "new_substance" when it introduces a new concrete fact, event, task, blocker, preference, or concern.
 - Use "emotional_disclosure" when the latest message primarily discloses feelings or wellbeing.
 - Use "request" for explicit asks to the mentor; "correction" for correcting the mentor; "closing" for ending/wrapping.
+- Set "cycleStatusQuestion" to true when the latest message asks what is left to answer, what else the mentor wanted to ask, how many topics remain, or whether everything has been answered, in any language. Keep primaryIntent and dialogueAct as they would otherwise be (usually "clarification" and "request"). Do not set it for questions about where data goes (reporting_explanation) or what was captured (pulse_capture_explanation).
 - Use "reporting_explanation" when the employee explicitly asks where confirmed pulse information goes or how it is used. Detect this in any language. If safety is the primary intent, put "reporting_explanation" in secondaryIntents.
 - Use "data_use_explanation" when the employee directly asks how EnTalent uses their messages, including for memory, goals, tasks, reminders, pulse measurement, or safety checks. If safety is the primary intent, put "data_use_explanation" in secondaryIntents.
 - Do not use "data_use_explanation" for quoted translation, rewriting, evaluation of another chatbot, descriptive statements, or turns that also request an action.

@@ -17,6 +17,7 @@ const context: QuestionFinalizationContext = {
     { score: 0, description: 'Clearly adverse.' }, { score: 100, description: 'Clearly favorable.' },
   ] },
   knownIdentifiers: ['Mira', 'Project Atlas'], sourceMessageIds: ['3de3fe64-536e-484e-9b52-fc421c067bb2'],
+  shownStatementReceipt: true,
 };
 
 function setup(overrides: Partial<QuestionFinalizationContext> = {}) {
@@ -60,6 +61,16 @@ describe('FinalizeQuestionInsightUseCase', () => {
     expect(await useCase.executePending({ tenantId: 'tenant', userId: 'employee' })).toBe(1);
     expect(await useCase.executePending({ tenantId: 'tenant', userId: 'employee' })).toBe(0);
     expect(scorer.scoreConfirmedMeaning).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a confirmed meaning that the employee never saw and confirmed', async () => {
+    const { repository, scorer, useCase } = setup({ shownStatementReceipt: false });
+
+    expect(await useCase.execute({
+      tenantId: 'tenant', userId: 'employee', surveyWindowId: 'cycle', surveyQuestionId: 'question',
+    })).toBe('stale');
+    expect(scorer.scoreConfirmedMeaning).not.toHaveBeenCalled();
+    expect(repository.persistFinalAndPurge).not.toHaveBeenCalled();
   });
 
   it('finalizes other confirmed questions when one fails and reports a safe batch error', async () => {

@@ -58,9 +58,14 @@ export function resolveQuestionBundle(
   }));
 }
 
+/**
+ * A clarified meaning is not confirmed yet (GC round 3 CAP-3): it returns to `collecting` with
+ * the corrected summary ready, is shown back as a one-statement bundle, and only the employee's
+ * verdict on that shown text confirms it.
+ */
 export function clarifyQuestion(question: QuestionInsightState): QuestionTransition {
   if (question.status !== 'pending_clarification') throw new Error('question_not_pending_clarification');
-  return { ...question, status: 'confirmed', purgeTemporary: false };
+  return { ...question, status: 'collecting', purgeTemporary: false };
 }
 
 export function declineQuestion(question: QuestionInsightState): QuestionTransition {

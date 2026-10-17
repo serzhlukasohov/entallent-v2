@@ -17,7 +17,7 @@ export type { FollowUpContextPort, FollowUpContextData } from './ports/follow-up
 export type { ProactiveSchedulerRepositoryPort, FindCheckInCandidatesParams, CheckInCandidate, CheckInEnqueuePort, CheckInEnqueuePayload } from './ports/proactive-scheduler.repository.port';
 export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams, StageGroupConfirmationParams, RecordGroupDeidentificationDecisionParams, TransitionAwaitingGroupStateParams, WithdrawGroupStateParams, ConfirmGroupStateParams, FindConfirmedGroupStatesParams, ConfirmedGroupReportStateRecord, SurveyTeamRecord, OpenSurveyReportingCycleParams, FindReportingCohortsReadyForFinalReportsParams, ExpireTemporaryGroupStatesForClosedCohortsParams } from './ports/survey.repository.port';
 export type { QuestionWorkingCapturePort, CaptureQuestionMeaningInput } from './ports/question-working-capture.port';
-export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict } from './ports/question-confirmation.port';
+export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict, CycleProgressSnapshot } from './ports/question-confirmation.port';
 export type { QuestionBundleComposition } from './ports/ai-provider.port';
 export {
   validateQuestionBundleComposition, validateBundleReply, composeBundleReplyText, isBundleShownIn,
@@ -75,6 +75,9 @@ export type { ProactiveScanConfig, ProactiveScanResult } from './use-cases/proac
 export { isInQuietHours, getLocalHour } from './utils/quiet-hours';
 export { BASE_STYLE } from './utils/style-adaptation';
 export { buildReplyPlan } from './utils/reply-plan';
+export { predictCycleProgress, EMPTY_CYCLE_PROGRESS } from './utils/cycle-progress';
+export type { QuestionBundleVariant } from './ports/ai-provider.port';
+export type { CycleProgress, PendingVerdictChange } from './utils/cycle-progress';
 export type { ReplyPlanInput } from './utils/reply-plan';
 export type { QuietHours } from './utils/quiet-hours';
 export { MemoryExtractionUseCase } from './use-cases/memory-extraction.use-case';
