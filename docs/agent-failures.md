@@ -3171,6 +3171,15 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Regression check: `pnpm --filter @entalent/conversation-sim test` must report `simulation-repositories.sim.test.ts` among the passing files (6 tests).
 - Status: fixed
 
+## 2026-10-17: Eval rubric widened after one live sample, then mis-scored the fix
+
+- Symptom: After the first live T9 sample failed, the judge criterion was widened to "or whether someone else could sign off or approve" and the deterministic pattern gained `backup|alternative|other`. The post-fix pass then scored 0/5 although three of five first replies asked something new (who can name a backup reviewer, who owns the release calendar, temporary vs systemic), and the pattern flagged "who owns the decision to let someone else cover that sign-off", a question the rubric explicitly allows.
+- Expected: A rubric names the defect precisely (asking the employee to restate or confirm what they already said) and lists the nearby legitimate questions as allowed, before any prompt change is measured against it; a deterministic pattern targets the question shape (existence questions: "is there", "anyone else", "nobody else"), not content words.
+- Root cause layer: verification
+- Harness fix: `fidelity-fixtures.ts` criterion 1 now states the re-ask definition and the allowed neighbours; the pattern is restricted to existence stems; `fidelity-checks.test.ts` keeps the allowed authority questions as negative cases. Saved live transcripts are re-scored offline with the final pattern (`findReaskedQuestions` over `runs/*.json`) rather than re-running live samples after a pattern-only change.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/harness/fidelity-checks.test.ts` (negative cases "who owns the decision to name a backup reviewer" / "let someone else cover that sign-off" stay unflagged).
+- Status: fixed
+
 ## 2026-10-17: Harness database integration step fails on shared local state and machine load
 
 - Symptom: `pnpm harness:check -- --base main` for S4b failed three times before passing, each time in tests the change did not touch. The `conversation-turn-effects` integration test counts every `conversation_dispatch_intents` row without scoping, so it saw 144 rows in the shared local DB instead of 4. `survey-cycle-policy-activation` failed once with a different trigger error. Worker repository suites hit the 5 s Vitest timeout while another session's tests ran in parallel (load average ~535). Each failing test passed when run alone.
