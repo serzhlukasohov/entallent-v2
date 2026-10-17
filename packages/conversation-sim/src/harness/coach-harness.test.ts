@@ -2,9 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { ScenarioResult } from '@langwatch/scenario';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ScriptedAiProvider } from '../fakes/scripted-ai';
-import { CoachHarness } from './coach-harness';
+import { CoachHarness, RecordingAiProvider } from './coach-harness';
 import { reportRun, type ScenarioRunReport } from './report';
 
 const PROVIDER_ERROR = 'provider exploded during generation';
@@ -117,4 +117,18 @@ describe('scenario report after a failed agent turn', () => {
     ]));
     expect(readFileSync(join(reportDir, 'aborted-agent-turn-sample-1.md'), 'utf8')).toContain(PROVIDER_ERROR);
   }, 70_000);
+});
+
+describe('RecordingAiProvider', () => {
+  it('forwards the bundle variant to the delegate', async () => {
+    const delegate = new ScriptedAiProvider();
+    const compose = vi.spyOn(delegate, 'composeQuestionBundle');
+    const provider = new RecordingAiProvider(delegate, []);
+    const turns = [{ role: 'user' as const, content: 'hi', timestamp: new Date() }];
+    const questions = [{ surveyQuestionId: 'q-b', workingSummary: 'I decide my methods.' }];
+
+    await provider.composeQuestionBundle(turns, questions, 'en', 'corrected_statement');
+
+    expect(compose).toHaveBeenCalledWith(turns, questions, 'en', 'corrected_statement');
+  });
 });

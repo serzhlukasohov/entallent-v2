@@ -5857,6 +5857,54 @@ describe('GC round 3 CAP-3: shown corrections, topic completion, cycle status', 
     }));
   });
 
+  it('skips the corrected statement for this turn when its composition stays invalid, keeping the verdict', async () => {
+    const m = baseMocks();
+    const corrected = 'I can decide my work methods, but not my priorities.';
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'clarified', correctedSummary: corrected });
+    m.aiProvider.composeQuestionBundle = vi.fn().mockRejectedValue(new BundleCompositionInvalidError('statement_not_in_text'));
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `Thanks for clearing that up.${context.trailingBundle ? `\n\n${context.trailingBundle.text}` : ''}`,
+      confidence: 0.9, containsSurveyProbe: false,
+    }));
+    const pending = {
+      workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+      workingSummary: 'I choose all my work.', disputedStatement: 'You set your priorities.',
+      clarificationPromptMessageId: 'clarify-out',
+      clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+    };
+    const repo = repoMocks({
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(pending),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_clarification', 'confirmed'])),
+    });
+
+    const result = await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(m.aiProvider.composeQuestionBundle).toHaveBeenCalledWith(
+      expect.any(Array), [{ surveyQuestionId: 'q-b', workingSummary: corrected }], 'en', 'corrected_statement',
+    );
+    const [, strategy, context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toBeUndefined();
+    expect(strategy.mode).not.toBe('confirmation');
+    expect(result.responseText).toBe('Thanks for clearing that up.');
+    expect(result.bundleReply).toBeUndefined();
+    expect(result.bundleCompositionFallbackReason).toBe('statement_not_in_text');
+    expect(repo.applyQuestionClarificationVerdict).toHaveBeenCalledWith(expect.objectContaining({
+      workingInsightId: 'working-b', verdict: { kind: 'clarified', correctedSummary: corrected },
+    }));
+    expect(repo.stageCorrectedStatementConfirmation).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'outbound',
+      metadata: expect.objectContaining({ v2CorrectedStatementFallbackReason: 'statement_not_in_text' }),
+    }));
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ v2CorrectedStatement: true }),
+    }));
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ v2BundleCompositionFallbackReason: expect.anything() }),
+    }));
+  });
+
   it('answers a cycle-status question from typed progress, and reports no cycle outside one', async () => {
     const m = baseMocks();
     m.aiProvider.classifySituation.mockResolvedValue({

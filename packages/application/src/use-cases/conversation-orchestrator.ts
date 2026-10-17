@@ -643,7 +643,9 @@ export class ConversationOrchestrator {
     // ordinary reply, the bundle stays ready for a later turn, and the reason is recorded.
     const languagePolicy = resolveLanguagePolicy();
     let v2Composition: QuestionBundleComposition | null = null;
+    /** Either composition that stayed invalid this turn; the metadata keys below name which one. */
     let bundleCompositionFallbackReason: BundleCompositionFallbackReason | undefined;
+    let readyBundleFallbackReason: BundleCompositionFallbackReason | undefined;
     if (v2BundleRequest) {
       try {
         v2Composition = validateQuestionBundleComposition(
@@ -659,8 +661,31 @@ export class ConversationOrchestrator {
         );
       } catch (error) {
         if (!isBundleCompositionInvalidError(error)) throw error;
-        bundleCompositionFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
+        readyBundleFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
+        bundleCompositionFallbackReason = readyBundleFallbackReason;
         v2BundleRequest = null;
+      }
+    }
+    // The corrected statement (GC round 3 CAP-3) degrades the same way: the clarified verdict is
+    // still applied, the row stays ready and the ordinary bundle path shows it on a later turn.
+    let correctedComposition: QuestionBundleComposition | null = null;
+    let correctedStatementFallbackReason: BundleCompositionFallbackReason | undefined;
+    if (correctedStatementRequest) {
+      try {
+        correctedComposition = validateQuestionBundleComposition(
+          await this.aiProvider.composeQuestionBundle(
+            turns,
+            [{ surveyQuestionId: correctedStatementRequest.surveyQuestionId, workingSummary: correctedStatementRequest.correctedSummary }],
+            languagePolicy.responseLanguage,
+            'corrected_statement',
+          ),
+          [correctedStatementRequest.surveyQuestionId],
+        );
+      } catch (error) {
+        if (!isBundleCompositionInvalidError(error)) throw error;
+        correctedStatementFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
+        bundleCompositionFallbackReason = correctedStatementFallbackReason;
+        correctedStatementRequest = null;
       }
     }
 
@@ -810,17 +835,6 @@ export class ConversationOrchestrator {
       ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
           turns, clarificationRequest, languagePolicy.responseLanguage,
         ))
-      : null;
-    const correctedComposition = correctedStatementRequest
-      ? validateQuestionBundleComposition(
-          await this.aiProvider.composeQuestionBundle(
-            turns,
-            [{ surveyQuestionId: correctedStatementRequest.surveyQuestionId, workingSummary: correctedStatementRequest.correctedSummary }],
-            languagePolicy.responseLanguage,
-            'corrected_statement',
-          ),
-          [correctedStatementRequest.surveyQuestionId],
-        )
       : null;
     const shouldOfferReportingDisclosure =
       this.surveyRepo !== undefined
@@ -1160,7 +1174,8 @@ export class ConversationOrchestrator {
           ...(correctedComposition ? { v2CorrectedStatement: true } : {}),
           ...(bundleReply ? { v2BundleReply: bundleReply } : {}),
           ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
-          ...(bundleCompositionFallbackReason ? { v2BundleCompositionFallbackReason: bundleCompositionFallbackReason } : {}),
+          ...(readyBundleFallbackReason ? { v2BundleCompositionFallbackReason: readyBundleFallbackReason } : {}),
+          ...(correctedStatementFallbackReason ? { v2CorrectedStatementFallbackReason: correctedStatementFallbackReason } : {}),
           ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
             ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
             : {}),
