@@ -3179,3 +3179,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: `fidelity-fixtures.ts` criterion 1 now states the re-ask definition and the allowed neighbours; the pattern is restricted to existence stems; `fidelity-checks.test.ts` keeps the allowed authority questions as negative cases. Saved live transcripts are re-scored offline with the final pattern (`findReaskedQuestions` over `runs/*.json`) rather than re-running live samples after a pattern-only change.
 - Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/harness/fidelity-checks.test.ts` (negative cases "who owns the decision to name a backup reviewer" / "let someone else cover that sign-off" stay unflagged).
 - Status: fixed
+
+## 2026-10-17: Harness database integration step fails on shared local state and machine load
+
+- Symptom: `pnpm harness:check -- --base main` for S4b failed three times before passing, each time in tests the change did not touch. The `conversation-turn-effects` integration test counts every `conversation_dispatch_intents` row without scoping, so it saw 144 rows in the shared local DB instead of 4. `survey-cycle-policy-activation` failed once with a different trigger error. Worker repository suites hit the 5 s Vitest timeout while another session's tests ran in parallel (load average ~535). Each failing test passed when run alone.
+- Expected: The harness test step is deterministic for a change that does not touch those tests: database assertions are scoped to the test's own tenant, and the timeouts tolerate parallel turbo runs.
+- Root cause layer: verification
+- Harness fix: Scope the dispatch-intent assertion to the test's inbound message ids. Give DB integration suites an explicit `testTimeout` (for example 20 s) in their Vitest configs. Document running the harness against a freshly migrated local database (`createdb` + `pnpm db:migrate` with an overridden `DATABASE_URL`) when the shared one has accumulated rows.
+- Regression check: `DATABASE_URL=<shared local> pnpm --filter @entalent/database exec vitest run --config vitest.integration.config.ts src/__tests__/conversation-turn-effects.integration.test.ts` passes after other suites have run.
+- Status: open

@@ -90,8 +90,9 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     { verdictKind: 'partial', questionGroup: 'autonomy', clarificationBeforeOutboundError: true },
     { verdictKind: 'agree', questionGroup: 'autonomy', questionWithBundle: true },
     { verdictKind: 'agree', questionGroup: 'autonomy', bundleReplyInvalid: true },
+    { verdictKind: 'partial', questionGroup: 'autonomy', correctedRejectedTwice: true },
   ] as const)(
-    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies approvedPolicy=$approvedPolicy insufficientEvidence=$insufficientEvidence afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError questionWithBundle=$questionWithBundle bundleReplyInvalid=$bundleReplyInvalid',
+    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies approvedPolicy=$approvedPolicy insufficientEvidence=$insufficientEvidence afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError questionWithBundle=$questionWithBundle bundleReplyInvalid=$bundleReplyInvalid correctedRejectedTwice=$correctedRejectedTwice',
     async (scenario) => {
     const { verdictKind, questionGroup } = scenario;
     const approvedPolicy = 'approvedPolicy' in scenario && scenario.approvedPolicy === true;
@@ -113,6 +114,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     // GC round 3 CAP-4: the employee's own message is answered before the bundle statements.
     const questionWithBundle = 'questionWithBundle' in scenario && scenario.questionWithBundle === true;
     const bundleReplyInvalid = 'bundleReplyInvalid' in scenario && scenario.bundleReplyInvalid === true;
+    const correctedRejectedTwice = 'correctedRejectedTwice' in scenario && scenario.correctedRejectedTwice === true;
     if (!client || !redisUrl) return;
     const db = client.db;
     const [tenant] = await db.insert(tenants).values({ name: `V2 queue fixture ${randomUUID()}` }).returning();
@@ -250,6 +252,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     const bundleAnswer = 'Open tomorrow with the retro notes; the checklist can wait until after standup.';
     const clarificationText = 'What would you change about your priorities?';
     // GC round 3 CAP-3: the corrected meaning is shown back as a one-statement bundle.
+    const stillWrong = 'No, that is still not it.';
     const correctedSummary = 'Urgent work can override your planned priorities.';
     const correctedBundleText = `So the fair version is: ${correctedSummary} Is that right?`;
     const ai = {
@@ -278,8 +281,9 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
               surveyQuestionId: question.surveyQuestionId, statement: statements[index]!,
             })),
           }),
-      interpretQuestionBundleResponse: vi.fn(async (_turns: unknown, shown: { components: unknown[] }) =>
-        shown.components.length === 1 ? { kind: 'agree' as const }
+      interpretQuestionBundleResponse: vi.fn(async (turns: Array<{ content: string }>, shown: { components: unknown[] }) =>
+        shown.components.length === 1
+          ? turns.at(-1)?.content === stillWrong ? { kind: 'reject' as const } : { kind: 'agree' as const }
         : verdictKind === 'partial'
         || verdictKind === 'partial_unrelated' || verdictKind === 'decline'
         ? { kind: 'partial' as const,
@@ -992,6 +996,60 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
         expect(JSON.stringify(correctedBundle?.components)).toContain(correctedSummary);
         expect(await db.select().from(surveyQuestionInsights)
           .where(eq(surveyQuestionInsights.surveyWindowId, window!.id))).toHaveLength(2);
+        if (correctedRejectedTwice) {
+          // GC round 3 S4b: a reject on the shown correction asks once more instead of wiping it;
+          // a second reject closes the question for this cycle as not collected.
+          const sendInbound = async (text: string, after: string, traceId: string) => {
+            await sentJobs.at(-1)!.waitUntilFinished(messageEvents, 10_000);
+            const [previous] = await db.select().from(messages).where(eq(messages.id, after));
+            const [row] = await db.insert(messages).values({
+              tenantId, userId, conversationId, direction: 'inbound', senderType: 'user', text,
+              occurredAt: new Date(previous!.sentAt!.getTime() + 1_000),
+            }).returning();
+            await admit(row!.id);
+            const job = await conversationQueue.add('process', jobData(row!.id, traceId));
+            await job.waitUntilFinished(conversationEvents, 10_000);
+            await sentJobs.at(-1)!.waitUntilFinished(messageEvents, 10_000);
+            await evidenceJobs.at(-1)!.waitUntilFinished(evidenceEvents, 10_000);
+            const [reply] = await db.select().from(messages).where(eq(messages.id, sentJobs.at(-1)!.data.messageId));
+            return reply!;
+          };
+          const workingRow = async () => (await db.select().from(surveyQuestionWorkingInsights)
+            .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, groupQuestions[1]!.id)))[0]!;
+
+          const secondClarification = await sendInbound(stillWrong, correctedPrompt!.id, 'v2-corrected-reject-1');
+          expect(sentJobs).toHaveLength(5);
+          expect(secondClarification.text).toBe(`${bundleAnswer}\n\n${clarificationText}`);
+          expect(ai.composeQuestionClarification).toHaveBeenCalledTimes(2);
+          expect(await workingRow()).toMatchObject({
+            status: 'pending_clarification', workingSummary: correctedSummary, clarificationAttempts: 2,
+          });
+
+          const shownAgain = await sendInbound('Urgent work sometimes overrides the priorities I planned.',
+            secondClarification.id, 'v2-clarified-again');
+          expect(shownAgain.text).toBe(`${bundleAnswer}\n\n${correctedBundleText}`);
+          expect(await workingRow()).toMatchObject({ status: 'pending_confirmation', confirmedSemanticSummary: null });
+
+          await sendInbound(stillWrong, shownAgain.id, 'v2-corrected-reject-2');
+          expect(sentJobs).toHaveLength(7);
+          expect(ai.composeQuestionClarification).toHaveBeenCalledTimes(2);
+          expect(ai.generateResponse.mock.calls.at(-1)![2]).toMatchObject({
+            questionNotCollected: { questionGroup },
+            topicConfirmed: { questionGroup, topicsClosed: 1, topicsTotal: 4 },
+          });
+          const closed = await workingRow();
+          expect(closed).toMatchObject({
+            status: 'declined', workingSummary: null, confirmedSemanticSummary: null, sourceMessageIds: [],
+          });
+          expect(closed.purgedAt).not.toBeNull();
+          const [closedBacklog] = await db.select().from(pulseBacklog)
+            .where(eq(pulseBacklog.surveyQuestionId, groupQuestions[1]!.id));
+          expect(closedBacklog).toMatchObject({ status: 'done', resultedInCoverage: false });
+          expect(await db.select().from(surveyQuestionInsights)
+            .where(eq(surveyQuestionInsights.surveyWindowId, window!.id))).toHaveLength(2);
+          expect(scoreConfirmedMeaning).toHaveBeenCalledTimes(2);
+          return;
+        }
         const [fifthInbound] = await db.insert(messages).values({
           tenantId, userId, conversationId, direction: 'inbound', senderType: 'user',
           text: 'Yes, that is right.',

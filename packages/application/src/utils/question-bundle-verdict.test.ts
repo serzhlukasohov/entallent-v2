@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { validateQuestionBundleVerdict } from './question-bundle-verdict';
+import {
+  MAX_QUESTION_CLARIFICATIONS, resolveCorrectedStatementVerdict, validateQuestionBundleVerdict,
+} from './question-bundle-verdict';
 
 const ids = ['q-a', 'q-b', 'q-c'];
 
@@ -43,5 +45,32 @@ describe('validateQuestionBundleVerdict', () => {
     expect(() => validateQuestionBundleVerdict({
       ...partial, disputedQuestionIds: ['q-a'],
     }, ids)).toThrow('v2_confirmation_verdict_invalid');
+  });
+});
+
+describe('resolveCorrectedStatementVerdict (GC round 3 S4b)', () => {
+  const disputed = { kind: 'partial' as const, acceptedQuestionIds: [], disputedQuestionIds: ['q-b'], declinedQuestionIds: [] };
+  const declined = { kind: 'partial' as const, acceptedQuestionIds: [], disputedQuestionIds: [], declinedQuestionIds: ['q-b'] };
+
+  it('allows at most two clarification questions per question', () => {
+    expect(MAX_QUESTION_CLARIFICATIONS).toBe(2);
+  });
+
+  it('turns a reject into one more clarification while the budget lasts', () => {
+    expect(resolveCorrectedStatementVerdict({ kind: 'reject' }, 'q-b', 1)).toEqual(disputed);
+  });
+
+  it('keeps a dispute while the budget lasts', () => {
+    expect(resolveCorrectedStatementVerdict(disputed, 'q-b', 1)).toEqual(disputed);
+  });
+
+  it('closes the question as declined once the budget is spent', () => {
+    expect(resolveCorrectedStatementVerdict({ kind: 'reject' }, 'q-b', 2)).toEqual(declined);
+    expect(resolveCorrectedStatementVerdict(disputed, 'q-b', 2)).toEqual(declined);
+  });
+
+  it('keeps agree and an explicit skip unchanged', () => {
+    expect(resolveCorrectedStatementVerdict({ kind: 'agree' }, 'q-b', 2)).toEqual({ kind: 'agree' });
+    expect(resolveCorrectedStatementVerdict(declined, 'q-b', 0)).toEqual(declined);
   });
 });
