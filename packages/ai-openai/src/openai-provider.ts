@@ -1,22 +1,28 @@
 import OpenAI, { AzureOpenAI } from 'openai';
 import { CircuitBreaker } from './circuit-breaker';
+import { ProviderContentFilterError } from '@entalent/application';
 import {
   SituationClassificationSchema,
   SituationIntentSchema,
   DialogueActSchema,
   RiskDetectionSchema,
+  ModerationSignalError,
   MemoryItemProposalSchema,
   GoalProposalSchema,
   FollowUpCandidateSchema,
   GeneratedResponseSchema,
   SurveyEvidenceEvaluationSchema,
+  QuestionScoreResponseSchema,
+  QuestionDeidentifiedSummarySchema,
   GroupSummarySchema,
   GroupReportSchema,
   SentimentScoreSchema,
   ConfirmationResponseSchema,
   ObservedStyleSchema,
   type SituationClassification,
-  type RiskDetection,
+  type ProviderRiskDetection,
+  type ModerationCategory,
+  type ModerationSignal,
   type MemoryProposal,
   type ReplyStrategy,
   type GeneratedResponse,
@@ -34,8 +40,27 @@ import type {
   MemoryContext,
   ResponseContext,
   SurveyQuestionForEvaluation,
+  SurveyEvidenceEvaluationOptions,
+  QuestionBundleComposition,
+  QuestionBundleVariant,
+  AwaitingQuestionBundle,
+  QuestionBundleVerdict,
+  PendingQuestionClarification,
+  QuestionClarificationVerdict,
+  ApprovedQuestionRubric,
+  QuestionScoreResult,
 } from '@entalent/application';
-import { isExplicitPulseCaptureRequest } from '@entalent/application';
+import {
+  BundleReplyInvalidError,
+  composeBundleReplyText,
+  maxReplyChars,
+  validateBundleReply,
+  validateQuestionBundleComposition,
+  validateQuestionBundleVerdict,
+  validateQuestionClarificationPrompt,
+  validateQuestionClarificationVerdict,
+  type TrailingBundle,
+} from '@entalent/application';
 import { buildClassifySystemPrompt, buildClassifyUserPrompt } from './prompts/classify';
 import { buildStyleAnalyzeSystemPrompt, buildStyleAnalyzeUserPrompt } from './prompts/style-analyze';
 import { buildMemorySystemPrompt, buildMemoryUserPrompt } from './prompts/memory';
@@ -43,8 +68,23 @@ import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
 import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey';
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
+import { buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt } from './prompts/question-bundle';
+import { buildQuestionBundleInterpretSystemPrompt, buildQuestionBundleInterpretUserPrompt } from './prompts/question-bundle-interpret';
+import {
+  buildQuestionClarificationSystemPrompt,
+  buildQuestionClarificationUserPrompt,
+  buildQuestionClarificationInterpretSystemPrompt,
+  buildQuestionClarificationInterpretUserPrompt,
+} from './prompts/question-clarification';
 import { buildConfirmInterpretSystemPrompt, buildConfirmInterpretUserPrompt } from './prompts/confirm-interpret';
 import { buildGroupReportSystemPrompt, buildGroupReportUserPrompt } from './prompts/group-report';
+import {
+  QUESTION_SCORE_PROMPT_VERSION,
+  buildQuestionScoreSystemPrompt,
+  buildQuestionScoreUserPrompt,
+  buildQuestionDeidentifySystemPrompt,
+  buildQuestionDeidentifyUserPrompt,
+} from './prompts/question-insight-finalization';
 
 export interface ModelConfig {
   /** Used for classification and risk detection (structured, lower cost). Default: gpt-4o-mini */
@@ -73,11 +113,34 @@ export interface AzureOpenAiConfig {
 
 export type OpenAiProviderConfig = DirectOpenAiConfig | AzureOpenAiConfig;
 
+function errorFields(error: unknown): Record<string, unknown> {
+  return typeof error === 'object' && error !== null ? error as Record<string, unknown> : {};
+}
+
+function isConfirmedAzureInputFilter(error: unknown): boolean {
+  const outer = errorFields(error);
+  const body = errorFields(outer['error']);
+  const code = outer['code'] ?? body['code'];
+  const param = outer['param'] ?? body['param'];
+  const inner = errorFields(outer['innererror'] ?? body['innererror']);
+  return outer['status'] === 400 && code === 'content_filter'
+    && (param === 'prompt' || inner['code'] === 'ResponsibleAIPolicyViolation');
+}
+
+function isRetryableProviderFailure(error: unknown): boolean {
+  if (error instanceof ProviderContentFilterError) return false;
+  const status = errorFields(error)['status'];
+  return typeof status !== 'number' || status === 429 || status >= 500;
+}
+
 function questionRetryInstruction(maxQuestions: 0 | 1): string {
   return maxQuestions === 0
     ? '\n\nYour previous draft asked a question. This turn must ask none — rewrite without any question anywhere in the reply.'
     : '\n\nYour previous draft asked more than one question. Rewrite with at most one question in the entire reply.';
 }
+
+const BUNDLE_REPLY_RETRY_INSTRUCTION =
+  '\n\nYour previous draft broke the two-part contract. Return "replyText" as 1-3 sentences that answer the employee\'s latest message with no question mark or other question punctuation, within the length limit, and without repeating the fixed text or any of its statements; return "bundleText" as a byte-for-byte copy of the fixed text given above, with nothing added, removed, or changed.';
 
 const CONFIRMATION_RETRY_INSTRUCTION =
   '\n\nYour previous confirmation draft was invalid. Return a non-empty reportable "confirmationSummary" with no question punctuation, copy that exact byte-for-byte string into "text" as a proper substring (never the entire reply), do not expose field labels like "confirmationSummary:", and ask exactly one question in the full "text" outside that summary.';
@@ -92,6 +155,28 @@ function stripExposedConfirmationSummaryLabel(response: GeneratedResponse): Gene
     : response;
 }
 
+/** A draft that fails to parse is a contract break like any other: repair once, then fail closed. */
+function assembleBundleReply(
+  raw: string,
+  bundleText: string,
+  options: { maxReplyChars: number; statements?: readonly string[] },
+): GeneratedResponse | BundleReplyInvalidError {
+  let response: GeneratedResponse;
+  try {
+    response = GeneratedResponseSchema.parse(JSON.parse(raw));
+  } catch {
+    return new BundleReplyInvalidError('draft_unparseable');
+  }
+  try {
+    const parts = validateBundleReply(response, bundleText, options);
+    return {
+      ...response, ...parts, text: composeBundleReplyText(parts), containsSurveyProbe: false, surveyProbeQuestionId: undefined,
+    };
+  } catch (error) {
+    return error instanceof BundleReplyInvalidError ? error : new BundleReplyInvalidError('reply_missing');
+  }
+}
+
 function isValidConfirmationResponse(response: GeneratedResponse): boolean {
   const summary = response.confirmationSummary;
   return typeof summary === 'string'
@@ -104,36 +189,39 @@ function isValidConfirmationResponse(response: GeneratedResponse): boolean {
 }
 
 /** Firm rewrite instruction when a reply overruns its length budget. */
-function lengthRetryInstruction(maxChars: number): string {
+function lengthRetryInstruction(maxChars: number, context?: Pick<ResponseContext, 'replyPlan' | 'replyBrief'>): string {
   const words = Math.max(8, Math.round(maxChars / 6));
-  return `\n\nYour previous draft was too long for this turn. Rewrite it much shorter — at most ${words} words, one sentence if you can. Keep only the single most useful thing and drop the extra observation.`;
-}
-
-/**
- * Hard length ceiling (characters) per reply-length tier, tightened for a clearly terse
- * user. Verbosity comes from the observed style profile already carried in the response context.
- */
-function maxReplyChars(strategy: ReplyStrategy, context: ResponseContext): number {
-  const verbosity = context.styleAdaptation?.dimensions.verbosity;
-  const terse = typeof verbosity === 'number' && verbosity <= 0.3;
-  switch (strategy.maxResponseLength) {
-    case 'short':
-      return terse ? 140 : 360;
-    case 'medium':
-      return terse ? 340 : 680;
-    default:
-      return 980;
+  const replyPlan = context?.replyPlan ?? context?.replyBrief;
+  if (replyPlan?.formatRequest) {
+    return `\n\nYour previous draft was too long for this turn. Rewrite it within ${words} words: keep the list shape the employee asked for (one item per line), trim each item to its essentials, and drop any prose around the items.`;
   }
+  return `\n\nYour previous draft was too long for this turn. Rewrite it much shorter — at most ${words} words, one sentence if you can. Keep only the single most useful thing and drop the extra observation.`;
 }
 
 function countQuestionGroups(text: string): number {
   return text.match(/[?;՞؟፧᥅⁇⁈⁉⸮﹖？❓❔]+/gu)?.length ?? 0;
 }
 
-function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext): 0 | 1 {
+const SOFT_QUESTION_RETRY_INSTRUCTION =
+  '\n\nYour previous draft asked a question or ended with an offer of your own. This turn delivers the item and stops: remove any question, offer, or "do you want" of your own. Quoted phrases or items the employee could say may keep their own question marks.';
+
+/**
+ * Question limit the deterministic gate enforces. On a delivery turn (an accepted offer or a
+ * requested list) the gate is soft: it drives ONE repair of a trailing question or offer but never
+ * fails the turn, because delivered phrases and items legitimately quote question marks the mentor
+ * is not asking (ADR-013 D2: a lexical count validates structure, it does not override the typed
+ * contract that allows them).
+ */
+function questionGateFor(strategy: ReplyStrategy, context: ResponseContext): { maxQuestions: 0 | 1; soft: boolean } {
   const replyPlan = context.replyPlan ?? context.replyBrief;
-  if (replyPlan) return replyPlan.questionPolicy.maxQuestions;
-  return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
+  if (replyPlan) {
+    const reason = replyPlan.questionPolicy.reason;
+    return {
+      maxQuestions: replyPlan.questionPolicy.maxQuestions,
+      soft: reason === 'offer_delivery' || reason === 'format_request',
+    };
+  }
+  return { maxQuestions: strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0, soft: false };
 }
 
 function numericProbeQuestion(context: ResponseContext): { id: string } | undefined {
@@ -171,9 +259,16 @@ export class OpenAiProvider implements AiProviderPort {
   private readonly client: OpenAI;
   private readonly analysisModel: string;
   private readonly generationModel: string;
-  private readonly breaker = new CircuitBreaker({ failureThreshold: 5, windowMs: 60_000, cooldownMs: 30_000 });
+  private readonly breaker = new CircuitBreaker({
+    failureThreshold: 5, windowMs: 60_000, cooldownMs: 30_000,
+    // A content-filter or other permanent 400 is a property of the request, not provider health:
+    // one user's message must not open the breaker for every other conversation.
+    isFailure: isRetryableProviderFailure,
+  });
+  private readonly azure: boolean;
 
   constructor(config: OpenAiProviderConfig) {
+    this.azure = config.azure === true;
     if (config.azure) {
       this.client = new AzureOpenAI({
         endpoint: config.endpoint,
@@ -232,13 +327,47 @@ export class OpenAiProvider implements AiProviderPort {
     return context.onboarding ? classification : { ...classification, onboardingSignal: null };
   }
 
-  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
-    const raw = await this.complete(
-      buildRiskSystemPrompt(),
-      buildRiskUserPrompt(turns, context),
-      this.analysisModel,
-    );
-    return RiskDetectionSchema.parse(JSON.parse(raw));
+  /**
+   * Risk detection at temperature 0 (ADR-013 R1) with the provider's moderation signal attached
+   * as a tripwire: Azure content-filter annotations on the same call, or the OpenAI moderation
+   * endpoint in parallel. A refusal or failure that carries a moderation signal is rethrown as
+   * ModerationSignalError so policy can still raise severity.
+   */
+  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
+    const latestUserText = [...turns].reverse().find((turn) => turn.role === 'user')?.content ?? '';
+    const [completion, endpointModeration] = await Promise.allSettled([
+      this.completeWithResponse(
+        buildRiskSystemPrompt(),
+        buildRiskUserPrompt(turns, context),
+        this.analysisModel,
+        2048,
+        0,
+      ),
+      this.azure ? Promise.resolve(undefined) : this.moderate(latestUserText),
+    ]);
+    const openAiSignal = endpointModeration.status === 'fulfilled' ? endpointModeration.value : undefined;
+
+    if (completion.status === 'rejected') {
+      const blocked = azureContentFilterSignal(completion.reason);
+      const signal = blocked ?? openAiSignal;
+      if (signal) throw new ModerationSignalError(signal, 'Risk detection failed with a moderation signal');
+      throw completion.reason;
+    }
+
+    const detection = RiskDetectionSchema.parse(JSON.parse(completion.value.content));
+    const signal = this.azure ? azurePromptAnnotationSignal(completion.value.response) : openAiSignal;
+    return signal ? { ...detection, moderation: signal } : detection;
+  }
+
+  /** OpenAI moderation endpoint (free). Best-effort: a failure yields no signal, never an error. */
+  private async moderate(text: string): Promise<ModerationSignal | undefined> {
+    if (!text.trim()) return undefined;
+    try {
+      const response = await this.client.moderations.create({ model: 'omni-moderation-latest', input: text });
+      return openAiModerationSignal(response.results?.[0]?.categories as unknown as Record<string, boolean> | undefined);
+    } catch {
+      return undefined;
+    }
   }
 
   async extractMemory(
@@ -272,14 +401,47 @@ export class OpenAiProvider implements AiProviderPort {
   async evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: SurveyEvidenceEvaluationOptions,
   ): Promise<SurveyEvidenceEvaluation> {
     const raw = await this.complete(
-      buildSurveySystemPrompt(),
+      buildSurveySystemPrompt(options),
       buildSurveyUserPrompt(turns, questions),
       this.analysisModel,
       4096,
     );
     return SurveyEvidenceEvaluationSchema.parse(JSON.parse(raw));
+  }
+
+  async scoreConfirmedMeaning(input: {
+    semanticSummary: string;
+    rubric: ApprovedQuestionRubric;
+    questionId: string;
+    scoringPolicyVersion: string;
+  }): Promise<QuestionScoreResult> {
+    const raw = await this.complete(
+      buildQuestionScoreSystemPrompt(),
+      buildQuestionScoreUserPrompt(input),
+      this.analysisModel,
+      512,
+      0,
+    );
+    const result = QuestionScoreResponseSchema.parse(JSON.parse(raw));
+    return {
+      ...result,
+      modelId: this.analysisModel,
+      promptVersion: QUESTION_SCORE_PROMPT_VERSION,
+    };
+  }
+
+  async deidentify(input: { semanticSummary: string; attempt: number }): Promise<string> {
+    const raw = await this.complete(
+      buildQuestionDeidentifySystemPrompt(input.attempt),
+      buildQuestionDeidentifyUserPrompt(input.semanticSummary),
+      this.analysisModel,
+      512,
+      0,
+    );
+    return QuestionDeidentifiedSummarySchema.parse(JSON.parse(raw)).summary;
   }
 
   async generateResponse(
@@ -289,6 +451,9 @@ export class OpenAiProvider implements AiProviderPort {
   ): Promise<GeneratedResponse> {
     const system = buildRespondSystemPrompt(strategy, context);
     const user = buildRespondUserPrompt(turns, context, strategy);
+    if (context.trailingBundle) {
+      return this.generateBundleReply(system, user, strategy, context, context.trailingBundle);
+    }
 
     const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
@@ -301,11 +466,11 @@ export class OpenAiProvider implements AiProviderPort {
       if (!isValidConfirmationResponse(first)) retries.push(CONFIRMATION_RETRY_INSTRUCTION);
     } else {
       if (first.text.length > maxReplyChars(strategy, context)) {
-        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
+        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context), context));
       }
-      const maxQuestions = maxAllowedQuestions(strategy, context);
-      if (countQuestionGroups(first.text) > maxQuestions) {
-        retries.push(questionRetryInstruction(maxQuestions));
+      const questionGate = questionGateFor(strategy, context);
+      if (countQuestionGroups(first.text) > questionGate.maxQuestions) {
+        retries.push(questionGate.soft ? SOFT_QUESTION_RETRY_INSTRUCTION : questionRetryInstruction(questionGate.maxQuestions));
       }
     }
     const numericProbe = numericProbeQuestion(context);
@@ -324,13 +489,103 @@ export class OpenAiProvider implements AiProviderPort {
         'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
       );
     }
-    if (!context.confirmationRequest && countQuestionGroups(corrected.text) > maxAllowedQuestions(strategy, context)) {
+    const correctedGate = questionGateFor(strategy, context);
+    if (!context.confirmationRequest && !correctedGate.soft
+      && countQuestionGroups(corrected.text) > correctedGate.maxQuestions) {
       throw new Error('Generated response exceeds the question limit after one corrective attempt');
     }
     if (numericProbe && !isValidNumericProbeResponse(corrected, numericProbe.id)) {
       throw new Error('OpenAI returned a noncompliant numeric survey probe after retry');
     }
     return corrected;
+  }
+
+  /**
+   * GC round 3 CAP-4: one structured generation with the answer and a byte-for-byte copy of the
+   * fixed text. The generic length and question gates do not apply to the assembled message; the
+   * reply part is validated on its own, with ONE repair, then fails closed so the orchestrator
+   * can send the fixed text alone.
+   */
+  private async generateBundleReply(
+    system: string,
+    user: string,
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    bundle: TrailingBundle,
+  ): Promise<GeneratedResponse> {
+    const options = { maxReplyChars: maxReplyChars(strategy, context), statements: bundle.statements };
+    const first = assembleBundleReply(await this.complete(system, user, this.generationModel), bundle.text, options);
+    if (!(first instanceof BundleReplyInvalidError)) return first;
+    const corrected = assembleBundleReply(
+      await this.complete(system + BUNDLE_REPLY_RETRY_INSTRUCTION, user, this.generationModel), bundle.text, options,
+    );
+    if (!(corrected instanceof BundleReplyInvalidError)) return corrected;
+    throw corrected;
+  }
+
+  async composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+    variant: QuestionBundleVariant = 'confirmation',
+  ): Promise<QuestionBundleComposition> {
+    const raw = await this.complete(
+      buildQuestionBundleSystemPrompt(responseLanguage, questions.length, variant),
+      buildQuestionBundleUserPrompt(turns, questions),
+      this.generationModel,
+      2048,
+    );
+    return validateQuestionBundleComposition(
+      JSON.parse(raw) as unknown,
+      questions.map((question) => question.surveyQuestionId),
+    );
+  }
+
+  async interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict> {
+    const raw = await this.complete(
+      buildQuestionBundleInterpretSystemPrompt(bundle.components.length),
+      buildQuestionBundleInterpretUserPrompt(turns, bundle),
+      this.analysisModel,
+      512,
+    );
+    return validateQuestionBundleVerdict(
+      JSON.parse(raw) as unknown,
+      bundle.components.map((component) => component.surveyQuestionId),
+    );
+  }
+
+  async composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string> {
+    const raw = await this.complete(
+      buildQuestionClarificationSystemPrompt(responseLanguage),
+      buildQuestionClarificationUserPrompt(turns, clarification),
+      this.generationModel,
+      512,
+    );
+    const parsed: unknown = JSON.parse(raw);
+    const text = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)['text']
+      : undefined;
+    return validateQuestionClarificationPrompt(text);
+  }
+
+  async interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict> {
+    const raw = await this.complete(
+      buildQuestionClarificationInterpretSystemPrompt(),
+      buildQuestionClarificationInterpretUserPrompt(turns, clarification),
+      this.analysisModel,
+      512,
+    );
+    return validateQuestionClarificationVerdict(JSON.parse(raw) as unknown);
   }
 
   async generateGroupSummary(
@@ -398,20 +653,46 @@ export class OpenAiProvider implements AiProviderPort {
     maxTokens = 2048,
     temperature = 0.3,
   ): Promise<string> {
+    const { content } = await this.completeWithResponse(systemPrompt, userPrompt, model, maxTokens, temperature);
+    return content;
+  }
+
+  private async completeWithResponse(
+    systemPrompt: string,
+    userPrompt: string,
+    model: string,
+    maxTokens: number,
+    temperature: number,
+  ): Promise<{ content: string; response: unknown }> {
     return this.breaker.call(async () => {
-      const response = await this.client.chat.completions.create({
-        model,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        response_format: { type: 'json_object' } as any,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature,
-        max_completion_tokens: maxTokens,
-      });
+      let response;
+      try {
+        response = await this.client.chat.completions.create({
+          model,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          response_format: { type: 'json_object' } as any,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature,
+          max_completion_tokens: maxTokens,
+        });
+      } catch (error) {
+        if (this.azure && isConfirmedAzureInputFilter(error)) {
+          throw new ProviderContentFilterError(
+            'input',
+            azureContentFilterSignal(error)?.categories ?? [],
+            azureFilteredCategoryKeys(error),
+          );
+        }
+        throw error;
+      }
 
       const choice = response.choices[0];
+      if (this.azure && choice?.finish_reason === 'content_filter') {
+        throw new ProviderContentFilterError('output');
+      }
       const content = choice?.message?.content;
       if (!content) throw new Error('OpenAI returned an empty response');
       // A truncated response is invalid JSON — surface it clearly instead of
@@ -421,9 +702,93 @@ export class OpenAiProvider implements AiProviderPort {
           `OpenAI response truncated (finish_reason=length, max_completion_tokens=${maxTokens}) — raise the token budget for this call`,
         );
       }
-      return content;
+      return { content, response };
     });
   }
+}
+
+type AzureFilterResult = Record<string, { filtered?: boolean; severity?: string } | undefined>;
+
+const AZURE_FILTER_CATEGORIES: Array<[string, ModerationCategory]> = [
+  ['self_harm', 'self_harm'],
+  ['violence', 'violence'],
+];
+
+function azureFilterCategories(result: AzureFilterResult | undefined): ModerationSignal['categories'] {
+  if (!result) return [];
+  const categories: ModerationSignal['categories'] = [];
+  for (const [key, category] of AZURE_FILTER_CATEGORIES) {
+    const level = result[key]?.severity;
+    if (level === 'low' || level === 'medium' || level === 'high') categories.push({ category, level });
+  }
+  return categories;
+}
+
+const AZURE_FILTER_KEY = /^[a-z_]{1,32}$/;
+const AZURE_FILTER_KEY_LIMIT = 8;
+
+/**
+ * The provider category keys whose result says the prompt was filtered or a shield detected it.
+ * Keys are format-validated and capped so the value stays a bounded diagnostic (ADR-013 D2).
+ */
+function azureFilteredCategoryKeys(error: unknown): string[] {
+  const outer = errorFields(error);
+  const body = errorFields(outer['error']);
+  const inner = errorFields(outer['innererror'] ?? body['innererror']);
+  const result = inner['content_filter_result'];
+  if (typeof result !== 'object' || result === null) return [];
+  return Object.entries(result as Record<string, unknown>)
+    .filter(([key, value]) => AZURE_FILTER_KEY.test(key)
+      && typeof value === 'object' && value !== null
+      && ((value as { filtered?: unknown }).filtered === true || (value as { detected?: unknown }).detected === true))
+    .map(([key]) => key)
+    .sort()
+    .slice(0, AZURE_FILTER_KEY_LIMIT);
+}
+
+function isAzureContentFilterError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null
+    && (err as { status?: unknown }).status === 400
+    && (err as { code?: unknown }).code === 'content_filter';
+}
+
+/** Azure rejects a prompt that crosses its content-filter threshold with a 400 content_filter. */
+function azureContentFilterSignal(err: unknown): ModerationSignal | undefined {
+  if (err instanceof ProviderContentFilterError) {
+    return err.direction === 'input'
+      ? { source: 'azure_content_filter', blocked: true, categories: [...err.categories] }
+      : undefined;
+  }
+  if (!isAzureContentFilterError(err)) return undefined;
+  const inner = (err as { error?: { innererror?: { content_filter_result?: AzureFilterResult } } })
+    .error?.innererror?.content_filter_result;
+  return { source: 'azure_content_filter', blocked: true, categories: azureFilterCategories(inner) };
+}
+
+/** Prompt annotations on a successful Azure call. They cover the whole risk prompt window. */
+function azurePromptAnnotationSignal(response: unknown): ModerationSignal | undefined {
+  const results = (response as { prompt_filter_results?: Array<{ content_filter_results?: AzureFilterResult }> })
+    ?.prompt_filter_results;
+  if (!Array.isArray(results)) return undefined;
+  const categories = results.flatMap((entry) => azureFilterCategories(entry.content_filter_results));
+  return categories.length > 0 ? { source: 'azure_content_filter', blocked: false, categories } : undefined;
+}
+
+const OPENAI_MODERATION_CATEGORIES: Array<[string, ModerationCategory]> = [
+  ['self-harm', 'self_harm'],
+  ['self-harm/intent', 'self_harm_intent'],
+  ['self-harm/instructions', 'self_harm_instructions'],
+  ['violence', 'violence'],
+  ['harassment/threatening', 'harassment_threatening'],
+  ['hate/threatening', 'hate_threatening'],
+];
+
+function openAiModerationSignal(flags: Record<string, boolean> | undefined): ModerationSignal | undefined {
+  if (!flags) return undefined;
+  const categories = OPENAI_MODERATION_CATEGORIES
+    .filter(([key]) => flags[key] === true)
+    .map(([, category]) => ({ category, level: null }));
+  return categories.length > 0 ? { source: 'openai_moderation', blocked: false, categories } : undefined;
 }
 
 const EXPLICIT_CORRECTION_REQUEST_PREFIX =
@@ -477,7 +842,6 @@ function normalizePulseCaptureExplanation(
   const isControlRequest = EXPLICIT_TEXT_TRANSFORM_REQUEST.test(latestEmployeeText)
     || EXPLICIT_CHATBOT_EVALUATION_REQUEST.test(latestEmployeeText)
     || /^the\s+employee\s+(?:wrote|said|asked)\b/iu.test(latestEmployeeText);
-  const explicitRequest = isExplicitPulseCaptureRequest(latestEmployeeText);
   const safetyRequest = safetyIntent !== undefined
     && PULSE_CAPTURE_QUESTION_FRAGMENT.test(latestEmployeeText);
   const explicitReminderRequest = EXPLICIT_REMINDER_REQUEST.test(latestEmployeeText);
@@ -494,21 +858,18 @@ function normalizePulseCaptureExplanation(
   const helpUnderstandRemainder = latestEmployeeText.replace(HELP_UNDERSTAND_PREFIX, '');
   const mixedActionRequest = MIXED_ACTION_REQUEST.test(
     helpUnderstandRemainder === latestEmployeeText ? latestEmployeeText : helpUnderstandRemainder,
-  ) && !explicitRequest;
+  );
   const additionalActionRequest = helpUnderstandRemainder
     .split(/[,.!?;\n]+|\b(?:and|also|plus|then|afterwards|и|та|і|затем|потом|тоді)\b/iu)
     .some((part) => MIXED_ACTION_REQUEST.test(part) && !EXPLICIT_REMINDER_REQUEST.test(part));
   if (
     !isControlRequest
     && (!mixedActionRequest || (typedReminderRequest && !additionalActionRequest))
-    && (explicitRequest || safetyRequest || typedRequest)
+    && (safetyRequest || typedRequest)
   ) {
     if (safetyIntent) {
       return {
         ...classification,
-        pulseCaptureScope: explicitRequest
-          ? { type: 'conversation' }
-          : classification.pulseCaptureScope,
         surveyAllowed: false,
         primaryIntent: safetyIntent,
         secondaryIntents: [
@@ -521,9 +882,6 @@ function normalizePulseCaptureExplanation(
     }
     return {
       ...classification,
-      pulseCaptureScope: explicitRequest
-        ? { type: 'conversation' }
-        : classification.pulseCaptureScope,
       surveyAllowed: false,
       reminderRequest: typedReminderRequest ? classification.reminderRequest : null,
       primaryIntent: 'pulse_capture_explanation',

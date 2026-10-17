@@ -4,6 +4,7 @@ import {
   messages,
   surveyGroupStates,
   surveyReportingCohorts,
+  surveyWindowScoringPolicies,
   surveyWindows,
   teamMemberships,
   teams,
@@ -65,11 +66,19 @@ export class GroupStateRepository {
         eq(surveyGroupStates.status, 'pending_confirmation'),
         isNull(surveyGroupStates.confirmationPromptMessageId),
         sql`not exists (
+          select 1 from ${surveyWindowScoringPolicies} v2_binding
+          where v2_binding.survey_window_id = ${surveyGroupStates.surveyWindowId}
+        )`,
+        sql`not exists (
           select 1 from ${surveyGroupStates} active
           where active.tenant_id = ${tenantId}
             and active.user_id = ${userId}
             and active.confirmation_prompt_message_id is not null
             and active.status in ('pending_confirmation', 'awaiting_confirmation')
+            and not exists (
+              select 1 from ${surveyWindowScoringPolicies} active_v2_binding
+              where active_v2_binding.survey_window_id = active.survey_window_id
+            )
         )`,
       ));
     return rows.map((row) => mapGroupState(row));
@@ -91,6 +100,10 @@ export class GroupStateRepository {
         eq(surveyGroupStates.userId, userId),
         eq(surveyGroupStates.tenantId, tenantId),
         inArray(surveyGroupStates.status, ['pending_confirmation', 'awaiting_confirmation']),
+        sql`not exists (
+          select 1 from ${surveyWindowScoringPolicies} v2_binding
+          where v2_binding.survey_window_id = ${surveyGroupStates.surveyWindowId}
+        )`,
         eq(messages.tenantId, tenantId),
         eq(messages.userId, userId),
         eq(messages.conversationId, conversationId),
@@ -425,6 +438,13 @@ export class GroupStateRepository {
         eq(surveyReportingCohorts.id, params.reportingCohortId),
         eq(surveyReportingCohorts.tenantId, params.tenantId),
         eq(surveyReportingCohorts.teamId, params.teamId),
+        sql`not exists (
+          select 1 from ${surveyWindowScoringPolicies} v2_binding
+          join ${surveyWindows} v2_window on v2_window.id = v2_binding.survey_window_id
+          where v2_window.reporting_cohort_id = ${params.reportingCohortId}
+            and v2_window.tenant_id = ${params.tenantId}
+            and v2_binding.tenant_id = ${params.tenantId}
+        )`,
         sql`${surveyGroupStates.userId} = any(${surveyReportingCohorts.rosterUserIds})`,
         sql`exists (
           select 1 from ${users} report_user

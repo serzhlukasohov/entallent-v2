@@ -25,18 +25,40 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
       .map((detail) => detail.trim())
       .filter(Boolean),
   )].slice(0, 5);
-  const safetyOverridesPause = (input.sensitiveMode ?? false) &&
+  const sensitiveMode = input.sensitiveMode ?? false;
+  const safetyOverridesPause = sensitiveMode &&
     (dialogueAct === 'closing' || dialogueAct === 'acknowledgement');
+  // CAP-6: an accepted offer is a request for the offered item even when the surface act is a
+  // backchannel. Safety, a disclosure, a correction, and a closing keep their own contracts.
+  const priorAssistantOffer = classification.priorAssistantOffer ?? false;
+  const acceptsPriorOffer = !sensitiveMode
+    && priorAssistantOffer
+    && (classification.acceptsPriorOffer ?? false)
+    && OFFER_ACCEPTING_ACTS.has(dialogueAct);
   const correctionCarryover = input.correctionCarryover ?? false;
-  const memoryAnchors = safetyOverridesPause || dialogueAct === 'correction' || correctionCarryover
+  const memoryAnchors = safetyOverridesPause || dialogueAct === 'correction' || correctionCarryover || acceptsPriorOffer
     ? []
     : selectMemoryAnchors(input.memoryItems ?? []);
-  const responseMove = safetyOverridesPause ? 'support_emotion' : responseMoveFor(dialogueAct);
+  const responseMove = safetyOverridesPause
+    ? 'support_emotion'
+    : acceptsPriorOffer
+      ? 'answer_request'
+      : responseMoveFor(dialogueAct);
   const mayInferFromBrevity = latestUserSubstance !== null;
-  const questionPolicy = buildQuestionPolicy({
-    dialogueAct,
-    includeFollowUpQuestion: input.includeFollowUpQuestion,
-  });
+  // CAP-9: a list shape is honoured only where the typed move produces content; a pause,
+  // emotional support, or a safety turn keeps prose.
+  const formatRequest = !sensitiveMode && FORMAT_HONOURING_MOVES.has(responseMove) && dialogueAct !== 'acknowledgement'
+    ? classification.formatRequest ?? null
+    : null;
+  // Delivering an accepted offer or a requested shape ends the turn; no question of the mentor's own.
+  const questionPolicy = acceptsPriorOffer
+    ? { maxQuestions: 0 as const, reason: 'offer_delivery' as const }
+    : formatRequest
+      ? { maxQuestions: 0 as const, reason: 'format_request' as const }
+      : buildQuestionPolicy({
+          dialogueAct,
+          includeFollowUpQuestion: input.includeFollowUpQuestion,
+        });
 
   return {
     dialogueAct,
@@ -48,19 +70,41 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
     responseMove,
     mayInferFromBrevity,
     questionPolicy,
-    requiredGrounding: safetyOverridesPause ? [] : buildRequiredGrounding(
-      responseMove,
-      input.currentTurnHasTopicAnchor ?? topicAnchor !== null,
-      memoryAnchors,
-    ),
+    requiredGrounding: safetyOverridesPause
+      ? []
+      : acceptsPriorOffer
+        ? [PRIOR_OFFER_GROUNDING]
+        : buildRequiredGrounding(
+            responseMove,
+            input.currentTurnHasTopicAnchor ?? topicAnchor !== null,
+            memoryAnchors,
+          ),
     forbiddenMoves: buildForbiddenMoves({
       responseMove,
       mayInferFromBrevity,
-      sensitiveMode: input.sensitiveMode ?? false,
+      sensitiveMode,
       surveyProbeQuestionId: input.surveyProbeQuestionId,
+      acceptsPriorOffer,
+      openPriorOffer: priorAssistantOffer && !acceptsPriorOffer,
     }),
+    formatRequest,
   };
 }
+
+const OFFER_ACCEPTING_ACTS = new Set<SituationClassification['dialogueAct']>([
+  'acknowledgement', 'continuation', 'request', 'new_substance', 'social_checkin', 'greeting',
+]);
+const FORMAT_HONOURING_MOVES = new Set<ReplyPlan['responseMove']>([
+  'answer_request', 'address_new_substance', 'continue_existing_thread',
+]);
+
+/** Prompt-side description only; the offered item itself is read from the transcript. */
+const PRIOR_OFFER_GROUNDING: ReplyPlan['requiredGrounding'][number] = {
+  source: 'prior_offer',
+  category: 'offer',
+  content: 'the item offered in the previous assistant turn',
+  requirement: 'deliver_now',
+};
 
 function selectMemoryAnchors(
   items: Pick<MemoryItemRecord, 'category' | 'content' | 'importance'>[],
@@ -158,10 +202,20 @@ function buildForbiddenMoves(input: {
   mayInferFromBrevity: boolean;
   sensitiveMode: boolean;
   surveyProbeQuestionId?: string;
+  acceptsPriorOffer: boolean;
+  /** The previous mentor turn offered something the employee has not accepted. */
+  openPriorOffer: boolean;
 }): ReplyPlan['forbiddenMoves'] {
   const forbidden = new Set<ReplyPlan['forbiddenMoves'][number]>();
   forbidden.add('unsupported_interpretation');
   if (!input.mayInferFromBrevity) forbidden.add('comment_on_brevity');
+  // CAP-6: deliver, do not offer. One open offer per thread; none when something was just asked
+  // for. In sensitive mode the safety contract already forbids frameworks and offers.
+  if (input.acceptsPriorOffer) forbidden.add('offer_again');
+  if (!input.sensitiveMode
+    && (input.acceptsPriorOffer || input.openPriorOffer || input.responseMove === 'answer_request')) {
+    forbidden.add('new_offer');
+  }
   if (input.responseMove === 'social_reply') forbidden.add('operational_status');
   if (input.responseMove === 'support_emotion') forbidden.add('action_plan');
   if (input.sensitiveMode) {

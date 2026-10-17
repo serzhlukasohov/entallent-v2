@@ -37,6 +37,7 @@ describe('manager dashboard read model boundary', () => {
     const response = {
       rangeStart: '2026-07-30',
       rangeEnd: '2026-08-12',
+      suppressed: false,
       engagement: [],
       signalCapture: [],
       coverageFunnel: {
@@ -173,6 +174,15 @@ describe('manager dashboard read model boundary', () => {
       expect(query.sql).toContain('not exists');
       expect(query.sql).toContain('"people"."pulse_participant" = false');
     }
+    for (const [fragment] of execute.mock.calls.slice(1)) {
+      const query = dialect.sqlToQuery(fragment as SQL);
+      expect(query.sql).toContain('FROM survey_window_scoring_policies v2');
+      expect(query.sql).toContain('v2.survey_window_id = w.id');
+      expect(query.sql).toMatch(/count\(DISTINCT (e|w)\.user_id\)/);
+    }
+    const activityQuery = dialect.sqlToQuery(execute.mock.calls[0]![0] as SQL);
+    expect(activityQuery.sql).toContain('FROM conversation_activity_daily activity');
+    expect(activityQuery.sql).not.toContain('FROM messages');
   });
 
   it('rejects invalid team tenant before querying', async () => {
@@ -193,7 +203,7 @@ describe('manager dashboard read model boundary', () => {
     expect(client.execute).not.toHaveBeenCalled();
   });
 
-  it('Manager Trends maf_primary regression aggregates MAF-created messages and survey evidence', async () => {
+  it('suppresses trends when any daily or question cell has fewer than five employees', async () => {
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setUTCDate(today.getUTCDate() - 1);
@@ -208,13 +218,13 @@ describe('manager dashboard read model boundary', () => {
           { day: todayKey, activeUsers: 1, inboundMessages: 3 },
         ])
         .mockResolvedValueOnce([
-          { day: yesterdayKey, polarity: 'positive', count: 2 },
-          { day: yesterdayKey, polarity: 'negative', count: 1 },
-          { day: todayKey, polarity: 'mixed', count: 1, evidenceSummary: 'raw MAF evidence' },
+          { day: yesterdayKey, polarity: 'positive', count: 2, cohortUsers: 2 },
+          { day: yesterdayKey, polarity: 'negative', count: 1, cohortUsers: 1 },
+          { day: todayKey, polarity: 'mixed', count: 1, cohortUsers: 1 },
         ])
         .mockResolvedValueOnce([
-          { status: 'scored', count: 2 },
-          { status: 'insufficient_evidence', count: 1 },
+          { status: 'scored', count: 2, cohortUsers: 2 },
+          { status: 'insufficient_evidence', count: 1, cohortUsers: 1 },
         ])
         .mockResolvedValueOnce([
           {
@@ -223,6 +233,7 @@ describe('manager dashboard read model boundary', () => {
             dimension: 'engagement',
             polarity: 'positive',
             count: 2,
+            cohortUsers: 2,
           },
           {
             stableKey: 'burnout_load',
@@ -230,6 +241,7 @@ describe('manager dashboard read model boundary', () => {
             dimension: 'safety',
             polarity: 'negative',
             count: 2,
+            cohortUsers: 2,
           },
         ]),
     };
@@ -241,24 +253,35 @@ describe('manager dashboard read model boundary', () => {
     const response = await readModel.getTrends(TENANT_ID, '2');
 
     expect(client.execute).toHaveBeenCalledTimes(4);
-    expect(response.engagement).toEqual([
-      { date: yesterdayKey, activeUsers: 2, inboundMessages: 5 },
-      { date: todayKey, activeUsers: 1, inboundMessages: 3 },
-    ]);
-    expect(response.signalCapture).toEqual([
-      { date: yesterdayKey, total: 3, positive: 2, negative: 1, mixed: 0, neutral: 0 },
-      { date: todayKey, total: 1, positive: 0, negative: 0, mixed: 1, neutral: 0 },
-    ]);
-    expect(response.coverageFunnel).toMatchObject({
-      unknown: 0,
-      insufficient_evidence: 1,
-      scored: 2,
+    expect(response).toMatchObject({
+      suppressed: true,
+      engagement: [],
+      signalCapture: [],
+      coverageFunnel: {},
+      questionSentiment: [],
     });
+  });
+
+  it('returns aggregate trends when every populated cell has five distinct employees', async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const execute = vi.fn()
+      .mockResolvedValueOnce([{ day, activeUsers: 5, inboundMessages: 8 }])
+      .mockResolvedValueOnce([{ day, polarity: 'positive', count: 6, cohortUsers: 5 }])
+      .mockResolvedValueOnce([{ status: 'scored', count: 7, cohortUsers: 5 }])
+      .mockResolvedValueOnce([{
+        stableKey: 'role_clarity', title: 'Role clarity', dimension: 'engagement',
+        polarity: 'positive', count: 6, cohortUsers: 5,
+      }]);
+    const readModel = new ManagerDashboardReadModel({ client: { execute } } as never,
+      { get: vi.fn() } as never);
+
+    const response = await readModel.getTrends(TENANT_ID, '1');
+
+    expect(response.suppressed).toBe(false);
+    expect(response.engagement).toEqual([{ date: day, activeUsers: 5, inboundMessages: 8 }]);
     expect(response.questionSentiment).toEqual([
-      expect.objectContaining({ stableKey: 'burnout_load', total: 2, net: -1 }),
-      expect.objectContaining({ stableKey: 'role_clarity', total: 2, net: 1 }),
+      expect.objectContaining({ stableKey: 'role_clarity', total: 6 }),
     ]);
-    expect(JSON.stringify(response)).not.toContain('raw MAF evidence');
   });
 });
 

@@ -1,6 +1,6 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger, OnApplicationShutdown } from '@nestjs/common';
-import { Job } from 'bullmq';
+import { Job, type Queue } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import {
   ConversationOrchestrator,
@@ -13,6 +13,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
 import { LlmRunRepository } from './llm-run.repository';
 import { ConversationRepository } from './repositories/conversation.repository';
 import { stableId } from '../onboarding/stable-id';
+import { SurveyRepository } from '../survey/repositories/survey.repository';
 
 export type ConversationJob = {
   requestId: string;
@@ -33,6 +34,7 @@ export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messag
   /** Dedupe key of the start (person + state version); derives the deterministic outbound message id. */
   onboardingStartKey?: string;
 };
+type ReceiptRetryJob = Pick<ConversationJob, 'messageId' | 'conversationId' | 'userId' | 'tenantId'>;
 
 const DEFAULT_PULSE_CONFIG: ProactivePulseConfig = { ignoreWindowHours: 48 };
 const RAPID_MESSAGE_COALESCING_WINDOW_MS = 2_000;
@@ -47,6 +49,8 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly llmRunRepo: LlmRunRepository,
     private readonly db: DatabaseService,
     private readonly conversationRepo: ConversationRepository,
+    private readonly surveyRepo: SurveyRepository,
+    @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly queue: Queue,
   ) {
     super();
   }
@@ -55,9 +59,13 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     await this.worker.close();
   }
 
-  async process(job: Job<ConversationJob | CheckInJob>): Promise<void> {
+  async process(job: Job<ConversationJob | CheckInJob | ReceiptRetryJob>): Promise<void> {
     if (job.name === 'check-in') {
       await this.processCheckIn(job as Job<CheckInJob>);
+      return;
+    }
+    if (job.name === 'receipt-retry') {
+      await this.settleInbound(job.data as ReceiptRetryJob, true);
       return;
     }
     await this.processInbound(job as Job<ConversationJob>);
@@ -104,11 +112,11 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           ? { onboardingStartMessageId: stableId('onb-start', onboardingStartKey) } : {}),
       });
       this.logger.log(
-        `Check-in job ${job.id} done — probe=${result.probeQuestionId ?? 'none'} text="${result.responseText.slice(0, 60)}"`,
+        `Check-in job ${job.id} done — probe=${result.probeQuestionId ?? 'none'}`,
       );
-    } catch (err) {
-      this.logger.error(`Check-in job ${job.id} failed: ${(err as Error).message}`, (err as Error).stack);
-      throw err;
+    } catch {
+      this.logger.error(`Check-in job ${job.id} failed: check_in_processing_failed`);
+      throw new Error('check_in_processing_failed');
     }
   }
 
@@ -118,13 +126,20 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       conversationId: job.data.conversationId,
     });
 
+    const pendingQuestionReply = await this.surveyRepo.hasUnresolvedQuestionConfirmationForInbound(job.data);
+    if (await this.orchestrator.resumeCommittedTurn?.(job.data)) {
+      await this.settleInbound(job.data, pendingQuestionReply);
+      this.logger.log(`Committed conversation turn resumed for job ${job.id}`);
+      return;
+    }
     if (!await this.conversationRepo.isUserRuntimeEligible(job.data.tenantId, job.data.userId)) {
       this.logger.log(`Skipping conversation job for inactive runtime user ${job.data.userId}`);
+      await this.settleInbound(job.data, pendingQuestionReply);
       return;
     }
 
     if (
-      job.data.rapidMessageCoalescing === true &&
+      job.data.rapidMessageCoalescing === true && !pendingQuestionReply &&
       await this.conversationRepo.shouldSkipInboundMessage({
         messageId: job.data.messageId,
         conversationId: job.data.conversationId,
@@ -134,25 +149,65 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       })
     ) {
       this.logger.log(`Skipping stale conversation job ${job.id}`);
+      await this.settleInbound(job.data, pendingQuestionReply);
       return;
     }
 
     const start = Date.now();
     let status: 'success' | 'error' = 'success';
+    let errorCode: string | undefined;
 
     try {
       const result = await this.orchestrator.orchestrate(job.data);
+      try {
+        await this.settleInbound(job.data, pendingQuestionReply);
+      } catch {
+        // Orchestration already persisted and queued its outbound effects. Retry only
+        // the content-free receipt so a BullMQ retry cannot send a second response.
+        try {
+          await this.queue.add('receipt-retry', {
+            messageId: job.data.messageId,
+            conversationId: job.data.conversationId,
+            userId: job.data.userId,
+            tenantId: job.data.tenantId,
+          } satisfies ReceiptRetryJob, {
+            jobId: `receipt-${job.data.messageId}`,
+            attempts: 10,
+            backoff: { type: 'exponential', delay: 1_000 },
+          });
+          this.logger.warn(`Conversation receipt retry queued for job ${job.id}`);
+        } catch {
+          // Completing this job preserves proof that orchestration finished.
+          // The cutoff scanner will enqueue the receipt-only retry later.
+          this.logger.error('Conversation receipt retry deferred: receipt_retry_enqueue_failed');
+        }
+      }
 
-      this.logger.log(
-        `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`,
-      );
-    } catch (err) {
+      if ('outcome' in result && result.outcome === 'input_filtered') {
+        // The employee got the filtered-input explanation; the categories make the trigger
+        // visible in llm_runs.error_code without storing any text (GC round 3 CAP-11).
+        errorCode = inputFilteredErrorCode(result.contentFilterCategories);
+        this.logger.warn(`Job ${job.id} done — outcome=input_filtered code=${errorCode}`);
+      } else {
+        const done = `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`
+          + (result.bundleReply ? ` bundleReply=${result.bundleReply}` : '');
+        if (result.bundleReply === 'bundle_without_reply') {
+          // The fixed text went alone (GC round 3 CAP-4 fallback); keep the reason visible.
+          this.logger.warn(`${done} reason=${result.bundleReplyFallbackReason ?? 'unknown'}`);
+        } else {
+          this.logger.log(done);
+        }
+      }
+    } catch (error) {
       status = 'error';
-      this.logger.error(
-        `Job ${job.id} failed (attempt ${job.attemptsMade}): ${(err as Error).message}`,
-        (err as Error).stack,
-      );
-      throw err;
+      errorCode = conversationFailureCode(error);
+      this.logger.error(`Job ${job.id} failed (attempt ${job.attemptsMade}): ${errorCode}`);
+      // Earlier attempts rethrow so a retry can still answer. On the last attempt, or for a failure
+      // a retry cannot change, the employee gets one explicit fallback reply instead of silence
+      // (GC round 2 CAP-1, round 3 CAP-11).
+      if ((isFinalAttempt(job) || !isRetryableFailure(errorCode))
+        && await this.commitFailedTurnFallback(job, errorCode, pendingQuestionReply)) return;
+      throw new Error('conversation_processing_failed');
     } finally {
       await this.llmRunRepo
         .record({
@@ -162,6 +217,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           model: 'gpt-4o',
           latencyMs: Date.now() - start,
           status,
+          errorCode,
           traceId: job.data.traceId,
         })
         .catch(() => {
@@ -169,6 +225,97 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
         });
     }
   }
+
+  private async commitFailedTurnFallback(
+    job: Job<ConversationJob>,
+    failureCode: string,
+    pendingQuestionReply: boolean,
+  ): Promise<boolean> {
+    try {
+      await this.orchestrator.commitFailedTurn(job.data, failureCode);
+    } catch {
+      this.logger.error(`Job ${job.id} fallback reply failed: conversation_fallback_commit_failed`);
+      return false;
+    }
+    this.logger.warn(`Job ${job.id} done — outcome=processing_failed failure=${failureCode}`);
+    try {
+      await this.settleInbound(job.data, pendingQuestionReply);
+    } catch {
+      // The fallback turn is committed and dispatched; a missing receipt only delays cutoff accounting.
+      this.logger.error(`Job ${job.id} fallback receipt deferred: receipt_store_failed`);
+    }
+    return true;
+  }
+
+  private async settleInbound(input: ReceiptRetryJob, pendingQuestionReply: boolean): Promise<void> {
+    await this.conversationRepo.markInboundConversationJobProcessed(input);
+    if (!pendingQuestionReply) return;
+    try {
+      await this.surveyRepo.expireTemporaryQuestionInsightsForClosedWindows({
+        tenantId: input.tenantId,
+        now: new Date(),
+      });
+    } catch {
+      // The recurring cutoff retries cleanup independently of conversation delivery.
+      this.logger.error('Post-conversation question cutoff failed: question_cutoff_retry_required');
+    }
+  }
+}
+
+function isFinalAttempt(job: Job): boolean {
+  return job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+}
+
+const CONTENT_FILTER_INPUT_FAILURE_CODE = 'conversation_provider_content_filter_input';
+
+/** A provider input filter is a property of the message, so a retry would only repeat it. */
+const NON_RETRYABLE_FAILURE_CODES: ReadonlySet<string> = new Set([CONTENT_FILTER_INPUT_FAILURE_CODE]);
+
+function isRetryableFailure(errorCode: string): boolean {
+  return !NON_RETRYABLE_FAILURE_CODES.has(errorCode);
+}
+
+function inputFilteredErrorCode(categories: readonly string[] | undefined): string {
+  const bounded = (categories ?? []).filter((category) => /^[a-z_]{1,32}$/.test(category)).slice(0, 8);
+  return bounded.length > 0
+    ? `${CONTENT_FILTER_INPUT_FAILURE_CODE}:${bounded.join('+')}`
+    : CONTENT_FILTER_INPUT_FAILURE_CODE;
+}
+
+/**
+ * Our own failures carry constant English messages; map them to stable codes. Message text is
+ * never logged as-is, because provider or parser errors can echo employee content.
+ */
+const KNOWN_FAILURE_MESSAGES: ReadonlyArray<[string, string]> = [
+  ['Generated response exceeds the question limit', 'conversation_reply_question_limit'],
+  ['OpenAI returned a noncompliant numeric survey probe', 'conversation_reply_numeric_probe_invalid'],
+  ['Confirmation response requires', 'conversation_reply_confirmation_invalid'],
+  ['OpenAI response truncated', 'conversation_model_truncated'],
+  ['OpenAI returned an empty response', 'conversation_model_empty'],
+  ['Circuit OPEN', 'conversation_provider_circuit_open'],
+];
+const APPLICATION_ERROR_CODE = /^[a-z][a-z0-9_]{2,80}$/;
+
+function conversationFailureCode(error: unknown): string {
+  if (error instanceof SyntaxError) return 'conversation_invalid_json';
+  if (typeof error !== 'object' || error === null) return 'conversation_unknown_error';
+  if ('name' in error && error.name === 'ZodError') return 'conversation_invalid_model_shape';
+  if ('name' in error && error.name === 'ProviderContentFilterError'
+    && 'direction' in error && (error.direction === 'input' || error.direction === 'output')) {
+    return `conversation_provider_content_filter_${error.direction}`;
+  }
+  if ('status' in error && typeof error.status === 'number'
+    && Number.isInteger(error.status) && error.status >= 400 && error.status <= 599) {
+    return `conversation_provider_http_${error.status}`;
+  }
+  if ('code' in error && typeof error.code === 'string' && /^[0-9A-Z]{5}$/.test(error.code)) {
+    return `conversation_database_${error.code}`;
+  }
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  if (APPLICATION_ERROR_CODE.test(message)) return `conversation_app_${message}`;
+  const known = KNOWN_FAILURE_MESSAGES.find(([prefix]) => message.startsWith(prefix));
+  if (known) return known[1];
+  return 'conversation_unclassified_error';
 }
 
 function normalizeOptionalString(value: string | null | undefined): string | undefined {

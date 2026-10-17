@@ -1,11 +1,17 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { onTestFailed } from 'vitest';
 import type { ScenarioResult } from '@langwatch/scenario';
 import type { StyleDimensions } from '@entalent/application';
 import { describeViolations, findViolations } from './assertions';
-import type { CoachHarness, GenerateResponseCall } from './coach-harness';
+import type { AgentTurnFailure, CoachHarness, GenerateResponseCall } from './coach-harness';
 
 const RUNS_DIR = join(process.cwd(), 'runs');
+
+type JudgeResult = Pick<ScenarioResult, 'success' | 'metCriteria' | 'unmetCriteria' | 'reasoning'>;
+
+/** Harnesses whose scenario already wrote its own report; the fallback finalizer skips them. */
+const reportedHarnesses = new WeakSet<CoachHarness>();
 
 export interface ScenarioRunReport {
   schemaVersion: 1;
@@ -32,6 +38,8 @@ export interface ScenarioRunReport {
     passed: boolean;
     violations: Array<{ turn: number; rule: string; detail: string }>;
   };
+  /** Exceptions that escaped the orchestrator; each is also an `agent-turn-error` violation. */
+  agentTurnErrors?: AgentTurnFailure[];
   turns: Array<{
     index: number;
     mode: string;
@@ -67,28 +75,106 @@ export async function reportRun(
   result: ScenarioResult,
   judgeEvaluated = true,
 ): Promise<void> {
+  reportedHarnesses.add(harness);
   const data = await buildReportData(name, harness, result, judgeEvaluated);
   writeScenarioRunReport(data);
 }
 
-export function writeScenarioRunReport(data: ScenarioRunReport): void {
-  const report = buildMarkdownReport(data);
-  console.log(`\n${report}`);
+export function writeScenarioRunReport(input: ScenarioRunReport): void {
+  const data = structuredClone(input);
+  const persist = persistReport(data);
+  // Each report registers its own finalizer, including multiple reports in one test.
+  // Paths belong to this attempt even if environment variables change afterward.
+  onTestFailed(({ task }) => {
+    appendTestFailure(data, task);
+    persist();
+  });
+}
+
+/**
+ * Guarantees `runs/<scenario>.json` for a harness whose test fails before `reportRun` runs,
+ * for example when the agent turn throws and `run()` rethrows. The report is named after the
+ * Vitest test, carries whatever turns completed, every recorded `agent-turn-error`, and the
+ * test error; the judge is marked not run. Outside a Vitest test nothing is registered.
+ */
+export function registerFallbackReport(harness: CoachHarness): void {
+  try {
+    onTestFailed(async ({ task }) => {
+      if (reportedHarnesses.has(harness)) return;
+      reportedHarnesses.add(harness);
+      const ordinal = (fallbackReportsByTask.get(task) ?? 0) + 1;
+      fallbackReportsByTask.set(task, ordinal);
+      const name = ordinal === 1 ? fullTaskName(task) : `${fullTaskName(task)} harness ${ordinal}`;
+      const data = await buildReportData(
+        name,
+        harness,
+        { success: false, metCriteria: [], unmetCriteria: [], reasoning: 'Scenario aborted before reportRun.' },
+        false,
+      );
+      appendTestFailure(data, task);
+      persistReport(data)();
+    });
+  } catch {
+    // Not inside a Vitest test (for example a script): there is no test failure to finalize on.
+  }
+}
+
+interface TaskLike {
+  name: string;
+  suite?: TaskLike;
+  result?: { errors?: Array<{ message: string }> };
+}
+
+const fallbackReportsByTask = new WeakMap<TaskLike, number>();
+
+function fullTaskName(task: TaskLike): string {
+  const names: string[] = [];
+  for (let current: TaskLike | undefined = task; current; current = current.suite) {
+    if (current.name) names.unshift(current.name);
+  }
+  return names.join(' ');
+}
+
+function appendTestFailure(data: ScenarioRunReport, task: TaskLike): void {
+  data.deterministic.passed = false;
+  data.deterministic.violations.push({
+    turn: 0,
+    rule: 'test-failure',
+    detail: (task.result?.errors ?? []).map((error) => error.message).join('; ') || 'Vitest test failed',
+  });
+}
+
+/** Prints the report and writes both files; the returned function re-persists the same paths. */
+function persistReport(data: ScenarioRunReport): () => void {
+  console.log(`\n${buildMarkdownReport(data)}`);
 
   const runsDir = process.env.SIM_GATE_REPORT_DIR ?? RUNS_DIR;
   const fileStem = buildFileStem(data.scenarioSlug);
   mkdirSync(runsDir, { recursive: true });
-  writeFileSync(join(runsDir, `${fileStem}.md`), report, 'utf8');
-  writeFileSync(join(runsDir, `${fileStem}.json`), JSON.stringify(data, null, 2), 'utf8');
+  const markdownPath = join(runsDir, `${fileStem}.md`);
+  const jsonPath = join(runsDir, `${fileStem}.json`);
+  const persist = () => {
+    writeFileSync(markdownPath, buildMarkdownReport(data), 'utf8');
+    writeFileSync(jsonPath, JSON.stringify(data, null, 2), 'utf8');
+  };
+  persist();
+  return persist;
 }
 
 async function buildReportData(
   name: string,
   harness: CoachHarness,
-  result: ScenarioResult,
+  result: JudgeResult,
   judgeEvaluated: boolean,
 ): Promise<ScenarioRunReport> {
-  const violations = findViolations(harness);
+  const violations = [
+    ...harness.failures.map((failure) => ({
+      turn: failure.turn,
+      rule: 'agent-turn-error',
+      detail: `${failure.name}: ${failure.message}`,
+    })),
+    ...findViolations(harness),
+  ];
   const profile = await harness.styleProfile();
 
   return {
@@ -116,6 +202,7 @@ async function buildReportData(
       passed: violations.length === 0,
       violations,
     },
+    ...(harness.failures.length > 0 ? { agentTurnErrors: [...harness.failures] } : {}),
     turns: harness.turns.map((turn, index) => ({
       index: index + 1,
       mode: turn.mode,
@@ -127,8 +214,8 @@ async function buildReportData(
       },
       responseLength: turn.responseText.length,
       responseText: turn.responseText,
-      replyPlan: harness.generateResponseCalls[index]?.context.replyPlan ?? null,
-      replyBrief: harness.generateResponseCalls[index]?.context.replyBrief ?? null,
+      replyPlan: harness.responseCallsByTurn[index]?.context.replyPlan ?? null,
+      replyBrief: harness.responseCallsByTurn[index]?.context.replyBrief ?? null,
     })),
     memoryItems: harness.memoryItems.map((item) => ({
       category: item.category,
@@ -161,10 +248,20 @@ function buildMarkdownReport(data: ScenarioRunReport): string {
     data.judge.reasoning ? `\n${data.judge.reasoning}` : '',
     '',
     '## Deterministic checks',
-    data.deterministic.violations.length === 0
+    data.deterministic.passed && data.deterministic.violations.length === 0
       ? 'all clear'
-      : describeViolations(data.deterministic.violations),
+      : describeViolations(data.deterministic.violations) || 'deterministic checks failed',
     '',
+    ...(data.agentTurnErrors?.length
+      ? [
+          '## Agent turn errors',
+          ...data.agentTurnErrors.flatMap((failure) => [
+            `turn ${failure.turn} — ${failure.name}: ${failure.message} (${failure.generationCalls} generation calls before the throw)`,
+            ...(failure.stack ? [trimStack(failure.stack)] : []),
+          ]),
+          '',
+        ]
+      : []),
     '## Turns',
     `reply lengths: ${lengths.join(', ')}`,
     '',
@@ -195,6 +292,10 @@ function buildMarkdownReport(data: ScenarioRunReport): string {
   ];
 
   return sections.join('\n');
+}
+
+function trimStack(stack: string): string {
+  return stack.split('\n').slice(0, 8).map((line) => `    ${line.trim()}`).join('\n');
 }
 
 function slugify(name: string): string {

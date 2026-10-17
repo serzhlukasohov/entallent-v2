@@ -16,6 +16,7 @@ describe('CloseSurveyReportingCycleUseCase', () => {
     const surveyRepo = {
       findReportingCohortsReadyForFinalReports: vi.fn().mockResolvedValue([cohort]),
       expireTemporaryGroupStatesForClosedCohorts: vi.fn().mockResolvedValue(3),
+      expireTemporaryQuestionInsightsForClosedWindows: vi.fn().mockResolvedValue(2),
     };
     const enqueued: unknown[] = [];
     const outbox = {
@@ -29,7 +30,7 @@ describe('CloseSurveyReportingCycleUseCase', () => {
       tenantId: 'tenant-1',
       surveyDefinitionId: 'definition-1',
       now: new Date('2026-10-01T00:00:00.000Z'),
-    })).resolves.toEqual({ cohortCount: 1, queuedReportCount: 1, expiredTemporaryCount: 3 });
+    })).resolves.toEqual({ cohortCount: 1, queuedReportCount: 1, expiredTemporaryCount: 3, expiredQuestionCount: 2 });
 
     expect(enqueued).toEqual([
       {
@@ -47,12 +48,18 @@ describe('CloseSurveyReportingCycleUseCase', () => {
       surveyDefinitionId: 'definition-1',
       now: new Date('2026-10-01T00:00:00.000Z'),
     });
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      surveyDefinitionId: 'definition-1',
+      now: new Date('2026-10-01T00:00:00.000Z'),
+    });
   });
 
   it('returns the number of unconfirmed temporary states expired at close', async () => {
     const surveyRepo = {
       findReportingCohortsReadyForFinalReports: vi.fn().mockResolvedValue([]),
       expireTemporaryGroupStatesForClosedCohorts: vi.fn().mockResolvedValue(2),
+      expireTemporaryQuestionInsightsForClosedWindows: vi.fn().mockResolvedValue(1),
     };
     const outbox = { enqueueGroupReport: vi.fn() };
     const useCase = new CloseSurveyReportingCycleUseCase(surveyRepo as never, outbox as never);
@@ -60,13 +67,14 @@ describe('CloseSurveyReportingCycleUseCase', () => {
     await expect(useCase.execute({
       tenantId: 'tenant-1',
       now: new Date('2026-10-01T00:00:00.000Z'),
-    })).resolves.toEqual({ cohortCount: 0, queuedReportCount: 0, expiredTemporaryCount: 2 });
+    })).resolves.toEqual({ cohortCount: 0, queuedReportCount: 0, expiredTemporaryCount: 2, expiredQuestionCount: 1 });
   });
 
   it('rejects invalid close inputs before touching the repository', async () => {
     const surveyRepo = {
       findReportingCohortsReadyForFinalReports: vi.fn(),
       expireTemporaryGroupStatesForClosedCohorts: vi.fn(),
+      expireTemporaryQuestionInsightsForClosedWindows: vi.fn(),
     };
     const outbox = { enqueueGroupReport: vi.fn() };
     const useCase = new CloseSurveyReportingCycleUseCase(surveyRepo as never, outbox as never);
@@ -78,6 +86,7 @@ describe('CloseSurveyReportingCycleUseCase', () => {
 
     expect(surveyRepo.findReportingCohortsReadyForFinalReports).not.toHaveBeenCalled();
     expect(surveyRepo.expireTemporaryGroupStatesForClosedCohorts).not.toHaveBeenCalled();
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
     expect(outbox.enqueueGroupReport).not.toHaveBeenCalled();
   });
 });

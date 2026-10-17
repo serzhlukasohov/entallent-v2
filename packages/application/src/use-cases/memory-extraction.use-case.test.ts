@@ -109,6 +109,23 @@ function makeDependencies(dialogueAct: 'closing' | 'request') {
 }
 
 describe('MemoryExtractionUseCase', () => {
+  it('prepares model output without durable memory or goal writes', async () => {
+    const dependencies = makeDependencies('request');
+    const useCase = new MemoryExtractionUseCase(
+      dependencies.conversationRepo, dependencies.memoryRepo,
+      dependencies.goalRepo, dependencies.ai,
+    );
+
+    const prepared = await useCase.prepare(input);
+
+    expect(prepared?.proposal.memoryItems).toHaveLength(1);
+    expect(dependencies.memoryRepo.save).not.toHaveBeenCalled();
+    expect(dependencies.goalRepo.save).not.toHaveBeenCalled();
+    await useCase.apply(input, prepared!);
+    expect(dependencies.memoryRepo.save).toHaveBeenCalledOnce();
+    expect(dependencies.goalRepo.save).toHaveBeenCalledOnce();
+  });
+
   it('does not turn a closing turn into durable memory, a new goal, or a follow-up', async () => {
     const dependencies = makeDependencies('closing');
     const result = await new MemoryExtractionUseCase(
@@ -140,5 +157,58 @@ describe('MemoryExtractionUseCase', () => {
     expect(dependencies.memoryRepo.save).toHaveBeenCalledOnce();
     expect(dependencies.goalRepo.save).toHaveBeenCalledOnce();
     expect(result.followUpCandidates).toHaveLength(1);
+  });
+
+  it('excludes later turns when a committed extraction job runs late', async () => {
+    const dependencies = makeDependencies('request');
+    const source = {
+      id: input.inboundMessageId, conversationId: input.conversationId,
+      tenantId: input.tenantId, userId: input.userId, direction: 'inbound' as const,
+      text: 'I want to grow at work.', occurredAt: new Date('2026-08-28T10:36:18Z'),
+      createdAt: new Date('2026-08-28T10:36:18Z'),
+    };
+    const reply = {
+      id: input.outboundMessageId, conversationId: input.conversationId,
+      tenantId: input.tenantId, userId: input.userId, direction: 'outbound' as const,
+      text: 'What kind of growth matters to you?', occurredAt: new Date('2026-08-28T10:36:21Z'),
+      createdAt: new Date('2026-08-28T10:36:21Z'),
+      metadata: { sourceInboundMessageId: input.inboundMessageId, dialogueAct: 'request' },
+    };
+    dependencies.conversationRepo.findMessagesThrough = vi.fn().mockResolvedValue([source]);
+    dependencies.conversationRepo.findMessageById = vi.fn().mockResolvedValue(reply);
+    dependencies.conversationRepo.findRecentMessages = vi.fn().mockResolvedValue([
+      source, reply, { ...source, id: 'future-inbound', text: 'Private later disclosure' },
+    ]);
+
+    await new MemoryExtractionUseCase(
+      dependencies.conversationRepo, dependencies.memoryRepo,
+      dependencies.goalRepo, dependencies.ai,
+    ).execute(input);
+
+    expect(dependencies.conversationRepo.findRecentMessages).not.toHaveBeenCalled();
+    const turns = vi.mocked(dependencies.ai.extractMemory).mock.calls[0]?.[0];
+    expect(turns?.map((turn) => turn.content)).toEqual([
+      'I want to grow at work.', 'What kind of growth matters to you?',
+    ]);
+  });
+
+  it('rejects a reply linked to a different inbound before model extraction', async () => {
+    const dependencies = makeDependencies('request');
+    dependencies.conversationRepo.findMessagesThrough = vi.fn().mockResolvedValue([{
+      id: input.inboundMessageId, conversationId: input.conversationId,
+      tenantId: input.tenantId, userId: input.userId, direction: 'inbound',
+    }]);
+    dependencies.conversationRepo.findMessageById = vi.fn().mockResolvedValue({
+      id: input.outboundMessageId, conversationId: input.conversationId,
+      tenantId: input.tenantId, userId: input.userId, direction: 'outbound',
+      metadata: { sourceInboundMessageId: 'other-inbound' },
+    });
+
+    await expect(new MemoryExtractionUseCase(
+      dependencies.conversationRepo, dependencies.memoryRepo,
+      dependencies.goalRepo, dependencies.ai,
+    ).execute(input)).rejects.toThrow('memory_extraction_message_scope_mismatch');
+    expect(dependencies.ai.extractMemory).not.toHaveBeenCalled();
+    expect(dependencies.memoryRepo.save).not.toHaveBeenCalled();
   });
 });

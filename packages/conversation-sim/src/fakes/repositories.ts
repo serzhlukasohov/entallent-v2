@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type {
   ConversationRecord,
   ConversationRepositoryPort,
+  CommittedStyleAnalysisInput,
+  CommittedStyleProfileRepositoryPort,
   GoalRepositoryPort,
   MemoryItemRecord,
   MemoryRepositoryPort,
@@ -14,7 +16,6 @@ import type {
   SaveMessageParams,
   ScheduledActionRepositoryPort,
   StyleProfileRecord,
-  StyleProfileRepositoryPort,
   UserGoalRecord,
 } from '@entalent/application';
 
@@ -34,6 +35,25 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
 
   async findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
     return this.messages.filter((m) => m.conversationId === conversationId).slice(-limit);
+  }
+
+  async findMessagesThrough(input: {
+    conversationId: string;
+    tenantId: string;
+    userId: string;
+    inboundMessageId: string;
+    limit: number;
+  }): Promise<MessageRecord[]> {
+    const anchor = this.messages.find((message) =>
+      message.id === input.inboundMessageId && message.conversationId === input.conversationId
+      && message.tenantId === input.tenantId && message.userId === input.userId
+      && message.direction === 'inbound');
+    if (!anchor) return [];
+    return this.messages.filter((message) =>
+      message.conversationId === input.conversationId && message.tenantId === input.tenantId
+      && message.userId === input.userId
+      && (message.occurredAt.getTime() < anchor.occurredAt.getTime() || message.id === anchor.id))
+      .slice(-input.limit);
   }
 
   async findLatestDeliveredReportingDisclosure(
@@ -294,8 +314,9 @@ export class InMemoryScheduledActionRepository implements ScheduledActionReposit
   }
 }
 
-export class InMemoryStyleProfileRepository implements StyleProfileRepositoryPort {
+export class InMemoryStyleProfileRepository implements CommittedStyleProfileRepositoryPort {
   private profile: StyleProfileRecord | null;
+  private readonly completed = new Set<string>();
 
   constructor(seedProfile: StyleProfileRecord | null = null) {
     this.profile = seedProfile;
@@ -311,5 +332,23 @@ export class InMemoryStyleProfileRepository implements StyleProfileRepositoryPor
   async upsert(profile: StyleProfileRecord): Promise<StyleProfileRecord> {
     this.profile = profile;
     return profile;
+  }
+
+  async isCommittedStyleAnalysisComplete(input: CommittedStyleAnalysisInput): Promise<boolean> {
+    return this.completed.has(this.completionKey(input));
+  }
+
+  async completeCommittedStyleAnalysis(
+    input: CommittedStyleAnalysisInput,
+    update: ((current: StyleProfileRecord | null) => StyleProfileRecord) | null,
+  ): Promise<void> {
+    const key = this.completionKey(input);
+    if (this.completed.has(key)) return;
+    if (update) this.profile = update(await this.findByUser(input.userId, input.tenantId));
+    this.completed.add(key);
+  }
+
+  private completionKey(input: CommittedStyleAnalysisInput): string {
+    return `${input.tenantId}:${input.userId}:${input.conversationId}:${input.inboundMessageId}`;
   }
 }

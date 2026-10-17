@@ -1,6 +1,6 @@
 import type { FollowUpCandidate } from '@entalent/contracts';
 import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.repository.port';
-import type { OutboxPort } from '../ports/outbox.port';
+import type { OutboxPort, FollowUpExecutionPayload } from '../ports/outbox.port';
 
 export interface FollowUpScheduleInput {
   candidates: FollowUpCandidate[];
@@ -22,6 +22,17 @@ export class FollowUpSchedulerUseCase {
   ) {}
 
   async schedule(input: FollowUpScheduleInput): Promise<void> {
+    for (const payload of await this.stage(input)) {
+      await this.dispatch(payload);
+    }
+  }
+
+  async dispatch(payload: FollowUpExecutionPayload): Promise<void> {
+    await this.outbox.enqueueFollowUpExecution(payload);
+  }
+
+  async stage(input: FollowUpScheduleInput): Promise<FollowUpExecutionPayload[]> {
+    const staged: FollowUpExecutionPayload[] = [];
     for (const candidate of input.candidates) {
       if (candidate.confidence < MIN_CONFIDENCE) continue;
 
@@ -53,7 +64,7 @@ export class FollowUpSchedulerUseCase {
         sourceMessageIds: [input.inboundMessageId],
       });
 
-      await this.outbox.enqueueFollowUpExecution({
+      staged.push({
         scheduledActionId: action.id,
         tenantId: input.tenantId,
         userId: input.userId,
@@ -61,6 +72,7 @@ export class FollowUpSchedulerUseCase {
         dueAt,
       });
     }
+    return staged;
   }
 }
 

@@ -114,7 +114,7 @@ describe.skipIf(!localDatabase)('OnboardingIntroService against PostgreSQL', () 
 
     await service.enqueueTrustAfterIntro(input);
     expect(queue.add).toHaveBeenCalledWith('send', expect.objectContaining({
-      messageId: r.trustMessageId, text: introMessages('employee').trust,
+      messageId: r.trustMessageId,
     }), { jobId: `onb-trust-${r.trustMessageId}` });
 
     queue.add.mockClear();

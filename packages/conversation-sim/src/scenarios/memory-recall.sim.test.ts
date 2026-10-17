@@ -73,7 +73,7 @@ describe('coach recalling an earlier commitment', () => {
     expect(remembersDefence, formatMemory(harness.memoryItems)).toBe(true);
 
     const finalReply = harness.replies[harness.replies.length - 1] ?? '';
-    const finalPlan = harness.generateResponseCalls[harness.generateResponseCalls.length - 1]?.context.replyPlan;
+    const finalPlan = harness.responseCallsByTurn[harness.turns.length - 1]?.context.replyPlan;
     const finalMemoryAnchors = finalPlan?.memoryAnchors.map((item) => item.content).join('\n') ?? '';
     expect(
       /payments?\s*architecture/i.test(finalMemoryAnchors),

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Job } from 'bullmq';
+import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ConversationProcessor,
@@ -70,14 +71,16 @@ function tenantQuery(policy: Record<string, unknown> = {}) {
 }
 
 function createProcessor(options: {
-  orchestrator?: { orchestrate: ReturnType<typeof vi.fn> };
+  orchestrator?: { orchestrate: ReturnType<typeof vi.fn>; commitFailedTurn?: ReturnType<typeof vi.fn> };
   checkInUseCase?: { execute: ReturnType<typeof vi.fn> };
   llmRunRepo?: { record: ReturnType<typeof vi.fn> };
-  conversationRepo?: {
+  conversationRepo?: Partial<{
     shouldSkipInboundMessage: ReturnType<typeof vi.fn>;
     isUserRuntimeEligible: ReturnType<typeof vi.fn>;
-  };
+    markInboundConversationJobProcessed: ReturnType<typeof vi.fn>;
+  }>;
   db?: unknown;
+  queue?: { add: ReturnType<typeof vi.fn> };
 } = {}) {
   const orchestrator = options.orchestrator ?? {
     orchestrate: vi.fn(async () => runtimeResult),
@@ -92,12 +95,19 @@ function createProcessor(options: {
   const llmRunRepo = options.llmRunRepo ?? {
     record: vi.fn(async () => undefined),
   };
-  const conversationRepo = options.conversationRepo ?? {
+  const conversationRepo = {
     shouldSkipInboundMessage: vi.fn(async () => false),
     isUserRuntimeEligible: vi.fn(async () => true),
+    markInboundConversationJobProcessed: vi.fn(async () => undefined),
+    ...options.conversationRepo,
+  };
+  const surveyRepo = {
+    hasUnresolvedQuestionConfirmationForInbound: vi.fn(async () => false),
+    expireTemporaryQuestionInsightsForClosedWindows: vi.fn(async () => 0),
   };
   const select = vi.fn(() => tenantQuery());
   const db = options.db ?? { client: { select } };
+  const queue = options.queue ?? { add: vi.fn(async () => undefined) };
 
   return {
     processor: new ConversationProcessor(
@@ -106,12 +116,16 @@ function createProcessor(options: {
       llmRunRepo as never,
       db as never,
       conversationRepo as never,
+      surveyRepo as never,
+      queue as never,
     ),
     orchestrator,
     checkInUseCase,
     llmRunRepo,
     conversationRepo,
+    surveyRepo,
     select,
+    queue,
   };
 }
 
@@ -146,6 +160,42 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       status: 'success',
       traceId: 'trace-1',
     });
+  });
+
+  it('settles a committed input-filter outcome without reading absent model decisions', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => ({
+        outcome: 'input_filtered', outboundMessageId: 'outbound-1', responseText: 'Please restate',
+      })),
+    };
+    const { processor, conversationRepo, llmRunRepo } = createProcessor({ orchestrator });
+
+    await expect(processor.process({
+      id: 'filtered-job', name: 'process', attemptsMade: 0,
+      opts: { delay: 2_000 }, data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+  });
+
+  it('records the provider filter categories in the llm_runs error code of a committed input-filtered turn (GC round 3 CAP-11)', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => ({
+        outcome: 'input_filtered', outboundMessageId: 'outbound-1', responseText: 'Please restate',
+        contentFilterCategories: ['jailbreak'],
+      })),
+    };
+    const { processor, llmRunRepo } = createProcessor({ orchestrator });
+
+    await expect(processor.process({
+      id: 'filtered-job', name: 'process', attemptsMade: 0,
+      opts: { delay: 2_000 }, data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'success', errorCode: 'conversation_provider_content_filter_input:jailbreak',
+    }));
   });
 
   it('no-ops stale original and retry jobs before orchestration and LLM accounting', async () => {
@@ -189,6 +239,78 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'trace-2' }));
   });
 
+  it('processes a timely pending Bundle reply despite rapid-message coalescing', async () => {
+    const { processor, surveyRepo, conversationRepo, orchestrator } = createProcessor();
+    surveyRepo.hasUnresolvedQuestionConfirmationForInbound.mockResolvedValue(true);
+    conversationRepo.shouldSkipInboundMessage.mockResolvedValue(true);
+
+    await processor.process({
+      id: 'bundle-reply', name: 'process', attemptsMade: 0,
+      data: conversationJob,
+    } as Job<ConversationJob>);
+
+    expect(conversationRepo.shouldSkipInboundMessage).not.toHaveBeenCalled();
+    expect(orchestrator.orchestrate).toHaveBeenCalledWith(conversationJob);
+    expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalledWith(conversationJob);
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).toHaveBeenCalledWith({
+      tenantId: conversationJob.tenantId, now: expect.any(Date),
+    });
+    expect(orchestrator.orchestrate.mock.invocationCallOrder[0]).toBeLessThan(
+      conversationRepo.markInboundConversationJobProcessed.mock.invocationCallOrder[0]!,
+    );
+    expect(conversationRepo.markInboundConversationJobProcessed.mock.invocationCallOrder[0])
+      .toBeLessThan(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows.mock.invocationCallOrder[0]!);
+  });
+
+  it('queues a receipt-only retry after completed orchestration without releasing cutoff', async () => {
+    const { processor, surveyRepo, conversationRepo, llmRunRepo, queue, orchestrator } = createProcessor();
+    surveyRepo.hasUnresolvedQuestionConfirmationForInbound.mockResolvedValue(true);
+    conversationRepo.markInboundConversationJobProcessed.mockRejectedValue(new Error('database unavailable'));
+
+    await processor.process({
+      id: 'receipt-failure', name: 'process', attemptsMade: 0,
+      data: conversationJob,
+    } as Job<ConversationJob>);
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(queue.add).toHaveBeenCalledWith('receipt-retry', {
+      messageId: conversationJob.messageId,
+      conversationId: conversationJob.conversationId,
+      tenantId: conversationJob.tenantId,
+      userId: conversationJob.userId,
+    }, expect.objectContaining({ jobId: `receipt-${conversationJob.messageId}` }));
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+
+    conversationRepo.markInboundConversationJobProcessed.mockResolvedValue(undefined);
+    await processor.process({
+      id: 'receipt-retry', name: 'receipt-retry',
+      data: {
+        messageId: conversationJob.messageId, conversationId: conversationJob.conversationId,
+        tenantId: conversationJob.tenantId, userId: conversationJob.userId,
+      },
+    } as never);
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).toHaveBeenCalledOnce();
+  });
+
+  it('finishes an orchestrated job when both receipt storage and retry enqueue fail', async () => {
+    const { processor, surveyRepo, conversationRepo, queue, orchestrator } = createProcessor();
+    surveyRepo.hasUnresolvedQuestionConfirmationForInbound.mockResolvedValue(true);
+    conversationRepo.markInboundConversationJobProcessed.mockRejectedValue(new Error('database unavailable'));
+    queue.add.mockRejectedValue(new Error('redis unavailable'));
+
+    await expect(processor.process({
+      id: `conversation-${conversationJob.messageId}`, name: 'process', attemptsMade: 0,
+      data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(orchestrator.orchestrate).toHaveBeenCalledOnce();
+    expect(queue.add).toHaveBeenCalledWith('receipt-retry', expect.objectContaining({
+      messageId: conversationJob.messageId,
+    }), expect.objectContaining({ jobId: `receipt-${conversationJob.messageId}` }));
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
+  });
+
   it('does not coalesce unmarked non-Slack conversation jobs', async () => {
     const { processor, orchestrator, conversationRepo } = createProcessor();
     const data = { ...conversationJob, rapidMessageCoalescing: undefined };
@@ -223,11 +345,12 @@ describe('ConversationProcessor TypeScript-only routing', () => {
   });
 
   it('routes every proactive check-in through ProactiveCheckInUseCase', async () => {
+    const privateText = 'Private check-in text about Project Atlas';
     const query = tenantQuery({ ignoreWindowHours: 24 });
     const checkInUseCase = {
       execute: vi.fn(async () => ({
         outboundMessageId: 'check-in-outbound-1',
-        responseText: 'TypeScript check-in',
+        responseText: privateText,
         probeQuestionId: 'probe-1',
       })),
     };
@@ -235,13 +358,19 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       checkInUseCase,
       db: { client: { select: vi.fn(() => query) } },
     });
+    const logged = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
-    await processor.process({
-      id: 'check-in-job-1',
-      name: 'check-in',
-      attemptsMade: 0,
-      data: checkInJob,
-    } as Job<CheckInJob>);
+    try {
+      await processor.process({
+        id: 'check-in-job-1',
+        name: 'check-in',
+        attemptsMade: 0,
+        data: checkInJob,
+      } as Job<CheckInJob>);
+      expect(logged.mock.calls.flat().join(' ')).not.toContain(privateText);
+    } finally {
+      logged.mockRestore();
+    }
 
     expect(checkInUseCase.execute).toHaveBeenCalledOnce();
     expect(checkInUseCase.execute).toHaveBeenCalledWith({
@@ -298,28 +427,123 @@ describe('ConversationProcessor TypeScript-only routing', () => {
     expect(checkInUseCase.execute).not.toHaveBeenCalled();
   });
 
-  it('propagates orchestrator failures and records the inbound run as failed', async () => {
+  it('redacts orchestrator failures while recording the inbound run as failed', async () => {
+    const privateText = 'private employee meaning about Project Atlas';
     const orchestrator = {
       orchestrate: vi.fn(async () => {
-        throw new Error('orchestrator failed');
+        throw new SyntaxError(privateText);
       }),
     };
     const llmRunRepo = {
       record: vi.fn(async () => undefined),
     };
-    const { processor } = createProcessor({ orchestrator, llmRunRepo });
+    const { processor, conversationRepo, surveyRepo } = createProcessor({ orchestrator, llmRunRepo });
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
-    await expect(processor.process({
-      id: 'job-1',
-      name: 'process',
-      attemptsMade: 0,
-      opts: { delay: 2_000 },
-      data: conversationJob,
-    } as Job<ConversationJob>)).rejects.toThrow('orchestrator failed');
+    try {
+      await expect(processor.process({
+        id: 'job-1',
+        name: 'process',
+        attemptsMade: 0,
+        opts: { delay: 2_000 },
+        data: conversationJob,
+      } as Job<ConversationJob>)).rejects.toThrow('conversation_processing_failed');
+      expect(logged.mock.calls.flat().join(' ')).not.toContain(privateText);
+    } finally {
+      logged.mockRestore();
+    }
 
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
       status: 'error',
+      errorCode: 'conversation_invalid_json',
       traceId: 'trace-1',
     }));
+    expect(conversationRepo.markInboundConversationJobProcessed).not.toHaveBeenCalled();
+    expect(surveyRepo.expireTemporaryQuestionInsightsForClosedWindows).not.toHaveBeenCalled();
+  });
+
+  describe('final-attempt fallback (GC round 2 CAP-1)', () => {
+    const failingJob = (attemptsMade: number) => ({
+      id: 'job-fail', name: 'process', attemptsMade, opts: { attempts: 3, delay: 2_000 },
+      data: conversationJob,
+    }) as unknown as Job<ConversationJob>;
+    const failingOrchestrator = (error: unknown) => ({
+      orchestrate: vi.fn(async () => { throw error; }),
+      commitFailedTurn: vi.fn(async () => ({ outboundMessageId: 'fallback-1' })),
+    });
+
+    it('rethrows on a non-final attempt so the retry can still answer', async () => {
+      const orchestrator = failingOrchestrator(new Error('v2_confirmation_bundle_stale'));
+      const { processor } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(1))).rejects.toThrow('conversation_processing_failed');
+      expect(orchestrator.commitFailedTurn).not.toHaveBeenCalled();
+    });
+
+    it('commits one fallback reply on the final attempt and completes the job', async () => {
+      const orchestrator = failingOrchestrator(new Error('v2_confirmation_bundle_stale'));
+      const { processor, llmRunRepo, conversationRepo } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(2))).resolves.toBeUndefined();
+
+      expect(orchestrator.commitFailedTurn).toHaveBeenCalledWith(conversationJob, 'conversation_app_v2_confirmation_bundle_stale');
+      expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+      expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'error', errorCode: 'conversation_app_v2_confirmation_bundle_stale',
+      }));
+    });
+
+    it('does not retry a provider input filter: one fallback on the first attempt (GC round 3 CAP-11)', async () => {
+      const orchestrator = failingOrchestrator(
+        Object.assign(new Error('Provider filtered input'), { name: 'ProviderContentFilterError', direction: 'input' }),
+      );
+      const { processor, llmRunRepo, conversationRepo } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(0))).resolves.toBeUndefined();
+
+      expect(orchestrator.commitFailedTurn).toHaveBeenCalledWith(conversationJob, 'conversation_provider_content_filter_input');
+      expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+      expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'error', errorCode: 'conversation_provider_content_filter_input',
+      }));
+    });
+
+    it('still fails the job when the fallback itself cannot be committed', async () => {
+      const orchestrator = failingOrchestrator(new Error('v2_confirmation_bundle_stale'));
+      orchestrator.commitFailedTurn.mockRejectedValue(new Error('database down'));
+      const { processor } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(2))).rejects.toThrow('conversation_processing_failed');
+    });
+
+    it.each([
+      [new Error('v2_confirmation_bundle_stale'), 'conversation_app_v2_confirmation_bundle_stale'],
+      [new Error('Generated response exceeds the question limit after one corrective attempt'), 'conversation_reply_question_limit'],
+      [new Error('OpenAI returned a noncompliant numeric survey probe after retry'), 'conversation_reply_numeric_probe_invalid'],
+      [new Error('Circuit OPEN — provider temporarily unavailable'), 'conversation_provider_circuit_open'],
+      [Object.assign(new Error('Provider filtered output'), { name: 'ProviderContentFilterError', direction: 'output' }), 'conversation_provider_content_filter_output'],
+      [new Error('private employee meaning about Project Atlas'), 'conversation_unclassified_error'],
+    ])('names a failure without exposing message text: %s', async (error, code) => {
+      const orchestrator = failingOrchestrator(error);
+      const { processor, llmRunRepo } = createProcessor({ orchestrator });
+
+      await expect(processor.process(failingJob(0))).rejects.toThrow('conversation_processing_failed');
+      expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ errorCode: code }));
+    });
+  });
+
+  it('redacts failed check-in content from queue reasons and logs', async () => {
+    const privateText = 'private check-in context about Project Atlas';
+    const checkInUseCase = { execute: vi.fn().mockRejectedValue(new Error(privateText)) };
+    const { processor } = createProcessor({ checkInUseCase });
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(processor.process({
+        id: 'check-in-job-2', name: 'check-in', data: checkInJob,
+      } as Job<CheckInJob>)).rejects.toThrow('check_in_processing_failed');
+      expect(logged.mock.calls.flat().join(' ')).not.toContain(privateText);
+    } finally {
+      logged.mockRestore();
+    }
   });
 });

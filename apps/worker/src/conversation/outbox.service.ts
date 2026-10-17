@@ -31,33 +31,42 @@ export class OutboxService implements OutboxPort {
       channelType: payload.channelType,
       externalWorkspaceId: payload.externalWorkspaceId,
       externalChannelId: payload.externalChannelId,
-      text: payload.text,
       replyToExternalThreadId: payload.replyToExternalThreadId,
-    });
+    }, { jobId: `message-send-${payload.messageId}` });
   }
 
   async enqueueMemoryExtraction(payload: MemoryExtractionPayload): Promise<void> {
-    await this.memoryExtractionQueue.add('extract', payload);
+    await this.memoryExtractionQueue.add('extract', payload, {
+      jobId: `memory-extraction-${payload.inboundMessageId}`,
+    });
   }
 
   async enqueueFollowUpExecution(payload: FollowUpExecutionPayload): Promise<void> {
     const delayMs = Math.max(0, payload.dueAt.getTime() - Date.now());
-    await this.followUpQueue.add('execute', payload, { delay: delayMs });
+    await this.followUpQueue.add('execute', payload, {
+      delay: delayMs,
+      jobId: `follow-up-${payload.scheduledActionId}-${payload.dueAt.getTime()}`,
+    });
   }
 
   async enqueueSurveyEvidence(payload: SurveyEvidencePayload): Promise<void> {
-    await this.surveyEvidenceQueue.add('evaluate', payload);
+    await this.surveyEvidenceQueue.add('evaluate', payload, {
+      jobId: `survey-evidence-${payload.inboundMessageId}`,
+    });
   }
 
   async enqueueGroupReport(payload: GroupReportPayload): Promise<void> {
-    await this.groupReportQueue.add('report', payload);
+    await this.groupReportQueue.add('report', payload,
+      payload.sourceGroupStateId ? { jobId: `group-report-${payload.sourceGroupStateId}` } : {});
   }
 
   async enqueueStyleAnalysis(payload: StyleAnalysisPayload): Promise<void> {
-    await this.styleAnalysisQueue.add('analyze', payload);
+    await this.styleAnalysisQueue.add('analyze', payload,
+      payload.inboundMessageId ? { jobId: `style-analysis-${payload.inboundMessageId}` } : {});
   }
 
   async enqueueProfileHydration(payload: ProfileHydrationPayload): Promise<void> {
-    await this.profileHydrationQueue.add('hydrate', payload);
+    await this.profileHydrationQueue.add('hydrate', payload,
+      payload.inboundMessageId ? { jobId: `profile-hydration-${payload.inboundMessageId}` } : {});
   }
 }

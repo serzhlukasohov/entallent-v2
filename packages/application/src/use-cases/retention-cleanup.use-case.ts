@@ -14,11 +14,15 @@ const EMPTY_RESULT: RetentionCleanupUseCaseResult = {
   tenantsProcessed: 0,
   messagesDeleted: 0,
   surveyEvidenceExpired: 0,
+  surveyAssessmentsExpired: 0,
   memoryItemsExpired: 0,
   riskSignalsExpired: 0,
   temporaryGroupStatesExpired: 0,
   confirmedGroupStatesExpired: 0,
   withdrawnGroupStatesExpired: 0,
+  workingQuestionInsightsExpired: 0,
+  questionBundlesExpired: 0,
+  questionInsightsDeleted: 0,
   auditLogsDeleted: 0,
   reportSnapshotsDeleted: 0,
 };
@@ -56,11 +60,15 @@ function cutoff(now: Date, days: number): Date {
 function addResult(target: RetentionCleanupUseCaseResult, result: RetentionCleanupResult): void {
   target.messagesDeleted += result.messagesDeleted;
   target.surveyEvidenceExpired += result.surveyEvidenceExpired;
+  target.surveyAssessmentsExpired += result.surveyAssessmentsExpired;
   target.memoryItemsExpired += result.memoryItemsExpired;
   target.riskSignalsExpired += result.riskSignalsExpired;
   target.temporaryGroupStatesExpired += result.temporaryGroupStatesExpired;
   target.confirmedGroupStatesExpired += result.confirmedGroupStatesExpired;
   target.withdrawnGroupStatesExpired += result.withdrawnGroupStatesExpired;
+  target.workingQuestionInsightsExpired += result.workingQuestionInsightsExpired;
+  target.questionBundlesExpired += result.questionBundlesExpired;
+  target.questionInsightsDeleted += result.questionInsightsDeleted;
   target.auditLogsDeleted += result.auditLogsDeleted;
   target.reportSnapshotsDeleted += result.reportSnapshotsDeleted;
 }

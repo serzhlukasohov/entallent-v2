@@ -38,11 +38,83 @@
       "manualReviewRequired": false
     },
     {
+      "id": "resolved-detail-question-planning",
+      "name": "resolved-detail question planning",
+      "file": "src/scenarios/resolved-detail-question-planning.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 5,
+      "manualReviewRequired": false
+    },
+    {
       "id": "pulse-capture-exact-message",
       "name": "CAP-8 exact-message pulse capture",
       "file": "src/scenarios/pulse-capture-exact-message.sim.test.ts",
       "hardPasses": 5,
       "judgePasses": 0,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "identity-purpose",
+      "name": "CAP-7 identity and purpose",
+      "file": "src/scenarios/identity-purpose.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "capability-link-request",
+      "name": "CAP-7 link request declined upfront",
+      "file": "src/scenarios/capability-link-request.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "offer-delivered",
+      "name": "CAP-6 accepted offer is delivered",
+      "file": "src/scenarios/offer-delivered.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "format-request-outline",
+      "name": "CAP-9 outline with time slots",
+      "file": "src/scenarios/format-request-outline.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "answer-then-bundle",
+      "name": "CAP-4 answer before the confirmation bundle",
+      "file": "src/scenarios/answer-then-bundle.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "reasked-question",
+      "name": "CAP-8 answered question is not re-asked",
+      "file": "src/scenarios/reasked-question.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "changed-advice",
+      "name": "CAP-10 changed advice is named",
+      "file": "src/scenarios/changed-advice.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "sentiment-amplification",
+      "name": "CAP-8 sentiment is not amplified",
+      "file": "src/scenarios/sentiment-amplification.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
       "manualReviewRequired": false
     },
     {

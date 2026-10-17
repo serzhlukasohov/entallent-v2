@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import {
   channelAccounts, orgEmployeePlacements, orgTeams, orgUnits, people,
-  surveyReportingCohorts, surveyWindows, teams, teamMemberships,
+  surveyReportingCohorts, surveyWindows, teams, teamMemberships, users,
 } from '@entalent/database';
 import { DatabaseService } from '../../database/database.service';
 
@@ -22,6 +22,29 @@ type TeamInfo = {
 @Injectable()
 export class TeamRepository {
   constructor(private readonly db: DatabaseService) {}
+
+  async isV2ManagerExternalUserId(
+    tenantId: string, externalWorkspaceId: string, externalUserId: string,
+  ): Promise<boolean> {
+    const rows = await this.db.client.select({ id: people.id })
+      .from(people)
+      .innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, tenantId)))
+      .innerJoin(orgUnits, and(
+        eq(orgUnits.managerPersonId, people.id), eq(orgUnits.tenantId, tenantId),
+        eq(orgUnits.lifecycleStatus, 'active'),
+      ))
+      .innerJoin(channelAccounts, and(
+        eq(channelAccounts.userId, users.id), eq(channelAccounts.tenantId, tenantId),
+      ))
+      .where(and(
+        eq(people.tenantId, tenantId), eq(people.primaryRole, 'manager'),
+        eq(people.lifecycleStatus, 'active'), eq(users.status, 'active'), isNull(users.deletedAt),
+        eq(channelAccounts.channelType, 'slack'), eq(channelAccounts.linkStatus, 'linked'),
+        eq(channelAccounts.externalWorkspaceId, externalWorkspaceId),
+        eq(channelAccounts.externalUserId, externalUserId),
+      )).limit(1);
+    return rows.length === 1;
+  }
 
   async findCurrentHierarchyIdentifiers(userId: string, tenantId: string): Promise<string[]> {
     const [person] = await this.db.client.select({ role: people.primaryRole }).from(people).where(and(

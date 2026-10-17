@@ -6,6 +6,7 @@ import type { FollowUpContextPort } from '../ports/follow-up-context.port';
 import type { OutboxPort, FollowUpExecutionPayload } from '../ports/outbox.port';
 import { isInQuietHours, getLocalHour } from '../utils/quiet-hours';
 import { resolveLanguagePolicy } from '../utils/language-policy';
+import { modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 
 export interface FollowUpExecutionInput {
   scheduledActionId: string;
@@ -45,6 +46,9 @@ export class FollowUpExecutionUseCase {
 
   async execute(input: FollowUpExecutionInput): Promise<PolicyDecision> {
     const action = await this.actionRepo.findById(input.scheduledActionId, input.tenantId);
+    if (action && action.userId !== input.userId) {
+      throw new Error('follow_up_action_scope_mismatch');
+    }
     if (!action || action.status !== 'pending') {
       return { decision: 'skip', reason: 'not_pending' };
     }
@@ -118,7 +122,9 @@ export class FollowUpExecutionUseCase {
     }
 
     // Generate personalized follow-up message
-    const recentMessages = await this.conversationRepo.findRecentMessages(ctx.conversation.id, 8);
+    const recentMessages = modelMessagesAfterContentFilter(
+      await this.conversationRepo.findRecentMessages(ctx.conversation.id, 8),
+    );
     const turns: ConversationTurn[] = recentMessages.map((m) => ({
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       content: m.text,
@@ -143,7 +149,7 @@ export class FollowUpExecutionUseCase {
 
     const generated = await this.ai.generateResponse(turns, strategy, {
       userName: ctx.user.preferredName ?? 'there',
-      languagePolicy: resolveLanguagePolicy(turns, ctx.conversation.userLocale),
+      languagePolicy: resolveLanguagePolicy(),
       ...(isReminder
         ? { reminderIntent: actionCtx.reminderIntent ?? action.intent }
         : { followUpIntent: `${actionCtx.originalReason} — ${actionCtx.messageStrategy}` }),

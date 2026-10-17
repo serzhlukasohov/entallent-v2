@@ -5,11 +5,9 @@ import { HealthModule } from './health/health.module';
 import { DatabaseModule } from './database/database.module';
 import { QueueModule } from './queue/queue.module';
 import { ChannelModule } from './channel/channel.module';
-import { UsersModule } from './users/users.module';
 import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
 import { shouldMountDevModule } from './dev/dev-endpoints';
-import { InternalMafContextModule } from './internal-maf-context/internal-maf-context.module';
 import { HierarchyModule } from './hierarchy/hierarchy.module';
 import { CompanyAuthModule } from './company-auth/company-auth.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
@@ -23,12 +21,10 @@ const mountDevModule = shouldMountDevModule();
     QueueModule,
     HealthModule,
     ChannelModule,
-    UsersModule,
     AdminModule,
     HierarchyModule,
     CompanyAuthModule,
     OnboardingModule,
-    InternalMafContextModule,
     ...(mountDevModule ? [DevModule] : []),
   ],
 })

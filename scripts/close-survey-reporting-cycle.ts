@@ -70,12 +70,8 @@ async function main(): Promise<void> {
   }
 }
 
-function createRedis(redisUrl: string): IORedis {
-  const parsed = new URL(redisUrl);
-  return new IORedis({
-    host: parsed.hostname,
-    port: Number(parsed.port) || 6379,
-    ...(parsed.password ? { password: decodeURIComponent(parsed.password) } : {}),
+export function createRedis(redisUrl: string): IORedis {
+  return new IORedis(redisUrl, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
   });

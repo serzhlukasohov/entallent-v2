@@ -1,0 +1,454 @@
+{
+  "autonomy_control_work": {
+    "topicId": "A1",
+    "title": "Control over work",
+    "questionGroup": "autonomy",
+    "canonicalMeaning": "The employee's perceived ability to choose how they carry out their work, influence outcomes within their responsibilities, and act on better approaches without unnecessary barriers.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's perceived ability to choose how they carry out their work, influence outcomes within their responsibilities, and act on better approaches without unnecessary barriers.\n\nLegitimate safety requirements or coordination of decisions affecting other teams do not automatically reduce the score. Evaluate whether sufficient independence remains and whether constraints obstruct work.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee has practically no choice over how work is performed or influence on outcomes within their responsibilities; attempts to improve the approach are systematically blocked."
+      },
+      {
+        "score": 25,
+        "description": "Independence is limited to minor decisions; meaningful actions require approvals that substantially obstruct work."
+      },
+      {
+        "score": 50,
+        "description": "Some significant tasks allow independence, while control and barriers materially restrict approach and influence in others."
+      },
+      {
+        "score": 75,
+        "description": "The employee usually chooses their approach and can implement improvements; specific significant constraints remain."
+      },
+      {
+        "score": 100,
+        "description": "The employee has sufficient independence within their responsibilities, can influence outcomes, and can apply improvements without unnecessary obstacles."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 20,
+        "text": "I can decide small details, but almost every meaningful change requires approval. Even routine improvements regularly get stuck."
+      },
+      {
+        "score": 60,
+        "text": "I choose how to handle routine work, but on important projects the approach is tightly prescribed. Some improvements are possible, others get blocked without a clear reason."
+      },
+      {
+        "score": 90,
+        "text": "I can choose my approach and try improvements. Cross-team changes need coordination, but that process usually helps rather than blocks me."
+      }
+    ]
+  },
+  "autonomy_voice_influence": {
+    "topicId": "A2",
+    "title": "Voice and influence",
+    "questionGroup": "autonomy",
+    "canonicalMeaning": "The extent to which the employee's ideas are heard, seriously considered, and can influence decisions or lead to action.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe extent to which the employee's ideas are heard, seriously considered, and can influence decisions or lead to action.\n\nA reasoned rejection does not imply a low score. High scores do not require every proposal to be implemented. Implementation is evidence of influence, not a mandatory acceptance rate.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee's input is systematically ignored or devalued."
+      },
+      {
+        "score": 25,
+        "description": "Input is heard mostly as a formality; substantive consideration is rare."
+      },
+      {
+        "score": 50,
+        "description": "Input is considered inconsistently: seriously in some significant situations, ignored in others."
+      },
+      {
+        "score": 75,
+        "description": "Input is usually considered seriously; specific significant exceptions remain."
+      },
+      {
+        "score": 100,
+        "description": "Input is consistently considered seriously; the employee understands how their contribution affects decisions or why a suggestion is rejected."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 90,
+        "text": "My suggestions are discussed seriously; some are accepted, and the decisions on others are explained. Feedback is occasionally delayed."
+      }
+    ]
+  },
+  "autonomy_expectation_clarity": {
+    "topicId": "A3",
+    "title": "Clarity of expectations",
+    "questionGroup": "autonomy",
+    "canonicalMeaning": "The employee's understanding of their current responsibilities, priorities, expected results, and what successful performance looks like.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's understanding of their current responsibilities, priorities, expected results, and what successful performance looks like.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "Tasks and success criteria are unclear; contradictory expectations obstruct work."
+      },
+      {
+        "score": 25,
+        "description": "Most expectations are unclear; the employee regularly has to guess priorities."
+      },
+      {
+        "score": 50,
+        "description": "Main tasks are understood, but significant priorities or success criteria remain unclear."
+      },
+      {
+        "score": 75,
+        "description": "Expectations are predominantly clear; specific gaps cause limited difficulty."
+      },
+      {
+        "score": 100,
+        "description": "Expected results, priorities, and success criteria are clear, and clarity is maintained when expectations change."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 65,
+        "text": "Tasks and deadlines are clear, but when priorities conflict, it is often unclear which matters more."
+      }
+    ]
+  },
+  "growth_skill_development": {
+    "topicId": "G1",
+    "title": "Skill development",
+    "questionGroup": "growth",
+    "canonicalMeaning": "The employee's perceived progress in developing skills relevant to their work, including whether work provides challenges that support learning.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's perceived progress in developing skills relevant to their work, including whether work provides challenges that support learning.\n\nDifficulty and workload alone do not demonstrate growth. Experienced specialists may develop depth of expertise without constantly acquiring new skills.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee explicitly experiences stagnation; work offers no opportunities to develop professionally meaningful skills."
+      },
+      {
+        "score": 25,
+        "description": "Development is rare and limited; the main work contributes little to learning."
+      },
+      {
+        "score": 50,
+        "description": "Useful development occurs, but inconsistently or only across part of the relevant skills."
+      },
+      {
+        "score": 75,
+        "description": "The employee regularly develops relevant skills and sees progress; specific constraints remain."
+      },
+      {
+        "score": 100,
+        "description": "The employee sees sustained, personally meaningful progress; work and accessible learning support development."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 80,
+        "text": "I'm getting noticeably better at designing complex systems through my projects, although I still have limited opportunities to develop my mentoring skills."
+      }
+    ]
+  },
+  "growth_useful_feedback": {
+    "topicId": "G2",
+    "title": "Useful feedback",
+    "questionGroup": "growth",
+    "canonicalMeaning": "The extent to which feedback helps the employee understand what to improve and make progress in their work.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe extent to which feedback helps the employee understand what to improve and make progress in their work.\n\nCritical feedback can receive a high score when useful. Praise alone does not establish usefulness.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "Needed feedback is absent, or received feedback does not help the employee understand what to improve."
+      },
+      {
+        "score": 25,
+        "description": "Feedback is predominantly vague, late, or unclear and difficult to apply."
+      },
+      {
+        "score": 50,
+        "description": "Some feedback helps improvement, but substantial gaps limit its usefulness."
+      },
+      {
+        "score": 75,
+        "description": "Feedback is usually specific, timely, and actionable; specific shortcomings remain."
+      },
+      {
+        "score": 100,
+        "description": "Clear, actionable feedback is available when needed, and the employee sees how it helps improve their work."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 65,
+        "text": "Code reviews help me improve specific technical decisions, but feedback on larger design choices often comes too late to use."
+      }
+    ]
+  },
+  "growth_future_opportunities": {
+    "topicId": "G3",
+    "title": "Future development opportunities",
+    "questionGroup": "growth",
+    "canonicalMeaning": "The employee's confidence that they have accessible opportunities to continue learning and progressing professionally within the company.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's confidence that they have accessible opportunities to continue learning and progressing professionally within the company.\n\nPrograms on paper are insufficient: assess real accessibility. Progress does not have to mean promotion.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee sees no accessible opportunities for continued, personally meaningful professional development in the company."
+      },
+      {
+        "score": 25,
+        "description": "Opportunities appear largely inaccessible; significant barriers undermine confidence in continued development."
+      },
+      {
+        "score": 50,
+        "description": "Some realistic opportunities exist, but access or fit with the employee's goals is substantially limited."
+      },
+      {
+        "score": 75,
+        "description": "The employee is confident that suitable opportunities are accessible; specific limitations or uncertainties remain."
+      },
+      {
+        "score": 100,
+        "description": "The employee sees realistic, accessible opportunities in a meaningful direction and is confident they can use them."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 85,
+        "text": "There are relevant projects and funded learning opportunities I can access. The specialist career path is less clear, but I'm confident I can keep developing here."
+      }
+    ]
+  },
+  "purpose_personal_meaning": {
+    "topicId": "P1",
+    "title": "Personal meaning",
+    "questionGroup": "purpose",
+    "canonicalMeaning": "The extent to which the employee experiences their work as personally meaningful, including its connection to the impact they value.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe extent to which the employee experiences their work as personally meaningful, including its connection to the impact they value.\n\nMeaning may come from craftsmanship, helping people, or building useful products. Alignment with the company's mission is not mandatory. Fatigue or calm expression alone does not establish a lack of meaning.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "Work is experienced as devoid of personal meaning or explicitly opposed to what matters to the employee."
+      },
+      {
+        "score": 25,
+        "description": "Work is predominantly not personally meaningful; meaningful moments are rare."
+      },
+      {
+        "score": 50,
+        "description": "Some work is meaningful, but substantial parts feel pointless or disconnected from valued goals."
+      },
+      {
+        "score": 75,
+        "description": "Work is predominantly personally meaningful; specific areas lose that connection."
+      },
+      {
+        "score": 100,
+        "description": "Work is consistently experienced as meaningful, and the employee can explain its connection to what matters to them."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 80,
+        "text": "Helping customers solve difficult problems matters to me. Most of my work does that, although some internal reporting feels disconnected from any useful outcome."
+      }
+    ]
+  },
+  "purpose_contribution_visibility": {
+    "topicId": "P2",
+    "title": "Visibility of contribution",
+    "questionGroup": "purpose",
+    "canonicalMeaning": "The employee's understanding of how their work contributes to meaningful outcomes for others, the team, the organization, or its customers.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's understanding of how their work contributes to meaningful outcomes for others, the team, the organization, or its customers.\n\nAssess visibility, not the size of the contribution. P2 can be high while P1 is low if contribution is understood but not personally meaningful.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee does not understand how their work contributes to any meaningful outcomes."
+      },
+      {
+        "score": 25,
+        "description": "The connection to outcomes is predominantly unclear; the employee rarely sees whom their work helps or how."
+      },
+      {
+        "score": 50,
+        "description": "Contribution is clear in some significant tasks, but the connection is lost for substantial parts of the work."
+      },
+      {
+        "score": 75,
+        "description": "The employee usually understands whom their work helps and how; specific significant gaps remain."
+      },
+      {
+        "score": 100,
+        "description": "The employee clearly understands the connection between their main work and meaningful outcomes and can give concrete examples."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 65,
+        "text": "I can see how our customer-facing features help users, but I don't understand what several major internal projects are supposed to achieve."
+      }
+    ]
+  },
+  "purpose_recognition": {
+    "topicId": "P3",
+    "title": "Recognition of good work",
+    "questionGroup": "purpose",
+    "canonicalMeaning": "The extent to which the employee experiences good work and valuable contributions as being noticed and acknowledged.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe extent to which the employee experiences good work and valuable contributions as being noticed and acknowledged.\n\nRecognition need not be public praise, a bonus, or promotion. Absence of praise during a particular week does not automatically reduce the score.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee explicitly reports that good work and significant achievements are systematically unnoticed or credited to others."
+      },
+      {
+        "score": 25,
+        "description": "Good work is rarely noticed; substantial contributions go unrecognized."
+      },
+      {
+        "score": 50,
+        "description": "Recognition exists but is inconsistent: significant achievements are sometimes noticed and sometimes ignored."
+      },
+      {
+        "score": 75,
+        "description": "Good work is usually noticed and acknowledged; specific significant exceptions remain."
+      },
+      {
+        "score": 100,
+        "description": "The employee experiences good work as consistently noticed and acknowledged in a suitable way."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 85,
+        "text": "My manager usually acknowledges specific contributions and gives me credit. Less visible maintenance work still gets overlooked sometimes."
+      }
+    ]
+  },
+  "belonging_team": {
+    "topicId": "B1",
+    "title": "Team belonging",
+    "questionGroup": "belonging",
+    "canonicalMeaning": "The employee's sense of being accepted, included, and a genuine member of their team.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's sense of being accepted, included, and a genuine member of their team.\n\nBelonging does not require friendship with everyone or participation in social events. Assess the employee's experience of acceptance and inclusion.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee feels excluded or rejected by the team."
+      },
+      {
+        "score": 25,
+        "description": "The employee predominantly feels like an outsider; acceptance and inclusion are rare."
+      },
+      {
+        "score": 50,
+        "description": "Belonging is experienced in some interactions, but the employee remains outside other significant situations."
+      },
+      {
+        "score": 75,
+        "description": "The employee usually feels accepted and a full team member; specific inclusion problems remain."
+      },
+      {
+        "score": 100,
+        "description": "The employee consistently feels accepted, included, and a full team member."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 65,
+        "text": "I feel included when we work together on projects, but important informal discussions often happen without me, and I sometimes feel outside the core group."
+      }
+    ]
+  },
+  "belonging_psychological_safety": {
+    "topicId": "B2",
+    "title": "Psychological safety",
+    "questionGroup": "belonging",
+    "canonicalMeaning": "The employee's perceived safety in raising concerns, sharing ideas, disagreeing, or admitting mistakes without fear of humiliation or retaliation.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's perceived safety in raising concerns, sharing ideas, disagreeing, or admitting mistakes without fear of humiliation or retaliation.\n\nAbsence of complaints does not demonstrate safety. Reasonable accountability for mistakes is not automatically unsafe: assess whether honest disclosure is possible without humiliation or retaliation. A2 assesses influence; B2 assesses the safety of expression.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "The employee reports punishment, humiliation, or threats for speaking up; openness is perceived as unsafe."
+      },
+      {
+        "score": 25,
+        "description": "Significant fear of negative consequences frequently leads the employee to hide problems, disagreement, or mistakes."
+      },
+      {
+        "score": 50,
+        "description": "The employee can speak openly in some situations, but feels unsafe and holds back in other significant circumstances."
+      },
+      {
+        "score": 75,
+        "description": "The employee can usually raise issues, propose ideas, and admit mistakes openly; specific situations still cause concern."
+      },
+      {
+        "score": 100,
+        "description": "The employee confidently speaks up and admits mistakes and, based on described experience, expects respectful, constructive treatment."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 40,
+        "text": "I can admit mistakes to teammates, but I avoid disagreeing with our manager because people who challenge decisions get publicly embarrassed."
+      }
+    ]
+  },
+  "belonging_manager_support": {
+    "topicId": "B3",
+    "title": "Manager support",
+    "questionGroup": "belonging",
+    "canonicalMeaning": "The employee's experience of receiving practical help, guidance, and support from their manager in day-to-day work.",
+    "version": "1.0.0",
+    "approvedAt": "2026-10-01",
+    "instructions": "1. Score the employee-confirmed semantic question summary before de-identification. Persist the score with the de-identified insight; purge temporary identifiable analytical material after durable completion. Original private conversation history remains governed by its separate access boundary.\n2. Scores are integers from `0` through `100`, with any intermediate integer permitted. The five anchors are reference points, not the only allowed scores: `0` extremely unfavorable, `25` predominantly unfavorable, `50` materially mixed or partially supported, `75` predominantly favorable, `100` clearly favorable with supporting evidence.\n3. Use the question-specific meaning, confirmed frequency, scope, and impact to choose an intermediate value. Do not count positive/negative sentences or apply the retired polarity/sentiment weighted formula. Do not infer unreported details. Calm wording may describe a severely unfavorable condition; emotional wording alone does not determine the score.\n4. A high score requires positive evidence. Absence of complaints is not sufficient. A score of `50` requires evidence of a mixed or partially supported condition; it is not a default for uncertainty or silence.\n5. The conversation should seek the condition, its causes, and useful examples before confirmation without forcing the employee to provide an explanation. An unknown cause does not block scoring when the condition itself is clear.\n6. If the condition can be evaluated despite limited detail, score it and record lower confidence. Confidence does not reduce the score. If the condition cannot be evaluated, keep the confirmed qualitative insight without a score as `insufficient_evidence`. Declined, unresolved, and no-data outcomes also have no score; they are not negative or neutral responses.\n7. Newly reported information supplements the existing confirmed insight. Preserve the earlier experience, the change, and its known cause rather than silently replacing the history. Confirm and de-identify the supplement. The current score reflects the latest confirmed condition; unconfirmed updates do not change it. Preserve prior de-identified versions and scores as history rather than counting them as additional current answers.\n8. When the employee attributes a change to a manager action following a recommendation, record the attribution and link the recommendation when identifiable in the system. Temporal coincidence alone does not establish causation. Persistent analytical text and links remain subject to the privacy/access contract.\n9. One policy applies consistently across the company and is fixed within a Pulse Cycle. It should remain stable across cycles. Scores from different policy versions must not form an official trend unless historical de-identified summaries have been rescored under one policy; otherwise establish a new baseline.\n10. Persist policy version, rubric version, model identifier, prompt version, confidence, and calculation timestamp. Every non-zero score delta indicates trend direction in MVP, as an experiment assumption rather than a claim of statistical significance.\n11. Changes to canonical topic meaning, anchors, or evaluation rules require a new version. Model/prompt provenance must remain recorded even when the policy does not change.\n\nThe employee's experience of receiving practical help, guidance, and support from their manager in day-to-day work.\n\nHigh scores do not require constant intervention. An independent employee may need support only occasionally. If help has not been needed and availability is unknown, do not assume a high or low score.",
+    "anchors": [
+      {
+        "score": 0,
+        "description": "Needed support is absent, or the manager's actions systematically obstruct the employee's ability to work effectively."
+      },
+      {
+        "score": 25,
+        "description": "Help is predominantly unavailable or ineffective; significant work difficulties remain unsupported."
+      },
+      {
+        "score": 50,
+        "description": "The manager helps in some situations, but support is insufficient in other important cases."
+      },
+      {
+        "score": 75,
+        "description": "The employee usually receives needed help, guidance, and assistance removing obstacles; specific significant gaps remain."
+      },
+      {
+        "score": 100,
+        "description": "The employee reliably receives suitable, timely support when needed, and the manager helps address significant work obstacles."
+      }
+    ],
+    "approvedExamples": [
+      {
+        "score": 80,
+        "text": "My manager helps resolve priorities and removes blockers when I ask. Support is reliable, although decisions involving other teams sometimes take too long."
+      }
+    ]
+  }
+}

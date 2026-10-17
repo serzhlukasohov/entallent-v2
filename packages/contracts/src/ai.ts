@@ -78,6 +78,8 @@ export const OnboardingSignalSchema = z.object({
   substantive: z.boolean(),
 });
 export type OnboardingSignal = z.infer<typeof OnboardingSignalSchema>;
+export const FormatRequestSchema = z.enum(['list', 'outline', 'steps']);
+export type FormatRequest = z.infer<typeof FormatRequestSchema>;
 
 export const SituationClassificationSchema = z.object({
   primaryIntent: SituationIntentSchema,
@@ -125,13 +127,36 @@ export const SituationClassificationSchema = z.object({
   ),
   /** Onboarding meaning of the latest message; invalid model output fails closed to null. */
   onboardingSignal: OnboardingSignalSchema.nullish().catch(null),
+  /**
+   * The employee asks what is left in the pulse cycle or whether they answered everything
+   * (GC round 3 CAP-3). The reply is then grounded on typed cycle progress.
+   */
+  cycleStatusQuestion: z.preprocess(
+    (value) => value === null || value === undefined ? false : value,
+    z.boolean().catch(false).optional(),
+  ),
+  /**
+   * GC round 3 CAP-6: the latest mentor turn contained an offer to do or produce something.
+   * Read by the classifier from the transcript each turn; malformed output fails closed.
+   */
+  priorAssistantOffer: z.boolean().optional().catch(false),
+  /** The latest employee message accepts that offer. Only meaningful with priorAssistantOffer. */
+  acceptsPriorOffer: z.boolean().optional().catch(false),
+  /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; unknown values fail closed. */
+  formatRequest: FormatRequestSchema.nullable().optional().catch(null),
 }).transform((classification) => {
+  const acceptsPriorOffer = classification.acceptsPriorOffer === undefined
+    ? undefined
+    : classification.priorAssistantOffer === true && classification.acceptsPriorOffer;
   const hasPulseCaptureIntent = classification.primaryIntent === 'pulse_capture_explanation'
     || classification.secondaryIntents.includes('pulse_capture_explanation');
-  if (!hasPulseCaptureIntent || classification.pulseCaptureScope !== undefined) {
+  const pulseCaptureScope = hasPulseCaptureIntent && classification.pulseCaptureScope === undefined
+    ? { type: 'unresolved' as const }
+    : classification.pulseCaptureScope;
+  if (acceptsPriorOffer === classification.acceptsPriorOffer && pulseCaptureScope === classification.pulseCaptureScope) {
     return classification;
   }
-  return { ...classification, pulseCaptureScope: { type: 'unresolved' as const } };
+  return { ...classification, acceptsPriorOffer, pulseCaptureScope };
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 
@@ -222,9 +247,13 @@ export const RiskTypeSchema = z.enum([
 ]);
 export type RiskType = z.infer<typeof RiskTypeSchema>;
 
+export const RiskSeveritySchema = z.enum(['none', 'low', 'medium', 'high', 'critical']);
+export type RiskSeverity = z.infer<typeof RiskSeveritySchema>;
+
+/** Model output of the risk detector. Archived MAF code still produces this shape directly. */
 export const RiskDetectionSchema = z.object({
   riskType: RiskTypeSchema.nullable(),
-  severity: z.enum(['none', 'low', 'medium', 'high', 'critical']),
+  severity: RiskSeveritySchema,
   confidence: z.number().min(0).max(1),
   evidence: z.array(z.string()),
   immediateResponseRequired: z.boolean(),
@@ -235,10 +264,87 @@ export const RiskDetectionSchema = z.object({
 });
 export type RiskDetection = z.infer<typeof RiskDetectionSchema>;
 
+/**
+ * Provider moderation signal (ADR-013 D2/R1). It is a monotonic tripwire: policy may use it
+ * to raise risk severity, never to lower it. Only flagged categories are listed.
+ */
+export const ModerationCategorySchema = z.enum([
+  'self_harm',
+  'self_harm_intent',
+  'self_harm_instructions',
+  'violence',
+  'harassment_threatening',
+  'hate_threatening',
+]);
+export type ModerationCategory = z.infer<typeof ModerationCategorySchema>;
+
+export const ModerationSignalSchema = z.object({
+  source: z.enum(['openai_moderation', 'azure_content_filter']),
+  /** The provider refused to process the content (e.g. Azure content_filter 400). */
+  blocked: z.boolean(),
+  categories: z.array(z.object({
+    category: ModerationCategorySchema,
+    /** Provider severity band when it reports one (Azure); null for boolean flags (OpenAI). */
+    level: z.enum(['low', 'medium', 'high']).nullable(),
+  })),
+});
+export type ModerationSignal = z.infer<typeof ModerationSignalSchema>;
+
+/** What a provider returns from detectRisk: the model output plus any moderation signal it observed. */
+export type ProviderRiskDetection = RiskDetection & { moderation?: ModerationSignal };
+
+/**
+ * Thrown by a provider's detectRisk when it failed but observed a moderation signal. When
+ * `moderation.blocked` is true the provider refused the content itself (e.g. Azure
+ * content_filter), which is a safety signal rather than a generic outage.
+ */
+export class ModerationSignalError extends Error {
+  readonly moderation: ModerationSignal;
+
+  constructor(moderation: ModerationSignal, message = 'Risk detection failed with a moderation signal') {
+    super(message);
+    this.name = 'ModerationSignalError';
+    this.moderation = moderation;
+  }
+}
+
+export function isModerationSignalError(err: unknown): err is ModerationSignalError {
+  if (err instanceof ModerationSignalError) return true;
+  if (typeof err !== 'object' || err === null || !('moderation' in err)) return false;
+  return (err as { name?: unknown }).name === 'ModerationSignalError'
+    && ModerationSignalSchema.safeParse((err as { moderation: unknown }).moderation).success;
+}
+
+/**
+ * Risk assessment as consumed by the active runtime (ADR-013 D3). `assessed: false` means the
+ * detector produced no usable result: there is no confidence, and consumers must treat it as
+ * unknown, never as safe. A moderation tripwire may still have raised its severity.
+ */
+export type AssessedRisk = RiskDetection & {
+  assessed: true;
+  moderation?: ModerationSignal;
+  /** True when the moderation tripwire raised severity or flags above the model output. */
+  tripwireRaised: boolean;
+};
+
+export interface UnassessedRisk {
+  assessed: false;
+  reason: 'assessment_failed' | 'invalid_output' | 'moderation_blocked';
+  riskType: RiskType | null;
+  /** 'unknown' unless a moderation tripwire raised it. Never 'none': unassessed is not safe. */
+  severity: Exclude<RiskSeverity, 'none'> | 'unknown';
+  immediateResponseRequired: boolean;
+  moderation?: ModerationSignal;
+  tripwireRaised: boolean;
+}
+
+export type RiskAssessment = AssessedRisk | UnassessedRisk;
+
 // ── Survey Evidence Evaluator ───────────────────────────────────────────────
 
 export const SurveyEvidenceEvaluationSchema = z.object({
   candidateQuestionIds: z.array(z.string()),
+  voluntaryReopenQuestionIds: z.array(z.string()).optional(),
   evidence: z.array(
     z.object({
       questionId: z.string(),
@@ -255,6 +361,22 @@ export const SurveyEvidenceEvaluationSchema = z.object({
   ),
 });
 export type SurveyEvidenceEvaluation = z.infer<typeof SurveyEvidenceEvaluationSchema>;
+
+export const QuestionScoreResponseSchema = z.object({
+  outcome: z.enum(['scored', 'insufficient_evidence']),
+  score: z.number().int().min(0).max(100).nullable(),
+  confidence: z.number().min(0).max(1),
+  direction: z.enum(['adverse', 'mixed', 'favorable']),
+  severity: z.enum(['low', 'moderate', 'high']),
+  rootCauseCategory: z.enum([
+    'workload', 'clarity', 'autonomy', 'growth', 'purpose',
+    'belonging', 'support', 'recognition', 'other',
+  ]),
+}).strict().refine((value) => (value.outcome === 'scored') === (value.score !== null));
+
+export const QuestionDeidentifiedSummarySchema = z.object({
+  summary: z.string().trim().min(1).max(600),
+}).strict();
 
 // ── Group Confirmation Response Interpreter ─────────────────────────────────
 
@@ -292,9 +414,15 @@ export const ReplyStrategySchema = z.object({
 });
 export type ReplyStrategy = z.infer<typeof ReplyStrategySchema>;
 
+const optionalNullableText = z.preprocess((value) => value === null ? undefined : value, z.string().optional());
+
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
   confirmationSummary: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
+  /** Two-part reply on a V2 bundle or clarification turn (GC round 3 CAP-4): the answer to the latest message. */
+  replyText: optionalNullableText,
+  /** The composed bundle or clarification text the model must return byte-for-byte. */
+  bundleText: optionalNullableText,
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
   surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),

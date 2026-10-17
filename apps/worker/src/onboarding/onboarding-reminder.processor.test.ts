@@ -51,7 +51,7 @@ describe('OnboardingReminderProcessor remind', () => {
     })]);
     expect(inserted[0]).not.toHaveProperty('metadata');
     expect(apply).toHaveBeenCalledWith('t1', 'p1', { type: 'reminder_sent', at: NOW }, expect.any(Function));
-    expect(effects.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'c1' }), id, reminderCopy('employee'));
+    expect(effects.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'c1' }), id);
   });
 
   it('uses team lead copy and a fresh id when the intro changed', async () => {

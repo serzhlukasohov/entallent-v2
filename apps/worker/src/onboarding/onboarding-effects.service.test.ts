@@ -73,7 +73,7 @@ describe('OnboardingEffectsService', () => {
     expect(inserted[0]).toMatchObject({ id, conversationId: 'c1', direction: 'outbound', messageType: 'onboarding_ack', text: 'ok' });
     expect(messageSendQueue.add).toHaveBeenCalledWith('send', expect.objectContaining({
       messageId: id, tenantId: 't', conversationId: 'c1', channelType: 'slack',
-      externalWorkspaceId: 'W1', externalChannelId: 'D1', text: 'ok',
+      externalWorkspaceId: 'W1', externalChannelId: 'D1',
     }));
   });
 

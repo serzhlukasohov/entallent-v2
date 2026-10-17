@@ -6,10 +6,16 @@ import type {
   MemoryContext,
   ResponseContext,
   SurveyQuestionForEvaluation,
+  SurveyEvidenceEvaluationOptions,
+  QuestionBundleComposition,
+  AwaitingQuestionBundle,
+  QuestionBundleVerdict,
+  PendingQuestionClarification,
+  QuestionClarificationVerdict,
 } from '@entalent/application';
 import type {
   SituationClassification,
-  RiskDetection,
+  ProviderRiskDetection,
   MemoryProposal,
   ReplyStrategy,
   GeneratedResponse,
@@ -39,7 +45,7 @@ export class AiProviderWithFallback implements AiProviderPort {
     return this.withFallback((p) => p.classifySituation(turns, context));
   }
 
-  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
+  async detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
     return this.withFallback((p) => p.detectRisk(turns, context));
   }
 
@@ -50,8 +56,9 @@ export class AiProviderWithFallback implements AiProviderPort {
   async evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: SurveyEvidenceEvaluationOptions,
   ): Promise<SurveyEvidenceEvaluation> {
-    return this.withFallback((p) => p.evaluateSurveyEvidence(turns, questions));
+    return this.withFallback((p) => p.evaluateSurveyEvidence(turns, questions, options));
   }
 
   async generateResponse(
@@ -60,6 +67,36 @@ export class AiProviderWithFallback implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     return this.withFallback((p) => p.generateResponse(turns, strategy, context));
+  }
+
+  async composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+  ): Promise<QuestionBundleComposition> {
+    return this.withFallback((provider) => provider.composeQuestionBundle(turns, questions, responseLanguage));
+  }
+
+  async interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict> {
+    return this.withFallback((provider) => provider.interpretQuestionBundleResponse(turns, bundle));
+  }
+
+  async composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string> {
+    return this.withFallback((provider) => provider.composeQuestionClarification(turns, clarification, responseLanguage));
+  }
+
+  async interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict> {
+    return this.withFallback((provider) => provider.interpretQuestionClarificationResponse(turns, clarification));
   }
 
   async generateGroupSummary(

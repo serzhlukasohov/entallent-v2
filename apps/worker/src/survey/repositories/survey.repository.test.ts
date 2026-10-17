@@ -657,6 +657,34 @@ describe('SurveyRepository', () => {
     }
   });
 
+  it('does not create an unbound V2 window without an open reporting cohort', async () => {
+    const selectedRows = [[], [{ id: 'definition-v2', version: 'v2-policy-1.0.0' }], []];
+    const limit = vi.fn(() => Promise.resolve(selectedRows.shift() ?? []));
+    const where = vi.fn(() => ({ limit }));
+    const from = vi.fn(() => ({ where }));
+    const select = vi.fn(() => ({ from }));
+    const insert = vi.fn();
+    const repository = new SurveyRepository({ client: { select, insert } } as never, {} as never, {
+      findTeamByMemberId: vi.fn().mockResolvedValue({ teamId: 'team-1' }),
+    } as never);
+
+    await expect(repository.findOrCreateActiveWindow('user-1', 'tenant-1'))
+      .rejects.toThrow('v2_reporting_cohort_missing');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('rejects ambiguous active tenant survey definitions', async () => {
+    const selectedRows = [[], [{ id: 'definition-v1' }, { id: 'definition-v2' }]];
+    const limit = vi.fn(() => Promise.resolve(selectedRows.shift() ?? []));
+    const where = vi.fn(() => ({ limit }));
+    const from = vi.fn(() => ({ where }));
+    const select = vi.fn(() => ({ from }));
+    const repository = new SurveyRepository({ client: { select } } as never, {} as never, {} as never);
+
+    await expect(repository.findOrCreateActiveWindow('user-1', 'tenant-1'))
+      .rejects.toThrow('survey_active_definition_ambiguous');
+  });
+
   it('persists evidence with an allowed polarity', async () => {
     const db = createDbMock();
     const repository = makeRepository(db);

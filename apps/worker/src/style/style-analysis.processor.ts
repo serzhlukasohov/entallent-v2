@@ -11,12 +11,12 @@ export class StyleAnalysisProcessor extends WorkerHost {
   constructor(private readonly useCase: StyleAnalysisUseCase) { super(); }
 
   async process(job: Job<StyleAnalysisPayload>): Promise<void> {
-    const { conversationId, userId, tenantId, traceId } = job.data;
+    const { conversationId, userId, tenantId, inboundMessageId } = job.data;
     try {
-      await this.useCase.execute({ conversationId, userId, tenantId });
-    } catch (err) {
-      this.logger.error(`Style analysis failed [${traceId}]: ${(err as Error).message}`, (err as Error).stack);
-      throw err;
+      await this.useCase.execute({ conversationId, userId, tenantId, inboundMessageId });
+    } catch {
+      this.logger.error('style_analysis_failed');
+      throw new Error('style_analysis_failed');
     }
   }
 }

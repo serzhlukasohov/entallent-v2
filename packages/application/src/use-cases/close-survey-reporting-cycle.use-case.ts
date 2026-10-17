@@ -16,6 +16,7 @@ export interface CloseSurveyReportingCycleResult {
   cohortCount: number;
   queuedReportCount: number;
   expiredTemporaryCount: number;
+  expiredQuestionCount: number;
 }
 
 export class CloseSurveyReportingCycleUseCase {
@@ -33,6 +34,7 @@ export class CloseSurveyReportingCycleUseCase {
 
     const cohorts = await this.surveyRepo.findReportingCohortsReadyForFinalReports(input);
     const expiredTemporaryCount = await this.surveyRepo.expireTemporaryGroupStatesForClosedCohorts(input);
+    const expiredQuestionCount = await this.surveyRepo.expireTemporaryQuestionInsightsForClosedWindows(input);
     for (const cohort of cohorts) {
       await this.outbox.enqueueGroupReport({
         reportingCohortId: cohort.id,
@@ -49,6 +51,7 @@ export class CloseSurveyReportingCycleUseCase {
       cohortCount: cohorts.length,
       queuedReportCount: cohorts.length,
       expiredTemporaryCount,
+      expiredQuestionCount,
     };
   }
 }

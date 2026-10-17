@@ -18,6 +18,11 @@ import type {
   ResponseContext,
   RiskContext,
   SurveyQuestionForEvaluation,
+  QuestionBundleComposition,
+  AwaitingQuestionBundle,
+  QuestionBundleVerdict,
+  PendingQuestionClarification,
+  QuestionClarificationVerdict,
 } from '@entalent/application';
 
 type Script<TInput, TOutput> =
@@ -80,16 +85,49 @@ export class ScriptedAiProvider implements AiProviderPort {
     context: ResponseContext,
   ): Promise<GeneratedResponse> {
     const callIndex = this.responseCalls++;
-    return readScript(
-      this.options.responses,
-      { turns, strategy, context },
-      callIndex,
-      {
-        text: `${strategy.mode}: ${context.reminderConfirmation ? `reminder set for ${context.reminderConfirmation.intent}` : 'noted'}`,
-        confidence: 0.9,
-        containsSurveyProbe: false,
-      },
-    );
+    const replyText = `${strategy.mode}: ${context.reminderConfirmation ? `reminder set for ${context.reminderConfirmation.intent}` : 'noted'}`;
+    // A bundle or clarification turn answers first, then shows the fixed text (GC round 3 CAP-4).
+    const fallback: GeneratedResponse = context.trailingBundle
+      ? {
+          text: `${replyText}\n\n${context.trailingBundle.text}`,
+          replyText,
+          bundleText: context.trailingBundle.text,
+          confidence: 0.9,
+          containsSurveyProbe: false,
+        }
+      : { text: replyText, confidence: 0.9, containsSurveyProbe: false };
+    return readScript(this.options.responses, { turns, strategy, context }, callIndex, fallback);
+  }
+
+  async composeQuestionBundle(
+    _turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    _responseLanguage: string,
+  ): Promise<QuestionBundleComposition> {
+    const statements = questions.map((question) => ({
+      surveyQuestionId: question.surveyQuestionId,
+      statement: question.workingSummary,
+    }));
+    return { text: `I heard that ${statements.map((item) => item.statement).join(' ')} Is that fair?`, statements };
+  }
+
+  async interpretQuestionBundleResponse(
+    _turns: ConversationTurn[],
+    _bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict> {
+    return { kind: 'unrelated' };
+  }
+
+  async composeQuestionClarification(
+    _turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    _responseLanguage: string,
+  ): Promise<string> {
+    return `What did I miss about ${clarification.disputedStatement}?`;
+  }
+
+  async interpretQuestionClarificationResponse(): Promise<QuestionClarificationVerdict> {
+    return { kind: 'unrelated' };
   }
 
   async generateGroupSummary(): Promise<GroupSummary> {

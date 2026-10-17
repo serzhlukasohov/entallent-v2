@@ -86,7 +86,7 @@ export class OnboardingReminderProcessor extends WorkerHost {
       return true;
     });
     // 7. Enqueue only after commit.
-    if (result.changed && messageId) await this.effects.enqueueMessageSend({ tenantId, ...target }, messageId, text);
+    if (result.changed && messageId) await this.effects.enqueueMessageSend({ tenantId, ...target }, messageId);
   }
 
   /**

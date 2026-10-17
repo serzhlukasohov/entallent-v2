@@ -93,15 +93,15 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
       direction: 'outbound', senderType: 'agent', text: input.text, messageType: 'onboarding_ack',
       occurredAt: new Date(), metadata: {},
     }).onConflictDoNothing();
-    await this.enqueueMessageSend({ tenantId: input.tenantId, ...target }, messageId, input.text);
+    await this.enqueueMessageSend({ tenantId: input.tenantId, ...target }, messageId);
   }
 
   /** Same job name/payload as OutboxService.enqueueMessageSend. */
-  async enqueueMessageSend(target: DeliveryTarget & { tenantId: string }, messageId: string, text: string): Promise<void> {
+  async enqueueMessageSend(target: DeliveryTarget & { tenantId: string }, messageId: string): Promise<void> {
     await this.messageSendQueue.add('send', {
       messageId, tenantId: target.tenantId, conversationId: target.conversationId,
       channelType: target.channelType, externalWorkspaceId: target.externalWorkspaceId,
-      externalChannelId: target.externalConversationId, text,
+      externalChannelId: target.externalConversationId,
       replyToExternalThreadId: undefined,
     });
   }

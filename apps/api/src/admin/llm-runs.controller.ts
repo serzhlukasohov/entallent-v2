@@ -38,7 +38,21 @@ export class LlmRunsController {
 
     const [rows, [{ total }]] = await Promise.all([
       this.db.client
-        .select()
+        .select({
+          id: llmRuns.id,
+          tenantId: llmRuns.tenantId,
+          taskType: llmRuns.taskType,
+          provider: llmRuns.provider,
+          model: llmRuns.model,
+          promptVersion: llmRuns.promptVersion,
+          inputTokenCount: llmRuns.inputTokenCount,
+          outputTokenCount: llmRuns.outputTokenCount,
+          latencyMs: llmRuns.latencyMs,
+          estimatedCost: llmRuns.estimatedCost,
+          status: llmRuns.status,
+          errorCode: llmRuns.errorCode,
+          createdAt: llmRuns.createdAt,
+        })
         .from(llmRuns)
         .where(where)
         .orderBy(desc(llmRuns.createdAt))

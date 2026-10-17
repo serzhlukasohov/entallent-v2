@@ -1,280 +1,157 @@
 import Link from 'next/link';
+import type { AdminV2PilotPeopleResponse } from '@entalent/contracts';
 import { Nav } from '../components/Nav';
-import { fetchAdminPulseOverview } from '../lib';
-import { DevControls } from './DevControls';
-import { devControlsEnabled } from './dev-controls-gate';
+import { Badge, Freshness, Legend, Notice, PageHeader, Stat, ViewBadge } from '../components/ui';
+import { fetchAdminV2PilotPeople, fetchAdminV2PilotQaTeamSignals, qaPrivateViewEnabled } from '../lib';
+import {
+  buildTopicRows, cohortLabel, isShownWorking, lastMessageLabel, refreshHref, rootCauseLabel, ruPlural, shortName,
+  signalBadge, topicGroupLabel, type TopicRow, type TopicSignal,
+} from '../v2-pilot-progress';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-const GROUP_LABELS: Record<string, string> = {
-  autonomy: 'Autonomy',
-  belonging: 'Belonging',
-  engagement: 'Engagement',
-  growth: 'Growth',
-  purpose: 'Purpose',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  pending_confirmation: 'Pending',
-  confirmed: 'Confirmed',
-};
-
-const ASSESSMENT_LABELS: Record<string, string> = {
-  scored: 'Scored',
-  partially_covered: 'Partial',
-  insufficient_evidence: 'Low data',
-  unknown: '—',
-};
-
-function statusColor(status: string | null): string {
-  if (status === 'confirmed') return 'var(--green)';
-  if (status === 'pending_confirmation') return '#f59e0b';
-  return 'var(--text-muted)';
+function workingCount(data: AdminV2PilotPeopleResponse | null): number | string {
+  if (!data) return '—';
+  return data.people.reduce((sum, person) => sum + person.questions.filter(isShownWorking).length, 0);
 }
 
-function assessmentColor(status: string | null): string {
-  if (status === 'scored') return 'var(--green)';
-  if (status === 'partially_covered') return '#f59e0b';
-  if (status === 'insufficient_evidence') return 'var(--text-muted)';
-  return 'var(--border)';
+function SignalItem({ signal }: { signal: TopicSignal }) {
+  return <div className="topic-item">
+    <blockquote>{signal.summary}</blockquote>
+    <div className="topic-item-meta">
+      <ViewBadge badge={signalBadge(signal)} />
+      <span className="muted">Причина: {rootCauseLabel(signal.rootCause)}</span>
+      <span>Автор: <Link href={`/pulse/${encodeURIComponent(signal.author.userId)}`}>{signal.author.name}</Link></span>
+    </div>
+  </div>;
 }
 
-export default async function PulsePage() {
-  const showDevControls = devControlsEnabled();
-  const data = await fetchAdminPulseOverview();
-
-  const updated = data
-    ? new Date(data.generatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-    : '—';
-
-  return (
-    <main style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
-      <Nav active="pulse" />
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 600 }}>Pulse Check Groups</h1>
-        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>updated at {updated}</span>
-      </div>
-
-      {!data || data.employees.length === 0 ? (
-        <div style={{ color: 'var(--text-muted)', marginTop: 48, textAlign: 'center' }}>
-          No data. Make sure TENANT_ID is configured and employees have completed at least one
-          assessment.
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {data.employees.map((emp) => (
-            <div
-              key={emp.userId}
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                padding: '20px 24px',
-              }}
-            >
-              {/* Employee header */}
-              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>
-                <Link
-                  href={`/pulse/${emp.userId}`}
-                  style={{ color: 'var(--text)', textDecoration: 'none' }}
-                >
-                  {emp.displayName ?? emp.userId.slice(0, 8) + '…'}
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--text-muted)',
-                      fontWeight: 400,
-                      marginLeft: 6,
-                    }}
-                  >
-                    → insights
-                  </span>
-                </Link>
-              </div>
-
-              {/* Groups grid */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                  gap: 12,
-                }}
-              >
-                {emp.groups.map((g) => (
-                  <div
-                    key={g.questionGroup}
-                    style={{
-                      background: 'var(--surface2)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 10,
-                      padding: '12px 14px',
-                    }}
-                  >
-                    {/* Group name + status */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: 10,
-                      }}
-                    >
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>
-                        {GROUP_LABELS[g.questionGroup] ?? g.questionGroup}
-                      </span>
-                      {g.status ? (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 500,
-                            color: statusColor(g.status),
-                            background:
-                              g.status === 'confirmed'
-                                ? 'rgba(34,197,94,0.1)'
-                                : 'rgba(245,158,11,0.1)',
-                            padding: '2px 8px',
-                            borderRadius: 6,
-                          }}
-                        >
-                          {STATUS_LABELS[g.status] ?? g.status}
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No data</span>
-                      )}
-                    </div>
-
-                    {/* Score */}
-                    {g.employeeScore !== null && (
-                      <div style={{ marginBottom: 10 }}>
-                        <ScoreBar
-                          score={g.employeeScore}
-                          scale={g.questionGroup === 'engagement' ? 'ten' : 'hundred'}
-                        />
-                      </div>
-                    )}
-
-                    {/* Questions */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      {g.questions.map((q) => (
-                        <div
-                          key={q.stableKey}
-                          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                        >
-                          <div
-                            style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: '50%',
-                              background: assessmentColor(q.assessmentStatus),
-                              flexShrink: 0,
-                            }}
-                          />
-                          <span
-                            style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.3 }}
-                            title={ASSESSMENT_LABELS[q.assessmentStatus ?? ''] ?? '—'}
-                          >
-                            {q.title}
-                          </span>
-                        </div>
-                      ))}
-                      {g.questions.length === 0 && (
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                          No questions
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Confirmed at */}
-                    {g.confirmedAt && (
-                      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
-                        {new Date(g.confirmedAt).toLocaleDateString('en-US', {
-                          day: 'numeric',
-                          month: 'short',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* Backlog progress row */}
-              <div
-                style={{
-                  marginTop: 12,
-                  padding: '8px 12px',
-                  background: 'var(--surface)',
-                  borderRadius: 8,
-                  fontSize: 12,
-                  color: 'var(--text-muted)',
-                  display: 'flex',
-                  gap: 16,
-                  alignItems: 'center',
-                }}
-              >
-                <span>
-                  Backlog: <b style={{ color: 'var(--text)' }}>{emp.backlog.doneCount}</b> closed
-                </span>
-                <span>
-                  <b style={{ color: 'var(--text)' }}>{emp.backlog.pendingCount}</b> pending
-                </span>
-                {emp.backlog.totalIgnoreCount > 0 && (
-                  <span style={{ color: '#f59e0b' }}>↩ {emp.backlog.totalIgnoreCount} ignored</span>
-                )}
-                {emp.backlog.nextQuestion && (
-                  <span>
-                    Next:{' '}
-                    <b style={{ color: 'var(--text)' }}>{emp.backlog.nextQuestion.stableKey}</b> (
-                    {emp.backlog.nextQuestion.group})
-                  </span>
-                )}
-                {!emp.backlog.nextQuestion && emp.backlog.doneCount > 0 && (
-                  <span style={{ color: '#10b981' }}>✓ All questions closed</span>
-                )}
-              </div>
-
-              {/* Dev controls */}
-              {showDevControls && <DevControls userId={emp.userId} tenantId={data.tenantId} />}
+function TopicRowCard({ row, peopleAvailable, signalsAvailable }: {
+  row: TopicRow; peopleAvailable: boolean; signalsAvailable: boolean;
+}) {
+  return <article className="topic-row">
+    <h3>{row.title}</h3>
+    <div className="topic-columns">
+      <div>
+        <div className="topic-column-label">Черновики · не подтверждены</div>
+        {row.drafts.length === 0
+          ? <div className="topic-empty">{peopleAvailable ? 'Нет черновиков' : '—'}</div>
+          : row.drafts.map((draft, index) => <div key={`${draft.userId}:${index}`} className="topic-item">
+            <blockquote>{draft.summary}</blockquote>
+            <div className="topic-item-meta">
+              <Link href={`/pulse/${encodeURIComponent(draft.userId)}`}>{draft.name}</Link>
+              <ViewBadge badge={draft.badge} />
+              {draft.ready && <Badge tone="accent">Достаточно для подтверждения</Badge>}
             </div>
-          ))}
+          </div>)}
+      </div>
+      <div>
+        <div className="topic-column-label">Team Signals · обезличено</div>
+        {row.signals.length === 0
+          ? <div className="topic-empty">{signalsAvailable ? 'Пока нет сигналов' : '—'}</div>
+          : row.signals.map((signal, index) => <SignalItem key={`${index}:${signal.summary}`} signal={signal} />)}
+      </div>
+    </div>
+  </article>;
+}
+
+function Participants({ people }: { people: AdminV2PilotPeopleResponse['people'] }) {
+  if (people.length === 0) return null;
+  return <p className="participants">
+    <span className="muted">Участники:</span>{' '}
+    {people.map((person, index) => <span key={person.userId}>
+      {index > 0 && ', '}
+      <Link href={`/pulse/${encodeURIComponent(person.userId)}`}>{shortName(person.displayName)}</Link>
+      {' '}<span className="muted small">({lastMessageLabel(person.lastInboundAt)})</span>
+    </span>)}
+  </p>;
+}
+
+function GroupFilter({ groups, active }: { groups: string[]; active: string | null }) {
+  return <nav className="filters" aria-label="Группа тем">
+    <Link href="/pulse" className={active === null ? 'active' : undefined} aria-current={active === null ? 'page' : undefined}>
+      Все группы
+    </Link>
+    {groups.map((group) => <Link
+      key={group}
+      href={`/pulse?group=${encodeURIComponent(group)}`}
+      className={active === group ? 'active' : undefined}
+      aria-current={active === group ? 'page' : undefined}
+    >
+      {topicGroupLabel(group)}
+    </Link>)}
+  </nav>;
+}
+
+export default async function PulsePage({ searchParams }: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const qaEnabled = qaPrivateViewEnabled();
+  const params = await searchParams;
+  const group = params.group;
+  // Resolve the cohort once so both sides always describe the same cycle.
+  const people = await fetchAdminV2PilotPeople();
+  const signals = await fetchAdminV2PilotQaTeamSignals(people?.cohortId);
+  const cohort = people ?? signals;
+  const topics = buildTopicRows(people?.people ?? null, signals?.signals ?? null, typeof group === 'string' ? group : undefined);
+  const visibleGroups = [...new Set(topics.rows.map((row) => row.group))];
+  const cycleWide = topics.group ? 'по всему циклу' : undefined;
+
+  return (
+    <main className="page">
+      <Nav active="current" />
+      <PageHeader title="Текущий цикл" subtitle={cohort ? cohortLabel(cohort) : undefined}>
+        {qaEnabled && <Freshness checkedAt={[people?.checkedAt, signals?.checkedAt]} href={refreshHref('/pulse', params)} />}
+      </PageHeader>
+      {!qaEnabled ? (
+        <Notice>Черновики и Team Signals доступны только в закрытом QA-режиме.</Notice>
+      ) : <>
+        <Legend />
+        <div className="stats">
+          <Stat label="Участников" value={people?.people.length ?? '—'} note={cycleWide} />
+          <Stat
+            label="Черновиков"
+            value={workingCount(people)}
+            note={cycleWide ? `ещё не подтверждены участником · ${cycleWide}` : 'ещё не подтверждены участником'}
+          />
+          <Stat
+            label="Team Signals"
+            value={signals?.signals.length ?? '—'}
+            note={cycleWide ? `подтверждено и обезличено · ${cycleWide}` : 'подтверждено и обезличено'}
+          />
         </div>
-      )}
-
-      {/* Legend */}
-      <div style={{ marginTop: 28, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-        <Legend dot="var(--green)" label="Scored / Confirmed" />
-        <Legend dot="#f59e0b" label="Partial / Awaiting confirmation" />
-        <Legend dot="var(--text-muted)" label="Low data" />
-        <Legend dot="var(--border)" label="No data" />
-      </div>
+        {people && <Participants people={people.people} />}
+        <p className="muted" style={{ marginTop: 16 }}>
+          Слева — черновики участников, они могут измениться. Справа — подтверждённые итоги без имён.
+          Строки совпадают только по теме. Порог в 5 участников в QA-режиме не применяется.
+        </p>
+        {!people && <div style={{ marginTop: 16 }}><Notice>Черновики участников сейчас недоступны.</Notice></div>}
+        {!signals ? <div style={{ marginTop: 16 }}><Notice>Team Signals сейчас недоступны.</Notice></div>
+          : signals.signals.length === 0 && <div style={{ marginTop: 16 }}><Notice>Подтверждённых сигналов пока нет.</Notice></div>}
+        {(people || signals) && <>
+          <GroupFilter groups={topics.groups} active={topics.group} />
+          {topics.rows.length === 0 && topics.empty.length === 0 && (
+            <p className="muted" style={{ marginTop: 16 }}>Тем в этом цикле пока нет.</p>
+          )}
+          {visibleGroups.map((rowGroup) => <section key={rowGroup}>
+            <h2 className="section-title">{topicGroupLabel(rowGroup)}</h2>
+            <div className="stack">
+              {topics.rows.filter((row) => row.group === rowGroup).map((row) => <TopicRowCard
+                key={`${row.group}|${row.stableKey}`} row={row} peopleAvailable={Boolean(people)} signalsAvailable={Boolean(signals)}
+              />)}
+            </div>
+          </section>)}
+          {topics.empty.length > 0 && <details className="card" style={{ marginTop: 24 }}>
+            <summary>Ещё {topics.empty.length} {ruPlural(topics.empty.length, 'тема', 'темы', 'тем')} без данных</summary>
+            <ul style={{ margin: '12px 0 0', paddingLeft: 20 }}>
+              {topics.empty.map((row) => <li key={`${row.group}|${row.stableKey}`}>
+                {row.title} <span className="muted small">· {topicGroupLabel(row.group)}</span>
+              </li>)}
+            </ul>
+          </details>}
+        </>}
+      </>}
     </main>
-  );
-}
-
-function ScoreBar({ score, scale }: { score: number; scale: 'ten' | 'hundred' }) {
-  const pct = Math.min(100, Math.max(0, scale === 'ten' ? score * 10 : score));
-  const color = pct >= 60 ? 'var(--green)' : pct >= 35 ? '#f59e0b' : '#ef4444';
-  const display = scale === 'ten' ? `${score.toFixed(1)} / 10` : score.toFixed(1);
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Index</span>
-        <span style={{ fontSize: 12, fontWeight: 600, color }}>{display}</span>
-      </div>
-      <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2 }} />
-      </div>
-    </div>
-  );
-}
-
-function Legend({ dot, label }: { dot: string; label: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <div style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} />
-      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</span>
-    </div>
   );
 }

@@ -16,6 +16,12 @@ import {
   type ScheduledActionRepositoryPort,
   type SurveyRepositoryPort,
   type SurveyQuestionForEvaluation,
+  type QuestionBundleComposition,
+  type AwaitingQuestionBundle,
+  type QuestionBundleVerdict,
+  type PendingQuestionClarification,
+  type QuestionClarificationVerdict,
+  type QuestionConfirmationPort,
   type StyleProfileRecord,
 } from '@entalent/application';
 import type {
@@ -26,7 +32,7 @@ import type {
   MemoryProposal,
   ObservedStyle,
   ReplyStrategy,
-  RiskDetection,
+  ProviderRiskDetection,
   SituationClassification,
   SurveyEvidenceEvaluation,
 } from '@entalent/contracts';
@@ -38,6 +44,7 @@ import {
   InMemoryStyleProfileRepository,
 } from '../fakes/repositories';
 import { InlineOutbox } from '../fakes/inline-outbox';
+import { registerFallbackReport } from './report';
 
 const TENANT_ID = 'sim-tenant';
 const USER_ID = 'sim-user';
@@ -57,12 +64,25 @@ export interface CoachHarnessOptions {
   scheduledActionRepo?: ScheduledActionRepositoryPort;
   surveyRepo?: SurveyRepositoryPort;
   onboardingTurn?: OnboardingTurnPort;
+  /** V2 question-confirmation state (ready bundles, clarifications); omitted means no V2 turns. */
+  questionConfirmationRepo?: QuestionConfirmationPort;
 }
 
 export interface GenerateResponseCall {
   turns: ConversationTurn[];
   strategy: ReplyStrategy;
   context: ResponseContext;
+}
+
+/** An exception that escaped `ConversationOrchestrator.orchestrate` during one `send`. */
+export interface AgentTurnFailure {
+  /** 1-based position the turn would have had in `turns`; nothing is pushed there for it. */
+  turn: number;
+  name: string;
+  message: string;
+  stack: string | null;
+  /** Generation attempts made for this turn before the throw (see `generateResponseCalls`). */
+  generationCalls: number;
 }
 
 class RecordingEscalation implements EscalationPort {
@@ -87,7 +107,15 @@ export class CoachHarness {
   readonly escalation = new RecordingEscalation();
   readonly outbox: InlineOutbox;
   readonly turns: OrchestrateResult[] = [];
+  /** All calls, including regeneration attempts; this is not indexed by conversation turn. */
   readonly generateResponseCalls: GenerateResponseCall[] = [];
+  /** Final generation call for each completed send; null when the response bypassed generation. */
+  readonly responseCallsByTurn: Array<GenerateResponseCall | null> = [];
+  /**
+   * Errors thrown by the orchestrator, in order. `send` records and rethrows, so the scenario
+   * still fails while the report keeps the error class instead of losing it with the stack trace.
+   */
+  readonly failures: AgentTurnFailure[] = [];
 
   private readonly orchestrator: ConversationOrchestrator;
 
@@ -138,7 +166,11 @@ export class CoachHarness {
       ai,
       this.outbox,
       this.memoryRepo,
-      options.surveyRepo,
+      options.surveyRepo ?? {
+        findPulseCaptureForConversation: async () => [],
+        findAwaitingConfirmationGroups: async () => [],
+        findPendingConfirmationGroups: async () => [],
+      } as unknown as SurveyRepositoryPort,
       undefined,
       this.escalation,
       undefined,
@@ -146,12 +178,18 @@ export class CoachHarness {
       undefined,
       this.styleRepo,
       this.goalRepo,
+      options.questionConfirmationRepo,
+      undefined,
       options.onboardingTurn,
     );
+
+    // A report must exist even when the scenario aborts before `reportRun` is reached.
+    registerFallbackReport(this);
   }
 
   /** Delivers one user message and returns the coach's reply. */
   async send(text: string): Promise<string> {
+    const generationStart = this.generateResponseCalls.length;
     const inbound = await this.conversationRepo.saveMessage({
       conversationId: CONVERSATION_ID,
       tenantId: TENANT_ID,
@@ -160,16 +198,28 @@ export class CoachHarness {
       text,
     });
 
-    const result = await this.orchestrator.orchestrate({
-      messageId: inbound.id,
-      conversationId: CONVERSATION_ID,
-      userId: USER_ID,
-      tenantId: TENANT_ID,
-      externalWorkspaceId: 'sim-workspace',
-      externalConversationId: 'sim-channel',
-      traceId: `sim-turn-${this.turns.length + 1}`,
-    });
+    const turn = this.turns.length + 1;
+    let result: OrchestrateResult;
+    try {
+      result = await this.orchestrator.orchestrate({
+        messageId: inbound.id,
+        conversationId: CONVERSATION_ID,
+        userId: USER_ID,
+        tenantId: TENANT_ID,
+        externalWorkspaceId: 'sim-workspace',
+        externalConversationId: 'sim-channel',
+        traceId: `sim-turn-${turn}`,
+      });
+    } catch (error) {
+      this.failures.push(describeFailure(error, turn, this.generateResponseCalls.length - generationStart));
+      throw error;
+    }
 
+    this.responseCallsByTurn.push(
+      this.generateResponseCalls.length > generationStart
+        ? this.generateResponseCalls[this.generateResponseCalls.length - 1]!
+        : null,
+    );
     this.turns.push(result);
     return result.responseText;
   }
@@ -204,7 +254,7 @@ class RecordingAiProvider implements AiProviderPort {
     return this.delegate.classifySituation(turns, context);
   }
 
-  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection> {
+  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
     return this.delegate.detectRisk(turns, context);
   }
 
@@ -215,8 +265,9 @@ class RecordingAiProvider implements AiProviderPort {
   evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: Parameters<AiProviderPort['evaluateSurveyEvidence']>[2],
   ): Promise<SurveyEvidenceEvaluation> {
-    return this.delegate.evaluateSurveyEvidence(turns, questions);
+    return this.delegate.evaluateSurveyEvidence(turns, questions, options);
   }
 
   async generateResponse(
@@ -226,6 +277,36 @@ class RecordingAiProvider implements AiProviderPort {
   ): Promise<GeneratedResponse> {
     this.generateCalls.push({ turns, strategy, context });
     return this.delegate.generateResponse(turns, strategy, context);
+  }
+
+  composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+  ): Promise<QuestionBundleComposition> {
+    return this.delegate.composeQuestionBundle(turns, questions, responseLanguage);
+  }
+
+  interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict> {
+    return this.delegate.interpretQuestionBundleResponse(turns, bundle);
+  }
+
+  composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string> {
+    return this.delegate.composeQuestionClarification(turns, clarification, responseLanguage);
+  }
+
+  interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict> {
+    return this.delegate.interpretQuestionClarificationResponse(turns, clarification);
   }
 
   generateGroupSummary(
@@ -258,6 +339,13 @@ class RecordingAiProvider implements AiProviderPort {
   analyzeStyle(userTurns: string[]): Promise<ObservedStyle> {
     return this.delegate.analyzeStyle(userTurns);
   }
+}
+
+function describeFailure(error: unknown, turn: number, generationCalls: number): AgentTurnFailure {
+  if (error instanceof Error) {
+    return { turn, name: error.name, message: error.message, stack: error.stack ?? null, generationCalls };
+  }
+  return { turn, name: typeof error, message: String(error), stack: null, generationCalls };
 }
 
 /** Mirrors `AiService` in the worker so simulations exercise the shipped provider setup. */

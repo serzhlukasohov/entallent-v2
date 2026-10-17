@@ -1,0 +1,2 @@
+ALTER TABLE "survey_question_insights" DROP CONSTRAINT "survey_question_insights_category_check";--> statement-breakpoint
+ALTER TABLE "survey_question_insights" ADD CONSTRAINT "survey_question_insights_category_check" CHECK ("survey_question_insights"."root_cause_category" IN ('workload', 'clarity', 'autonomy', 'growth', 'purpose', 'belonging', 'support', 'recognition', 'other'));

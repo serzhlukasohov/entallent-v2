@@ -1,10 +1,11 @@
-import type { MemoryItemProposal, GoalProposal, FollowUpCandidate } from '@entalent/contracts';
+import type { MemoryItemProposal, GoalProposal, FollowUpCandidate, MemoryProposal } from '@entalent/contracts';
 import type { AiProviderPort } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { MemoryRepositoryPort, SaveMemoryItemParams } from '../ports/memory.repository.port';
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
 import type { MemoryItemRecord } from '../types/records';
 import { contentSimilarity } from '../utils/text-similarity';
+import { modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 
 /** Above this, a proposed item is considered the same fact as an existing one */
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.6;
@@ -23,6 +24,11 @@ export interface MemoryExtractionResult {
   followUpCandidates: FollowUpCandidate[];
 }
 
+export interface PreparedMemoryExtraction {
+  proposal: MemoryProposal;
+  closesConversation: boolean;
+}
+
 export class MemoryExtractionUseCase {
   constructor(
     private readonly conversationRepo: ConversationRepositoryPort,
@@ -32,7 +38,16 @@ export class MemoryExtractionUseCase {
   ) {}
 
   async execute(input: MemoryExtractionInput): Promise<MemoryExtractionResult> {
-    const dbMessages = await this.conversationRepo.findRecentMessages(input.conversationId, 20);
+    const prepared = await this.prepare(input);
+    return prepared ? this.apply(input, prepared) : { followUpCandidates: [] };
+  }
+
+  async prepare(input: MemoryExtractionInput): Promise<PreparedMemoryExtraction | null> {
+    const loadedMessages = this.conversationRepo.findMessagesThrough && this.conversationRepo.findMessageById
+      ? await this.findSourceBoundMessages(input)
+      : await this.conversationRepo.findRecentMessages(input.conversationId, 20);
+    const dbMessages = modelMessagesAfterContentFilter(loadedMessages);
+    if (dbMessages.length === 0) return null;
     const closesConversation = dbMessages.some(
       (message) =>
         message.id === input.outboundMessageId && message.metadata?.['dialogueAct'] === 'closing',
@@ -58,6 +73,12 @@ export class MemoryExtractionUseCase {
       goals: activeGoals.map((g) => ({ id: g.id, title: g.title, status: g.status })),
     });
 
+    return { proposal, closesConversation };
+  }
+
+  async apply(input: MemoryExtractionInput, prepared: PreparedMemoryExtraction): Promise<MemoryExtractionResult> {
+    const { proposal, closesConversation } = prepared;
+    const activeItems = await this.memoryRepo.findActiveByUser(input.userId, input.tenantId, 30);
     await this.applyMemoryItems(input, closesConversation ? [] : proposal.memoryItems, activeItems);
     await this.applyGoalProposals(
       input,
@@ -67,6 +88,31 @@ export class MemoryExtractionUseCase {
     );
 
     return { followUpCandidates: closesConversation ? [] : proposal.followUpCandidates };
+  }
+
+  private async findSourceBoundMessages(input: MemoryExtractionInput) {
+    const [history, outbound] = await Promise.all([
+      this.conversationRepo.findMessagesThrough!({
+        conversationId: input.conversationId,
+        tenantId: input.tenantId,
+        userId: input.userId,
+        inboundMessageId: input.inboundMessageId,
+        limit: 19,
+      }),
+      this.conversationRepo.findMessageById!(
+        input.outboundMessageId, input.tenantId, input.conversationId,
+      ),
+    ]);
+    const source = history.find((message) => message.id === input.inboundMessageId);
+    if (!source || !outbound) return [];
+    if (source.direction !== 'inbound' || outbound.direction !== 'outbound'
+      || [...history, outbound].some((message) => message.tenantId !== input.tenantId
+        || message.userId !== input.userId || message.conversationId !== input.conversationId)
+      || (outbound.metadata?.['sourceInboundMessageId'] !== undefined
+        && outbound.metadata['sourceInboundMessageId'] !== input.inboundMessageId)) {
+      throw new Error('memory_extraction_message_scope_mismatch');
+    }
+    return [...history, outbound];
   }
 
   private async applyMemoryItems(

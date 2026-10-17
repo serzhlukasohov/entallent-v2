@@ -36,7 +36,9 @@ Each scenario writes a full report to `packages/conversation-sim/runs/<scenario>
 and `.json` (gitignored, overwritten per run): judge verdict with met and unmet
 criteria, deterministic violations, every reply with its mode, classification,
 `replyPlan` and length, the extracted memory and the learned style profile. The
-same markdown report goes to stdout.
+initial markdown snapshot goes to stdout. After the Vitest test finishes, any
+assertion or cleanup failure updates every report written by that test; the saved JSON and
+Markdown are the final result. The judge verdict remains independent.
 
 Setting `LANGWATCH_API_KEY` additionally streams runs to the LangWatch UI, where the
 conversation is rendered turn by turn as it plays out.
@@ -59,9 +61,15 @@ packages/conversation-sim/runs/gates/<gate-id>/
   <scenario-report>.json
 ```
 
-The default gate is five samples per scenario. Hard gates must pass 5/5. Judge
+The default gate is five samples per scenario. Hard gates must pass 5/5. A failed
+deterministic flag or any recorded violation fails the hard gate even when the
+subprocess exits successfully; report-backed failures are never infrastructure
+retries. Judge
 criteria must pass 4/5 for `burnout` and `memory-recall`, and 3/5 for
-`terse-user`, where the judge is intentionally noisier than the deterministic
+`terse-user`. The existing `resolved-detail-question-planning` regression requires
+5/5 hard and judge passes because its test directly asserts judge success; its
+unresolved-detail control records the judge as not run. For the other scenarios
+above, the judge is intentionally noisier than the deterministic
 contract. Set `SIM_GATE_RUNS=1` for a local smoke run; thresholds scale to the
 sample count for that override.
 
@@ -78,8 +86,12 @@ is available and fall back to the single Azure deployment otherwise.
 | `AZURE_OPENAI_TESTING_DEPLOYMENT` | Azure deployment for the testing agents |
 | `LANGWATCH_API_KEY` | Optional — renders runs in the LangWatch UI |
 
-These simulations are deliberately excluded from `pnpm test`: each run costs real
-tokens and takes tens of seconds. Run them before merging prompt or orchestration
+The package `test` command runs the offline gate and harness tests plus the
+offline structural scenario `simulation-repositories.sim.test.ts`, and explicitly
+excludes the live scenario files, even when tooling appends their paths. Add any
+new offline `.sim.test.ts` to that include list so the harness gate runs it. Live
+simulations use `sim` or `sim:gate`; each run costs real tokens and takes tens of
+seconds. Run them before merging prompt or orchestration
 changes, and on a schedule.
 
 ## Reading a result
@@ -97,9 +109,25 @@ Every scenario records three independent layers:
    structured `replyPlan` conditioned the prompt.
 3. **Judge verdict** — the subjective criteria that no regex can express. This is
    advisory in these tests: a single judge miss is printed and written to the report,
-   not used to turn Vitest green or red.
+   not used to turn Vitest green or red in the advisory scenarios. The existing
+   resolved-detail regression asserts judge success directly.
 
 `reportRun` records all three, so a red run says *why* rather than just *no*.
+
+A report exists even when the agent turn itself throws. `CoachHarness.send` catches any
+error from the orchestrator, records it in `harness.failures` (turn, error name, message,
+stack, generation calls made before the throw) and rethrows, so the scenario still fails.
+`reportRun` turns each recorded failure into a `deterministic.violations` entry with rule
+`agent-turn-error` (detail `Name: message`) and an `agentTurnErrors` block with the stack.
+Because `run()` rethrows a non-assertion agent error before the scenario reaches `reportRun`,
+the harness registers a fallback finalizer at construction: if the test fails and no report
+was written for that harness, `runs/<test name>.json` and `.md` are written from the turns
+completed so far, the recorded `agent-turn-error` entries and the Vitest `test-failure`,
+with the judge marked not run. Read a sample with no judge line by opening that JSON; the
+`Agent turn errors` section of the markdown carries the trimmed stack. `pnpm sim:gate`
+counts an `agent-turn-error` as a hard failure; only an error whose message matches the
+transport classifier (`ECONNRESET`, `fetch failed`, 429, 5xx, ...) is retried as
+infrastructure.
 
 ## Non-determinism
 
@@ -161,6 +189,43 @@ conversation.
 structural scenarios that use the real orchestrator with scripted AI outputs. They
 verify safety/privacy state and produce local reports without depending on live
 model credentials. Their reports mark the LLM judge as not run.
+
+`answer-then-bundle` gates GC round 3 CAP-4: with a ready V2 confirmation bundle and a
+substantive employee message that asks a question, the live model must return the answer
+and a byte-for-byte copy of the composed bundle in one generation. The test asserts the
+`answer_then_bundle` outcome on the outbound metadata, the staged bundle text shown exactly
+once at the end after a non-empty answer, and a judge rubric on whether the answer part
+addresses the question. A `bundle_without_reply` fallback is a hard failure here.
+
+`reasked-question`, `changed-advice` and `sentiment-amplification` are the GC round 3
+S8 fidelity cases (CAP-8 T9/T13, CAP-10 T12). Their employee turns and judge rubrics live in
+`src/scenarios/fidelity-fixtures.ts`; the offline `fidelity-fixtures.sim.test.ts` replays each
+fixture through the real orchestrator with scripted model output so the wiring and the
+deterministic checks in `src/harness/fidelity-checks.ts` are proven without credentials
+(including counter-cases that reproduce the tester's T9 and T13 transcripts). Live,
+`reasked-question` hard-fails when any coach question asks for a detail the employee already
+stated (`findReaskedQuestions`), `sentiment-amplification` hard-fails when a reply contains
+emotional-weight vocabulary absent from the employee's own messages
+(`findUnstatedEmotionWords`), and all three assert the judge rubric. T12 has no deterministic
+reply check: whether a changed suggestion is named is the judge's call. These checks are eval
+rails only; a repeated live failure is handled through the resolved-details and
+evidence-boundary contracts in `packages/ai-openai/src/prompts/respond.ts`, never by porting
+the word lists into the reply path (ADR-013). `reasked-question` did fail repeatedly on its
+first live pass (every miss was the first coach reply asking whether anyone else could sign
+off, a turn on which the classifier emits no resolved details by design), so the reply-plan
+block now carries an answered-detail contract whenever a question is allowed: what the
+employee stated, including in the latest message, is answered and is not re-asked in other
+words.
+
+`offer-delivered` gates GC round 3 CAP-6: after a seeded coach reply that ends with an offer
+("If you want, I can give you exact phrases"), the employee's "Yes, a bit more direct please"
+must reach generation as `answer_request` with a `prior_offer` / `deliver_now` grounding item
+and `offer_again` forbidden, and the live reply must deliver the phrases without restating the
+previous reply or offering again (judge rubric; "if you want, I can" is a hard failure).
+
+`format-request-outline` gates GC round 3 CAP-9: an explicit request for an outline with time
+slots must carry `formatRequest` in the reply plan and come back as at least three separated
+items on their own lines; the judge checks that each item has a slot and that no re-offer follows.
 
 `proactivity-reminders` and `planning-memory` are deterministic structural
 scenarios for action discipline, reminder deduplication, delayed follow-up policy,

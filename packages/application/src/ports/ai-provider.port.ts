@@ -1,6 +1,6 @@
 import type {
   SituationClassification,
-  RiskDetection,
+  ProviderRiskDetection,
   MemoryProposal,
   ReplyStrategy,
   GeneratedResponse,
@@ -11,7 +11,15 @@ import type {
   ObservedStyle,
 } from '@entalent/contracts';
 import type { OnboardingTrack, Participation } from '../onboarding/onboarding-state';
-import type { SurveyResponseType } from '../types/records';
+import type { SurveyResponseType, PulseCaptureRecord } from '../types/records';
+import type {
+  AwaitingQuestionBundle,
+  PendingQuestionClarification,
+  QuestionBundleVerdict,
+  QuestionClarificationVerdict,
+} from './question-confirmation.port';
+
+export type QuestionBundleVariant = 'confirmation' | 'corrected_statement';
 
 export interface ConversationTurn {
   role: 'user' | 'assistant';
@@ -51,6 +59,15 @@ export interface SurveyQuestionForEvaluation {
   responseType?: SurveyResponseType;
 }
 
+export interface SurveyEvidenceEvaluationOptions {
+  focusLatestEmployeeMessage?: boolean;
+}
+
+export interface QuestionBundleComposition {
+  text: string;
+  statements: Array<{ surveyQuestionId: string; statement: string }>;
+}
+
 export interface ReplyPlan {
   dialogueAct: import('@entalent/contracts').DialogueAct;
   /** A correction occurred in the last two mentor replies; do not revive its rejected frame. */
@@ -78,29 +95,65 @@ export interface ReplyPlan {
       | 'social_checkin_returns_question'
       | 'acknowledgement_no_new_substance'
       | 'asked_recently'
-      | 'new_substance_allows_question';
+      | 'new_substance_allows_question'
+      | 'offer_delivery'
+      | 'format_request';
   };
-  requiredGrounding: Array<{
-    source: 'memory';
-    category: string;
-    content: string;
-    requirement: 'mention_explicitly';
-  }>;
-  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan' | 'unsupported_interpretation'>;
+  requiredGrounding: Array<
+    | {
+        source: 'memory';
+        category: string;
+        content: string;
+        requirement: 'mention_explicitly';
+      }
+    | {
+        /** GC round 3 CAP-6: the employee accepted the offer made in the previous mentor turn. */
+        source: 'prior_offer';
+        category: 'offer';
+        content: string;
+        requirement: 'deliver_now';
+      }
+  >;
+  forbiddenMoves: Array<
+    | 'comment_on_brevity'
+    | 'diagnose'
+    | 'survey_probe'
+    | 'operational_status'
+    | 'action_plan'
+    | 'unsupported_interpretation'
+    /** Do not repeat or re-offer the accepted item; deliver it. */
+    | 'offer_again'
+    /** Do not end with a new "if you want, I can..." this turn. */
+    | 'new_offer'
+  >;
+  /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; null keeps the prose default. */
+  formatRequest?: import('@entalent/contracts').FormatRequest | null;
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
 export type ReplyBrief = ReplyPlan;
 
 export interface LanguagePolicy {
+  /** Primary BCP-47 language subtag the mentor replies in. */
   responseLanguage: string;
-  source: 'current_turn' | 'recent_turns' | 'user_profile' | 'tenant_default';
-  confidence: number;
-  shouldUpdateUserLocale: boolean;
+  source: 'product_default';
+}
+
+/**
+ * Grounded facts for a pulse-capture transparency question (GC round 3 CAP-5). The model
+ * answers in its own words from these; deterministic code never writes the reply.
+ */
+export interface PulseCaptureFacts {
+  /** What the employee asked about: the whole conversation, one exact message, or unresolved. */
+  scope: 'conversation' | 'exact' | 'unresolved';
+  /** Persisted captures in scope; empty when nothing is persisted or the scope is unresolved. */
+  captures: Array<Pick<PulseCaptureRecord, 'evidenceSummary' | 'status'>>;
 }
 
 export interface ResponseContext {
   userName: string;
+  /** Set only on a pulse-capture transparency turn; the reply must stay within these facts. */
+  captureFacts?: PulseCaptureFacts;
   tenantContext?: string;
   languagePolicy: LanguagePolicy;
   memoryContext?: MemoryContext;
@@ -130,7 +183,23 @@ export interface ResponseContext {
    * Set when the employee just confirmed a summary the agent proposed.
    * Signals that this topic is now closed — acknowledge and move on, no more probing.
    */
-  topicConfirmed?: { questionGroup: string };
+  topicConfirmed?: {
+    questionGroup: string;
+    /** Progress after this confirmation (GC round 3 CAP-3); the reply states it plainly. */
+    topicsClosed?: number;
+    topicsTotal?: number;
+  };
+  /**
+   * Set when the employee asked what is left in the pulse cycle (GC round 3 CAP-3). The reply is
+   * grounded on these counts and topic names only; evidence text never travels here.
+   */
+  cycleProgress?: {
+    inCycle: boolean;
+    topicsTotal: number;
+    topicsClosed: number;
+    openTopics: string[];
+    awaitingReply: boolean;
+  };
   /**
    * Set when a question group has completed and the agent should reflect its
    * understanding back and ask for confirmation IN THIS REPLY (confirm-only, no
@@ -161,6 +230,19 @@ export interface ResponseContext {
   replyBrief?: ReplyBrief;
   /** Typed response policy: what the generator must do, before it decides wording. */
   replyPlan?: ReplyPlan;
+  /**
+   * V2 confirmation bundle or clarification question composed for this turn (GC round 3 CAP-4).
+   * The reply answers the employee's latest message first; this text is shown last, byte-for-byte.
+   */
+  trailingBundle?: TrailingBundle;
+}
+
+export interface TrailingBundle {
+  kind: 'confirmation_bundle' | 'clarification' | 'corrected_statement';
+  /** Validated composition text; the only question of the turn lives here. */
+  text: string;
+  /** Bundle statements the reply part must not restate (confirmation bundles only). */
+  statements?: readonly string[];
 }
 
 export interface AiProviderPort {
@@ -169,13 +251,15 @@ export interface AiProviderPort {
     context: ClassifyContext,
   ): Promise<SituationClassification>;
 
-  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<RiskDetection>;
+  /** Model risk output plus any provider moderation signal; may throw ModerationSignalError. */
+  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection>;
 
   extractMemory(turns: ConversationTurn[], existing: MemoryContext): Promise<MemoryProposal>;
 
   evaluateSurveyEvidence(
     turns: ConversationTurn[],
     questions: SurveyQuestionForEvaluation[],
+    options?: SurveyEvidenceEvaluationOptions,
   ): Promise<SurveyEvidenceEvaluation>;
 
   generateResponse(
@@ -183,6 +267,30 @@ export interface AiProviderPort {
     strategy: ReplyStrategy,
     context: ResponseContext,
   ): Promise<GeneratedResponse>;
+
+  composeQuestionBundle(
+    turns: ConversationTurn[],
+    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
+    responseLanguage: string,
+    /** 'corrected_statement' reflects one meaning the employee just corrected (GC round 3 CAP-3). */
+    variant?: QuestionBundleVariant,
+  ): Promise<QuestionBundleComposition>;
+
+  interpretQuestionBundleResponse(
+    turns: ConversationTurn[],
+    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
+  ): Promise<QuestionBundleVerdict>;
+
+  composeQuestionClarification(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+    responseLanguage: string,
+  ): Promise<string>;
+
+  interpretQuestionClarificationResponse(
+    turns: ConversationTurn[],
+    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
+  ): Promise<QuestionClarificationVerdict>;
 
   generateGroupSummary(
     summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,

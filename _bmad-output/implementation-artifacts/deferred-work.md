@@ -213,3 +213,45 @@
   summary: Make scheduled-action deduplication and follow-up queue admission atomic or durably recoverable.
   status: todo
   evidence: The shared reminder path still performs `existsByDeduplicationKey` before insert and queues execution afterward; concurrent requests or a crash between insert and queue admission can leave a unique-key retry or an unqueued pending action. CAP-8 now acknowledges sequential dedup hits without creating a duplicate, but the cross-runtime atomicity boundary needs a dedicated scheduler slice.
+
+- source_spec: none
+  summary: Show current-cycle working insights next to confirmed, de-identified Team Signals (no names, direction/severity/score, cohort threshold ignored in the QA view).
+  evidence: Split from the 2026-10-14 dashboard cleanup intent as an independently shippable goal; it needs a new API projection and is planned as spec 2 of 3 in the same session.
+- source_spec: none
+  summary: Show the team hierarchy (unit manager -> teams with leads -> employees) from the new org model, falling back to legacy teams/team_memberships when the tenant has no active org units.
+  evidence: Split from the 2026-10-14 dashboard cleanup intent as an independently shippable goal; it needs a new admin read endpoint and is planned as spec 3 of 3 in the same session.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-cleanup-cycles.md`
+  summary: Replace the production dashboard verifier's legacy `/admin/manager/trends` data gate with a `/admin/v2-pilot` check now that no dashboard page reads trends.
+  evidence: `scripts/verify-production-dashboard.ts` still fails verification when a tenant has empty trend series, for a feature the dashboard no longer shows; spec 1 kept it deliberately.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-cleanup-cycles.md`
+  summary: Add render-level tests for dashboard pages (cycle detail 404 vs API-unavailable branching, nav tabs, cohort-scoped roster).
+  evidence: The dashboard has no component/page test harness; only pure helpers in `v2-pilot-progress.ts` are covered, so page-branch regressions are caught only by manual checks.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-current-cycle-team-signals.md`
+  summary: Enforce the QA private-view boundary in the API for `/admin/v2-pilot/people` and `/admin/v2-pilot/team-signals` (server-side flag or cohort-size floor), not only in the dashboard.
+  evidence: Both endpoints are protected only by `ADMIN_API_KEY` + `INTERNAL_DASHBOARD_ENABLED`; any key holder can read un-thresholded per-cohort data even when the dashboard's `QA_PRIVATE_VIEW_ENABLED` is off.
+- source_spec: `_bmad-output/implementation-artifacts/spec-dashboard-team-hierarchy.md`
+  summary: Audit-log identifiable admin reads (`/admin/team-hierarchy`, `/admin/v2-pilot/people`) and restrict them server-side to approved tenants.
+  evidence: AGENTS.md requires auditability for identifiable manager/admin surfaces; these endpoints return names for any tenant UUID to any `ADMIN_API_KEY` holder with no `audit_logs` row, and the pilot-tenant gate exists only in the dashboard.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s3-answer-then-bundle.md`
+  summary: `AiProviderWithFallback.withFallback` swallows the primary provider's typed failures (including `BundleReplyInvalidError` and confirmation fail-closed errors), so a fallback provider reruns the same contract and the orchestrator may see the fallback's unrelated error instead; the router is exported but not wired in apps today.
+  evidence: Blind Hunter review of S3 (2026-10-15); `packages/ai-openai/src/ai-provider-router.ts` rethrows only the last error.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s3-answer-then-bundle.md`
+  summary: Add a live sim scenario for tester item T4 (substantive message with a question while a bundle is ready) so `pnpm sim:gate` exercises the answer-then-bundle prompt contract with the real model; the scripted fake now honours `trailingBundle` but no scenario asserts the reply part.
+  status: done
+  completed_by: `packages/conversation-sim/src/scenarios/answer-then-bundle.sim.test.ts` (gate id `answer-then-bundle`, 2026-10-15)
+  evidence: Blind Hunter review of S3 (2026-10-15); the fix-plan verification matrix lists only the V2 queue suite and the next live cycle for S3.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4-confirmation-completion.md`
+  summary: Working rows confirmed by the pre-S4 `clarified` path (receipt `verdictKind='clarified'`, no `bundleId`, confirmed text never shown) are now refused by finalization forever and re-listed by `listPendingConfirmedQuestions` on every run without being purged; before deploying S4, check production for `survey_question_working_insights` rows in `confirmed` status with `purged_at is null` and either backfill them to `collecting` + ready so they are shown back, or purge them, with user approval.
+  evidence: Blind Hunter and Edge Case Hunter reviews of S4 (2026-10-15); as of 2026-10-15 no V2 cycle is active and the closed cycle's rows are finalized and purged, so the current risk is nil, but the check is required at deploy time.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4-confirmation-completion.md`
+  summary: A `reject` verdict on a one-statement corrected bundle ("no, that's still wrong") keeps the ordinary semantics (reset: the correction is wiped and the question re-collected from scratch) because the bundle interpreter cannot tell a corrected bundle from an ordinary one-statement bundle; the product owner must decide whether such a reply should instead reopen the clarification question, which needs a bundle kind marker.
+  evidence: Blind Hunter review of S4 (2026-10-15); the spec listed this as an Ask First item and the orchestrator maps the verdict unchanged.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4-confirmation-completion.md`
+  summary: The V2 queue suite's bundle interpreter stub answers `agree` for every one-statement bundle, so "disputed again" on a corrected statement, `reject` on a corrected statement, a clarified statement while a second statement of the group is still disputed, and a retry after the corrected turn committed are covered only by orchestrator unit tests, not end to end.
+  evidence: Blind Hunter review of S4 (2026-10-15); `apps/worker/src/conversation/v2-conversation-flow.integration.test.ts` interpretQuestionBundleResponse mock.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
+  summary: Build a reply plan on V2 bundle and clarification turns so an accepted offer or an explicit format request on those turns still reaches the two-part reply contract.
+  evidence: Both S7 reviewers (2026-10-15): `conversation-orchestrator.ts` sets `replyPlan` to undefined whenever a confirmation, bundle, or clarification is pending, so `acceptsPriorOffer` and `formatRequest` are dropped there; S3 already deferred reply-plan integration for bundle turns.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
+  summary: Exclude outbound messages whose delivery failed from the transcript the classifier reads as the latest mentor turn.
+  evidence: Blind Hunter review of S7 (2026-10-15): `apps/worker/src/conversation/repositories/conversation.repository.ts` `findRecentMessages` filters only `deletedAt`, so an undelivered offer can make the next "yes" an `acceptsPriorOffer`; pre-existing for every transcript-derived signal.

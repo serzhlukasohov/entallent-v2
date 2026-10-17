@@ -10,12 +10,12 @@ export class ProfileHydrationProcessor extends WorkerHost {
   private readonly logger = new Logger(ProfileHydrationProcessor.name);
   constructor(private readonly useCase: ProfileHydrationUseCase) { super(); }
   async process(job: Job<ProfileHydrationPayload>): Promise<void> {
-    const { userId, tenantId, channelType, externalWorkspaceId, traceId } = job.data;
+    const { userId, tenantId, channelType, externalWorkspaceId, inboundMessageId } = job.data;
     try {
-      await this.useCase.execute({ userId, tenantId, channelType, externalWorkspaceId });
-    } catch (err) {
-      this.logger.error(`Profile hydration failed [${traceId}]: ${(err as Error).message}`, (err as Error).stack);
-      throw err;
+      await this.useCase.execute({ userId, tenantId, channelType, externalWorkspaceId, inboundMessageId });
+    } catch {
+      this.logger.error('profile_hydration_failed');
+      throw new Error('profile_hydration_failed');
     }
   }
 }

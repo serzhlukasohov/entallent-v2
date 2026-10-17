@@ -108,7 +108,7 @@ export class OnboardingIntroService {
       ));
     }
 
-    await this.messageSendQueue.add('send', this.job(introId, copy.intro, input));
+    await this.messageSendQueue.add('send', this.job(introId, input));
     return { introMessageId: introId, trustMessageId: trustId };
   }
 
@@ -135,16 +135,16 @@ export class OnboardingIntroService {
     await this.messageSendQueue.add('send', {
       messageId: trustId, tenantId: input.tenantId, conversationId: input.conversationId,
       channelType: input.channelType, externalWorkspaceId: input.externalWorkspaceId,
-      externalChannelId: input.externalChannelId, text: trust.text,
+      externalChannelId: input.externalChannelId,
     }, { jobId: trustJobId(trustId) });
   }
 
-  private job(messageId: string, text: string, input: SendIntroInput): MessageSendJob {
+  private job(messageId: string, input: SendIntroInput): MessageSendJob {
     return {
       messageId, tenantId: input.tenantId, conversationId: input.conversation.id,
       channelType: input.conversation.channelType,
       externalWorkspaceId: input.conversation.externalWorkspaceId,
-      externalChannelId: input.conversation.externalConversationId, text,
+      externalChannelId: input.conversation.externalConversationId,
     };
   }
 

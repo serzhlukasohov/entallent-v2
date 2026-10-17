@@ -1,34 +1,24 @@
 import Link from 'next/link';
 
 const TABS = [
-  { key: 'team', label: 'Team', href: '/' },
-  { key: 'trends', label: 'Trends', href: '/trends' },
-  { key: 'pulse', label: 'Pulse Check', href: '/pulse' },
+  { key: 'team', label: 'Команда', href: '/' },
+  { key: 'cycles', label: 'Циклы', href: '/cycles' },
+  { key: 'current', label: 'Текущий цикл', href: '/pulse' },
 ] as const;
 
-export function Nav({ active }: { active: 'team' | 'trends' | 'pulse' }) {
+export function Nav({ active }: { active: (typeof TABS)[number]['key'] }) {
   return (
-    <nav style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
-      {TABS.map((t) => {
-        const isActive = t.key === active;
-        return (
-          <Link
-            key={t.key}
-            href={t.href}
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              padding: '6px 14px',
-              borderRadius: 8,
-              color: isActive ? 'var(--text)' : 'var(--text-muted)',
-              background: isActive ? 'var(--surface2)' : 'transparent',
-              border: `1px solid ${isActive ? 'var(--border)' : 'transparent'}`,
-            }}
-          >
-            {t.label}
-          </Link>
-        );
-      })}
+    <nav className="nav">
+      {TABS.map((t) => (
+        <Link
+          key={t.key}
+          href={t.href}
+          className={t.key === active ? 'active' : undefined}
+          aria-current={t.key === active ? 'page' : undefined}
+        >
+          {t.label}
+        </Link>
+      ))}
     </nav>
   );
 }

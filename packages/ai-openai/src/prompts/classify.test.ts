@@ -23,6 +23,9 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain('both rejects the mentor\'s prior interpretation and states a corrected request');
     expect(prompt).toContain('use "correction", not "request"');
     expect(prompt).toContain('No, you keep circling. I want you to give me criteria');
+    expect(prompt).toContain('actually ends or abandons the exchange');
+    expect(prompt).toContain('even when that rejection is the final sentence');
+    expect(prompt).toContain('Preserve the restated ask in latestUserSubstance');
     expect(prompt).toContain('Short explicit endings such as "No, forget"');
     expect(prompt).toContain('Do not preserve that premise in latestUserSubstance or topicAnchor');
     expect(prompt).toContain('Dialogue-act choice never lowers safety');
@@ -31,6 +34,14 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain('Do not include mentor claims, inference, memory, or a detail the employee later corrected');
     expect(prompt).toContain('WHOLE recent active thread, not only the latest message');
     expect(prompt).toContain('rebuild the full dependency chain');
+  });
+
+  it('types the cycle-status question instead of leaving it to prose', () => {
+    const prompt = buildClassifySystemPrompt();
+
+    expect(prompt).toContain('"cycleStatusQuestion": boolean');
+    expect(prompt).toContain('what is left to answer');
+    expect(prompt).toContain('Do not set it for questions about where data goes');
   });
 
   it('limits resolved details to eligible active-thread turns and clears boundaries', () => {
@@ -101,11 +112,40 @@ describe('buildClassifyUserPrompt', () => {
   });
 });
 
+describe('buildClassifySystemPrompt offer and format signals (GC round 3 CAP-6/CAP-9)', () => {
+  it('asks for the prior-offer, acceptance and format fields', () => {
+    const prompt = buildClassifySystemPrompt();
+
+    expect(prompt).toContain('"priorAssistantOffer": boolean');
+    expect(prompt).toContain('"acceptsPriorOffer": boolean');
+    expect(prompt).toContain('"formatRequest": string|null');
+    expect(prompt).toContain('"list"');
+    expect(prompt).toContain('"outline"');
+    expect(prompt).toContain('"steps"');
+  });
+
+  it('treats a short acceptance of an offer as a request, not a backchannel', () => {
+    const prompt = buildClassifySystemPrompt();
+
+    expect(prompt).toMatch(/acceptsPriorOffer[^.]*only when[^.]*latest mentor (?:turn|message)[^.]*offer/i);
+    expect(prompt).toContain('"Yes, a bit more direct please"');
+    expect(prompt).toMatch(/accepts[^.]*offer[^.]*dialogueAct="request"/i);
+    expect(prompt).toMatch(/not an? "acknowledgement"/i);
+  });
+
+  it('sets formatRequest only for an explicit request for a list, outline, or steps', () => {
+    const prompt = buildClassifySystemPrompt();
+
+    expect(prompt).toMatch(/formatRequest[^.]*only when the latest employee message explicitly asks/i);
+    expect(prompt).toContain('time slots');
+    expect(prompt).toMatch(/formatRequest[^.]*null/i);
+  });
+});
 describe('onboarding signal classification', () => {
   const turns = [{ role: 'user' as const, content: 'ok thanks', timestamp: new Date('2026-10-07T10:00:00.000Z') }];
 
-  // Pinned to the pre-onboarding wording: adding a field to this block shifted how the model read
-  // dialogueAct (pulse-capture-exact-message sim regression). Onboarding lives only in the user prompt.
+  // Pinned to the system-prompt wording without onboarding: adding a field to this block shifted how the model
+  // read dialogueAct (pulse-capture-exact-message sim regression). Onboarding lives only in the user prompt.
   const BASE_SCHEMA_BLOCK = `Return a JSON object with exactly these fields:
 {
   "primaryIntent": string,       // one of: "support","coaching","goal_setting","progress_update","casual_conversation","social_checkin","clarification","survey_opportunity","conflict","burnout_signal","harassment_signal","potential_crisis","celebration","onboarding","feedback_request","reporting_explanation","data_use_explanation","pulse_capture_explanation"
@@ -121,7 +161,11 @@ describe('onboarding signal classification', () => {
   "latestUserSubstance": string|null, // what the latest employee message newly contributes; null for pure acknowledgements/backchannels
   "topicAnchor": string|null,    // existing topic to continue when latestUserSubstance is null
   "resolvedDetails": string[],   // up to 5 explicit employee-stated facts that already close a clarification branch in the active thread
-  "pulseCaptureScope": object|null // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
+  "pulseCaptureScope": object|null, // CAP-8 only: {"type":"conversation"}, {"type":"message","messageIndex":N}, {"type":"previous_exact"}, or {"type":"unresolved"}
+  "cycleStatusQuestion": boolean, // true only when the employee asks what is still left to answer, how many topics remain, or whether they have answered everything the mentor needed
+  "priorAssistantOffer": boolean, // true only when the latest mentor turn offered to do, write, list, or produce something for the employee
+  "acceptsPriorOffer": boolean,   // true only when priorAssistantOffer is true AND the latest employee message accepts that offer
+  "formatRequest": string|null    // "list", "outline", or "steps" when the latest employee message explicitly asks for that shape; otherwise null
 }`;
 
   it('keeps the system prompt schema block byte-identical to the base wording', () => {

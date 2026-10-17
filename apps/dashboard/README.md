@@ -33,3 +33,15 @@ pnpm --filter @entalent/dashboard dev   # http://localhost:3002 (3001 is the wor
 - Cohort-safety: aggregate analytics endpoints suppress data below a minimum
   cohort size; the per-employee manager view is intentionally identifiable and is
   therefore gated behind the admin key.
+- `/` shows the team hierarchy (unit manager, teams with leads, members); names
+  are shown only when `QA_PRIVATE_VIEW_ENABLED=true` for the approved tenant.
+- `/cycles` is a temporary public QA progress view for the approved Test AI
+  Agent tenant's V2 cycles. Its server-side API read still requires
+  `ADMIN_API_KEY` and `INTERNAL_DASHBOARD_ENABLED`. The cycle list shows only
+  dates, cycle state, participation and processing counts, Bundle/final/report
+  status, and timestamps. The cycle detail roster (names, per-person message
+  counts, and each person's Autonomy progress stage) is shown only when
+  `QA_PRIVATE_VIEW_ENABLED=true`, as are `/pulse` and `/pulse/[userId]`. Without
+  that flag those pages render no names. The cycle pages never show
+  conversation text or report payloads. Remove this public
+  exception and apply the normal access boundary before a customer launch.

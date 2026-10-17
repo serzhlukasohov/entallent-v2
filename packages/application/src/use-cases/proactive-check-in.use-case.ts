@@ -11,6 +11,7 @@ import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import type { SurveyQuestionRecord } from '../types/records';
 import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
 import { resolveLanguagePolicy } from '../utils/language-policy';
+import { isContentFilterOutcome, modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 import {
   REPORTING_DISCLOSURE_VERSION,
   appendReportingDisclosure,
@@ -95,7 +96,9 @@ export class ProactiveCheckInUseCase {
       }
     }
 
-    const dbMessages = await this.conversationRepo.findRecentMessages(conversationId, 10);
+    const dbMessages = modelMessagesAfterContentFilter(
+      await this.conversationRepo.findRecentMessages(conversationId, 10),
+    );
     const turns: ConversationTurn[] = dbMessages
       .filter((m) => m.text !== '__init__')
       .map((m) => ({
@@ -106,7 +109,7 @@ export class ProactiveCheckInUseCase {
 
     const userName = conversation.userDisplayName ?? 'there';
     const flagCtx = { tenantId, userId };
-    const languagePolicy = resolveLanguagePolicy(turns, conversation.userLocale);
+    const languagePolicy = resolveLanguagePolicy();
 
     const [memoryEnabled, surveyFlagEnabled] = await Promise.all([
       this.featureFlags
@@ -119,7 +122,7 @@ export class ProactiveCheckInUseCase {
     const surveyEnabled = input.pulseEnabled !== false && surveyFlagEnabled;
 
     const memoryItems =
-      memoryEnabled && this.memoryRepo
+      memoryEnabled && this.memoryRepo && !dbMessages.some(isContentFilterOutcome)
         ? await this.memoryRepo.findActiveByUser(userId, tenantId, 20)
         : [];
 

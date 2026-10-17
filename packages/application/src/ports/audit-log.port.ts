@@ -8,8 +8,9 @@ export interface AppendAuditLogParams {
   reason?: string;
   metadata?: Record<string, unknown>;
   traceId?: string;
+  idempotencyKey?: string;
 }
 
 export interface AuditLogPort {
-  append(params: AppendAuditLogParams): Promise<void>;
+  append(params: AppendAuditLogParams): Promise<boolean>;
 }

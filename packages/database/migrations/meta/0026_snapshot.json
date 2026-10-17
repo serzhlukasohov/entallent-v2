@@ -1,5 +1,5 @@
 {
-  "id": "c42fd939-7da0-437e-970b-6465f7107ac9",
+  "id": "e8d232c4-e944-4946-87d7-570a1f971cd8",
   "prevId": "de061b33-20a1-4547-aa99-25a5c78e4e1b",
   "version": "7",
   "dialect": "postgresql",
@@ -5147,6 +5147,860 @@
         }
       }
     },
+    "public.survey_question_confirmation_bundles": {
+      "name": "survey_question_confirmation_bundles",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "survey_window_id": {
+          "name": "survey_window_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_group": {
+          "name": "question_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "displayed_text": {
+          "name": "displayed_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "components": {
+          "name": "components",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "prompt_message_id": {
+          "name": "prompt_message_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending_delivery'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "purged_at": {
+          "name": "purged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "survey_question_confirmation_bundles_tenant_id_tenants_id_fk": {
+          "name": "survey_question_confirmation_bundles_tenant_id_tenants_id_fk",
+          "tableFrom": "survey_question_confirmation_bundles",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_confirmation_bundles_user_id_users_id_fk": {
+          "name": "survey_question_confirmation_bundles_user_id_users_id_fk",
+          "tableFrom": "survey_question_confirmation_bundles",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_confirmation_bundles_survey_window_id_survey_windows_id_fk": {
+          "name": "survey_question_confirmation_bundles_survey_window_id_survey_windows_id_fk",
+          "tableFrom": "survey_question_confirmation_bundles",
+          "tableTo": "survey_windows",
+          "columnsFrom": [
+            "survey_window_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_confirmation_bundles_prompt_message_id_messages_id_fk": {
+          "name": "survey_question_confirmation_bundles_prompt_message_id_messages_id_fk",
+          "tableFrom": "survey_question_confirmation_bundles",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "prompt_message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "survey_question_confirmation_bundles_version_key": {
+          "name": "survey_question_confirmation_bundles_version_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "user_id",
+            "survey_window_id",
+            "question_group",
+            "version"
+          ]
+        }
+      },
+      "checkConstraints": {
+        "survey_question_confirmation_bundles_purged_content_check": {
+          "name": "survey_question_confirmation_bundles_purged_content_check",
+          "value": "\"survey_question_confirmation_bundles\".\"purged_at\" IS NULL OR (\"survey_question_confirmation_bundles\".\"displayed_text\" IS NULL AND \"survey_question_confirmation_bundles\".\"components\" IS NULL)"
+        },
+        "survey_question_confirmation_bundles_status_check": {
+          "name": "survey_question_confirmation_bundles_status_check",
+          "value": "\"survey_question_confirmation_bundles\".\"status\" IN ('pending_delivery', 'awaiting_confirmation', 'resolved', 'rejected', 'purged')"
+        }
+      }
+    },
+    "public.survey_question_insights": {
+      "name": "survey_question_insights",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "survey_window_id": {
+          "name": "survey_window_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "survey_definition_id": {
+          "name": "survey_definition_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "survey_question_id": {
+          "name": "survey_question_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_version": {
+          "name": "question_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_group": {
+          "name": "question_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "deidentified_summary": {
+          "name": "deidentified_summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "score": {
+          "name": "score",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signal_direction": {
+          "name": "signal_direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signal_severity": {
+          "name": "signal_severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "root_cause_category": {
+          "name": "root_cause_category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scoring_policy_version": {
+          "name": "scoring_policy_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_rubric_version": {
+          "name": "question_rubric_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model_id": {
+          "name": "model_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prompt_version": {
+          "name": "prompt_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "privacy_policy_version": {
+          "name": "privacy_policy_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scored_at": {
+          "name": "scored_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "processed_at": {
+          "name": "processed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "withdrawn_at": {
+          "name": "withdrawn_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "survey_question_insights_window_group_idx": {
+          "name": "survey_question_insights_window_group_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "survey_window_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "question_group",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "survey_question_insights_tenant_id_tenants_id_fk": {
+          "name": "survey_question_insights_tenant_id_tenants_id_fk",
+          "tableFrom": "survey_question_insights",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_insights_user_id_users_id_fk": {
+          "name": "survey_question_insights_user_id_users_id_fk",
+          "tableFrom": "survey_question_insights",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_insights_survey_window_id_survey_windows_id_fk": {
+          "name": "survey_question_insights_survey_window_id_survey_windows_id_fk",
+          "tableFrom": "survey_question_insights",
+          "tableTo": "survey_windows",
+          "columnsFrom": [
+            "survey_window_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_insights_survey_definition_id_survey_definitions_id_fk": {
+          "name": "survey_question_insights_survey_definition_id_survey_definitions_id_fk",
+          "tableFrom": "survey_question_insights",
+          "tableTo": "survey_definitions",
+          "columnsFrom": [
+            "survey_definition_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "survey_question_insights_survey_question_id_survey_questions_id_fk": {
+          "name": "survey_question_insights_survey_question_id_survey_questions_id_fk",
+          "tableFrom": "survey_question_insights",
+          "tableTo": "survey_questions",
+          "columnsFrom": [
+            "survey_question_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "survey_question_insights_scope_key": {
+          "name": "survey_question_insights_scope_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "user_id",
+            "survey_window_id",
+            "survey_definition_id",
+            "survey_question_id",
+            "question_version"
+          ]
+        }
+      },
+      "checkConstraints": {
+        "survey_question_insights_score_range": {
+          "name": "survey_question_insights_score_range",
+          "value": "\"survey_question_insights\".\"score\" >= 0 AND \"survey_question_insights\".\"score\" <= 100"
+        },
+        "survey_question_insights_direction_check": {
+          "name": "survey_question_insights_direction_check",
+          "value": "\"survey_question_insights\".\"signal_direction\" IN ('adverse', 'mixed', 'favorable')"
+        },
+        "survey_question_insights_severity_check": {
+          "name": "survey_question_insights_severity_check",
+          "value": "\"survey_question_insights\".\"signal_severity\" IN ('low', 'moderate', 'high')"
+        },
+        "survey_question_insights_category_check": {
+          "name": "survey_question_insights_category_check",
+          "value": "\"survey_question_insights\".\"root_cause_category\" IN ('workload', 'clarity', 'autonomy', 'growth', 'purpose', 'belonging', 'support', 'other')"
+        },
+        "survey_question_insights_confidence_range": {
+          "name": "survey_question_insights_confidence_range",
+          "value": "\"survey_question_insights\".\"confidence\" >= 0 AND \"survey_question_insights\".\"confidence\" <= 1"
+        },
+        "survey_question_insights_summary_not_blank": {
+          "name": "survey_question_insights_summary_not_blank",
+          "value": "btrim(\"survey_question_insights\".\"deidentified_summary\") <> ''"
+        },
+        "survey_question_insights_versions_not_blank": {
+          "name": "survey_question_insights_versions_not_blank",
+          "value": "btrim(\"survey_question_insights\".\"question_version\") <> '' AND btrim(\"survey_question_insights\".\"scoring_policy_version\") <> '' AND btrim(\"survey_question_insights\".\"question_rubric_version\") <> '' AND btrim(\"survey_question_insights\".\"model_id\") <> '' AND btrim(\"survey_question_insights\".\"prompt_version\") <> '' AND btrim(\"survey_question_insights\".\"privacy_policy_version\") <> ''"
+        }
+      }
+    },
+    "public.survey_question_working_insights": {
+      "name": "survey_question_working_insights",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "survey_window_id": {
+          "name": "survey_window_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "survey_question_id": {
+          "name": "survey_question_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_version": {
+          "name": "question_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'collecting'"
+        },
+        "working_summary": {
+          "name": "working_summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmed_semantic_summary": {
+          "name": "confirmed_semantic_summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_message_ids": {
+          "name": "source_message_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "ARRAY[]::uuid[]"
+        },
+        "confirmation_bundle_id": {
+          "name": "confirmation_bundle_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmation_message_id": {
+          "name": "confirmation_message_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finalized_at": {
+          "name": "finalized_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "purged_at": {
+          "name": "purged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "survey_question_working_insights_window_idx": {
+          "name": "survey_question_working_insights_window_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "survey_window_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "survey_question_working_insights_tenant_id_tenants_id_fk": {
+          "name": "survey_question_working_insights_tenant_id_tenants_id_fk",
+          "tableFrom": "survey_question_working_insights",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_working_insights_user_id_users_id_fk": {
+          "name": "survey_question_working_insights_user_id_users_id_fk",
+          "tableFrom": "survey_question_working_insights",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_working_insights_survey_window_id_survey_windows_id_fk": {
+          "name": "survey_question_working_insights_survey_window_id_survey_windows_id_fk",
+          "tableFrom": "survey_question_working_insights",
+          "tableTo": "survey_windows",
+          "columnsFrom": [
+            "survey_window_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_question_working_insights_survey_question_id_survey_questions_id_fk": {
+          "name": "survey_question_working_insights_survey_question_id_survey_questions_id_fk",
+          "tableFrom": "survey_question_working_insights",
+          "tableTo": "survey_questions",
+          "columnsFrom": [
+            "survey_question_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "survey_question_working_insights_confirmation_bundle_id_survey_question_confirmation_bundles_id_fk": {
+          "name": "survey_question_working_insights_confirmation_bundle_id_survey_question_confirmation_bundles_id_fk",
+          "tableFrom": "survey_question_working_insights",
+          "tableTo": "survey_question_confirmation_bundles",
+          "columnsFrom": [
+            "confirmation_bundle_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "survey_question_working_insights_confirmation_message_id_messages_id_fk": {
+          "name": "survey_question_working_insights_confirmation_message_id_messages_id_fk",
+          "tableFrom": "survey_question_working_insights",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "confirmation_message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "survey_question_working_insights_scope_key": {
+          "name": "survey_question_working_insights_scope_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "user_id",
+            "survey_window_id",
+            "survey_question_id",
+            "question_version"
+          ]
+        }
+      },
+      "checkConstraints": {
+        "survey_question_working_insights_status_check": {
+          "name": "survey_question_working_insights_status_check",
+          "value": "\"survey_question_working_insights\".\"status\" IN ('collecting', 'pending_confirmation', 'pending_clarification', 'confirmed', 'declined', 'no_data', 'reset')"
+        },
+        "survey_question_working_insights_purged_content_check": {
+          "name": "survey_question_working_insights_purged_content_check",
+          "value": "\"survey_question_working_insights\".\"purged_at\" IS NULL OR (\"survey_question_working_insights\".\"working_summary\" IS NULL AND \"survey_question_working_insights\".\"confirmed_semantic_summary\" IS NULL AND cardinality(\"survey_question_working_insights\".\"source_message_ids\") = 0)"
+        }
+      }
+    },
+    "public.survey_scoring_policies": {
+      "name": "survey_scoring_policies",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rubrics": {
+          "name": "rubrics",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "survey_scoring_policies_tenant_id_tenants_id_fk": {
+          "name": "survey_scoring_policies_tenant_id_tenants_id_fk",
+          "tableFrom": "survey_scoring_policies",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "survey_scoring_policies_tenant_version_key": {
+          "name": "survey_scoring_policies_tenant_version_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "version"
+          ]
+        },
+        "survey_scoring_policies_tenant_id_key": {
+          "name": "survey_scoring_policies_tenant_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
+      "checkConstraints": {
+        "survey_scoring_policies_version_not_blank": {
+          "name": "survey_scoring_policies_version_not_blank",
+          "value": "btrim(\"survey_scoring_policies\".\"version\") <> ''"
+        },
+        "survey_scoring_policies_rubrics_object": {
+          "name": "survey_scoring_policies_rubrics_object",
+          "value": "jsonb_typeof(\"survey_scoring_policies\".\"rubrics\") = 'object'"
+        }
+      }
+    },
+    "public.survey_window_scoring_policies": {
+      "name": "survey_window_scoring_policies",
+      "schema": "",
+      "columns": {
+        "survey_window_id": {
+          "name": "survey_window_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scoring_policy_id": {
+          "name": "scoring_policy_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bound_at": {
+          "name": "bound_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "survey_window_scoring_policies_survey_window_id_survey_windows_id_fk": {
+          "name": "survey_window_scoring_policies_survey_window_id_survey_windows_id_fk",
+          "tableFrom": "survey_window_scoring_policies",
+          "tableTo": "survey_windows",
+          "columnsFrom": [
+            "survey_window_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_window_scoring_policies_tenant_id_tenants_id_fk": {
+          "name": "survey_window_scoring_policies_tenant_id_tenants_id_fk",
+          "tableFrom": "survey_window_scoring_policies",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "survey_window_scoring_policies_tenant_policy_fk": {
+          "name": "survey_window_scoring_policies_tenant_policy_fk",
+          "tableFrom": "survey_window_scoring_policies",
+          "tableTo": "survey_scoring_policies",
+          "columnsFrom": [
+            "tenant_id",
+            "scoring_policy_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "public.pulse_backlog": {
       "name": "pulse_backlog",
       "schema": "",
@@ -6224,328 +7078,6 @@
         "runtime_shadow_diagnostics_estimated_cost_non_negative_check": {
           "name": "runtime_shadow_diagnostics_estimated_cost_non_negative_check",
           "value": "\"runtime_shadow_diagnostics\".\"estimated_cost\" >= 0"
-        }
-      }
-    },
-    "public.onboarding_states": {
-      "name": "onboarding_states",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "person_id": {
-          "name": "person_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "track": {
-          "name": "track",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "intro_status": {
-          "name": "intro_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "participation": {
-          "name": "participation",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "management_ack_at": {
-          "name": "management_ack_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reminder_status": {
-          "name": "reminder_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'none'"
-        },
-        "reminder_origin_at": {
-          "name": "reminder_origin_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reminder_due_at": {
-          "name": "reminder_due_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reminder_sent_at": {
-          "name": "reminder_sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "intro_channel_id": {
-          "name": "intro_channel_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "intro_actions_message_ts": {
-          "name": "intro_actions_message_ts",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "buttons_active": {
-          "name": "buttons_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "onboarding_states_tenant_person_idx": {
-          "name": "onboarding_states_tenant_person_idx",
-          "columns": [
-            {
-              "expression": "tenant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "person_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "onboarding_states_due_reminder_idx": {
-          "name": "onboarding_states_due_reminder_idx",
-          "columns": [
-            {
-              "expression": "reminder_status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "reminder_due_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "onboarding_states_tenant_id_tenants_id_fk": {
-          "name": "onboarding_states_tenant_id_tenants_id_fk",
-          "tableFrom": "onboarding_states",
-          "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "onboarding_states_person_id_tenant_id_people_id_tenant_id_fk": {
-          "name": "onboarding_states_person_id_tenant_id_people_id_tenant_id_fk",
-          "tableFrom": "onboarding_states",
-          "tableTo": "people",
-          "columnsFrom": [
-            "person_id",
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id",
-            "tenant_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "onboarding_states_track_valid": {
-          "name": "onboarding_states_track_valid",
-          "value": "\"onboarding_states\".\"track\" IN ('employee', 'team_lead', 'management')"
-        },
-        "onboarding_states_intro_valid": {
-          "name": "onboarding_states_intro_valid",
-          "value": "\"onboarding_states\".\"intro_status\" IN ('pending', 'delivered', 'completed')"
-        },
-        "onboarding_states_participation_valid": {
-          "name": "onboarding_states_participation_valid",
-          "value": "\"onboarding_states\".\"participation\" IN ('undecided', 'deferred', 'active', 'declined', 'not_applicable')"
-        },
-        "onboarding_states_management_not_applicable": {
-          "name": "onboarding_states_management_not_applicable",
-          "value": "(\"onboarding_states\".\"track\" = 'management') = (\"onboarding_states\".\"participation\" = 'not_applicable')"
-        },
-        "onboarding_states_reminder_valid": {
-          "name": "onboarding_states_reminder_valid",
-          "value": "\"onboarding_states\".\"reminder_status\" IN ('none', 'scheduled', 'sent', 'cancelled')"
-        },
-        "onboarding_states_scheduled_has_due": {
-          "name": "onboarding_states_scheduled_has_due",
-          "value": "\"onboarding_states\".\"reminder_status\" <> 'scheduled' OR \"onboarding_states\".\"reminder_due_at\" IS NOT NULL"
-        },
-        "onboarding_states_management_no_reminder": {
-          "name": "onboarding_states_management_no_reminder",
-          "value": "\"onboarding_states\".\"track\" <> 'management' OR \"onboarding_states\".\"reminder_status\" IN ('none', 'cancelled')"
-        }
-      }
-    },
-    "public.tenant_work_calendars": {
-      "name": "tenant_work_calendars",
-      "schema": "",
-      "columns": {
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "timezone": {
-          "name": "timezone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "working_days": {
-          "name": "working_days",
-          "type": "smallint[]",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "work_start": {
-          "name": "work_start",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "work_end": {
-          "name": "work_end",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "onboarding_language": {
-          "name": "onboarding_language",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'en'"
-        },
-        "updated_by": {
-          "name": "updated_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "tenant_work_calendars_tenant_id_tenants_id_fk": {
-          "name": "tenant_work_calendars_tenant_id_tenants_id_fk",
-          "tableFrom": "tenant_work_calendars",
-          "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "tenant_work_calendars_hours_valid": {
-          "name": "tenant_work_calendars_hours_valid",
-          "value": "\"tenant_work_calendars\".\"work_start\" ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND \"tenant_work_calendars\".\"work_end\" ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' AND \"tenant_work_calendars\".\"work_start\" < \"tenant_work_calendars\".\"work_end\""
-        },
-        "tenant_work_calendars_days_valid": {
-          "name": "tenant_work_calendars_days_valid",
-          "value": "cardinality(\"tenant_work_calendars\".\"working_days\") > 0 AND \"tenant_work_calendars\".\"working_days\" <@ ARRAY[1,2,3,4,5,6,7]::smallint[]"
-        },
-        "tenant_work_calendars_language_valid": {
-          "name": "tenant_work_calendars_language_valid",
-          "value": "\"tenant_work_calendars\".\"onboarding_language\" = 'en'"
         }
       }
     }

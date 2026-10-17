@@ -11,6 +11,9 @@ import { describeBaselineCoverageGaps, findBaselineCoverageGaps } from '../harne
 interface GateConfig {
   scenarios: Array<{
     id: string;
+    file: string;
+    hardPasses: number;
+    judgePasses: number;
     migrationCases?: string[];
     manualReviewRequired?: boolean;
   }>;
@@ -25,6 +28,16 @@ describe('migration baseline coverage manifest', () => {
     expect(MIGRATION_BASELINE_CASES.map((entry) => entry.id)).toEqual(
       REQUIRED_MIGRATION_BASELINE_CASE_IDS,
     );
+  });
+
+  it('gates the existing resolved-detail regression under the current live judge policy', () => {
+    const config = readGateConfig();
+    const resolved = config.scenarios.find((entry) => entry.id === 'resolved-detail-question-planning');
+    const comparable = config.scenarios.find((entry) => entry.id === 'annna-intent-fidelity');
+    expect(resolved?.file).toBe('src/scenarios/resolved-detail-question-planning.sim.test.ts');
+    expect(resolved?.hardPasses).toBe(comparable?.hardPasses);
+    // The existing resolved-detail test asserts judge success on every sample.
+    expect(resolved?.judgePasses).toBe(resolved?.hardPasses);
   });
 
   it('requires manual review for every sensitive scenario', () => {

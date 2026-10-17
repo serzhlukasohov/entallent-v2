@@ -29,6 +29,8 @@ import { StyleProfileRepository } from '../style/repositories/style-profile.repo
 import { StyleModule } from '../style/style.module';
 import { SurveyRepository } from '../survey/repositories/survey.repository';
 import { SurveyModule } from '../survey/survey.module';
+import { QuestionInsightRepository } from '../survey/repositories/question-insight.repository';
+import { DatabaseService } from '../database/database.service';
 
 // Onboarding degradations are logged, never thrown into the reply path.
 const nestOrchestratorLogger = new Logger(ConversationOrchestrator.name);
@@ -76,6 +78,8 @@ const orchestratorLogger = {
         pulseBacklogService: PulseBacklogService,
         styleProfileRepo: StyleProfileRepository,
         goalRepo: GoalRepository,
+        questionInsightRepo: QuestionInsightRepository,
+        db: DatabaseService,
         onboardingTurn: OnboardingService,
       ) => new ConversationOrchestrator(
         repo,
@@ -90,6 +94,8 @@ const orchestratorLogger = {
         pulseBacklogService,
         styleProfileRepo,
         goalRepo,
+        questionInsightRepo,
+        { run: (callback) => db.withTransaction(callback) },
         onboardingTurn,
         orchestratorLogger,
       ),
@@ -106,6 +112,8 @@ const orchestratorLogger = {
         PulseBacklogService,
         StyleProfileRepository,
         GoalRepository,
+        QuestionInsightRepository,
+        DatabaseService,
         OnboardingService,
       ],
     },
