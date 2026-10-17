@@ -19,6 +19,7 @@ import type {
   RiskContext,
   SurveyQuestionForEvaluation,
   QuestionBundleComposition,
+  QuestionBundleVariant,
   AwaitingQuestionBundle,
   QuestionBundleVerdict,
   PendingQuestionClarification,
@@ -103,6 +104,7 @@ export class ScriptedAiProvider implements AiProviderPort {
     _turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     _responseLanguage: string,
+    _variant?: QuestionBundleVariant,
   ): Promise<QuestionBundleComposition> {
     const statements = questions.map((question) => ({
       surveyQuestionId: question.surveyQuestionId,

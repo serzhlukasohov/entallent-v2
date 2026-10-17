@@ -172,7 +172,12 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       } else {
         const done = `Job ${job.id} done — mode=${result.mode} intent=${result.classification.primaryIntent} risk=${result.risk.severity}`
           + (result.bundleReply ? ` bundleReply=${result.bundleReply}` : '');
-        if (result.bundleReply === 'bundle_without_reply') {
+        if (result.bundleCompositionFallbackReason) {
+          // A ready bundle was skipped because its composition stayed invalid after one repair; the
+          // bounded reason goes to llm_runs.error_code so the rate stays measurable without text.
+          errorCode = `conversation_v2_bundle_composition_invalid:${result.bundleCompositionFallbackReason}`;
+          this.logger.warn(`${done} bundleSkipped=${result.bundleCompositionFallbackReason}`);
+        } else if (result.bundleReply === 'bundle_without_reply') {
           // The fixed text went alone (GC round 3 CAP-4 fallback); keep the reason visible.
           this.logger.warn(`${done} reason=${result.bundleReplyFallbackReason ?? 'unknown'}`);
         } else {
