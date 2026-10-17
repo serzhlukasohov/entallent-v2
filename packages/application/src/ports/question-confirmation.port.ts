@@ -37,6 +37,8 @@ export interface PendingQuestionClarification {
   userId: string;
   surveyWindowId: string;
   surveyQuestionId: string;
+  /** Needed to stage the corrected statement as a one-statement bundle (GC round 3 CAP-3). */
+  questionVersion: string;
   questionGroup: string;
   workingSummary: string;
   disputedStatement: string;
@@ -53,7 +55,36 @@ export type AppliedQuestionVerdict =
   | { kind: 'bundle'; verdictKind: 'agree' | 'partial' | 'reject'; questionGroup: string }
   | { kind: 'clarification'; verdictKind: 'clarified' | 'declined'; questionGroup: string };
 
+/** Per-question statuses of the active V2 window, for typed cycle progress (GC round 3 CAP-3). */
+export interface CycleProgressSnapshot {
+  surveyWindowId: string;
+  groups: Array<{
+    questionGroup: string;
+    questions: Array<{ surveyQuestionId: string; status: string }>;
+  }>;
+}
+
 export interface QuestionConfirmationPort {
+  /** Null when the employee has no active V2 window. */
+  findCycleProgress?(input: { tenantId: string; userId: string }): Promise<CycleProgressSnapshot | null>;
+  /**
+   * After a `clarified` verdict the corrected statement is shown back as a one-statement bundle
+   * and waits for the employee's verdict; nothing becomes confirmed until then (GC round 3 CAP-3).
+   */
+  stageCorrectedStatementConfirmation?(input: {
+    tenantId: string;
+    userId: string;
+    conversationId: string;
+    surveyWindowId: string;
+    questionGroup: string;
+    workingInsightId: string;
+    surveyQuestionId: string;
+    questionVersion: string;
+    promptMessageId: string;
+    displayedText: string;
+    statement: string;
+    expectedWorkingSummary: string;
+  }): Promise<string>;
   findAppliedQuestionVerdictForInbound(input: {
     tenantId: string; userId: string; conversationId: string; inboundMessageId: string;
   }): Promise<AppliedQuestionVerdict | null>;

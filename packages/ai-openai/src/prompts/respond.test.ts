@@ -1086,6 +1086,66 @@ describe('buildRespondSystemPrompt trailing bundle (GC round 3 CAP-4)', () => {
   });
 });
 
+describe('buildRespondSystemPrompt topic completion and cycle status (GC round 3 CAP-3)', () => {
+  it('states completion with progress when a topic closes', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 },
+    }));
+    expect(prompt).toMatch(/complete/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toMatch(/3 (topics? )?(still )?(remain|left)/i);
+    expect(prompt).not.toMatch(/last topic/i);
+  });
+
+  it('says the cycle is complete after the last topic', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'belonging', topicsClosed: 4, topicsTotal: 4 },
+    }));
+    expect(prompt).toMatch(/last topic/i);
+    expect(prompt).toContain('4 of 4');
+  });
+
+  it('keeps the legacy acknowledgement when no progress is known', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'autonomy' },
+    }));
+    expect(prompt).toContain('"autonomy" topic');
+    expect(prompt).not.toMatch(/\d+ of \d+ topics/);
+  });
+
+  it('grounds a cycle-status answer on typed progress only', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      cycleProgress: { inCycle: true, topicsTotal: 4, topicsClosed: 1, openTopics: ['growth', 'purpose', 'belonging'], awaitingReply: true },
+    }));
+    expect(prompt).toMatch(/Cycle status/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toContain('growth');
+    expect(prompt).toMatch(/waiting for (their|the employee's) reply/i);
+    expect(prompt).toMatch(/never list, quote, or repeat the evidence/i);
+  });
+
+  it('says nothing is pending outside a cycle', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      cycleProgress: { inCycle: false, topicsTotal: 0, topicsClosed: 0, openTopics: [], awaitingReply: false },
+    }));
+    expect(prompt).toMatch(/nothing (is )?pending/i);
+    expect(prompt).not.toContain('0 of 0');
+  });
+
+  it('describes the corrected-statement variant as the corrected version of a disputed statement', () => {
+    const ctx = context({
+      userName: 'Test',
+      trailingBundle: { kind: 'corrected_statement', text: 'So the fair version is: you set your own priorities. Right?' },
+    });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).toMatch(/corrected version/i);
+    expect(prompt).toMatch(/disputed/i);
+    expect(prompt).toContain('"bundleText"');
+  });
+});
+
 describe('buildRespondSystemPrompt accepted offers and format requests (GC round 3 CAP-6/CAP-9)', () => {
   const normal: ReplyStrategy = { ...strategy, mode: 'normal', includeFollowUpQuestion: true };
   const acceptancePlan: NonNullable<ResponseContext['replyPlan']> = {

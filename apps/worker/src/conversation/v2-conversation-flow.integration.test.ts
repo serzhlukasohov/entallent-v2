@@ -249,6 +249,9 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     const bundleText = `I hear that ${statements.join(' ')} Is that fair?`;
     const bundleAnswer = 'Open tomorrow with the retro notes; the checklist can wait until after standup.';
     const clarificationText = 'What would you change about your priorities?';
+    // GC round 3 CAP-3: the corrected meaning is shown back as a one-statement bundle.
+    const correctedSummary = 'Urgent work can override your planned priorities.';
+    const correctedBundleText = `So the fair version is: ${correctedSummary} Is that right?`;
     const ai = {
       // Wave 1 runs risk assessment on every turn; an unassessed risk blocks the survey.
       detectRisk: vi.fn(async () => ({
@@ -264,13 +267,20 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
         latestUserSubstance: turns.at(-1)?.content ?? '', topicAnchor: null,
       })),
       // Like the live model (measured valid 15/15), map statements to the ids actually requested.
-      composeQuestionBundle: vi.fn(async (_turns: unknown, requested: Array<{ surveyQuestionId: string }>) => ({
-        text: bundleText,
-        statements: requested.map((question, index) => ({
-          surveyQuestionId: question.surveyQuestionId, statement: statements[index]!,
-        })),
-      })),
-      interpretQuestionBundleResponse: vi.fn(async () => verdictKind === 'partial'
+      composeQuestionBundle: vi.fn(async (_turns: unknown,
+        requested: Array<{ surveyQuestionId: string; workingSummary: string }>) =>
+        requested.length === 1 && requested[0]!.workingSummary === correctedSummary
+          ? { text: correctedBundleText,
+            statements: [{ surveyQuestionId: requested[0]!.surveyQuestionId, statement: correctedSummary }] }
+          : {
+            text: bundleText,
+            statements: requested.map((question, index) => ({
+              surveyQuestionId: question.surveyQuestionId, statement: statements[index]!,
+            })),
+          }),
+      interpretQuestionBundleResponse: vi.fn(async (_turns: unknown, shown: { components: unknown[] }) =>
+        shown.components.length === 1 ? { kind: 'agree' as const }
+        : verdictKind === 'partial'
         || verdictKind === 'partial_unrelated' || verdictKind === 'decline'
         ? { kind: 'partial' as const,
           acceptedQuestionIds: [groupQuestions[0]!.id, groupQuestions[2]!.id],
@@ -282,8 +292,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       interpretQuestionClarificationResponse: vi.fn(async (turns: Array<{ content: string }>) =>
         turns.at(-1)?.content === 'What is the weather like?'
           ? { kind: 'unrelated' as const }
-          : { kind: 'clarified' as const,
-            correctedSummary: 'Urgent work can override your planned priorities.' }),
+          : { kind: 'clarified' as const, correctedSummary }),
       evaluateSurveyEvidence: vi.fn(async (turns: Array<{ content: string }>) => ({
         candidateQuestionIds: groupQuestions.map((question) => question.id),
         voluntaryReopenQuestionIds: turns.at(-1)?.content === 'I changed my mind; let us discuss priorities.'
@@ -792,6 +801,12 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       } else {
         expect(ai.interpretQuestionBundleResponse).toHaveBeenCalledOnce();
       }
+      if (verdictKind === 'agree' && !afterCutoff && !concurrentThird && !afterVerdictBeforeOutboundError) {
+        // GC round 3 CAP-3: the closing verdict is answered with completion and progress.
+        expect(ai.generateResponse.mock.calls.at(-1)![2]).toMatchObject({
+          topicConfirmed: { questionGroup, topicsClosed: 1, topicsTotal: 4 },
+        });
+      }
       const afterVerdict = await db.select().from(surveyQuestionWorkingInsights)
         .where(eq(surveyQuestionWorkingInsights.surveyWindowId, window!.id));
       expect(afterVerdict).toHaveLength(3);
@@ -955,6 +970,44 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
           }
           return;
         }
+        // GC round 3 CAP-3: the corrected meaning was shown back and waits for the employee's
+        // verdict; nothing became final from the correction reply alone.
+        const [correctedPrompt] = await db.select().from(messages)
+          .where(eq(messages.id, sentJobs[3]!.data.messageId));
+        expect(correctedPrompt!.text).toBe(`${bundleAnswer}\n\n${correctedBundleText}`);
+        expect(correctedPrompt!.metadata).toMatchObject({
+          v2CorrectedStatement: true, v2BundleReply: 'answer_then_bundle',
+        });
+        const [awaitingCorrection] = await db.select().from(surveyQuestionWorkingInsights)
+          .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, groupQuestions[1]!.id));
+        expect(awaitingCorrection).toMatchObject({
+          status: 'pending_confirmation', workingSummary: correctedSummary, confirmedSemanticSummary: null,
+        });
+        expect(awaitingCorrection!.sourceMessageIds).toContain(fourthInbound!.id);
+        const [correctedBundle] = await db.select().from(surveyQuestionConfirmationBundles)
+          .where(eq(surveyQuestionConfirmationBundles.id, awaitingCorrection!.confirmationBundleId!));
+        expect(correctedBundle).toMatchObject({
+          status: 'awaiting_confirmation', displayedText: correctedBundleText, promptMessageId: correctedPrompt!.id,
+        });
+        expect(JSON.stringify(correctedBundle?.components)).toContain(correctedSummary);
+        expect(await db.select().from(surveyQuestionInsights)
+          .where(eq(surveyQuestionInsights.surveyWindowId, window!.id))).toHaveLength(2);
+        const [fifthInbound] = await db.insert(messages).values({
+          tenantId, userId, conversationId, direction: 'inbound', senderType: 'user',
+          text: 'Yes, that is right.',
+          occurredAt: new Date(correctedPrompt!.sentAt!.getTime() + 1_000),
+        }).returning();
+        await admit(fifthInbound!.id);
+        const fifthJob = await conversationQueue.add('process', jobData(fifthInbound!.id, 'v2-corrected-agree'));
+        await fifthJob.waitUntilFinished(conversationEvents, 10_000);
+        expect(sentJobs).toHaveLength(5);
+        await sentJobs[4]!.waitUntilFinished(messageEvents, 10_000);
+        expect(ai.interpretQuestionBundleResponse).toHaveBeenCalledTimes(2);
+        expect(ai.generateResponse.mock.calls.at(-1)![2]).toMatchObject({
+          topicConfirmed: { questionGroup, topicsClosed: 1, topicsTotal: 4 },
+        });
+        expect(evidenceJobs).toHaveLength(5);
+        await evidenceJobs[4]!.waitUntilFinished(evidenceEvents, 10_000);
       }
       const finalRows = await db.select().from(surveyQuestionInsights)
         .where(eq(surveyQuestionInsights.surveyWindowId, window!.id));

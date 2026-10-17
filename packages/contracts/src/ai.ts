@@ -112,6 +112,14 @@ export const SituationClassificationSchema = z.object({
       .optional(),
   ),
   /**
+   * The employee asks what is left in the pulse cycle or whether they answered everything
+   * (GC round 3 CAP-3). The reply is then grounded on typed cycle progress.
+   */
+  cycleStatusQuestion: z.preprocess(
+    (value) => value === null || value === undefined ? false : value,
+    z.boolean().catch(false).optional(),
+  ),
+  /**
    * GC round 3 CAP-6: the latest mentor turn contained an offer to do or produce something.
    * Read by the classifier from the transcript each turn; malformed output fails closed.
    */

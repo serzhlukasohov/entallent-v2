@@ -164,6 +164,8 @@ When an employee explicitly accepts some meanings and rejects another, the accep
 
 The agent shall ask natural follow-up questions for the disputed meaning. A substantive employee clarification authorizes the corrected Question Insight without requiring the agent to display and reconfirm another complete bundle.
 
+> **Amended 2026-10-15 (product owner decision, GC round 3 CAP-3).** The corrected meaning is shown back to the employee as a one-statement confirmation and only the employee's verdict on that shown text confirms it; a clarification reply alone no longer authorizes a Question Insight. Finalization refuses any confirmed meaning without a shown-and-confirmed receipt. The complete bundle is still not re-displayed.
+
 This MVP rule intentionally accepts the risk that the employee does not see the agent's final rewritten question summary.
 
 #### IA-012 — Silence after clarification

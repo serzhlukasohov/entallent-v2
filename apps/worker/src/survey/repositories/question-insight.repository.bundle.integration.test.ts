@@ -435,17 +435,72 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
     })).toBeNull();
     expect(await repository.applyQuestionClarificationVerdict(clarifiedInput)).toBe(true);
     expect(await repository.applyQuestionClarificationVerdict(clarifiedInput)).toBe(false);
-    expect(await client`select status, confirmed_semantic_summary, confirmation_message_id
+    // GC round 3 CAP-3: the corrected meaning is ready to be shown back, not confirmed.
+    expect(await client`select status, working_summary, confirmed_semantic_summary, confirmation_message_id,
+      ready_for_confirmation, source_message_ids
       from survey_question_working_insights where id = ${disputed!.workingInsightId}`)
       .toMatchObject([{
-        status: 'confirmed', confirmed_semantic_summary: clarifiedInput.verdict.correctedSummary,
-        confirmation_message_id: clarificationInboundId,
+        status: 'collecting', working_summary: clarifiedInput.verdict.correctedSummary,
+        confirmed_semantic_summary: null, confirmation_message_id: null, ready_for_confirmation: true,
+        source_message_ids: [growthIds[1], clarificationInboundId],
       }]);
     expect(await repository.findPendingQuestionClarification({ tenantId, userId, conversationId, inboundMessageId: clarificationInboundId })).toBeNull();
     expect(await client`select displayed_text, components from survey_question_confirmation_bundles
       where id = ${growthBundleId}`).toMatchObject([{ displayed_text: null, components: null }]);
     await client`update survey_windows set period_end = ${activePeriodEnd}
       where id = ${surveyWindowId}`;
+
+    const correctedPromptId = '77777777-7777-4777-8777-777777777791';
+    const correctedInboundId = '77777777-7777-4777-8777-777777777792';
+    const correctedText = `So the fair version is: ${clarifiedInput.verdict.correctedSummary} Is that right?`;
+    await client`insert into messages values
+      (${correctedPromptId}, ${tenantId}, ${userId}, ${conversationId}, 'outbound',
+       ${`Thanks.\n\n${correctedText}`}, '2026-09-28T18:11:00Z', null, null)`;
+    const correctedInput = {
+      tenantId, userId, conversationId, surveyWindowId, questionGroup: 'growth',
+      workingInsightId: disputed!.workingInsightId, surveyQuestionId: growthIds[1], questionVersion: 'v2',
+      promptMessageId: correctedPromptId, displayedText: correctedText,
+      statement: clarifiedInput.verdict.correctedSummary,
+      expectedWorkingSummary: clarifiedInput.verdict.correctedSummary,
+    };
+    await expect(repository.stageCorrectedStatementConfirmation({
+      ...correctedInput, expectedWorkingSummary: 'Another meaning.',
+    })).rejects.toThrow('v2_corrected_statement_working_state_stale');
+    const correctedBundleId = await repository.stageCorrectedStatementConfirmation(correctedInput);
+    expect(await client`select status, displayed_text, components from survey_question_confirmation_bundles
+      where id = ${correctedBundleId}`).toMatchObject([{
+        status: 'pending_delivery', displayed_text: correctedText,
+        components: [{ surveyQuestionId: growthIds[1], statement: clarifiedInput.verdict.correctedSummary }],
+      }]);
+    expect(await client`select status, confirmation_bundle_id from survey_question_working_insights
+      where id = ${disputed!.workingInsightId}`)
+      .toMatchObject([{ status: 'pending_confirmation', confirmation_bundle_id: correctedBundleId }]);
+    const progress = await repository.findCycleProgress({ tenantId, userId });
+    expect(progress?.surveyWindowId).toBe(surveyWindowId);
+    const growthProgress = progress?.groups.find((group) => group.questionGroup === 'growth');
+    expect(Object.fromEntries((growthProgress?.questions ?? []).map((question) => [question.surveyQuestionId, question.status])))
+      .toEqual({ [growthIds[0]]: 'confirmed', [growthIds[1]]: 'pending_confirmation', [growthIds[2]]: 'declined' });
+    await client`update messages set sent_at = '2026-09-28T18:11:30Z' where id = ${correctedPromptId}`;
+    await repository.activateDeliveredQuestionBundle({
+      promptMessageId: correctedPromptId, tenantId, conversationId,
+      deliveredAt: new Date('2026-09-28T18:11:30Z'),
+    });
+    await client`insert into messages values
+      (${correctedInboundId}, ${tenantId}, ${userId}, ${conversationId}, 'inbound', 'Yes, that is right.',
+       '2026-09-28T18:12:00Z', null, null)`;
+    expect(await repository.findAwaitingQuestionBundle({
+      tenantId, userId, conversationId, inboundMessageId: correctedInboundId,
+    })).toMatchObject({ id: correctedBundleId, components: [{ surveyQuestionId: growthIds[1] }] });
+    expect(await repository.applyQuestionBundleVerdict({
+      tenantId, userId, conversationId, inboundMessageId: correctedInboundId,
+      bundleId: correctedBundleId, verdict: { kind: 'agree' },
+    })).toBe(true);
+    expect(await client`select status, confirmed_semantic_summary, confirmation_message_id
+      from survey_question_working_insights where id = ${disputed!.workingInsightId}`)
+      .toMatchObject([{
+        status: 'confirmed', confirmed_semantic_summary: clarifiedInput.verdict.correctedSummary,
+        confirmation_message_id: correctedInboundId,
+      }]);
   });
 
   it('removes each resolved clarification component before the other disputes finish', async () => {

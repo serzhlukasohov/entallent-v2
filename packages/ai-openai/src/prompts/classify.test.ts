@@ -36,6 +36,14 @@ describe('buildClassifySystemPrompt', () => {
     expect(prompt).toContain('rebuild the full dependency chain');
   });
 
+  it('types the cycle-status question instead of leaving it to prose', () => {
+    const prompt = buildClassifySystemPrompt();
+
+    expect(prompt).toContain('"cycleStatusQuestion": boolean');
+    expect(prompt).toContain('what is left to answer');
+    expect(prompt).toContain('Do not set it for questions about where data goes');
+  });
+
   it('limits resolved details to eligible active-thread turns and clears boundaries', () => {
     const prompt = buildClassifySystemPrompt();
 
