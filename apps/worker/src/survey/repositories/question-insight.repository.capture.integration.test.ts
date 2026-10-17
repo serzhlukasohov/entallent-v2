@@ -71,7 +71,7 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
       confirmed_semantic_summary text,
       source_message_ids uuid[] not null default array[]::uuid[],
       confirmation_bundle_id uuid, confirmation_message_id uuid,
-      clarification_prompt_message_id uuid,
+      clarification_prompt_message_id uuid, clarification_attempts integer not null default 0,
       confirmed_at timestamptz, finalized_at timestamptz, purged_at timestamptz,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),

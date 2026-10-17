@@ -185,6 +185,11 @@ export interface ResponseContext {
     topicsTotal?: number;
   };
   /**
+   * Set when this turn closed one disputed point of a topic for this cycle without an agreed
+   * wording (GC round 3 S4b). The reply says so in one plain sentence; no evidence travels here.
+   */
+  questionNotCollected?: { questionGroup: string };
+  /**
    * Set when the employee asked what is left in the pulse cycle (GC round 3 CAP-3). The reply is
    * grounded on these counts and topic names only; evidence text never travels here.
    */

@@ -255,3 +255,16 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
   summary: Exclude outbound messages whose delivery failed from the transcript the classifier reads as the latest mentor turn.
   evidence: Blind Hunter review of S7 (2026-10-15): `apps/worker/src/conversation/repositories/conversation.repository.ts` `findRecentMessages` filters only `deletedAt`, so an undelivered offer can make the next "yes" an `acceptsPriorOffer`; pre-existing for every transcript-derived signal.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4b-corrected-statement-reclarify.md`
+  summary: Resolves the S4 entry on `reject` semantics for a one-statement corrected bundle; per the 2026-10-17 product decision a reject or dispute asks one more clarification (at most two per question), then the question closes as declined and not collected.
+  evidence: S4b implementation and review loop, 2026-10-17.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4b-corrected-statement-reclarify.md`
+  summary: Migration 0051 has no backfill. Before deploying it, confirm that production has no active V2 window. Otherwise corrected bundles still awaiting a verdict get `kind='confirmation'` and in-flight rows get `clarification_attempts=0`. Then either backfill the attempts from the clarified receipts and the open clarification prompts, or accept the gap with user approval.
+  evidence: Blind Hunter and Edge Case Hunter reviews of S4b (2026-10-17). The read-only production check of 2026-10-17 found 0 active V2 windows, so the current risk is nil.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4b-corrected-statement-reclarify.md`
+  summary: The retry flag `questionNotCollected` is derived from the working row's current status instead of being stored on the verdict receipt. If the row is reopened between the commit and a retry of the same job, the replayed reply loses the not-collected sentence.
+  evidence: Blind Hunter and Edge Case Hunter reviews of S4b (2026-10-17). The window is narrow because a reopen needs a newer employee message.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4b-corrected-statement-reclarify.md`
+  summary: The clarification interpreter prompt still says a clarified answer "authorizes the corrected meaning; no second bundle confirmation is needed". That has been stale since S4 shows the correction back for a verdict. Updating it changes the interpreter contract, which is an Ask First item.
+  evidence: Read while implementing S4b, in `packages/ai-openai/src/prompts/question-clarification.ts`.
+
