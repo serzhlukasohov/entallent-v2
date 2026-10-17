@@ -249,3 +249,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4-confirmation-completion.md`
   summary: The V2 queue suite's bundle interpreter stub answers `agree` for every one-statement bundle, so "disputed again" on a corrected statement, `reject` on a corrected statement, a clarified statement while a second statement of the group is still disputed, and a retry after the corrected turn committed are covered only by orchestrator unit tests, not end to end.
   evidence: Blind Hunter review of S4 (2026-10-15); `apps/worker/src/conversation/v2-conversation-flow.integration.test.ts` interpretQuestionBundleResponse mock.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
+  summary: Build a reply plan on V2 bundle and clarification turns so an accepted offer or an explicit format request on those turns still reaches the two-part reply contract.
+  evidence: Both S7 reviewers (2026-10-15): `conversation-orchestrator.ts` sets `replyPlan` to undefined whenever a confirmation, bundle, or clarification is pending, so `acceptsPriorOffer` and `formatRequest` are dropped there; S3 already deferred reply-plan integration for bundle turns.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
+  summary: Exclude outbound messages whose delivery failed from the transcript the classifier reads as the latest mentor turn.
+  evidence: Blind Hunter review of S7 (2026-10-15): `apps/worker/src/conversation/repositories/conversation.repository.ts` `findRecentMessages` filters only `deletedAt`, so an undelivered offer can make the next "yes" an `acceptsPriorOffer`; pre-existing for every transcript-derived signal.

@@ -6079,3 +6079,42 @@ describe('GC round 3 CAP-3: review findings round 2', () => {
     expect(context.cycleProgress).toBeUndefined();
   });
 });
+
+describe('ConversationOrchestrator accepted offers are delivered (GC round 3 CAP-6)', () => {
+  const PRIOR_OFFER = 'Lead with the one change you want and name it in the first sentence. If you want, I can give you exact phrases you can say out loud.';
+
+  it('hands an accepted offer to generation as a delivery request even when the classifier labels the turn an acknowledgement', async () => {
+    const m = baseMocks();
+    const acceptance = 'Yes, a bit more direct please';
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'm-ask', ...OWNERSHIP, direction: 'inbound', text: 'How do I give feedback to a senior colleague without it landing wrong?', occurredAt: new Date('2026-09-03T09:58:00.000Z') },
+      { id: 'out-offer', ...OWNERSHIP, direction: 'outbound', text: PRIOR_OFFER, occurredAt: new Date('2026-09-03T09:58:05.000Z'), metadata: { sourceInboundMessageId: 'm-ask', replyShape: { askedQuestion: false } } },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: acceptance, occurredAt: INBOUND_OCCURRED_AT },
+    ]);
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'coaching', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'accepts the offer',
+      reminderRequest: null, dialogueAct: 'acknowledgement', latestUserSubstance: null,
+      topicAnchor: 'feedback for the senior colleague',
+      priorAssistantOffer: true, acceptsPriorOffer: true, formatRequest: null,
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({
+      text: 'Try: "I want to flag one thing about the review timing: it slipped twice this sprint and I need it by Wednesday."',
+      confidence: 0.9, containsSurveyProbe: false,
+    });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).toContain('I want to flag one thing');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    const context = m.aiProvider.generateResponse.mock.calls[0][2];
+    expect(context.replyPlan?.responseMove).toBe('answer_request');
+    expect(context.replyPlan?.requiredGrounding).toEqual([
+      expect.objectContaining({ source: 'prior_offer', requirement: 'deliver_now' }),
+    ]);
+    expect(context.replyPlan?.forbiddenMoves).toContain('offer_again');
+    expect(context.replyPlan?.questionPolicy).toEqual({ maxQuestions: 0, reason: 'offer_delivery' });
+    // The offer grounding item is not memory; decision metadata must not report memory grounding.
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.memoryGrounding).toEqual({ used: false, count: 0 });
+  });
+});

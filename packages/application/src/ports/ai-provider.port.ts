@@ -92,15 +92,39 @@ export interface ReplyPlan {
       | 'social_checkin_returns_question'
       | 'acknowledgement_no_new_substance'
       | 'asked_recently'
-      | 'new_substance_allows_question';
+      | 'new_substance_allows_question'
+      | 'offer_delivery'
+      | 'format_request';
   };
-  requiredGrounding: Array<{
-    source: 'memory';
-    category: string;
-    content: string;
-    requirement: 'mention_explicitly';
-  }>;
-  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan' | 'unsupported_interpretation'>;
+  requiredGrounding: Array<
+    | {
+        source: 'memory';
+        category: string;
+        content: string;
+        requirement: 'mention_explicitly';
+      }
+    | {
+        /** GC round 3 CAP-6: the employee accepted the offer made in the previous mentor turn. */
+        source: 'prior_offer';
+        category: 'offer';
+        content: string;
+        requirement: 'deliver_now';
+      }
+  >;
+  forbiddenMoves: Array<
+    | 'comment_on_brevity'
+    | 'diagnose'
+    | 'survey_probe'
+    | 'operational_status'
+    | 'action_plan'
+    | 'unsupported_interpretation'
+    /** Do not repeat or re-offer the accepted item; deliver it. */
+    | 'offer_again'
+    /** Do not end with a new "if you want, I can..." this turn. */
+    | 'new_offer'
+  >;
+  /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; null keeps the prose default. */
+  formatRequest?: import('@entalent/contracts').FormatRequest | null;
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
