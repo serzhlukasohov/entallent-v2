@@ -146,7 +146,7 @@ What you don't do: you don't paraphrase what they just said, you don't just nod 
 ${strategy.includeFollowUpQuestion
   ? hasResolvedDetails
     ? 'Conversation rhythm: do not reopen or narrow a resolved detail. Ask at most one question only when a different employee-raised detail remains materially unresolved; otherwise close naturally.'
-    : `Conversation rhythm: follow one unresolved detail at a time and end with one specific question that advances understanding. Never rephrase an answered question. Once the current thread is understood, either follow another employee-raised thread ("you said you want something more interesting — what does that mean for you?") or, if nothing meaningful remains, close naturally. "What else is on your mind right now?" is available when the current thread is complete but the conversation is still open.`
+    : `Conversation rhythm: follow one unresolved detail at a time and end with one specific question that advances understanding. Never rephrase an answered question, including a detail the employee stated in their latest message. Once the current thread is understood, either follow another employee-raised thread ("you said you want something more interesting — what does that mean for you?") or, if nothing meaningful remains, close naturally. "What else is on your mind right now?" is available when the current thread is complete but the conversation is still open.`
   : `Conversation rhythm: keep it brief and don't interrogate — a short reflection or a plain acknowledgement that leaves room is enough. No exit question this turn.`}
 
 Thread-following: people often drop hints mid-sentence and don't develop them — "I want something with more life to it", "my lead says yes, but...", "I actually wanted to suggest it, but didn't". These side remarks are often more important than the main topic they're talking about. When you catch one, follow it: it's an invitation. Don't let it disappear while you keep drilling the current subject.
@@ -274,6 +274,11 @@ function buildReplyPlanBlock(
   const resolvedDetails = hasResolvedDetails
     ? '\nResolved-detail contract (hard contract): Resolved details constrain question selection only. Do not assert, repeat, or paraphrase a resolved detail unless the employee transcript supports it independently. Do not ask the employee to choose between, repeat, confirm, or further narrow any listed detail. If a question is useful, ask only about a materially new uncertainty; otherwise ask none.'
     : '';
+  // GC round 3 CAP-8 (T9): a first-turn question has no resolved details to lean on, so the
+  // latest message's own statements must count as answered before a question is chosen.
+  const answeredDetails = !safetyMode && plan.questionPolicy.maxQuestions > 0
+    ? '\nAnswered-detail contract (hard contract): anything the employee stated explicitly in the transcript, including in their latest message, is answered. Do not ask them to confirm, repeat, narrow, or double-check it in other words, and do not ask whether an alternative, exception, or backup exists when they said there is none. Ask only about something they have not said. If the only question left would do that, ask none.'
+    : '';
   const forbiddenMoves = plan.forbiddenMoves.length > 0
     ? `\nForbidden moves for this turn: ${plan.forbiddenMoves.join(', ')}.`
     : '';
@@ -323,7 +328,7 @@ function buildReplyPlanBlock(
 
   return `\nReply plan (typed policy controls the response move, pacing, and limits; the latest employee message in the transcript is authoritative for meaning):
   - dialogueAct: ${plan.dialogueAct}
-  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${resolvedDetails}${forbiddenMoves}${evidenceBoundary}${brevity}${social}${emotionalSupport}${request}${correction}${correctionCarryover}${pause}
+  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${resolvedDetails}${answeredDetails}${forbiddenMoves}${evidenceBoundary}${brevity}${social}${emotionalSupport}${request}${correction}${correctionCarryover}${pause}
   `;
 }
 
