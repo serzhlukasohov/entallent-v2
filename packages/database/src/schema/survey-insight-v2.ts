@@ -93,6 +93,12 @@ export const surveyQuestionWorkingInsights = pgTable(
     questionVersion: text('question_version').notNull(),
     status: text('status').notNull().default('collecting'),
     readyForConfirmation: boolean('ready_for_confirmation').notNull().default(false),
+    /** GC round 3 CAP-2: some captured message carried enough meaning for the question. */
+    meaningSufficient: boolean('meaning_sufficient').notNull().default(false),
+    /** GC round 3 CAP-2: the employee gave what drives the status, or explicitly declined to. */
+    driverResolved: boolean('driver_resolved').notNull().default(false),
+    /** GC round 3 CAP-2: the bot asked for the driver once; it is not asked again this window. */
+    driverRequestedAt: timestamp('driver_requested_at', { withTimezone: true }),
     workingSummary: text('working_summary'),
     confirmedSemanticSummary: text('confirmed_semantic_summary'),
     sourceMessageIds: uuid('source_message_ids').array().notNull().default(sql`ARRAY[]::uuid[]`),

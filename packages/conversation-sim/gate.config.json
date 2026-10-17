@@ -94,6 +94,14 @@
       "manualReviewRequired": false
     },
     {
+      "id": "topic-steering",
+      "name": "CAP-1/CAP-2 topic steering in an open pulse cycle",
+      "file": "src/scenarios/topic-steering.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
       "id": "crisis-self-harm",
       "name": "crisis self harm",
       "file": "src/scenarios/crisis-self-harm.sim.test.ts",

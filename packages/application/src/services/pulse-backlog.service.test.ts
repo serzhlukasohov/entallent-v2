@@ -221,7 +221,7 @@ describe('PulseBacklogService', () => {
 
       const result = await service.getNextProbeQuestion('u-1', 't-1');
 
-      expect(result).toEqual({ question, windowId: 'w-1' });
+      expect(result).toEqual({ question, windowId: 'w-1', focus: 'open' });
     });
 
     it('returns null when no pending entry exists', async () => {
@@ -430,6 +430,120 @@ describe('PulseBacklogService', () => {
 
       expect(backlogRepo.prioritizeQuestionGroup).toHaveBeenCalledWith('u-1', 'w-1', 'belonging');
     });
+  });
+});
+
+// GC round 3 CAP-1, CAP-2: V2 working insights feed topic selection.
+describe('PulseBacklogService with V2 working coverage', () => {
+  const q1 = makeQuestion({ id: 'q-1', questionGroup: 'autonomy', displayOrder: 1 });
+  const q2 = makeQuestion({ id: 'q-2', questionGroup: 'autonomy', displayOrder: 2 });
+  const q3 = makeQuestion({ id: 'q-3', questionGroup: 'growth', displayOrder: 3 });
+  const coverage = (rows: Array<{ surveyQuestionId: string; status: string; readyForConfirmation?: boolean;
+    needsDriver?: boolean; driverRequested?: boolean; questionVersion?: string }>) => ({
+    findQuestionCoverage: vi.fn().mockResolvedValue(rows.map((row) => ({
+      questionVersion: '1', readyForConfirmation: false, needsDriver: false, driverRequested: false, ...row,
+    }))),
+  });
+
+  it('counts confirmed, pending and ready V2 questions as covered and closes their backlog entries', async () => {
+    const backlogRepo = makeBacklogRepo({
+      findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry({ surveyQuestionId: 'q-3' })),
+    });
+    const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), [q1, q2, q3]), coverage([
+      { surveyQuestionId: 'q-1', status: 'confirmed' },
+      { surveyQuestionId: 'q-2', status: 'collecting', readyForConfirmation: true },
+    ]));
+
+    const result = await service.getNextProbeQuestion('u-1', 't-1');
+
+    const covered = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0]![4] as Set<string>;
+    expect([...covered].sort()).toEqual(['q-1', 'q-2']);
+    expect(backlogRepo.markDone).toHaveBeenCalledWith('u-1', 'w-1', 'q-1', 0);
+    expect(backlogRepo.markDone).toHaveBeenCalledWith('u-1', 'w-1', 'q-2', 0);
+    expect(result).toMatchObject({ question: { id: 'q-3' }, focus: 'open' });
+  });
+
+  it('does not count a reset or a status-only question as covered', async () => {
+    const backlogRepo = makeBacklogRepo();
+    const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), [q1, q2, q3]), coverage([
+      { surveyQuestionId: 'q-1', status: 'reset' },
+      { surveyQuestionId: 'q-2', status: 'collecting' },
+    ]));
+
+    await service.getNextProbeQuestion('u-1', 't-1');
+
+    const covered = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0]![4] as Set<string>;
+    expect([...covered]).toEqual([]);
+    expect(backlogRepo.markDone).not.toHaveBeenCalled();
+  });
+
+  it('asks for the driver of a captured status before opening another question', async () => {
+    const backlogRepo = makeBacklogRepo({
+      findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry({ surveyQuestionId: 'q-3' })),
+    });
+    const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), [q1, q2, q3]), coverage([
+      { surveyQuestionId: 'q-2', status: 'collecting', needsDriver: true },
+    ]));
+
+    expect(await service.getNextProbeQuestion('u-1', 't-1'))
+      .toMatchObject({ question: { id: 'q-2' }, windowId: 'w-1', focus: 'driver' });
+  });
+
+  it('takes a question out of selection once its driver was asked for, without counting it as covered', async () => {
+    const backlogRepo = makeBacklogRepo({
+      findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry({ surveyQuestionId: 'q-3' })),
+    });
+    const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), [q1, q2, q3]), coverage([
+      { surveyQuestionId: 'q-2', status: 'collecting', driverRequested: true },
+    ]));
+
+    expect(await service.getNextProbeQuestion('u-1', 't-1')).toMatchObject({ question: { id: 'q-3' }, focus: 'open' });
+    expect(backlogRepo.markDone).toHaveBeenCalledWith('u-1', 'w-1', 'q-2', 0);
+    const covered = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0]![4] as Set<string>;
+    expect([...covered]).toEqual([]);
+  });
+
+  it('ignores working rows of another question version', async () => {
+    const backlogRepo = makeBacklogRepo({
+      findNextPending: vi.fn().mockResolvedValue(makeBacklogEntry({ surveyQuestionId: 'q-1' })),
+    });
+    const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), [q1, q2, q3]), coverage([
+      { surveyQuestionId: 'q-1', status: 'confirmed', questionVersion: '0' },
+      { surveyQuestionId: 'q-2', status: 'collecting', needsDriver: true, questionVersion: '0' },
+    ]));
+
+    expect(await service.getNextProbeQuestion('u-1', 't-1')).toMatchObject({ question: { id: 'q-1' }, focus: 'open' });
+    expect(backlogRepo.markDone).not.toHaveBeenCalled();
+  });
+
+  it('leaves declined and expired questions to their own backlog transitions', async () => {
+    const backlogRepo = makeBacklogRepo();
+    const service = new PulseBacklogService(backlogRepo, makeSurveyRepo(makeWindow(), [q1, q2, q3]), coverage([
+      { surveyQuestionId: 'q-1', status: 'declined' },
+      { surveyQuestionId: 'q-2', status: 'no_data' },
+    ]));
+
+    await service.getNextProbeQuestion('u-1', 't-1');
+
+    expect(backlogRepo.markDone).not.toHaveBeenCalled();
+    const covered = (backlogRepo.initializeIfNeeded as ReturnType<typeof vi.fn>).mock.calls[0]![4] as Set<string>;
+    expect([...covered].sort()).toEqual(['q-1', 'q-2']);
+  });
+
+  it('still unlocks engagement at the end of the quarter when a driver is pending', async () => {
+    const backlogRepo = makeBacklogRepo();
+    const service = new PulseBacklogService(backlogRepo,
+      makeSurveyRepo(makeWindow({ periodEnd: QUARTER_END_NEAR }), [q1, q2, q3]), coverage([
+        { surveyQuestionId: 'q-2', status: 'collecting', needsDriver: true },
+      ]));
+
+    expect(await service.getNextProbeQuestion('u-1', 't-1')).toMatchObject({ question: { id: 'q-2' }, focus: 'driver' });
+    expect(backlogRepo.unlockEngagementIfNeeded).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the legacy selection when no V2 coverage reader is wired', async () => {
+    const service = new PulseBacklogService(makeBacklogRepo(), makeSurveyRepo(makeWindow(), [q1]));
+    expect(await service.getNextProbeQuestion('u-1', 't-1')).toMatchObject({ question: { id: 'q-1' }, focus: 'open' });
   });
 });
 

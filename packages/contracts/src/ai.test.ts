@@ -620,3 +620,54 @@ describe('Contract: SituationClassificationSchema offer and format signals (GC r
     expect(parsed.acceptsPriorOffer).toBe(false);
   });
 });
+
+describe('Contract: GC round 3 CAP-1/CAP-2 topic steering fields', () => {
+  const evidence = {
+    questionId: 'q-1', evidenceSummary: 'Motivation is high at 9 out of 10.', polarity: 'positive',
+    strength: 0.9, completeness: 0.8, confidence: 0.9, followUpProbeNeeded: false,
+    thresholdReached: true, assessmentShouldRemainUnknown: false,
+  };
+
+  it('carries typed driver signals on survey evidence', () => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [{ ...evidence, driverCaptured: true, driverDeclined: false }],
+    });
+    expect(parsed.evidence[0]).toMatchObject({ driverCaptured: true, driverDeclined: false });
+  });
+
+  it('fails closed to no driver when the signals are missing or malformed', () => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [evidence, { ...evidence, driverCaptured: 'yes', driverDeclined: null }],
+    });
+    expect(parsed.evidence.map((item) => [item.driverCaptured, item.driverDeclined]))
+      .toEqual([[undefined, undefined], [false, false]]);
+  });
+
+  it('carries a separate topic question on a generated reply and normalizes null', () => {
+    expect(GeneratedResponseSchema.parse({
+      text: '', replyText: 'That deadline sounds tight.', topicQuestion: 'How much say do you have over how you plan it?',
+      confidence: 0.9, containsSurveyProbe: true, surveyProbeQuestionId: 'q-1',
+    }).topicQuestion).toBe('How much say do you have over how you plan it?');
+    expect(GeneratedResponseSchema.parse({
+      text: 'ok', topicQuestion: null, confidence: 0.9, containsSurveyProbe: false,
+    }).topicQuestion).toBeUndefined();
+  });
+
+  it('carries driver declines that come without new meaning, failing closed to none', () => {
+    expect(SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: [], evidence: [], driverDeclinedQuestionIds: ['q-1'],
+    }).driverDeclinedQuestionIds).toEqual(['q-1']);
+    expect(SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: [], evidence: [], driverDeclinedQuestionIds: 'q-1',
+    }).driverDeclinedQuestionIds).toEqual([]);
+  });
+
+  it('treats a null confirmation summary from model output as absent', () => {
+    expect(GeneratedResponseSchema.parse({
+      text: '', replyText: 'ok.', topicQuestion: 'What helps?', confirmationSummary: null,
+      confidence: 0.9, containsSurveyProbe: true,
+    }).confirmationSummary).toBeUndefined();
+  });
+});

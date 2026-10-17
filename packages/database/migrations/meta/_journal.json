@@ -358,6 +358,20 @@
       "when": 1791111687025,
       "tag": "0050_mute_vengeance",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792265000652,
+      "tag": "0051_quiet_hitman",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792267877661,
+      "tag": "0052_glossy_ronan",
+      "breakpoints": true
     }
   ]
 }

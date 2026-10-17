@@ -17,7 +17,8 @@ import {
 import {
   ConversationOrchestrator, ExpireQuestionInsightsAtCutoffUseCase, FEATURE_FLAGS,
   FinalizeQuestionInsightUseCase, RecoverConfirmedQuestionInsightsUseCase, SelectQuestionInsightInputsUseCase,
-  SurveyEvidenceExtractionUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY, type SurveyEvidencePayload,
+  SurveyEvidenceExtractionUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY, PulseBacklogService,
+  type SurveyEvidencePayload,
 } from '@entalent/application';
 import { ConversationProcessor, type ConversationJob } from './conversation.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -26,6 +27,7 @@ import { QuestionInsightRepository } from '../survey/repositories/question-insig
 import { SurveyEvidenceProcessor } from '../survey/survey-evidence.processor';
 import { QuestionCutoffProcessor } from '../survey/question-cutoff.processor';
 import { SurveyRepository } from '../survey/repositories/survey.repository';
+import { PulseBacklogRepository } from '../survey/repositories/pulse-backlog.repository';
 import { DatabaseService } from '../database/database.service';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -304,7 +306,8 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
             questionId: question.id, evidenceSummary: statements[index],
             polarity: 'positive' as const, strength: 0.9, completeness: 1,
             confidence: 0.9, followUpProbeNeeded: false, thresholdReached: true,
-            assessmentShouldRemainUnknown: false,
+            // GC round 3 CAP-2: the synthetic statements say what drives each status.
+            assessmentShouldRemainUnknown: false, driverCaptured: true,
           })) : [],
       })),
       // Under the two-part contract the live model answers the latest message, then copies the
@@ -1207,4 +1210,178 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       await queue.close();
     }
   }, 20_000);
+
+  // GC round 3 CAP-1, CAP-2 (T1, T2): inside an open V2 cycle the bot raises the topic itself, and
+  // a status without its driver keeps the question open until the driver arrives.
+  it('raises a required topic question for the driver of a captured status, then closes it once the driver arrives', async () => {
+    if (!client || !redisUrl) return;
+    const db = client.db;
+    const [tenant] = await db.insert(tenants).values({ name: `V2 topic steering ${randomUUID()}` }).returning();
+    const tenantId = tenant!.id;
+    tenantIds.push(tenantId);
+    const [user] = await db.insert(users).values({ tenantId, preferredName: 'Sam', timezone: 'UTC', locale: 'en' })
+      .returning();
+    const userId = user!.id;
+    const [definition] = await db.insert(surveyDefinitions).values({
+      tenantId, name: 'Synthetic V2 topic steering', version: `fixture-${randomUUID()}`,
+    }).returning();
+    const questions = await db.insert(surveyQuestions).values(
+      Object.entries(LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY).map(([stableKey, questionGroup], index) => ({
+        surveyDefinitionId: definition!.id, stableKey, title: stableKey, canonicalMeaning: `Synthetic ${stableKey}`,
+        dimension: questionGroup, questionGroup, version: 'v2', displayOrder: index,
+        probeStrategies: [`Ask about ${stableKey}`],
+      })),
+    ).returning();
+    const rubric = { version: 'synthetic-queue-v1', instructions: 'Synthetic test only.', anchors: [
+      { score: 0, description: 'Low' }, { score: 100, description: 'High' },
+    ] };
+    const [policy] = await db.insert(surveyScoringPolicies).values({
+      tenantId, version: 'synthetic-queue-v1',
+      rubrics: Object.fromEntries(questions.map((question) => [question.stableKey, rubric])),
+      approvedAt: new Date(),
+    }).returning();
+    const now = Date.now();
+    const [window] = await db.insert(surveyWindows).values({
+      tenantId, userId, surveyDefinitionId: definition!.id,
+      periodStart: new Date(now - 86_400_000), periodEnd: new Date(now + 86_400_000),
+    }).returning();
+    await db.insert(surveyWindowScoringPolicies).values({ surveyWindowId: window!.id, tenantId, scoringPolicyId: policy!.id });
+    await db.insert(pulseBacklog).values(questions.map((question, index) => ({
+      surveyWindowId: window!.id, tenantId, userId, surveyQuestionId: question.id, position: index + 1,
+    })));
+    const autonomy = questions.filter((question) => question.questionGroup === 'autonomy')
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+    const statusQuestion = autonomy[0]!;
+    const externalConversationId = `topic-${randomUUID()}`;
+    const [conversation] = await db.insert(conversations).values({
+      tenantId, userId, channelType: 'dev', externalConversationId,
+    }).returning();
+    const conversationId = conversation!.id;
+    const at = (minutes: number) => new Date(now + minutes * 60_000);
+    const say = async (direction: 'inbound' | 'outbound', text: string, minutes: number,
+      metadata?: Record<string, unknown>) => (await db.insert(messages).values({
+      tenantId, userId, conversationId, direction, senderType: direction === 'inbound' ? 'user' : 'agent',
+      text, metadata, occurredAt: at(minutes), ...(direction === 'outbound' ? { sentAt: at(minutes) } : {}),
+    }).returning())[0]!;
+    await say('outbound', 'Your reflections can be used in aggregated reporting.', -10,
+      { reportingDisclosureVersion: 'reporting-disclosure-v1' });
+    await say('inbound', 'Release week is busy.', -9);
+    await say('outbound', 'What keeps you going this week?', -8,
+      { containsSurveyProbe: true, surveyProbeQuestionId: statusQuestion.id });
+    const status = await say('inbound', 'Motivation is high, 9 out of 10.', -7);
+    await say('outbound', 'Good to hear.', -6);
+    await say('inbound', 'Lunch was fine.', -5);
+    await say('outbound', 'Glad you got a break.', -4);
+    const current = await say('inbound', 'Back to the release checklist now.', -3);
+
+    const driverQuestion = 'What is it about the release work that keeps it that high for you?';
+    const evidenceFor = (questionId: string, extra: Record<string, unknown>) => ({
+      candidateQuestionIds: [questionId], voluntaryReopenQuestionIds: [],
+      evidence: [{ questionId, evidenceSummary: 'Synthetic meaning.', polarity: 'positive' as const,
+        strength: 0.9, confidence: 0.9, followUpProbeNeeded: false, assessmentShouldRemainUnknown: false, ...extra }],
+    });
+    const ai = {
+      detectRisk: vi.fn(async () => ({
+        severity: 'none', confidence: 0.9, reasoningSummary: 'synthetic', riskType: null, evidence: [],
+        immediateResponseRequired: false, escalationRecommended: false,
+        surveyMustBeBlocked: false, proactiveMessagesMustBePaused: false,
+      })),
+      classifySituation: vi.fn(async (turns: Array<{ content: string }>) => ({
+        primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
+        urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
+        reasoningSummary: 'synthetic', reminderRequest: null, dialogueAct: 'new_substance',
+        latestUserSubstance: turns.at(-1)?.content ?? '', topicAnchor: null,
+      })),
+      generateResponse: vi.fn(async (_turns: unknown, _strategy: unknown, context: { topicQuestion?: unknown }) =>
+        context.topicQuestion
+          ? { text: '', replyText: 'Checklists before a release are a good anchor.', topicQuestion: driverQuestion,
+            confidence: 0.9, containsSurveyProbe: true, surveyProbeQuestionId: statusQuestion.id }
+          : { text: 'Noted.', confidence: 0.9, containsSurveyProbe: false }),
+      // The status names no cause; the later message names it but alone is not a full meaning.
+      evaluateSurveyEvidence: vi.fn(async (turns: Array<{ content: string }>) =>
+        turns.at(-1)?.content === status.text
+          ? evidenceFor(statusQuestion.id, { completeness: 1, thresholdReached: true, driverCaptured: false })
+          : evidenceFor(statusQuestion.id, { completeness: 0.2, thresholdReached: false, driverCaptured: true })),
+    };
+    const repo = new ConversationRepository(transactionDb!);
+    const questionRepo = new QuestionInsightRepository(transactionDb!, { findCurrentHierarchyIdentifiers: async () => [] } as never);
+    const surveyEvidenceRepo = new SurveyRepository(transactionDb!, {} as never, { findTeamByMemberId: async () => null } as never);
+    const backlog = new PulseBacklogService(new PulseBacklogRepository(transactionDb!), surveyEvidenceRepo, questionRepo);
+    const capture = new SurveyEvidenceExtractionUseCase(ai as never, repo, surveyEvidenceRepo, backlog, questionRepo);
+    await capture.execute({ conversationId, userId, tenantId, inboundMessageId: status.id });
+    const workingFor = async () => (await db.select().from(surveyQuestionWorkingInsights)
+      .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, statusQuestion.id)))[0];
+    expect(await workingFor()).toMatchObject({ status: 'collecting', readyForConfirmation: false,
+      meaningSufficient: true, driverResolved: false });
+
+    const redis = new URL(redisUrl);
+    const connection = { host: redis.hostname, port: Number(redis.port) || 6379, db: 15, maxRetriesPerRequest: null };
+    const conversationQueue = new Queue(`v2-topic-${randomUUID()}`, { connection });
+    const conversationEvents = new QueueEvents(conversationQueue.name, { connection });
+    const sent: string[] = [];
+    const outbox = {
+      enqueueMessageSend: async (payload: { messageId: string }) => { sent.push(payload.messageId); },
+      enqueueMemoryExtraction: async () => undefined, enqueueStyleAnalysis: async () => undefined,
+      enqueueSurveyEvidence: async () => undefined, enqueueProfileHydration: async () => undefined,
+      enqueueFollowUpExecution: async () => undefined,
+    };
+    const orchestrator = new ConversationOrchestrator(
+      repo, ai as never, outbox as never, undefined,
+      { findAwaitingConfirmationGroups: async () => [], findPendingConfirmationGroups: async () => [] } as never,
+      undefined, undefined, { isEnabled: async (flag: string) => flag === FEATURE_FLAGS.CONVERSATIONAL_SURVEY },
+      undefined, backlog, undefined, undefined, questionRepo,
+      { run: (callback) => transactionDb!.withTransaction(callback) },
+    );
+    const processor = new ConversationProcessor(
+      orchestrator, {} as never, { record: async () => undefined } as never,
+      transactionDb!, repo, surveyEvidenceRepo, conversationQueue,
+    );
+    let worker: Worker | undefined;
+    try {
+      await conversationEvents.waitUntilReady();
+      worker = new Worker(conversationQueue.name, (job) => processor.process(job), { connection });
+      await db.insert(conversationJobAdmissions).values({
+        messageId: current.id, tenantId, userId, conversationId,
+        externalWorkspaceId: 'synthetic-dev-workspace', externalConversationId,
+        eventId: randomUUID(), requestId: randomUUID(), traceId: randomUUID(), queuedAt: new Date(),
+      });
+      const job = await conversationQueue.add('process', {
+        requestId: randomUUID(), eventId: randomUUID(), messageId: current.id, conversationId,
+        userId, tenantId, externalWorkspaceId: 'synthetic-dev-workspace', externalConversationId,
+        traceId: 'v2-topic-steering',
+      } satisfies ConversationJob);
+      await job.waitUntilFinished(conversationEvents, 10_000);
+
+      expect(ai.generateResponse).toHaveBeenCalledOnce();
+      expect(ai.generateResponse.mock.calls[0]![2]).toMatchObject({
+        topicQuestion: { questionId: statusQuestion.id, questionGroup: 'autonomy', focus: 'driver' },
+      });
+      expect(sent).toHaveLength(1);
+      const [reply] = await db.select().from(messages).where(eq(messages.id, sent[0]!));
+      expect(reply!.text).toBe(`Checklists before a release are a good anchor. ${driverQuestion}`);
+      expect(reply!.metadata).toMatchObject({
+        containsSurveyProbe: true, surveyProbeQuestionId: statusQuestion.id,
+        topicQuestion: { questionGroup: 'autonomy', focus: 'driver', policyVersion: 'topic-question-v1' },
+      });
+      // The rolling cap reads topic questions beyond the loaded window: the seeded one and this one.
+      expect(await repo.countTopicQuestionsSince({ tenantId, userId, conversationId, since: at(-60) })).toBe(2);
+      // The driver is asked at most once.
+      expect((await workingFor())!.driverRequestedAt).toBeInstanceOf(Date);
+    } finally {
+      await worker?.close();
+      await conversationEvents.close();
+      await conversationQueue.obliterate({ force: true });
+      await conversationQueue.close();
+    }
+
+    // The driver arrives; with the earlier status the question is ready and leaves topic selection.
+    const driver = await say('inbound', 'Mostly because I own the design of the new release flow.', 1);
+    await capture.execute({ conversationId, userId, tenantId, inboundMessageId: driver.id });
+    expect(await workingFor()).toMatchObject({ status: 'collecting', readyForConfirmation: true, driverResolved: true });
+    const next = await backlog.getNextProbeQuestion(userId, tenantId);
+    expect(next).toMatchObject({ question: { id: autonomy[1]!.id }, focus: 'open' });
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledTimes(2);
+    const [statusBacklog] = await db.select().from(pulseBacklog).where(eq(pulseBacklog.surveyQuestionId, statusQuestion.id));
+    expect(statusBacklog!.status).toBe('done');
+  }, 30_000);
 });

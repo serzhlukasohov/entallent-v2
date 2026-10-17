@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne } from 'drizzle-orm';
 import {
   messages,
   pulseBacklog,
@@ -34,8 +34,11 @@ import type {
   QuestionClarificationVerdict,
   AppliedQuestionVerdict,
   CycleProgressSnapshot,
+  QuestionWorkingCoverage,
 } from '@entalent/application';
 import {
+  accumulateQuestionReadiness,
+  needsDriver,
   hasCompleteV2ScoringPolicy,
   hasLegacyV2ScoringPolicy,
   isApprovedQuestionRubric,
@@ -1218,6 +1221,104 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     });
   }
 
+  /** GC round 3 CAP-1, CAP-2: per-question V2 working state of one window for topic selection. */
+  async findQuestionCoverage(input: { tenantId: string; userId: string; surveyWindowId: string }):
+    Promise<QuestionWorkingCoverage[]> {
+    const rows = await this.db.client.select({
+      surveyQuestionId: surveyQuestionWorkingInsights.surveyQuestionId,
+      questionVersion: surveyQuestionWorkingInsights.questionVersion,
+      status: surveyQuestionWorkingInsights.status,
+      readyForConfirmation: surveyQuestionWorkingInsights.readyForConfirmation,
+      meaningSufficient: surveyQuestionWorkingInsights.meaningSufficient,
+      driverResolved: surveyQuestionWorkingInsights.driverResolved,
+      driverRequestedAt: surveyQuestionWorkingInsights.driverRequestedAt,
+    }).from(surveyQuestionWorkingInsights).where(and(
+      eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+      eq(surveyQuestionWorkingInsights.userId, input.userId),
+      eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
+    ));
+    return rows.map((row) => {
+      const driverRequested = row.driverRequestedAt !== null;
+      return {
+        surveyQuestionId: row.surveyQuestionId,
+        questionVersion: row.questionVersion,
+        status: row.status,
+        readyForConfirmation: row.readyForConfirmation,
+        needsDriver: needsDriver({ ...row, driverRequested }),
+        driverRequested,
+      };
+    });
+  }
+
+  /** GC round 3 CAP-2: the driver is asked at most once per question and window. */
+  async recordDriverRequested(input: {
+    tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId: string; requestedAt: Date;
+  }): Promise<boolean> {
+    const updated = await this.db.client.update(surveyQuestionWorkingInsights)
+      .set({ driverRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
+      .where(and(
+        eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+        eq(surveyQuestionWorkingInsights.userId, input.userId),
+        eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
+        eq(surveyQuestionWorkingInsights.surveyQuestionId, input.surveyQuestionId),
+        eq(surveyQuestionWorkingInsights.status, 'collecting'),
+        isNull(surveyQuestionWorkingInsights.driverRequestedAt),
+      )).returning({ id: surveyQuestionWorkingInsights.id });
+    return updated.length > 0;
+  }
+
+  /**
+   * GC round 3 CAP-2: an explicit decline to say what drives a captured status resolves the driver
+   * (honoured on the first refusal). Only a newer in-period employee message of the same
+   * conversation counts; the working summary is not touched.
+   */
+  async recordDriverDeclined(input: {
+    tenantId: string; userId: string; conversationId: string; surveyWindowId: string;
+    surveyQuestionId: string; questionVersion: string; sourceMessageId: string;
+  }): Promise<boolean> {
+    return this.db.client.transaction(async (tx) => {
+      const [scope] = await tx.select({
+        periodStart: surveyWindows.periodStart,
+        periodEnd: surveyWindows.periodEnd,
+        sourceOccurredAt: messages.occurredAt,
+      }).from(surveyWindows)
+        .innerJoin(messages, eq(messages.id, input.sourceMessageId))
+        .where(and(
+          eq(surveyWindows.id, input.surveyWindowId),
+          eq(surveyWindows.tenantId, input.tenantId),
+          eq(surveyWindows.userId, input.userId),
+          eq(surveyWindows.status, 'active'),
+          eq(messages.tenantId, input.tenantId),
+          eq(messages.userId, input.userId),
+          eq(messages.conversationId, input.conversationId),
+          eq(messages.direction, 'inbound'),
+          isNull(messages.deletedAt),
+        )).limit(1);
+      if (!scope || scope.periodEnd <= new Date() || scope.sourceOccurredAt < scope.periodStart
+        || scope.sourceOccurredAt >= scope.periodEnd) return false;
+      const [working] = await tx.select().from(surveyQuestionWorkingInsights).where(and(
+        eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+        eq(surveyQuestionWorkingInsights.userId, input.userId),
+        eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
+        eq(surveyQuestionWorkingInsights.surveyQuestionId, input.surveyQuestionId),
+        eq(surveyQuestionWorkingInsights.questionVersion, input.questionVersion),
+      )).for('update').limit(1);
+      if (!working || working.status !== 'collecting' || working.purgedAt !== null
+        || working.driverResolved || working.sourceMessageIds.includes(input.sourceMessageId)) return false;
+      const [latestSource] = working.sourceMessageIds.length === 0 ? [] : await tx.select({
+        occurredAt: messages.occurredAt,
+      }).from(messages).where(inArray(messages.id, working.sourceMessageIds))
+        .orderBy(desc(messages.occurredAt)).limit(1);
+      if (latestSource && scope.sourceOccurredAt <= latestSource.occurredAt) return false;
+      await tx.update(surveyQuestionWorkingInsights).set({
+        driverResolved: true,
+        readyForConfirmation: working.readyForConfirmation || working.meaningSufficient,
+        updatedAt: new Date(),
+      }).where(eq(surveyQuestionWorkingInsights.id, working.id));
+      return true;
+    });
+  }
+
   async captureMeaning(input: CaptureQuestionMeaningInput): Promise<'captured' | 'ignored'> {
     const meaning = input.meaning.trim();
     if (!meaning || !input.questionVersion.trim()) return 'ignored';
@@ -1279,7 +1380,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           surveyQuestionId: input.surveyQuestionId,
           questionVersion: input.questionVersion,
           workingSummary: meaning,
-          readyForConfirmation: input.sufficientMeaning,
+          ...readinessColumns(accumulateQuestionReadiness(null, input)),
           sourceMessageIds: [input.sourceMessageId],
         }).onConflictDoNothing().returning({ id: surveyQuestionWorkingInsights.id });
         if (created) return 'captured';
@@ -1291,10 +1392,13 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         || working.sourceMessageIds.includes(input.sourceMessageId)) return 'ignored';
 
       const reopened = working.status === 'reset' || Boolean(working.purgedAt && working.finalizedAt);
+      // GC round 3 CAP-2: ready only with sufficient meaning and a driver or decline, which may
+      // arrive in different messages. A row already ready (including legacy rows) stays ready.
+      const readiness = accumulateQuestionReadiness(reopened ? null : working, input);
       await tx.update(surveyQuestionWorkingInsights).set({
         status: 'collecting',
-        readyForConfirmation: reopened ? input.sufficientMeaning
-          : working.readyForConfirmation || input.sufficientMeaning,
+        ...readinessColumns(readiness),
+        ...(reopened ? {} : { readyForConfirmation: working.readyForConfirmation || readiness.ready }),
         workingSummary: reopened || !working.workingSummary
           ? meaning
           : working.workingSummary.includes(meaning)
@@ -1680,4 +1784,12 @@ function parseBundleComponents(
     throw new Error('v2_confirmation_bundle_components_invalid');
   }
   return components;
+}
+
+function readinessColumns(readiness: { meaningSufficient: boolean; driverResolved: boolean; ready: boolean }) {
+  return {
+    readyForConfirmation: readiness.ready,
+    meaningSufficient: readiness.meaningSufficient,
+    driverResolved: readiness.driverResolved,
+  };
 }

@@ -2,6 +2,27 @@ import type { PulseBacklogRepositoryPort, ProactivePulseConfig } from '../ports/
 import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { SurveyQuestionRecord, SurveyWindowRecord } from '../types/records';
+import type { QuestionWorkingCapturePort, QuestionWorkingCoverage } from '../ports/question-working-capture.port';
+
+/** V2 working states that take a question out of topic selection (GC round 3 CAP-1). */
+const V2_COVERED_STATUSES = new Set(['confirmed', 'declined', 'pending_confirmation', 'pending_clarification', 'no_data']);
+
+function isV2Covered(row: QuestionWorkingCoverage): boolean {
+  return V2_COVERED_STATUSES.has(row.status) || (row.status === 'collecting' && row.readyForConfirmation);
+}
+
+/**
+ * Rows whose backlog entry this service closes. Declined and expired questions keep the backlog
+ * transitions their own repository paths wrote. A status whose driver was already asked for once is
+ * not offered again (CAP-2: no interrogation), though it is not covered until a driver or decline.
+ */
+function isSettledForSelection(row: QuestionWorkingCoverage): boolean {
+  return ['confirmed', 'pending_confirmation', 'pending_clarification'].includes(row.status)
+    || (row.status === 'collecting' && (row.readyForConfirmation || row.driverRequested));
+}
+
+/** What the next topic question should ask: open the question, or the driver behind a captured status. */
+export type ProbeFocus = 'open' | 'driver';
 
 /** Canonical group order for backlog initialization (engagement is excluded). */
 const CANONICAL_GROUP_ORDER = ['autonomy', 'belonging', 'growth', 'purpose'] as const;
@@ -31,6 +52,7 @@ export class PulseBacklogService {
   constructor(
     private readonly backlogRepo: PulseBacklogRepositoryPort,
     private readonly surveyRepo: SurveyRepositoryPort,
+    private readonly questionCoverage?: Pick<QuestionWorkingCapturePort, 'findQuestionCoverage'>,
   ) {}
 
   /**
@@ -42,7 +64,7 @@ export class PulseBacklogService {
     userId: string,
     tenantId: string,
     config: ProactivePulseConfig = DEFAULT_PULSE_CONFIG,
-  ): Promise<{ question: SurveyQuestionRecord; windowId: string } | null> {
+  ): Promise<{ question: SurveyQuestionRecord; windowId: string; focus: ProbeFocus } | null> {
     const window = await this.surveyRepo.findOrCreateActiveWindow(userId, tenantId);
     if (!window) return null;
 
@@ -72,6 +94,14 @@ export class PulseBacklogService {
         })
         .map((a) => a.surveyQuestionId),
     );
+    // GC round 3 CAP-1: V2 progress lives in working insights, not legacy assessments.
+    const v2Coverage = await this.questionCoverage?.findQuestionCoverage?.({
+      tenantId, userId, surveyWindowId: window.id,
+    }) ?? [];
+    const currentRows = v2Coverage.filter((row) =>
+      questionById.get(row.surveyQuestionId)?.version === row.questionVersion);
+    for (const row of currentRows.filter(isV2Covered)) coveredIds.add(row.surveyQuestionId);
+    const settledIds = currentRows.filter(isSettledForSelection).map((row) => row.surveyQuestionId);
 
     await this.backlogRepo.initializeIfNeeded(
       userId,
@@ -81,6 +111,9 @@ export class PulseBacklogService {
       coveredIds,
       coverageSnapshotAt,
     );
+
+    // Idempotent: a covered V2 question never stays pending or active in the backlog.
+    for (const id of settledIds) await this.backlogRepo.markDone(userId, window.id, id, 0);
 
     const resolvedIgnores = await this.backlogRepo.resolveIgnoredEntries(userId, window.id, config.ignoreWindowHours);
     const skippedGroups = new Set(
@@ -100,6 +133,12 @@ export class PulseBacklogService {
         .sort((a, b) => a.displayOrder - b.displayOrder);
       await this.backlogRepo.unlockEngagementIfNeeded(userId, tenantId, window.id, engagementQuestions);
     }
+
+    // GC round 3 CAP-2: a captured status without its driver is followed up (once) before a new question.
+    const driverNeeded = new Set(currentRows.filter((row) => row.needsDriver && !isV2Covered(row))
+      .map((row) => row.surveyQuestionId));
+    const driverQuestion = nonEngagementQuestions.find((question) => driverNeeded.has(question.id));
+    if (driverQuestion) return { question: driverQuestion, windowId: window.id, focus: 'driver' };
 
     const focusedGroup = !questionGroup
       ? selectFocusedRegularGroup(nonEngagementQuestions, coveredIds)
@@ -122,7 +161,7 @@ export class PulseBacklogService {
     const question = allQuestions.find((q) => q.id === entry.surveyQuestionId);
     if (!question) return null;
 
-    return { question, windowId: window.id };
+    return { question, windowId: window.id, focus: 'open' };
   }
 
   /** Records that a probe was sent for a question — transitions it to 'active'. */

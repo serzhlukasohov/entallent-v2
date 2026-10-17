@@ -65,6 +65,10 @@ export interface CycleProgressSnapshot {
 }
 
 export interface QuestionConfirmationPort {
+  /** GC round 3 CAP-2: a driver topic question was delivered; the driver is asked at most once. */
+  recordDriverRequested?(input: {
+    tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId: string; requestedAt: Date;
+  }): Promise<boolean>;
   /** Null when the employee has no active V2 window. */
   findCycleProgress?(input: { tenantId: string; userId: string }): Promise<CycleProgressSnapshot | null>;
   /**

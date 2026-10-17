@@ -2711,3 +2711,50 @@ describe('OpenAiProvider.generateResponse offer delivery and format requests (GC
     expect(repairSystemPrompt).not.toMatch(/one sentence if you can/i);
   });
 });
+
+describe('OpenAiProvider.generateResponse topic question (GC round 3 CAP-1)', () => {
+  beforeEach(() => createMock.mockReset());
+  const question = 'How much say do you have over how you plan the release work?';
+  const reply = 'That release week sounds packed.';
+  const normal = {
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [],
+  } as ReplyStrategy;
+  const topicContext = responseContext({
+    userName: 'X',
+    topicQuestion: { questionId: 'q-a1', questionGroup: 'autonomy', focus: 'open', probeStrategies: ['methods'] },
+  });
+  const draft = (replyText: string, topicQuestion: unknown) => ({
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: '', replyText, topicQuestion, confidence: 0.9, containsSurveyProbe: false,
+    }) } }],
+  });
+
+  it('returns the answer then the required question from one call, with probe metadata set by code', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: '', replyText: reply, topicQuestion: question, confirmationSummary: 'stray', confidence: 0.9,
+      containsSurveyProbe: false,
+    }) } }] });
+    const res = await makeProvider().generateResponse(turns, normal, topicContext);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({
+      text: `${reply} ${question}`, replyText: reply, topicQuestion: question,
+      containsSurveyProbe: true, surveyProbeQuestionId: 'q-a1',
+    });
+    expect(res.confirmationSummary).toBeUndefined();
+  });
+
+  it('repairs once when the topic question is missing, naming the contract', async () => {
+    createMock.mockResolvedValueOnce(draft(reply, null)).mockResolvedValueOnce(draft(reply, question));
+    const res = await makeProvider().generateResponse(turns, normal, topicContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(createMock.mock.calls[1]![0].messages[0].content).toMatch(/"topicQuestion"/);
+    expect(res.topicQuestion).toBe(question);
+  });
+
+  it('fails closed with the typed reason after one repair', async () => {
+    createMock.mockResolvedValue(draft('Busy week?', question));
+    await expect(makeProvider().generateResponse(turns, normal, topicContext))
+      .rejects.toMatchObject({ message: 'topic_question_reply_invalid', reason: 'reply_question' });
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+});

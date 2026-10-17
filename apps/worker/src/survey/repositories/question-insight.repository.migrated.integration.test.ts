@@ -110,6 +110,7 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
     expect(await repository.reopenDeclinedQuestion(reopen)).toBe(false);
     expect(await repository.captureMeaning({
       ...reopen, meaning: 'I want more choice in my work methods.', sufficientMeaning: false,
+      driverCaptured: false, driverDeclined: false,
     })).toBe('captured');
 
     const [working] = await db.select().from(surveyQuestionWorkingInsights)
@@ -215,7 +216,7 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
       tenantId, userId: user!.id, conversationId: conversation!.id,
       surveyWindowId: window!.id, surveyQuestionId: confirmedQuestion.id,
       questionVersion: confirmedQuestion.version, sourceMessageId: laterMessage!.id,
-      meaning: 'Further private growth detail.', sufficientMeaning: true,
+      meaning: 'Further private growth detail.', sufficientMeaning: true, driverCaptured: true, driverDeclined: false,
     })).toBe('captured');
     const [reopened] = await db.select().from(surveyQuestionWorkingInsights)
       .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, confirmedQuestion.id));

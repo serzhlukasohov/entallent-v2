@@ -68,6 +68,9 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
       survey_question_id uuid not null, question_version text not null,
       status text not null default 'collecting', working_summary text,
       ready_for_confirmation boolean not null default false,
+      meaning_sufficient boolean not null default false,
+      driver_resolved boolean not null default false,
+      driver_requested_at timestamptz,
       confirmed_semantic_summary text,
       source_message_ids uuid[] not null default array[]::uuid[],
       confirmation_bundle_id uuid, confirmation_message_id uuid,
@@ -155,7 +158,7 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
     const input = {
       ...scope, conversationId: CONVERSATION, surveyQuestionId: QUESTION,
       questionVersion: 'v2', sourceMessageId: FIRST_MESSAGE, meaning: 'I can choose my work methods.',
-      sufficientMeaning: false,
+      sufficientMeaning: false, driverCaptured: false, driverDeclined: false,
     };
     expect(await repository.captureMeaning(input)).toBe('captured');
     expect(await repository.captureMeaning(input)).toBe('ignored');
@@ -163,6 +166,7 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
       .toBe('ignored');
     expect(await repository.captureMeaning({
       ...input, sourceMessageId: SECOND_MESSAGE, meaning: 'I have freedom to set priorities.', sufficientMeaning: true,
+      driverCaptured: true,
     })).toBe('captured');
 
     const rows = await client`select status, working_summary, source_message_ids, ready_for_confirmation
@@ -241,12 +245,86 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
       (${TENANT}, ${PERSON}, ${WINDOW}, ${questionId}, 'v2', '2026-09-17T00:00:00Z', true)`;
     const base = { tenantId: TENANT, userId: PERSON, conversationId: CONVERSATION,
       surveyWindowId: WINDOW, surveyQuestionId: questionId, questionVersion: 'v2',
-      meaning: 'A later detail.', sufficientMeaning: true };
+      meaning: 'A later detail.', sufficientMeaning: true, driverCaptured: true, driverDeclined: false };
     expect(await repository.captureMeaning({ ...base, sourceMessageId: oldMessageId })).toBe('ignored');
     expect(await repository.captureMeaning({ ...base, sourceMessageId: newMessageId })).toBe('captured');
     expect(await repository.captureMeaning({ ...base, sourceMessageId: delayedOldId })).toBe('ignored');
     expect(await client`select source_message_ids from survey_question_working_insights
       where survey_question_id = ${questionId}`).toMatchObject([{ source_message_ids: [newMessageId] }]);
+  });
+
+  // GC round 3 CAP-2 (T2): a status is not a covered topic; a driver or an explicit decline is.
+  it('keeps a status without a driver open until a driver or a decline arrives', async () => {
+    if (!client || !repository) return;
+    const statusMessage = '99999999-9999-4999-8999-999999999981';
+    const driverMessage = '99999999-9999-4999-8999-999999999982';
+    const declineMessage = '99999999-9999-4999-8999-999999999983';
+    await client`insert into messages values
+      (${statusMessage}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-15T01:00:00Z', null),
+      (${driverMessage}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-15T02:00:00Z', null),
+      (${declineMessage}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-15T03:00:00Z', null)`;
+    const scope = { tenantId: TENANT, userId: PERSON, conversationId: CONVERSATION,
+      surveyWindowId: WINDOW, questionVersion: 'v2' };
+    const statusOnly = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000004';
+    const declined = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000005';
+    const readiness = async (questionId: string) => (await client`select ready_for_confirmation,
+      meaning_sufficient, driver_resolved from survey_question_working_insights
+      where survey_question_id = ${questionId}`)[0];
+
+    expect(await repository.captureMeaning({ ...scope, surveyQuestionId: statusOnly,
+      sourceMessageId: statusMessage, meaning: 'Motivation is high, 9 out of 10.',
+      sufficientMeaning: true, driverCaptured: false, driverDeclined: false })).toBe('captured');
+    expect(await readiness(statusOnly)).toMatchObject({
+      ready_for_confirmation: false, meaning_sufficient: true, driver_resolved: false,
+    });
+    expect(await repository.findQuestionCoverage({ tenantId: TENANT, userId: PERSON, surveyWindowId: WINDOW }))
+      .toContainEqual({ surveyQuestionId: statusOnly, questionVersion: 'v2', status: 'collecting',
+        readyForConfirmation: false, needsDriver: true, driverRequested: false });
+    // The bot asks for the driver once; afterwards the question is not offered for it again.
+    expect(await repository.recordDriverRequested({ tenantId: TENANT, userId: PERSON,
+      surveyWindowId: WINDOW, surveyQuestionId: statusOnly, requestedAt: new Date('2026-09-15T01:30:00Z') }))
+      .toBe(true);
+    expect(await repository.findQuestionCoverage({ tenantId: TENANT, userId: PERSON, surveyWindowId: WINDOW }))
+      .toContainEqual({ surveyQuestionId: statusOnly, questionVersion: 'v2', status: 'collecting',
+        readyForConfirmation: false, needsDriver: false, driverRequested: true });
+
+    // The driver arrives in a later message the evaluator alone does not judge sufficient.
+    expect(await repository.captureMeaning({ ...scope, surveyQuestionId: statusOnly,
+      sourceMessageId: driverMessage, meaning: 'The new project lets them own the design.',
+      sufficientMeaning: false, driverCaptured: true, driverDeclined: false })).toBe('captured');
+    expect(await readiness(statusOnly)).toMatchObject({
+      ready_for_confirmation: true, meaning_sufficient: true, driver_resolved: true,
+    });
+
+    expect(await repository.captureMeaning({ ...scope, surveyQuestionId: declined,
+      sourceMessageId: declineMessage, meaning: 'Feels settled in the team; prefers not to say why.',
+      sufficientMeaning: true, driverCaptured: false, driverDeclined: true })).toBe('captured');
+    expect(await readiness(declined)).toMatchObject({ ready_for_confirmation: true, driver_resolved: true });
+    expect(await repository.findQuestionCoverage({ tenantId: TENANT, userId: PERSON, surveyWindowId: WINDOW }))
+      .toContainEqual({ surveyQuestionId: statusOnly, questionVersion: 'v2', status: 'collecting',
+        readyForConfirmation: true, needsDriver: false, driverRequested: true });
+  });
+
+  // An explicit "I'd rather not say why" carries no new meaning, so no evidence item records it.
+  it('honours an explicit decline of the driver recorded without new meaning', async () => {
+    if (!client || !repository) return;
+    const statusMessage = '99999999-9999-4999-8999-999999999971';
+    const declineMessage = '99999999-9999-4999-8999-999999999972';
+    const questionId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000006';
+    await client`insert into messages values
+      (${statusMessage}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-15T04:00:00Z', null),
+      (${declineMessage}, ${TENANT}, ${PERSON}, ${CONVERSATION}, 'inbound', '2026-09-15T05:00:00Z', null)`;
+    const scope = { tenantId: TENANT, userId: PERSON, conversationId: CONVERSATION,
+      surveyWindowId: WINDOW, surveyQuestionId: questionId, questionVersion: 'v2' };
+    expect(await repository.recordDriverDeclined({ ...scope, sourceMessageId: declineMessage })).toBe(false);
+    expect(await repository.captureMeaning({ ...scope, sourceMessageId: statusMessage,
+      meaning: 'Belonging is fine.', sufficientMeaning: true, driverCaptured: false, driverDeclined: false }))
+      .toBe('captured');
+    expect(await repository.recordDriverDeclined({ ...scope, sourceMessageId: statusMessage })).toBe(false);
+    expect(await repository.recordDriverDeclined({ ...scope, sourceMessageId: declineMessage })).toBe(true);
+    expect((await client`select ready_for_confirmation, driver_resolved, source_message_ids
+      from survey_question_working_insights where survey_question_id = ${questionId}`)[0])
+      .toMatchObject({ ready_for_confirmation: true, driver_resolved: true, source_message_ids: [statusMessage] });
   });
 
   it('rejects delayed capture after the window cutoff', async () => {
@@ -258,7 +336,7 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
       tenantId: TENANT, userId: PERSON, conversationId: CONVERSATION,
       surveyWindowId: WINDOW, surveyQuestionId: questionId,
       questionVersion: 'v2', sourceMessageId: FIRST_MESSAGE,
-      meaning: 'Delayed private text', sufficientMeaning: true,
+      meaning: 'Delayed private text', sufficientMeaning: true, driverCaptured: true, driverDeclined: false,
     })).toBe('ignored');
     expect(await client`select id from survey_question_working_insights
       where survey_question_id = ${questionId}`).toHaveLength(0);

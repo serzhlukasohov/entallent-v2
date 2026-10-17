@@ -255,3 +255,10 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
   summary: Exclude outbound messages whose delivery failed from the transcript the classifier reads as the latest mentor turn.
   evidence: Blind Hunter review of S7 (2026-10-15): `apps/worker/src/conversation/repositories/conversation.repository.ts` `findRecentMessages` filters only `deletedAt`, so an undelivered offer can make the next "yes" an `acceptsPriorOffer`; pre-existing for every transcript-derived signal.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
+  summary: A V2 question completed across two messages is closed in the backlog by the coverage reconcile (`markDone(..., 0)`), so its group is not re-prioritized and `evidenceCapturedCount` stays 0.
+  evidence: S5 review (both reviewers); `markQuestionCovered` fires only when one message alone makes the question ready.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
+  summary: Topic selection issues one idempotent `markDone` update per settled V2 question on every lookup; batch it or read backlog statuses first.
+  evidence: S5 Blind Hunter finding 10; correct but adds writes on the conversation path (lookups now run only when the cadence and cap allow).
