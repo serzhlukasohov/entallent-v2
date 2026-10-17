@@ -1125,3 +1125,215 @@ describe('buildRespondSystemPrompt answered-detail contract (GC round 3 CAP-8, T
     expect(p).not.toContain('Answered-detail contract (hard contract)');
   });
 });
+
+describe('buildRespondSystemPrompt topic completion and cycle status (GC round 3 CAP-3)', () => {
+  it('states completion with progress when a topic closes', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 },
+    }));
+    expect(prompt).toMatch(/complete/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toMatch(/3 (topics? )?(still )?(remain|left)/i);
+    expect(prompt).not.toMatch(/last topic/i);
+  });
+
+  it('says the cycle is complete after the last topic', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'belonging', topicsClosed: 4, topicsTotal: 4 },
+    }));
+    expect(prompt).toMatch(/last topic/i);
+    expect(prompt).toContain('4 of 4');
+  });
+
+  it('keeps the legacy acknowledgement when no progress is known', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'autonomy' },
+    }));
+    expect(prompt).toContain('"autonomy" topic');
+    expect(prompt).not.toMatch(/\d+ of \d+ topics/);
+  });
+
+  it('grounds a cycle-status answer on typed progress only', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      cycleProgress: { inCycle: true, topicsTotal: 4, topicsClosed: 1, openTopics: ['growth', 'purpose', 'belonging'], awaitingReply: true },
+    }));
+    expect(prompt).toMatch(/Cycle status/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toContain('growth');
+    expect(prompt).toMatch(/waiting for (their|the employee's) reply/i);
+    expect(prompt).toMatch(/never list, quote, or repeat the evidence/i);
+  });
+
+  it('says nothing is pending outside a cycle', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      cycleProgress: { inCycle: false, topicsTotal: 0, topicsClosed: 0, openTopics: [], awaitingReply: false },
+    }));
+    expect(prompt).toMatch(/nothing (is )?pending/i);
+    expect(prompt).not.toContain('0 of 0');
+  });
+
+  it('describes the corrected-statement variant as the corrected version of a disputed statement', () => {
+    const ctx = context({
+      userName: 'Test',
+      trailingBundle: { kind: 'corrected_statement', text: 'So the fair version is: you set your own priorities. Right?' },
+    });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).toMatch(/corrected version/i);
+    expect(prompt).toMatch(/disputed/i);
+    expect(prompt).toContain('"bundleText"');
+  });
+});
+
+describe('buildRespondSystemPrompt accepted offers and format requests (GC round 3 CAP-6/CAP-9)', () => {
+  const normal: ReplyStrategy = { ...strategy, mode: 'normal', includeFollowUpQuestion: true };
+  const acceptancePlan: NonNullable<ResponseContext['replyPlan']> = {
+    dialogueAct: 'acknowledgement',
+    responseMove: 'answer_request',
+    latestUserSubstance: null,
+    topicAnchor: 'feedback for the senior colleague',
+    memoryAnchors: [],
+    requiredGrounding: [
+      { source: 'prior_offer', category: 'offer', content: 'the item offered in the previous assistant turn', requirement: 'deliver_now' },
+    ],
+    resolvedDetails: [],
+    questionPolicy: { maxQuestions: 0, reason: 'offer_delivery' },
+    mayInferFromBrevity: false,
+    forbiddenMoves: ['unsupported_interpretation', 'offer_again', 'new_offer'],
+    formatRequest: null,
+  };
+
+  it('renders an offer-delivery contract instead of the acknowledgement pause', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: acceptancePlan }));
+
+    expect(prompt).toContain('Offer-delivery contract (hard contract)');
+    // Leading position: the contract opens the system prompt, ahead of the persona.
+    expect(prompt.indexOf('Offer-delivery contract')).toBeLessThan(prompt.indexOf('You are speaking directly with the employee'));
+    expect(prompt).toMatch(/accepted the offer[^.]*previous (?:reply|turn)/i);
+    expect(prompt).toMatch(/deliver[^.]*now/i);
+    expect(prompt).toMatch(/do not restate/i);
+    expect(prompt).toMatch(/do not offer (?:it )?again/i);
+    expect(prompt).toMatch(/one version[^.]*adjusted the way the employee asked/i);
+    // A final self-check sits right before the JSON instruction, where the closing sentence is written.
+    expect(prompt).toMatch(/Final check[^]*delete[^]*"If you want"[^]*\n\nReturn JSON:/i);
+    expect(prompt).toMatch(/no conditional variants?[^.]*"if you want it firmer/i);
+    expect(prompt).not.toContain('Acknowledgement contract');
+    expect(prompt).not.toContain('typed pause act controls this turn');
+    expect(prompt).toContain('ask zero questions this turn');
+  });
+
+  it('keeps the accepted offer out of the pause gating in the user prompt too', () => {
+    const userPrompt = buildRespondUserPrompt(
+      [
+        { role: 'assistant', content: 'If you want, I can give you exact phrases you can say out loud.', timestamp: new Date() },
+        { role: 'user', content: 'Yes, a bit more direct please', timestamp: new Date() },
+      ],
+      context({ userName: 'Sam', replyPlan: acceptancePlan }),
+      normal,
+    );
+
+    expect(userPrompt).toContain('Yes, a bit more direct please');
+    expect(userPrompt).not.toContain('UNTRUSTED TOPIC ANCHOR');
+  });
+
+  it('forbids a new offer when the plan says so and explains what to do instead', () => {
+    const requestPlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'give me the exact phrases',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: requestPlan }));
+
+    expect(prompt).toContain('Offer limit (hard contract)');
+    expect(prompt).toMatch(/do not end with an offer/i);
+    expect(prompt).toMatch(/"if you want, I can"/i);
+    expect(prompt).not.toContain('Offer-delivery contract');
+  });
+
+  it('lifts the no-list style rule only for an explicit format request', () => {
+    const outlinePlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'give me an outline with timings, a list with time slots please',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 0, reason: 'format_request' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+      formatRequest: 'outline',
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: outlinePlan }));
+
+    expect(prompt).toContain('Format contract (hard contract)');
+    expect(prompt.indexOf('Format contract')).toBeLessThan(prompt.indexOf('You are speaking directly with the employee'));
+    expect(prompt).toMatch(/Reason: format_request\. Deliver the items/);
+    expect(prompt).toMatch(/asked for an outline/i);
+    expect(prompt).toMatch(/one item per line/i);
+    expect(prompt).toMatch(/plain "-" or numbered/i);
+    expect(prompt).toMatch(/no headers/i);
+    expect(prompt).not.toContain("You don't structure your replies with headers or bullet points");
+  });
+
+  it('keeps the prose rule on turns without a format request', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: acceptancePlan }));
+
+    expect(prompt).toContain("You don't structure your replies with headers or bullet points");
+    expect(prompt).not.toContain('Format contract');
+  });
+
+  it('keeps memory and goal hints out of an offer-delivery turn', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({
+      userName: 'Sam',
+      replyPlan: acceptancePlan,
+      memoryContext: {
+        items: [{ id: 'm-1', category: 'project_context', content: 'payments migration', importance: 1 }],
+        goals: [{ id: 'g-1', title: 'get promoted by spring' } as never],
+      },
+    }));
+
+    expect(prompt).not.toContain('Things you already know');
+    expect(prompt).not.toContain('payments migration');
+    expect(prompt).not.toContain('One prequalified active goal');
+  });
+
+  it('explains the zero-question policy on an offer-delivery turn as delivering, not pausing', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: acceptancePlan }));
+
+    expect(prompt).toMatch(/Reason: offer_delivery\. Deliver the item/);
+    expect(prompt).not.toContain('A plain statement or acknowledgement is enough');
+  });
+
+  it('lets a capability decline state what the coach can do instead without a deferred offer', () => {
+    const requestPlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'find me a link',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: requestPlan }));
+
+    expect(prompt).toMatch(/Offer limit \(hard contract\):[^]*decline[^]*state what you can do instead/i);
+    expect(prompt).not.toContain('a previous offer may still be open');
+  });
+
+  it('describes an outline request without asserting time slots the employee did not ask for', () => {
+    const outlinePlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'give me an agenda for the 1:1',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+      formatRequest: 'outline',
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: outlinePlan }));
+
+    expect(prompt).toMatch(/asked for an outline \(an agenda or plan\)/i);
+    expect(prompt).toMatch(/time slot[^.]*only when the employee asked for timings/i);
+    expect(prompt).not.toMatch(/asked for an outline with time slots/i);
+  });
+});

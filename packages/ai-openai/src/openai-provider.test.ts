@@ -2626,3 +2626,88 @@ describe('OpenAiProvider.generateResponse trailing bundle (GC round 3 CAP-4)', (
     expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
   });
 });
+
+describe('OpenAiProvider.generateResponse offer delivery and format requests (GC round 3 CAP-6/CAP-9)', () => {
+  beforeEach(() => createMock.mockReset());
+  const medium = {
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [],
+  } as ReplyStrategy;
+  const basePlan: NonNullable<ResponseContext['replyPlan']> = {
+    dialogueAct: 'request',
+    responseMove: 'answer_request',
+    latestUserSubstance: 'yes please',
+    topicAnchor: null,
+    memoryAnchors: [],
+    requiredGrounding: [],
+    resolvedDetails: [],
+    questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+    mayInferFromBrevity: true,
+    forbiddenMoves: ['unsupported_interpretation'],
+    formatRequest: null,
+  };
+  const reply = (text: string) => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text, confidence: 0.9, containsSurveyProbe: false }) } }] });
+
+  const deliveryContext = responseContext({
+    userName: 'X',
+    replyPlan: {
+      ...basePlan,
+      requiredGrounding: [{ source: 'prior_offer', category: 'offer', content: 'the item offered in the previous assistant turn', requirement: 'deliver_now' }],
+      questionPolicy: { maxQuestions: 0, reason: 'offer_delivery' },
+      forbiddenMoves: ['unsupported_interpretation', 'offer_again', 'new_offer'],
+    },
+  });
+
+  it('repairs a delivered reply that ends with an offer question, once, and tells the model quoted phrases may keep theirs', async () => {
+    const withOffer = 'Try: "I need the review by Wednesday." Do you want me to make it firmer?';
+    const delivered = 'Try: "I need the review by Wednesday."';
+    createMock.mockResolvedValueOnce(reply(withOffer)).mockResolvedValueOnce(reply(delivered));
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(turns, medium, deliveryContext);
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe(delivered);
+    const repairSystemPrompt = createMock.mock.calls[1]?.[0]?.messages?.[0]?.content as string;
+    expect(repairSystemPrompt).toMatch(/quoted phrases[^.]*may keep/i);
+  });
+
+  it('accepts the repaired draft even when quoted phrases still carry question marks, instead of failing the turn', async () => {
+    const first = 'Try: "Can you get my PR reviewed by Wednesday?" Want a softer version?';
+    const delivered = 'Try: "Can you get my PR reviewed by Wednesday?" and if it slips again: "What is blocking the review?"';
+    createMock.mockResolvedValueOnce(reply(first)).mockResolvedValueOnce(reply(delivered));
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(turns, medium, deliveryContext);
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe(delivered);
+  });
+
+  it('gives a format request the long length budget and keeps the list shape in a length repair', async () => {
+    const item = (n: number) => `${n}. ${n * 5}-${n * 5 + 5} min: a line of the outline that carries enough detail to take up real space in the length budget`;
+    const withinLong = Array.from({ length: 8 }, (_, i) => item(i)).join('\n');
+    expect(withinLong.length).toBeGreaterThan(680);
+    expect(withinLong.length).toBeLessThanOrEqual(980);
+    createMock.mockResolvedValueOnce(reply(withinLong));
+    const provider = makeProvider();
+    const formatContext = responseContext({
+      userName: 'X',
+      replyPlan: { ...basePlan, formatRequest: 'outline', questionPolicy: { maxQuestions: 0, reason: 'format_request' } },
+    });
+
+    const res = await provider.generateResponse(turns, medium, formatContext);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toBe(withinLong);
+
+    createMock.mockReset();
+    const overLong = Array.from({ length: 12 }, (_, i) => item(i)).join('\n');
+    createMock
+      .mockResolvedValueOnce(reply(overLong))
+      .mockResolvedValueOnce(reply(withinLong));
+    await provider.generateResponse(turns, medium, formatContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const repairSystemPrompt = createMock.mock.calls[1]?.[0]?.messages?.[0]?.content as string;
+    expect(repairSystemPrompt).toMatch(/keep the list shape/i);
+    expect(repairSystemPrompt).not.toMatch(/one sentence if you can/i);
+  });
+});

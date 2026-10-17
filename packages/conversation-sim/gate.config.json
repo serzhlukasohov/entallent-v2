@@ -70,6 +70,22 @@
       "manualReviewRequired": false
     },
     {
+      "id": "offer-delivered",
+      "name": "CAP-6 accepted offer is delivered",
+      "file": "src/scenarios/offer-delivered.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "format-request-outline",
+      "name": "CAP-9 outline with time slots",
+      "file": "src/scenarios/format-request-outline.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
       "id": "answer-then-bundle",
       "name": "CAP-4 answer before the confirmation bundle",
       "file": "src/scenarios/answer-then-bundle.sim.test.ts",

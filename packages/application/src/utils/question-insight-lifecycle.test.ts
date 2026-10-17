@@ -25,7 +25,8 @@ describe('question-level bundle lifecycle', () => {
       kind: 'partial', acceptedQuestionIds: ['q1', 'q3'], disputedQuestionIds: ['q2'],
     });
     expect(transitions.map((q) => q.status)).toEqual(['confirmed', 'pending_clarification', 'confirmed']);
-    expect(clarifyQuestion(transitions[1]).status).toBe('confirmed');
+    // GC round 3 CAP-3: a corrected meaning returns to collecting so it is shown and confirmed before it counts.
+    expect(clarifyQuestion(transitions[1])).toMatchObject({ status: 'collecting', purgeTemporary: false });
     expect(() => clarifyQuestion(transitions[0])).toThrow('question_not_pending_clarification');
   });
 

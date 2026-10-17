@@ -18,6 +18,8 @@ import type {
   QuestionClarificationVerdict,
 } from './question-confirmation.port';
 
+export type QuestionBundleVariant = 'confirmation' | 'corrected_statement';
+
 export interface ConversationTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -90,15 +92,39 @@ export interface ReplyPlan {
       | 'social_checkin_returns_question'
       | 'acknowledgement_no_new_substance'
       | 'asked_recently'
-      | 'new_substance_allows_question';
+      | 'new_substance_allows_question'
+      | 'offer_delivery'
+      | 'format_request';
   };
-  requiredGrounding: Array<{
-    source: 'memory';
-    category: string;
-    content: string;
-    requirement: 'mention_explicitly';
-  }>;
-  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan' | 'unsupported_interpretation'>;
+  requiredGrounding: Array<
+    | {
+        source: 'memory';
+        category: string;
+        content: string;
+        requirement: 'mention_explicitly';
+      }
+    | {
+        /** GC round 3 CAP-6: the employee accepted the offer made in the previous mentor turn. */
+        source: 'prior_offer';
+        category: 'offer';
+        content: string;
+        requirement: 'deliver_now';
+      }
+  >;
+  forbiddenMoves: Array<
+    | 'comment_on_brevity'
+    | 'diagnose'
+    | 'survey_probe'
+    | 'operational_status'
+    | 'action_plan'
+    | 'unsupported_interpretation'
+    /** Do not repeat or re-offer the accepted item; deliver it. */
+    | 'offer_again'
+    /** Do not end with a new "if you want, I can..." this turn. */
+    | 'new_offer'
+  >;
+  /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; null keeps the prose default. */
+  formatRequest?: import('@entalent/contracts').FormatRequest | null;
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
@@ -152,7 +178,23 @@ export interface ResponseContext {
    * Set when the employee just confirmed a summary the agent proposed.
    * Signals that this topic is now closed — acknowledge and move on, no more probing.
    */
-  topicConfirmed?: { questionGroup: string };
+  topicConfirmed?: {
+    questionGroup: string;
+    /** Progress after this confirmation (GC round 3 CAP-3); the reply states it plainly. */
+    topicsClosed?: number;
+    topicsTotal?: number;
+  };
+  /**
+   * Set when the employee asked what is left in the pulse cycle (GC round 3 CAP-3). The reply is
+   * grounded on these counts and topic names only; evidence text never travels here.
+   */
+  cycleProgress?: {
+    inCycle: boolean;
+    topicsTotal: number;
+    topicsClosed: number;
+    openTopics: string[];
+    awaitingReply: boolean;
+  };
   /**
    * Set when a question group has completed and the agent should reflect its
    * understanding back and ask for confirmation IN THIS REPLY (confirm-only, no
@@ -191,7 +233,7 @@ export interface ResponseContext {
 }
 
 export interface TrailingBundle {
-  kind: 'confirmation_bundle' | 'clarification';
+  kind: 'confirmation_bundle' | 'clarification' | 'corrected_statement';
   /** Validated composition text; the only question of the turn lives here. */
   text: string;
   /** Bundle statements the reply part must not restate (confirmation bundles only). */
@@ -225,6 +267,8 @@ export interface AiProviderPort {
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
+    /** 'corrected_statement' reflects one meaning the employee just corrected (GC round 3 CAP-3). */
+    variant?: QuestionBundleVariant,
   ): Promise<QuestionBundleComposition>;
 
   interpretQuestionBundleResponse(

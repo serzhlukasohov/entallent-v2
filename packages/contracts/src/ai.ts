@@ -64,6 +64,9 @@ export const PulseCaptureScopeSchema = z.discriminatedUnion('type', [
 ]);
 export type PulseCaptureScope = z.infer<typeof PulseCaptureScopeSchema>;
 
+export const FormatRequestSchema = z.enum(['list', 'outline', 'steps']);
+export type FormatRequest = z.infer<typeof FormatRequestSchema>;
+
 export const SituationClassificationSchema = z.object({
   primaryIntent: SituationIntentSchema,
   secondaryIntents: z.array(z.string()),
@@ -108,13 +111,36 @@ export const SituationClassificationSchema = z.object({
       .catch({ type: 'unresolved' })
       .optional(),
   ),
+  /**
+   * The employee asks what is left in the pulse cycle or whether they answered everything
+   * (GC round 3 CAP-3). The reply is then grounded on typed cycle progress.
+   */
+  cycleStatusQuestion: z.preprocess(
+    (value) => value === null || value === undefined ? false : value,
+    z.boolean().catch(false).optional(),
+  ),
+  /**
+   * GC round 3 CAP-6: the latest mentor turn contained an offer to do or produce something.
+   * Read by the classifier from the transcript each turn; malformed output fails closed.
+   */
+  priorAssistantOffer: z.boolean().optional().catch(false),
+  /** The latest employee message accepts that offer. Only meaningful with priorAssistantOffer. */
+  acceptsPriorOffer: z.boolean().optional().catch(false),
+  /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; unknown values fail closed. */
+  formatRequest: FormatRequestSchema.nullable().optional().catch(null),
 }).transform((classification) => {
+  const acceptsPriorOffer = classification.acceptsPriorOffer === undefined
+    ? undefined
+    : classification.priorAssistantOffer === true && classification.acceptsPriorOffer;
   const hasPulseCaptureIntent = classification.primaryIntent === 'pulse_capture_explanation'
     || classification.secondaryIntents.includes('pulse_capture_explanation');
-  if (!hasPulseCaptureIntent || classification.pulseCaptureScope !== undefined) {
+  const pulseCaptureScope = hasPulseCaptureIntent && classification.pulseCaptureScope === undefined
+    ? { type: 'unresolved' as const }
+    : classification.pulseCaptureScope;
+  if (acceptsPriorOffer === classification.acceptsPriorOffer && pulseCaptureScope === classification.pulseCaptureScope) {
     return classification;
   }
-  return { ...classification, pulseCaptureScope: { type: 'unresolved' as const } };
+  return { ...classification, acceptsPriorOffer, pulseCaptureScope };
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 
