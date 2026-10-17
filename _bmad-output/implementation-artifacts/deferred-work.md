@@ -240,3 +240,9 @@
   status: done
   completed_by: `packages/conversation-sim/src/scenarios/answer-then-bundle.sim.test.ts` (gate id `answer-then-bundle`, 2026-10-15)
   evidence: Blind Hunter review of S3 (2026-10-15); the fix-plan verification matrix lists only the V2 queue suite and the next live cycle for S3.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
+  summary: Build a reply plan on V2 bundle and clarification turns so an accepted offer or an explicit format request on those turns still reaches the two-part reply contract.
+  evidence: Both S7 reviewers (2026-10-15): `conversation-orchestrator.ts` sets `replyPlan` to undefined whenever a confirmation, bundle, or clarification is pending, so `acceptsPriorOffer` and `formatRequest` are dropped there; S3 already deferred reply-plan integration for bundle turns.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-s7-offers-delivered-format-honored.md`
+  summary: Exclude outbound messages whose delivery failed from the transcript the classifier reads as the latest mentor turn.
+  evidence: Blind Hunter review of S7 (2026-10-15): `apps/worker/src/conversation/repositories/conversation.repository.ts` `findRecentMessages` filters only `deletedAt`, so an undelivered offer can make the next "yes" an `acceptsPriorOffer`; pre-existing for every transcript-derived signal.

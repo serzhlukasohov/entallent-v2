@@ -197,6 +197,16 @@ and a byte-for-byte copy of the composed bundle in one generation. The test asse
 once at the end after a non-empty answer, and a judge rubric on whether the answer part
 addresses the question. A `bundle_without_reply` fallback is a hard failure here.
 
+`offer-delivered` gates GC round 3 CAP-6: after a seeded coach reply that ends with an offer
+("If you want, I can give you exact phrases"), the employee's "Yes, a bit more direct please"
+must reach generation as `answer_request` with a `prior_offer` / `deliver_now` grounding item
+and `offer_again` forbidden, and the live reply must deliver the phrases without restating the
+previous reply or offering again (judge rubric; "if you want, I can" is a hard failure).
+
+`format-request-outline` gates GC round 3 CAP-9: an explicit request for an outline with time
+slots must carry `formatRequest` in the reply plan and come back as at least three separated
+items on their own lines; the judge checks that each item has a slot and that no re-offer follows.
+
 `proactivity-reminders` and `planning-memory` are deterministic structural
 scenarios for action discipline, reminder deduplication, delayed follow-up policy,
 assessment preparation, goal state, memory extraction, memory correction, and

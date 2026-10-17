@@ -8,8 +8,10 @@ import type { ResponseContext } from '../ports/ai-provider.port';
  */
 export function maxReplyChars(
   strategy: Pick<ReplyStrategy, 'maxResponseLength'>,
-  context: Pick<ResponseContext, 'styleAdaptation'>,
+  context: Pick<ResponseContext, 'styleAdaptation' | 'replyPlan'>,
 ): number {
+  // GC round 3 CAP-9: an explicit list, outline, or steps request needs room for its items.
+  if (context.replyPlan?.formatRequest) return 980;
   const verbosity = context.styleAdaptation?.dimensions.verbosity;
   const terse = typeof verbosity === 'number' && verbosity <= 0.3;
   switch (strategy.maxResponseLength) {
