@@ -1086,6 +1086,46 @@ describe('buildRespondSystemPrompt trailing bundle (GC round 3 CAP-4)', () => {
   });
 });
 
+describe('buildRespondSystemPrompt answered-detail contract (GC round 3 CAP-8, T9)', () => {
+  const normal = (includeFollowUpQuestion: boolean): ReplyStrategy => ({
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion, maxResponseLength: 'short', forbiddenPatterns: [],
+  });
+  type ReplyPlan = NonNullable<ResponseContext['replyPlan']>;
+  const plan = (maxQuestions: 0 | 1): ReplyPlan => ({
+    dialogueAct: 'new_substance',
+    latestUserSubstance: 'release blocked on the only security reviewer being out; nobody else may sign off',
+    topicAnchor: null,
+    memoryAnchors: [],
+    responseMove: 'address_new_substance',
+    mayInferFromBrevity: true,
+    questionPolicy: maxQuestions === 1
+      ? { maxQuestions: 1, reason: 'new_substance_allows_question' }
+      : { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+    requiredGrounding: [],
+    forbiddenMoves: ['unsupported_interpretation', 'survey_probe'],
+  });
+
+  it('treats details stated in the latest message as answered on a first-turn question', () => {
+    const p = buildRespondSystemPrompt(normal(true), context({ userName: 'T', replyPlan: plan(1) }));
+    expect(p).toContain('Answered-detail contract (hard contract)');
+    expect(p).toMatch(/stated explicitly in the transcript, including in their latest message, is answered/);
+    expect(p).toMatch(/do not ask whether an alternative, exception, or backup exists when they said there is none/i);
+    expect(p).toMatch(/If the only question left would do that, ask none/);
+    expect(p).toMatch(/Never rephrase an answered question, including a detail the employee stated in their latest message/);
+  });
+
+  it('omits the contract when the turn allows no question', () => {
+    const p = buildRespondSystemPrompt(normal(false), context({ userName: 'T', replyPlan: plan(0) }));
+    expect(p).not.toContain('Answered-detail contract (hard contract)');
+  });
+
+  it('omits the contract in safety mode', () => {
+    const sensitive: ReplyStrategy = { ...normal(true), mode: 'sensitive' };
+    const p = buildRespondSystemPrompt(sensitive, context({ userName: 'T', replyPlan: plan(1) }));
+    expect(p).not.toContain('Answered-detail contract (hard contract)');
+  });
+});
+
 describe('buildRespondSystemPrompt topic completion and cycle status (GC round 3 CAP-3)', () => {
   it('states completion with progress when a topic closes', () => {
     const prompt = buildRespondSystemPrompt(strategy, context({

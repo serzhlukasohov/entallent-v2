@@ -3171,3 +3171,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: The conversation-sim `test` script now includes `src/scenarios/simulation-repositories.sim.test.ts` next to `src/gate`; the pulse-capture case is rewritten to assert the CAP-5 behaviour (generation call with grounded `captureFacts`, report plan aligned to that call) and the data-use bypass stays a separate test. Any future offline `.sim.test.ts` must be added to the `test` script's include list, not only excluded from the live set.
 - Regression check: `pnpm --filter @entalent/conversation-sim test` must report `simulation-repositories.sim.test.ts` among the passing files (6 tests).
 - Status: fixed
+
+## 2026-10-17: Eval rubric widened after one live sample, then mis-scored the fix
+
+- Symptom: After the first live T9 sample failed, the judge criterion was widened to "or whether someone else could sign off or approve" and the deterministic pattern gained `backup|alternative|other`. The post-fix pass then scored 0/5 although three of five first replies asked something new (who can name a backup reviewer, who owns the release calendar, temporary vs systemic), and the pattern flagged "who owns the decision to let someone else cover that sign-off", a question the rubric explicitly allows.
+- Expected: A rubric names the defect precisely (asking the employee to restate or confirm what they already said) and lists the nearby legitimate questions as allowed, before any prompt change is measured against it; a deterministic pattern targets the question shape (existence questions: "is there", "anyone else", "nobody else"), not content words.
+- Root cause layer: verification
+- Harness fix: `fidelity-fixtures.ts` criterion 1 now states the re-ask definition and the allowed neighbours; the pattern is restricted to existence stems; `fidelity-checks.test.ts` keeps the allowed authority questions as negative cases. Saved live transcripts are re-scored offline with the final pattern (`findReaskedQuestions` over `runs/*.json`) rather than re-running live samples after a pattern-only change.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/harness/fidelity-checks.test.ts` (negative cases "who owns the decision to name a backup reviewer" / "let someone else cover that sign-off" stay unflagged).
+- Status: fixed
