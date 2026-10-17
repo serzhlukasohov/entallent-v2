@@ -192,8 +192,12 @@ function isValidConfirmationResponse(response: GeneratedResponse): boolean {
 }
 
 /** Firm rewrite instruction when a reply overruns its length budget. */
-function lengthRetryInstruction(maxChars: number): string {
+function lengthRetryInstruction(maxChars: number, context?: Pick<ResponseContext, 'replyPlan' | 'replyBrief'>): string {
   const words = Math.max(8, Math.round(maxChars / 6));
+  const replyPlan = context?.replyPlan ?? context?.replyBrief;
+  if (replyPlan?.formatRequest) {
+    return `\n\nYour previous draft was too long for this turn. Rewrite it within ${words} words: keep the list shape the employee asked for (one item per line), trim each item to its essentials, and drop any prose around the items.`;
+  }
   return `\n\nYour previous draft was too long for this turn. Rewrite it much shorter — at most ${words} words, one sentence if you can. Keep only the single most useful thing and drop the extra observation.`;
 }
 
@@ -201,10 +205,26 @@ function countQuestionGroups(text: string): number {
   return text.match(/[?;՞؟፧᥅⁇⁈⁉⸮﹖？❓❔]+/gu)?.length ?? 0;
 }
 
-function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext): 0 | 1 {
+const SOFT_QUESTION_RETRY_INSTRUCTION =
+  '\n\nYour previous draft asked a question or ended with an offer of your own. This turn delivers the item and stops: remove any question, offer, or "do you want" of your own. Quoted phrases or items the employee could say may keep their own question marks.';
+
+/**
+ * Question limit the deterministic gate enforces. On a delivery turn (an accepted offer or a
+ * requested list) the gate is soft: it drives ONE repair of a trailing question or offer but never
+ * fails the turn, because delivered phrases and items legitimately quote question marks the mentor
+ * is not asking (ADR-013 D2: a lexical count validates structure, it does not override the typed
+ * contract that allows them).
+ */
+function questionGateFor(strategy: ReplyStrategy, context: ResponseContext): { maxQuestions: 0 | 1; soft: boolean } {
   const replyPlan = context.replyPlan ?? context.replyBrief;
-  if (replyPlan) return replyPlan.questionPolicy.maxQuestions;
-  return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
+  if (replyPlan) {
+    const reason = replyPlan.questionPolicy.reason;
+    return {
+      maxQuestions: replyPlan.questionPolicy.maxQuestions,
+      soft: reason === 'offer_delivery' || reason === 'format_request',
+    };
+  }
+  return { maxQuestions: strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0, soft: false };
 }
 
 function numericProbeQuestion(context: ResponseContext): { id: string } | undefined {
@@ -457,11 +477,11 @@ export class OpenAiProvider implements AiProviderPort {
       if (!isValidConfirmationResponse(first)) retries.push(CONFIRMATION_RETRY_INSTRUCTION);
     } else {
       if (first.text.length > maxReplyChars(strategy, context)) {
-        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
+        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context), context));
       }
-      const maxQuestions = maxAllowedQuestions(strategy, context);
-      if (countQuestionGroups(first.text) > maxQuestions) {
-        retries.push(questionRetryInstruction(maxQuestions));
+      const questionGate = questionGateFor(strategy, context);
+      if (countQuestionGroups(first.text) > questionGate.maxQuestions) {
+        retries.push(questionGate.soft ? SOFT_QUESTION_RETRY_INSTRUCTION : questionRetryInstruction(questionGate.maxQuestions));
       }
     }
     const numericProbe = numericProbeQuestion(context);
@@ -480,7 +500,9 @@ export class OpenAiProvider implements AiProviderPort {
         'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
       );
     }
-    if (!context.confirmationRequest && countQuestionGroups(corrected.text) > maxAllowedQuestions(strategy, context)) {
+    const correctedGate = questionGateFor(strategy, context);
+    if (!context.confirmationRequest && !correctedGate.soft
+      && countQuestionGroups(corrected.text) > correctedGate.maxQuestions) {
       throw new Error('Generated response exceeds the question limit after one corrective attempt');
     }
     if (numericProbe && !isValidNumericProbeResponse(corrected, numericProbe.id)) {

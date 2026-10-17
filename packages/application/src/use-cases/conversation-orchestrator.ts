@@ -2001,7 +2001,7 @@ function conversationDecisionMetadata(input: {
     reason: string;
   };
 }): Record<string, unknown> {
-  const groundingCount = input.replyPlan?.requiredGrounding.length ?? 0;
+  const groundingCount = input.replyPlan?.requiredGrounding.filter((item) => item.source === 'memory').length ?? 0;
   return {
     measurementVersion: CONVERSATION_DECISION_MEASUREMENT_VERSION,
     ...(input.replyPlan
