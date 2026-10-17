@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   auditLogs, orgAdvisorAssignments, orgEmployeePlacements, orgHrbpScopes,
   orgOnboardingDeliveries, orgTeams, orgUnits, people, users,
@@ -48,10 +48,14 @@ function setup(role: 'employee' | 'hrbp' | 'leadership' | 'team_lead', lastTeamE
       return { then: (resolve: (value: unknown[]) => unknown) => Promise.resolve([{ id: personId }]).then(resolve),
         returning: async () => [{ id: personId }] };
     } }) }),
-    insert: (table: unknown) => ({ values: async (value: unknown) => { writes.push({ table, value }); } }),
+    insert: (table: unknown) => ({ values: (value: unknown) => {
+      writes.push({ table, value });
+      return Object.assign(Promise.resolve(undefined), { returning: async () => [{ id: `audit-${writes.length}` }] });
+    } }),
     transaction: async (run: (tx: unknown) => Promise<unknown>) => run(db),
   };
-  return { service: new HierarchyDeactivationService({ client: db } as never), writes, personId, rows };
+  const publisher = { publish: vi.fn().mockResolvedValue(undefined) };
+  return { service: new HierarchyDeactivationService({ client: db } as never, publisher as never), writes, personId, rows, publisher };
 }
 
 describe('HierarchyDeactivationService.deactivatePerson', () => {
@@ -179,5 +183,64 @@ describe('HierarchyDeactivationService.transferAndDeactivateUnit', () => {
       tenantId, 'unit-a', 'unit-a', 'deactivate', actor,
     )).rejects.toMatchObject({ code: 'unit_deactivation_invalid' });
     expect(writes.some((write) => write.table === orgUnits)).toBe(false);
+  });
+});
+
+describe('HierarchyDeactivationService onboarding events', () => {
+  const auditId = (writes: Array<{ table: unknown; value: unknown }>) => {
+    const index = writes.findIndex((w) => w.table === auditLogs);
+    return `audit-${index + 1}`;
+  };
+
+  it('publishes deactivated for a deactivated person after commit', async () => {
+    const { service, writes, publisher, personId } = setup('employee');
+    await service.deactivatePerson(tenantId, personId, actor);
+    expect(publisher.publish).toHaveBeenCalledWith(tenantId, [
+      { personId, auditLogId: auditId(writes), event: { type: 'deactivated' } },
+    ]);
+  });
+
+  it('publishes nothing when the transaction is rejected', async () => {
+    const { service, publisher, personId } = setup('employee', true);
+    await expect(service.deactivatePerson(tenantId, personId, actor)).rejects.toThrow();
+    expect(publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it('publishes role_changed for a Team Lead who becomes an Employee', async () => {
+    const { service, writes, publisher } = setup('hrbp');
+    await service.deactivateTeam(tenantId, 'team-a', 'become_employee', actor);
+    expect(publisher.publish).toHaveBeenCalledWith(tenantId, [
+      { personId: 'lead', auditLogId: auditId(writes), event: { type: 'role_changed', from: 'team_lead', to: 'employee' } },
+    ]);
+  });
+
+  it('publishes deactivated for a Team Lead deactivated with the Team', async () => {
+    const { service, writes, publisher } = setup('hrbp');
+    await service.deactivateTeam(tenantId, 'team-a', 'deactivate', actor);
+    expect(publisher.publish).toHaveBeenCalledWith(tenantId, [
+      { personId: 'lead', auditLogId: auditId(writes), event: { type: 'deactivated' } },
+    ]);
+  });
+
+  it('publishes role_changed for a Manager who becomes an Employee on unit transfer', async () => {
+    const { service, writes, publisher } = setup('hrbp', false, true);
+    await service.transferAndDeactivateUnit(tenantId, 'unit-a', 'unit-b', 'become_employee', actor);
+    expect(publisher.publish).toHaveBeenCalledWith(tenantId, [
+      { personId: 'manager', auditLogId: auditId(writes), event: { type: 'role_changed', from: 'manager', to: 'employee' } },
+    ]);
+  });
+
+  it('publishes deactivated for a Manager deactivated on unit transfer', async () => {
+    const { service, writes, publisher } = setup('hrbp', false, true);
+    await service.transferAndDeactivateUnit(tenantId, 'unit-a', 'unit-b', 'deactivate', actor);
+    expect(publisher.publish).toHaveBeenCalledWith(tenantId, [
+      { personId: 'manager', auditLogId: auditId(writes), event: { type: 'deactivated' } },
+    ]);
+  });
+
+  it('does not fail the mutation when publishing throws', async () => {
+    const { service, publisher, personId } = setup('employee');
+    publisher.publish.mockRejectedValue(new Error('redis down'));
+    await expect(service.deactivatePerson(tenantId, personId, actor)).resolves.toMatchObject({ lifecycleStatus: 'inactive' });
   });
 });

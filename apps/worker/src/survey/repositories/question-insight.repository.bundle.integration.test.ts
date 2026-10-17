@@ -747,7 +747,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         activateDeliveredConfirmation: async () => {
           if (++activationAttempts === 1) throw new Error('synthetic_activation_failure');
         },
-      } as never, repository);
+      } as never, {} as never, {} as never, repository);
       let firstWorker: Worker | undefined;
       let restartedWorker: Worker | undefined;
       try {

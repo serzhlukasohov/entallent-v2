@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { planEmployeeDeactivation, planTeamDeactivation, planUnitTransferDeactivation, type ActiveGraphIssue, type ActiveHierarchyGraph, type PreviousManagerAction, type PreviousTeamLeadAction } from '@entalent/application';
 import {
@@ -8,6 +8,7 @@ import {
 import { DatabaseService } from '../database/database.service';
 import { actorId, assertHierarchyActorAuthorized, HierarchyAuthorizationError, type HierarchyActor } from './hierarchy-authorization';
 import { withSerializableRetry } from './serializable-retry';
+import { OnboardingEventPublisher, type OnboardingSystemEvent } from '../onboarding/onboarding-event-publisher';
 
 type Transaction = Parameters<Parameters<DbClient['db']['transaction']>[0]>[0];
 
@@ -20,7 +21,22 @@ export class HierarchyDeactivationError extends Error {
 
 @Injectable()
 export class HierarchyDeactivationService {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly logger = new Logger(HierarchyDeactivationService.name);
+
+  constructor(
+    private readonly db: DatabaseService,
+    @Optional() private readonly onboardingEvents?: OnboardingEventPublisher,
+  ) {}
+
+  /** Post-commit and best effort: the worker's reconcile sweep recovers a lost event. */
+  private async publishOnboarding(tenantId: string, events: OnboardingSystemEvent[]): Promise<void> {
+    if (!this.onboardingEvents || events.length === 0) return;
+    try {
+      await this.onboardingEvents.publish(tenantId, events);
+    } catch (error) {
+      this.logger.error(`Onboarding event publish failed: ${(error as Error).message}`);
+    }
+  }
 
   private async loadGraph(tx: Transaction, tenantId: string): Promise<ActiveHierarchyGraph> {
     return {
@@ -49,8 +65,9 @@ export class HierarchyDeactivationService {
   async deactivateTeam(
     tenantId: string, teamId: string, leadAction: PreviousTeamLeadAction, actor: HierarchyActor,
   ) {
+    let onboardingEvents: OnboardingSystemEvent[] = [];
     try {
-      return await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
+      const result = await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
         await assertHierarchyActorAuthorized(tx, tenantId, actor);
         const plan = planTeamDeactivation(await this.loadGraph(tx, tenantId), teamId, leadAction);
         if (!plan.ok) throw new HierarchyDeactivationError('team_deactivation_invalid', plan.issues);
@@ -93,7 +110,7 @@ export class HierarchyDeactivationService {
             eq(orgTeams.lifecycleStatus, 'active'), eq(orgTeams.teamLeadPersonId, plan.leadPersonId)))
           .returning({ id: orgTeams.id });
         if (!team) throw new HierarchyDeactivationError('team_deactivation_stale');
-        await tx.insert(auditLogs).values({
+        const [audit] = await tx.insert(auditLogs).values({
           tenantId, actorType: actor.type, actorId: actorId(actor),
           action: 'org.team.deactivate', resourceType: 'org_team', resourceId: teamId,
           metadata: { unitId: plan.unitId, leadPersonId: plan.leadPersonId,
@@ -107,10 +124,15 @@ export class HierarchyDeactivationService {
                 lifecycleStatus: leadAction === 'deactivate' ? 'inactive' : 'active' },
               leadPlacement: leadAction === 'become_employee' ? { unitId: plan.unitId, teamId: null } : null,
               placements: plan.placementIds.map((id) => ({ id, teamId: null })) } },
-        });
+        }).returning({ id: auditLogs.id });
+        onboardingEvents = [{ personId: plan.leadPersonId, auditLogId: audit.id,
+          event: leadAction === 'become_employee'
+            ? { type: 'role_changed', from: 'team_lead', to: 'employee' } : { type: 'deactivated' } }];
         return { teamId, unitId: plan.unitId, leadPersonId: plan.leadPersonId,
           leadAction, movedPlacementIds: plan.placementIds };
       }, { isolationLevel: 'serializable' }));
+      await this.publishOnboarding(tenantId, onboardingEvents);
+      return result;
     } catch (error) {
       await this.db.client.insert(auditLogs).values({
         tenantId, actorType: actor.type, actorId: actorId(actor),
@@ -127,8 +149,9 @@ export class HierarchyDeactivationService {
     tenantId: string, sourceUnitId: string, targetUnitId: string,
     managerAction: PreviousManagerAction, actor: HierarchyActor,
   ) {
+    let onboardingEvents: OnboardingSystemEvent[] = [];
     try {
-      return await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
+      const result = await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
         await assertHierarchyActorAuthorized(tx, tenantId, actor);
         const plan = planUnitTransferDeactivation(
           await this.loadGraph(tx, tenantId), sourceUnitId, targetUnitId, managerAction,
@@ -231,7 +254,7 @@ export class HierarchyDeactivationService {
             eq(orgUnits.lifecycleStatus, 'active'), eq(orgUnits.managerPersonId, plan.managerPersonId)))
           .returning({ id: orgUnits.id });
         if (!unit) throw new HierarchyDeactivationError('unit_deactivation_stale');
-        await tx.insert(auditLogs).values({
+        const [audit] = await tx.insert(auditLogs).values({
           tenantId, actorType: actor.type, actorId: actorId(actor),
           action: 'org.unit.transfer_deactivate', resourceType: 'org_unit', resourceId: sourceUnitId,
           metadata: { targetUnitId, managerPersonId: plan.managerPersonId, managerAction,
@@ -250,11 +273,16 @@ export class HierarchyDeactivationService {
               teams: plan.teamIds.map((id) => ({ id, unitId: targetUnitId })),
               placements: plan.placements.map((row) => ({ id: row.id, unitId: targetUnitId,
                 teamId: row.teamId })) } },
-        });
+        }).returning({ id: auditLogs.id });
+        onboardingEvents = [{ personId: plan.managerPersonId, auditLogId: audit.id,
+          event: managerAction === 'become_employee'
+            ? { type: 'role_changed', from: 'manager', to: 'employee' } : { type: 'deactivated' } }];
         return { sourceUnitId, targetUnitId, managerPersonId: plan.managerPersonId,
           managerAction, movedTeamIds: plan.teamIds,
           movedPlacementIds: plan.placements.map((row) => row.id) };
       }, { isolationLevel: 'serializable' }));
+      await this.publishOnboarding(tenantId, onboardingEvents);
+      return result;
     } catch (error) {
       await this.db.client.insert(auditLogs).values({
         tenantId, actorType: actor.type, actorId: actorId(actor),
@@ -269,8 +297,9 @@ export class HierarchyDeactivationService {
   }
 
   async deactivatePerson(tenantId: string, personId: string, actor: HierarchyActor) {
+    let onboardingEvents: OnboardingSystemEvent[] = [];
     try {
-      return await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
+      const result = await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
         await assertHierarchyActorAuthorized(tx, tenantId, actor);
         if (actor.type === 'company_admin' && actor.personId === personId) {
           throw new HierarchyDeactivationError('self_deactivation_forbidden');
@@ -325,15 +354,18 @@ export class HierarchyDeactivationService {
         await tx.update(orgOnboardingDeliveries).set({ status: 'cancelled', updatedAt: now })
           .where(and(eq(orgOnboardingDeliveries.tenantId, tenantId), eq(orgOnboardingDeliveries.personId, personId),
             inArray(orgOnboardingDeliveries.status, ['pending', 'failed'])));
-        await tx.insert(auditLogs).values({
+        const [audit] = await tx.insert(auditLogs).values({
           tenantId, actorType: actor.type, actorId: actorId(actor),
           action: 'org.person.deactivate', resourceType: 'person', resourceId: personId,
           metadata: { role: person.primaryRole, placementIds,
             before: { primaryRole: person.primaryRole, lifecycleStatus: 'active', activePlacementIds: placementIds },
             after: { primaryRole: person.primaryRole, lifecycleStatus: 'inactive', activePlacementIds: [] } },
-        });
+        }).returning({ id: auditLogs.id });
+        onboardingEvents = [{ personId, auditLogId: audit.id, event: { type: 'deactivated' } }];
         return { personId, previousRole: person.primaryRole, lifecycleStatus: 'inactive' as const };
       }, { isolationLevel: 'serializable' }));
+      await this.publishOnboarding(tenantId, onboardingEvents);
+      return result;
     } catch (error) {
       await this.db.client.insert(auditLogs).values({
         tenantId, actorType: actor.type, actorId: actorId(actor),

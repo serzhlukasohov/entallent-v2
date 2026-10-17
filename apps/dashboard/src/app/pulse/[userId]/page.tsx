@@ -3,7 +3,9 @@ import { notFound } from 'next/navigation';
 import type { AdminV2PilotPersonQuestion } from '@entalent/contracts';
 import { Nav } from '../../components/Nav';
 import { Badge, Freshness, Legend, Notice, PageHeader, ViewBadge } from '../../components/ui';
-import { fetchAdminV2PilotPeople } from '../../lib';
+import { fetchAdminV2PilotPeople, TENANT_ID } from '../../lib';
+import { DevControls } from '../DevControls';
+import { devControlsEnabled } from '../dev-controls-gate';
 import {
   cohortLabel, draftStatusBadge, isShownWorking, lastMessageLabel, personProgress, personStageBadge, TOPIC_GROUPS,
 } from '../../v2-pilot-progress';
@@ -34,6 +36,7 @@ function TopicCard({ question }: { question: AdminV2PilotPersonQuestion }) {
 
 export default async function UserInsightsPage({ params }: { params: Promise<{ userId: string }> }) {
   const { userId } = await params;
+  const showDevControls = devControlsEnabled();
   const data = await fetchAdminV2PilotPeople();
   const person = data?.people.find((candidate) => candidate.userId === userId);
   if (data && !person) notFound();
@@ -55,6 +58,8 @@ export default async function UserInsightsPage({ params }: { params: Promise<{ u
           <ViewBadge badge={personStageBadge(person)} />
           <span>{personProgress(person).nextStep}</span>
         </div>
+        {/* Local QA only: never rendered in production (see dev-controls-gate). */}
+        {showDevControls && <DevControls userId={person.userId} tenantId={TENANT_ID} />}
       </>}
       {person && TOPIC_GROUPS.map(([group, label]) => {
         const questions = person.questions.filter((q) => q.group === group);

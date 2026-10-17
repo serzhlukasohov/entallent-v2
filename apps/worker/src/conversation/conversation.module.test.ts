@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { ConversationOrchestrator } from '@entalent/application';
 import { AiService } from './ai.service';
 import { ConversationModule } from './conversation.module';
+import { OnboardingModule } from '../onboarding/onboarding.module';
 
 describe('ConversationModule runtime boundary', () => {
   it('does not register an agent runtime router or client', () => {
@@ -36,5 +37,10 @@ describe('ConversationModule runtime boundary', () => {
     expect(orchestrator?.inject).not.toContain(AGENT_RUNTIME_PORT);
     const injectedNames = orchestrator!.inject.map((token) => (typeof token === 'function' ? token.name : String(token)));
     expect(injectedNames.filter((name) => /maf|agent.?service|agent.?runtime/i.test(name))).toEqual([]);
+  });
+
+  it('imports OnboardingModule so the orchestrator receives the onboarding turn port', () => {
+    const imports = Reflect.getMetadata(MODULE_METADATA.IMPORTS, ConversationModule) as unknown[];
+    expect(imports).toContain(OnboardingModule);
   });
 });

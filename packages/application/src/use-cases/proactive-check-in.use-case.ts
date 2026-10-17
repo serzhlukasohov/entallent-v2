@@ -1,4 +1,4 @@
-import type { ReplyStrategy } from '@entalent/contracts';
+import type { GeneratedResponse, ReplyStrategy } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
@@ -9,6 +9,7 @@ import type { ProactivePulseConfig } from '../ports/pulse-backlog.repository.por
 import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import type { SurveyQuestionRecord } from '../types/records';
+import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
 import { resolveLanguagePolicy } from '../utils/language-policy';
 import { isContentFilterOutcome, modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 import {
@@ -30,6 +31,13 @@ export interface ProactiveCheckInInput {
   onboardingMessageId?: string;
   /** Non-Pulse organizational roles still receive first contact without Pulse disclosure. */
   pulseEnabled?: boolean;
+  /**
+   * The person pressed the onboarding start button: open with the first backlog topic, or the approved
+   * opener when there is none.
+   */
+  onboardingStart?: boolean;
+  /** Deterministic outbound id for an onboarding start; a retry reuses the persisted message and makes no model call. */
+  onboardingStartMessageId?: string;
 }
 
 export interface ProactiveCheckInResult {
@@ -76,6 +84,18 @@ export class ProactiveCheckInUseCase {
       }
     }
 
+    if (input.onboardingStartMessageId) {
+      if (!this.conversationRepo.findMessageById) throw new Error('Onboarding message lookup unavailable');
+      const existing = await this.conversationRepo.findMessageById(input.onboardingStartMessageId, tenantId, conversationId);
+      if (existing) {
+        if (existing.userId !== userId || existing.direction !== 'outbound') {
+          throw new Error('Onboarding start message ownership mismatch');
+        }
+        if (!existing.sentAt) await this.enqueue(input, conversation.channelType, existing.id, existing.text);
+        return { outboundMessageId: existing.id, responseText: existing.text, probeQuestionId: null };
+      }
+    }
+
     const dbMessages = modelMessagesAfterContentFilter(
       await this.conversationRepo.findRecentMessages(conversationId, 10),
     );
@@ -118,13 +138,15 @@ export class ProactiveCheckInUseCase {
       reportingDisclosureReceipt?.version === REPORTING_DISCLOSURE_VERSION;
 
     // First contact (no history, no memory): earn trust first, never steer toward a survey topic
-    const isFirstContact = Boolean(input.onboardingMessageId) || (turns.length === 0 && memoryItems.length === 0);
+    const onboardingStart = input.onboardingStart === true;
+    const isFirstContact = !onboardingStart
+      && (Boolean(input.onboardingMessageId) || (turns.length === 0 && memoryItems.length === 0));
 
     const pulseConfig = input.pulseConfig ?? DEFAULT_PULSE_CONFIG;
 
     const probeResult =
       surveyEnabled
-      && hasCurrentDeliveredDisclosure
+      && (hasCurrentDeliveredDisclosure || onboardingStart)
       && !isFirstContact
       && this.pulseBacklogService
         ? await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId, pulseConfig)
@@ -140,7 +162,10 @@ export class ProactiveCheckInUseCase {
       forbiddenPatterns: ['checking in', 'just wanted to check', 'reminder'],
     };
 
-    const generated = await this.aiProvider.generateResponse(turns, strategy, {
+    // G1: nothing in the backlog to start with, so the approved opener goes out verbatim, without a model call.
+    const generated = onboardingStart && !probeQuestion
+      ? { text: EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } as GeneratedResponse
+      : await this.aiProvider.generateResponse(turns, strategy, {
       userName,
       languagePolicy,
       reportingDisclosure: surveyEnabled
@@ -168,10 +193,13 @@ export class ProactiveCheckInUseCase {
               ...(probeQuestion.responseType ? { responseType: probeQuestion.responseType } : {}),
             }
           : undefined,
+        ...(onboardingStart ? { afterUserStart: true } : {}),
       },
     });
 
-    const responseText = surveyEnabled && !hasCurrentDeliveredDisclosure
+    // The onboarding opener never carries the disclosure; later check-ins deliver it (decision 2026-10-08).
+    const appendDisclosure = surveyEnabled && !hasCurrentDeliveredDisclosure && !onboardingStart;
+    const responseText = appendDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
     const containsSurveyProbe =
@@ -181,6 +209,7 @@ export class ProactiveCheckInUseCase {
 
     const outbound = await this.conversationRepo.saveMessage({
       ...(input.onboardingMessageId ? { id: input.onboardingMessageId } : {}),
+      ...(input.onboardingStartMessageId ? { id: input.onboardingStartMessageId } : {}),
       conversationId,
       tenantId,
       userId,
@@ -191,7 +220,7 @@ export class ProactiveCheckInUseCase {
       messageType: 'proactive_check_in',
       metadata: {
         ...(input.onboardingMessageId ? { onboardingDeliveryId: input.onboardingMessageId } : {}),
-        ...(surveyEnabled && !hasCurrentDeliveredDisclosure
+        ...(appendDisclosure
           ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
           : {}),
         ...(containsSurveyProbe

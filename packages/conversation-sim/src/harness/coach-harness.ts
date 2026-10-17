@@ -9,6 +9,7 @@ import {
   type MemoryContext,
   type MemoryItemRecord,
   type MessageRecord,
+  type OnboardingTurnPort,
   type OrchestrateResult,
   type ResponseContext,
   type RiskContext,
@@ -62,6 +63,7 @@ export interface CoachHarnessOptions {
   aiProvider?: AiProviderPort;
   scheduledActionRepo?: ScheduledActionRepositoryPort;
   surveyRepo?: SurveyRepositoryPort;
+  onboardingTurn?: OnboardingTurnPort;
   /** V2 question-confirmation state (ready bundles, clarifications); omitted means no V2 turns. */
   questionConfirmationRepo?: QuestionConfirmationPort;
 }
@@ -177,6 +179,8 @@ export class CoachHarness {
       this.styleRepo,
       this.goalRepo,
       options.questionConfirmationRepo,
+      undefined,
+      options.onboardingTurn,
     );
 
     // A report must exist even when the scenario aborts before `reportRun` is reached.
@@ -345,7 +349,7 @@ function describeFailure(error: unknown, turn: number, generationCalls: number):
 }
 
 /** Mirrors `AiService` in the worker so simulations exercise the shipped provider setup. */
-function createLiveProvider(): AiProviderPort {
+export function createLiveProvider(): AiProviderPort {
   const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
   if (azureEndpoint) {
     return new OpenAiProvider({

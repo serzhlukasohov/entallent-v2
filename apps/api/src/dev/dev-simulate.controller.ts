@@ -9,6 +9,7 @@ import { ApiKeyGuard } from '../auth/api-key.guard';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
 import { UserResetService, type UserResetResult } from '../admin/user-reset.service';
+import { OnboardingRestartService } from '../onboarding/onboarding-restart.service';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
 import type { SurveyEvidencePayload } from '@entalent/application';
 
@@ -25,6 +26,10 @@ interface ForceCheckInDto {
   tenantId: string;
 }
 
+export interface DevUserResetResult extends UserResetResult {
+  onboarding: { stateDeleted: boolean; deliveryRequeued: boolean; introQueued: boolean };
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Only available in development — not imported in production AppModule.
@@ -37,9 +42,10 @@ export class DevSimulateController {
     private readonly ingestion: IngestionService,
     private readonly db: DatabaseService,
     @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly queue: Queue<ConversationJob | CheckInJob>,
-    @InjectQueue(QUEUE_NAMES.PROACTIVE_SCAN) private readonly scanQueue: Queue<{ tenantId?: string }>,
+    @InjectQueue(QUEUE_NAMES.PROACTIVE_SCAN) private readonly scanQueue: Queue<{ tenantId?: string; unitId?: string }>,
     @InjectQueue(QUEUE_NAMES.SURVEY_EVIDENCE) private readonly surveyEvidenceQueue: Queue<SurveyEvidencePayload>,
     private readonly resetService: UserResetService,
+    private readonly onboardingRestart: OnboardingRestartService,
   ) {}
 
   @Post('simulate-message')
@@ -185,6 +191,9 @@ export class DevSimulateController {
         text: messages.text,
         occurredAt: messages.occurredAt,
         traceId: messages.traceId,
+        messageType: messages.messageType,
+        sentAt: messages.sentAt,
+        metadata: messages.metadata,
       })
       .from(messages)
       .where(eq(messages.conversationId, conversationId))
@@ -448,10 +457,13 @@ export class DevSimulateController {
     return { enqueued: candidates.length, users: candidates.map((c) => c.userId) };
   }
 
-  /** Resets a user's state for a clean re-test. Pass `{ deep: true }` for a full conversation wipe. */
+  /**
+   * Resets a user's state for a clean re-test and restarts their onboarding v2. Pass `{ deep: true }` for a full
+   * conversation wipe. The intro is re-sent right away when the person has an org onboarding delivery.
+   */
   @Post('reset-user')
   @HttpCode(200)
-  async resetUser(@Body() body: { userId: string; tenantId?: string; deep?: boolean }): Promise<UserResetResult> {
+  async resetUser(@Body() body: { userId: string; tenantId?: string; deep?: boolean }): Promise<DevUserResetResult> {
     const tenantId = body.tenantId ?? process.env['DEFAULT_TENANT_ID'] ?? '';
     if (!tenantId) throw new BadRequestException('tenantId is required');
     const result = await this.resetService.resetUser({
@@ -459,9 +471,18 @@ export class DevSimulateController {
       userId: body.userId,
       deleteConversationHistory: body.deep ?? false,
     });
+    const restart = await this.onboardingRestart.restart({ tenantId, personId: body.userId });
+    if (restart.unitId) {
+      await this.scanQueue.add('onboarding-only', { tenantId, unitId: restart.unitId }, {
+        jobId: `dev-onboarding-restart-${body.userId}-${Date.now()}`, attempts: 1,
+      });
+    }
 
-    this.logger.log(`Dev: reset user=${body.userId} deep=${body.deep ?? false}`);
-    return result;
+    this.logger.log(`Dev: reset user=${body.userId} deep=${body.deep ?? false} onboardingIntroQueued=${Boolean(restart.unitId)}`);
+    return {
+      ...result,
+      onboarding: { stateDeleted: restart.stateDeleted, deliveryRequeued: restart.deliveryRequeued, introQueued: Boolean(restart.unitId) },
+    };
   }
 
   /**

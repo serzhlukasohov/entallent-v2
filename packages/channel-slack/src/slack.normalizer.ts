@@ -12,6 +12,10 @@ export function normalizeSlackEvent(input: SlackNormalizeInput): NormalizedChann
     return [];
   }
 
+  if (body['type'] === 'block_actions') {
+    return normalizeBlockActions(body);
+  }
+
   if (body['type'] !== 'event_callback') {
     return [];
   }
@@ -81,4 +85,36 @@ export function normalizeSlackEvent(input: SlackNormalizeInput): NormalizedChann
   }
 
   return [];
+}
+
+function normalizeBlockActions(body: Record<string, unknown>): NormalizedChannelEvent[] {
+  const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+  const rec = (v: unknown): Record<string, unknown> =>
+    v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+  const channelId = str(rec(body['channel'])['id']);
+  // Onboarding buttons exist only in DMs with the bot.
+  if (!channelId || !channelId.startsWith('D')) return [];
+  const actions = body['actions'];
+  if (!Array.isArray(actions) || actions.length !== 1) return [];
+  const action = rec(actions[0]);
+  const workspaceId = str(rec(body['team'])['id']);
+  const userId = str(rec(body['user'])['id']);
+  const messageTs = str(rec(body['container'])['message_ts']) ?? str(rec(body['message'])['ts']);
+  const actionId = str(action['action_id']);
+  const actionTs = str(action['action_ts']);
+  if (!workspaceId || !userId || !messageTs || !actionId || !actionTs) return [];
+
+  return [{
+    type: 'interaction',
+    payload: {
+      externalWorkspaceId: workspaceId,
+      externalUserId: userId,
+      externalChannelId: channelId,
+      messageTs,
+      actionId,
+      value: str(action['value']) ?? '',
+      actionTs,
+    },
+  }];
 }

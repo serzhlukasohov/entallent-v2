@@ -1,4 +1,4 @@
-import { Controller, Post, Req, Body, HttpCode, Logger } from '@nestjs/common';
+import { Controller, Post, Req, Body, HttpCode, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { FastifyRequest } from 'fastify';
 import { SlackAdapter } from '@entalent/channel-slack';
@@ -15,6 +15,42 @@ export class SlackEventsController {
     private readonly pipeline: SlackIngestService,
     private readonly config: ConfigService<Env, true>,
   ) {}
+
+  /** Block Kit button clicks (HTTP delivery). Slack posts `payload=<json>` form-urlencoded. */
+  @Post('interactions')
+  @HttpCode(200)
+  async handleInteraction(
+    @Req() req: FastifyRequest,
+    @Body() form: { payload?: unknown },
+  ): Promise<Record<string, unknown>> {
+    const rawBody = (req as unknown as { rawBody?: string }).rawBody;
+    if (!rawBody || typeof form?.payload !== 'string') {
+      throw new UnauthorizedException('Invalid Slack interaction');
+    }
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(form.payload) as Record<string, unknown>;
+    } catch {
+      throw new UnauthorizedException('Invalid Slack interaction');
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new UnauthorizedException('Invalid Slack interaction');
+    }
+    const teamId = (payload['team'] as { id?: string } | undefined)?.id;
+    if (!teamId) throw new UnauthorizedException('Invalid Slack interaction');
+
+    const identity = await this.ingestion.findWorkspaceIdentity('slack', teamId);
+    const adapter = identity ? new SlackAdapter({ signingSecret: identity.signingSecret }) : null;
+    if (!adapter || !(await adapter.verifyRequest({ headers: req.headers, rawBody }))) {
+      this.logger.warn(`Invalid Slack interaction signature for team ${teamId}`);
+      throw new UnauthorizedException('Invalid Slack signature');
+    }
+
+    await this.pipeline.processBody(payload).catch((err: unknown) => {
+      this.logger.error('Slack interaction processing failed', err);
+    });
+    return {};
+  }
 
   @Post('events')
   @HttpCode(200)

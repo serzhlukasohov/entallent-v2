@@ -64,6 +64,20 @@ export const PulseCaptureScopeSchema = z.discriminatedUnion('type', [
 ]);
 export type PulseCaptureScope = z.infer<typeof PulseCaptureScopeSchema>;
 
+/**
+ * Onboarding meaning of the latest employee message, read by the classifier only when the
+ * person has an onboarding state. TypeScript decides what (if anything) changes.
+ */
+export const OnboardingSignalIntentSchema = z.enum([
+  'start', 'later', 'decline', 'acknowledge', 'stop_participation', 'end_today_only', 'ambiguous', 'none',
+]);
+export type OnboardingSignalIntent = z.infer<typeof OnboardingSignalIntentSchema>;
+
+export const OnboardingSignalSchema = z.object({
+  intent: OnboardingSignalIntentSchema,
+  substantive: z.boolean(),
+});
+export type OnboardingSignal = z.infer<typeof OnboardingSignalSchema>;
 export const FormatRequestSchema = z.enum(['list', 'outline', 'steps']);
 export type FormatRequest = z.infer<typeof FormatRequestSchema>;
 
@@ -111,6 +125,8 @@ export const SituationClassificationSchema = z.object({
       .catch({ type: 'unresolved' })
       .optional(),
   ),
+  /** Onboarding meaning of the latest message; invalid model output fails closed to null. */
+  onboardingSignal: OnboardingSignalSchema.nullish().catch(null),
   /**
    * The employee asks what is left in the pulse cycle or whether they answered everything
    * (GC round 3 CAP-3). The reply is then grounded on typed cycle progress.
@@ -393,6 +409,8 @@ export const ReplyStrategySchema = z.object({
   surveyProbeQuestionId: z.string().optional(),
   maxResponseLength: z.enum(['short', 'medium', 'long']),
   forbiddenPatterns: z.array(z.string()),
+  /** The turn may be an onboarding choice but is unclear: ask one question, change nothing. */
+  onboardingClarify: z.boolean().optional(),
 });
 export type ReplyStrategy = z.infer<typeof ReplyStrategySchema>;
 
@@ -400,7 +418,7 @@ const optionalNullableText = z.preprocess((value) => value === null ? undefined 
 
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
-  confirmationSummary: z.string().optional(),
+  confirmationSummary: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
   /** Two-part reply on a V2 bundle or clarification turn (GC round 3 CAP-4): the answer to the latest message. */
   replyText: optionalNullableText,
   /** The composed bundle or clarification text the model must return byte-for-byte. */

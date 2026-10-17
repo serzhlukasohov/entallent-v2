@@ -17,6 +17,13 @@ export const IncomingMessageSchema = z.object({
 });
 export type IncomingMessage = z.infer<typeof IncomingMessageSchema>;
 
+export const OutgoingActionSchema = z.object({
+  actionId: z.string(),
+  label: z.string(),
+  value: z.string(),
+});
+export type OutgoingAction = z.infer<typeof OutgoingActionSchema>;
+
 export const OutgoingMessageSchema = z.object({
   tenantId: z.string().uuid(),
   conversationId: z.string().uuid(),
@@ -25,6 +32,7 @@ export const OutgoingMessageSchema = z.object({
   externalWorkspaceId: z.string(),
   externalChannelId: z.string(),
   replyToExternalThreadId: z.string().optional(),
+  actions: z.array(OutgoingActionSchema).max(5).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 export type OutgoingMessage = z.infer<typeof OutgoingMessageSchema>;
@@ -65,6 +73,18 @@ export const NormalizedChannelEventSchema = z.discriminatedUnion('type', [
     payload: z.object({
       externalMessageId: z.string(),
       deletedAt: z.coerce.date(),
+    }),
+  }),
+  z.object({
+    type: z.literal('interaction'),
+    payload: z.object({
+      externalWorkspaceId: z.string(),
+      externalUserId: z.string(),
+      externalChannelId: z.string(),
+      messageTs: z.string(),
+      actionId: z.string(),
+      value: z.string(),
+      actionTs: z.string(),
     }),
   }),
   z.object({

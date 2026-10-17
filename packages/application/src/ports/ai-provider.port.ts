@@ -10,6 +10,7 @@ import type {
   ConfirmationResponse,
   ObservedStyle,
 } from '@entalent/contracts';
+import type { OnboardingTrack, Participation } from '../onboarding/onboarding-state';
 import type { SurveyResponseType, PulseCaptureRecord } from '../types/records';
 import type {
   AwaitingQuestionBundle,
@@ -35,6 +36,8 @@ export interface ClassifyContext {
   now?: string;
   /** IANA timezone of the employee — reminder times are interpreted in it */
   timezone?: string;
+  /** Present only when the person has an onboarding state; enables the onboardingSignal reading. */
+  onboarding?: { track: OnboardingTrack; participation: Participation; introStatus: string };
 }
 
 export interface RiskContext {
@@ -173,6 +176,8 @@ export interface ResponseContext {
   /** Agent-initiated check-in: the agent writes first, optionally steering toward a survey topic */
   proactiveCheckIn?: {
     probeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
+    /** The employee just agreed (by text) to start after the onboarding introduction. */
+    afterUserStart?: boolean;
   };
   /**
    * Set when the employee just confirmed a summary the agent proposed.

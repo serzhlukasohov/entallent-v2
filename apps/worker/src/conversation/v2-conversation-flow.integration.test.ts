@@ -404,7 +404,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     );
     const messageProcessor = new MessageSendProcessor(
       {} as never, repo, { activateDeliveredConfirmation: async () => undefined } as never,
-      questionRepo,
+      {} as never, {} as never, questionRepo,
     );
     const scoreConfirmedMeaning = vi.fn(async ({ questionId }: { questionId: string }) => ({
         outcome: insufficientEvidence && questionId === groupQuestions[1]!.id
