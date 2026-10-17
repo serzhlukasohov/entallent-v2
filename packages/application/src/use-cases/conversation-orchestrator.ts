@@ -50,7 +50,9 @@ import {
   type BundleCompositionInvalidReason, type BundleReplyInvalidReason,
 } from '../utils/question-bundle-composition';
 import { maxReplyChars } from '../utils/reply-length';
-import { validateQuestionBundleVerdict } from '../utils/question-bundle-verdict';
+import {
+  MAX_QUESTION_CLARIFICATIONS, resolveCorrectedStatementVerdict, validateQuestionBundleVerdict,
+} from '../utils/question-bundle-verdict';
 import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
 import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
 import { contentFilterExplanation, processingFailureExplanation } from '../utils/content-filter-recovery';
@@ -111,6 +113,8 @@ type PreparedBundlePhase = {
     verdict: Exclude<QuestionBundleVerdict, { kind: 'unrelated' }>;
   };
   nextClarification?: PendingQuestionClarification | null;
+  /** Topic whose disputed point this verdict closes as not collected (GC round 3 S4b). */
+  questionNotCollected?: string;
 };
 
 type LegacyGroupReportIntent = {
@@ -492,6 +496,10 @@ export class ConversationOrchestrator {
     } | null = null;
     let correctedStatementRequest: (PendingQuestionClarification & { correctedSummary: string }) | null = null;
     let clarificationPhase: PreparedBundlePhase | null = null;
+    // GC round 3 S4b: a skipped clarification closes its point as not collected; the reply says so.
+    let questionNotCollected: string | undefined = v2PhaseB.questionNotCollected
+      ?? (appliedQuestionVerdict?.kind === 'clarification' && appliedQuestionVerdict.questionNotCollected
+        ? appliedQuestionVerdict.questionGroup : undefined);
     // A bundle that still awaits its verdict (for example a corrected statement) keeps the floor:
     // no second employee question is opened until that verdict is applied this turn.
     if (!clarificationWasPresent && this.questionConfirmationRepo && surveyEnabled
@@ -515,6 +523,7 @@ export class ConversationOrchestrator {
             workingInsightId: pendingClarification.workingInsightId,
             verdict: clarificationVerdict,
           };
+          if (clarificationVerdict.kind === 'declined') questionNotCollected = resolvedClarification.questionGroup;
           if (clarificationVerdict.kind === 'declined' && this.questionConfirmationRepo.findCycleProgress) {
             // A declined statement can be the last open one of its topic: state completion then too.
             const snapshot = await this.questionConfirmationRepo.findCycleProgress({ tenantId, userId });
@@ -656,6 +665,8 @@ export class ConversationOrchestrator {
               workingSummary: question.workingSummary,
             })),
             languagePolicy.responseLanguage,
+            // A clarified meaning that was not shown on its own turn is still a corrected statement.
+            ...(v2BundleRequest.kind === 'corrected_statement' ? ['corrected_statement' as const] : []),
           ),
           v2BundleRequest.questions.map((question) => question.surveyQuestionId),
         );
@@ -932,6 +943,7 @@ export class ConversationOrchestrator {
           }
         : undefined,
       topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+      questionNotCollected: questionNotCollected ? { questionGroup: questionNotCollected } : undefined,
       cycleProgress,
       confirmationRequest,
       styleAdaptation,
@@ -952,7 +964,7 @@ export class ConversationOrchestrator {
           }
       : v2Composition
         ? {
-            kind: 'confirmation_bundle',
+            kind: v2BundleRequest?.kind === 'corrected_statement' ? 'corrected_statement' : 'confirmation_bundle',
             text: v2Composition.text,
             statements: v2Composition.statements.map((statement) => statement.statement),
           }
@@ -1086,6 +1098,7 @@ export class ConversationOrchestrator {
             : undefined,
           reminderConfirmation,
           topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+          questionNotCollected: questionNotCollected ? { questionGroup: questionNotCollected } : undefined,
           cycleProgress,
           styleAdaptation,
           localTime: describeLocalTime(conversation.userTimezone),
@@ -1430,11 +1443,27 @@ export class ConversationOrchestrator {
     if (!awaiting) return { confirmedGroup: false, awaitingPresent: false };
     if (!reportingDisclosureReceipt) return { confirmedGroup: false, awaitingPresent: true };
 
-    const verdict = validateQuestionBundleVerdict(
+    const interpreted = validateQuestionBundleVerdict(
       await this.aiProvider.interpretQuestionBundleResponse(turns, awaiting),
       awaiting.components.map((component) => component.surveyQuestionId),
     );
-    if (verdict.kind === 'unrelated') return { confirmedGroup: false, awaitingPresent: true };
+    if (interpreted.kind === 'unrelated') return { confirmedGroup: false, awaitingPresent: true };
+    // GC round 3 S4b: a corrected statement is never reset. A reject or a dispute asks once more
+    // while the clarification budget lasts, otherwise the point closes as not collected.
+    const correctedQuestionId = awaiting.kind === 'corrected_statement' && awaiting.components.length === 1
+      ? awaiting.components[0]!.surveyQuestionId
+      : null;
+    // An adapter that cannot say how many clarifications were asked gets no further one, so the
+    // repository's budget guard can never fail the turn.
+    const verdict = correctedQuestionId
+      ? resolveCorrectedStatementVerdict(
+          interpreted, correctedQuestionId, awaiting.clarificationAttempts ?? MAX_QUESTION_CLARIFICATIONS,
+        )
+      : interpreted;
+    // Any statement closed without an agreed wording is said plainly, however it was shown.
+    const questionNotCollected = verdict.kind === 'partial' && verdict.declinedQuestionIds.length > 0
+      ? awaiting.questionGroup
+      : undefined;
     const nextClarification = verdict.kind === 'partial' && verdict.disputedQuestionIds.length > 0
       ? await this.questionConfirmationRepo.previewPendingQuestionClarificationAfterBundleVerdict?.({
         tenantId: input.tenantId,
@@ -1467,6 +1496,7 @@ export class ConversationOrchestrator {
       verdictProposal: { bundleId: awaiting.id, verdict },
       nextClarification,
       ...(progress ? { progress } : {}),
+      ...(questionNotCollected ? { questionNotCollected } : {}),
     };
   }
 
@@ -1484,6 +1514,7 @@ export class ConversationOrchestrator {
       confirmedGroup: closed ? applied.questionGroup : false,
       awaitingPresent: true,
       ...(progress ? { progress } : {}),
+      ...(applied.questionNotCollected ? { questionNotCollected: applied.questionGroup } : {}),
     };
   }
 
