@@ -41,9 +41,12 @@ describe.skipIf(!localDatabase)('OnboardingIntroService against PostgreSQL', () 
     }
   });
 
+  // One fixture conversation, re-owned per test: the messages owner guard rejects a message whose
+  // user does not own its conversation, and every test creates its own person.
   async function useConversation(personId: string) {
     await client.db.insert(conversations).values({ id: conversationId, tenantId, userId: personId,
-      channelType: 'slack', externalConversationId: 'D1' }).onConflictDoNothing();
+      channelType: 'slack', externalConversationId: 'D1' })
+      .onConflictDoUpdate({ target: conversations.id, set: { userId: personId } });
   }
 
   it('persists two approved messages (buttons only on the second), enqueues only the first, and is idempotent', async () => {
