@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { and, eq, lt, or, sql } from 'drizzle-orm';
-import { ProactiveCheckInUseCase } from '@entalent/application';
+import type { PrimaryOrgRole } from '@entalent/application';
 import { SlackAdapter } from '@entalent/channel-slack';
 import {
   channelAccounts, conversations, orgOnboardingDeliveries, people, users,
 } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
+import { OnboardingIntroService } from '../onboarding/onboarding-intro.service';
 import { WorkspaceConnectionRepository } from './repositories/workspace-connection.repository';
 
 const RETRY_AFTER_MS = 60 * 60 * 1000;
@@ -17,7 +18,7 @@ export class OnboardingDispatchService {
   constructor(
     private readonly db: DatabaseService,
     private readonly workspaceRepo: WorkspaceConnectionRepository,
-    private readonly checkIn: ProactiveCheckInUseCase,
+    private readonly intro: OnboardingIntroService,
   ) {}
 
   async dispatchPending(tenantId?: string, unitId?: string): Promise<{ found: number; queued: number; failed: number }> {
@@ -29,7 +30,10 @@ export class OnboardingDispatchService {
         eq(orgOnboardingDeliveries.status, 'pending'),
         and(eq(orgOnboardingDeliveries.status, 'failed'), lt(orgOnboardingDeliveries.lastAttemptAt, retryBefore)),
       ),
+      // Q18: no intro (and so no buttons whose reminder cannot be scheduled) before the calendar exists.
+      sql`EXISTS (SELECT 1 FROM tenant_work_calendars wc WHERE wc.tenant_id = ${orgOnboardingDeliveries.tenantId})`,
     )).orderBy(orgOnboardingDeliveries.createdAt).limit(25);
+    await this.logHeldWithoutCalendar(tenantId, unitId);
 
     let queued = 0;
     let failed = 0;
@@ -49,13 +53,82 @@ export class OnboardingDispatchService {
         this.logger.error(`onboarding_preparation_failed delivery=${delivery.id}`);
       }
     }
+    await this.recoverStrandedTrustMessages(tenantId);
     return { found: rows.length, queued, failed };
+  }
+
+  /** Deliveries in tenants without a work calendar stay pending untouched; one log line per tick. Never throws. */
+  private async logHeldWithoutCalendar(tenantId?: string, unitId?: string): Promise<void> {
+    try {
+      const [row] = (await this.db.client.execute(sql`
+        SELECT count(*)::int AS held, count(DISTINCT d.tenant_id)::int AS tenants
+        FROM org_onboarding_deliveries d
+        WHERE d.status IN ('pending', 'failed')
+          AND NOT EXISTS (SELECT 1 FROM tenant_work_calendars wc WHERE wc.tenant_id = d.tenant_id)
+          ${tenantId ? sql`AND d.tenant_id = ${tenantId}` : sql``}
+          ${unitId ? sql`AND d.unit_id = ${unitId}` : sql``}
+      `)) as unknown as Array<{ held: number; tenants: number }>;
+      if (row && Number(row.held) > 0) {
+        this.logger.warn(`${row.held} onboarding deliveries held: ${row.tenants} tenant(s) have no work calendar (Q18)`);
+      }
+    } catch (error) {
+      this.logger.error(`Held onboarding delivery check failed: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Safety net for the intro chain: an intro half that was delivered whose trust half was never queued
+   * (crash between the two, lost job). Never throws; the deterministic job id makes repeats harmless.
+   */
+  private async recoverStrandedTrustMessages(tenantId?: string): Promise<void> {
+    try {
+      const rows = (await this.db.client.execute(sql`
+        SELECT i.tenant_id AS tenant_id, i.conversation_id AS conversation_id, i.metadata AS metadata,
+               c.channel_type AS channel_type, c.external_conversation_id AS external_conversation_id,
+               ca.external_workspace_id AS external_workspace_id
+        FROM messages i
+        JOIN messages t ON t.id = (i.metadata->>'onboardingTrustMessageId')::uuid AND t.tenant_id = i.tenant_id
+        JOIN conversations c ON c.id = i.conversation_id AND c.tenant_id = i.tenant_id
+        JOIN channel_accounts ca ON ca.user_id = i.user_id AND ca.tenant_id = i.tenant_id
+          AND ca.channel_type = c.channel_type AND ca.link_status = 'linked'
+        WHERE i.message_type = 'onboarding_intro' AND i.direction = 'outbound'
+          AND i.metadata->>'onboardingIntroPart' = 'intro'
+          AND i.metadata->>'onboardingTrustMessageId' ~ '^[0-9a-f-]{36}$'
+          AND i.sent_at IS NOT NULL AND i.sent_at > now() - interval '7 days'
+          AND t.sent_at IS NULL AND t.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM messages n
+            WHERE n.tenant_id = i.tenant_id AND n.user_id = i.user_id AND n.direction = 'outbound'
+              AND n.message_type = 'onboarding_intro' AND n.metadata->>'onboardingIntroPart' = 'intro'
+              AND n.occurred_at > i.occurred_at
+          )
+          ${tenantId ? sql`AND i.tenant_id = ${tenantId}` : sql``}
+        ORDER BY i.sent_at
+        LIMIT 25
+      `)) as unknown as Array<{
+        tenant_id: string; conversation_id: string; metadata: unknown; channel_type: string;
+        external_conversation_id: string; external_workspace_id: string;
+      }>;
+      for (const r of rows) {
+        try {
+          await this.intro.enqueueTrustAfterIntro({
+            tenantId: r.tenant_id, conversationId: r.conversation_id, channelType: r.channel_type,
+            externalWorkspaceId: r.external_workspace_id, externalChannelId: r.external_conversation_id,
+            introMetadata: r.metadata,
+          });
+        } catch (error) {
+          this.logger.error(`Trust message recovery failed conversation=${r.conversation_id}: ${(error as Error).message}`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Trust message recovery sweep failed: ${(error as Error).message}`);
+    }
   }
 
   private async dispatchOne(delivery: typeof orgOnboardingDeliveries.$inferSelect): Promise<void> {
     const [person] = await this.db.client.select({
       lifecycleStatus: people.lifecycleStatus,
-      pulseParticipant: people.pulseParticipant,
+      primaryRole: people.primaryRole,
       userStatus: users.status,
       deletedAt: users.deletedAt,
     }).from(people).innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, people.tenantId)))
@@ -98,11 +171,13 @@ export class OnboardingDispatchService {
       await this.db.client.update(orgOnboardingDeliveries).set({ status: 'pending', updatedAt: new Date() })
         .where(and(eq(orgOnboardingDeliveries.id, delivery.id), eq(orgOnboardingDeliveries.status, 'failed')));
     }
-    await this.checkIn.execute({
-      tenantId: delivery.tenantId, userId: delivery.personId,
-      conversationId: conversation.id, externalWorkspaceId: delivery.externalWorkspaceId,
-      externalConversationId: dmChannelId, traceId: `onboarding:${delivery.id}`,
-      onboardingMessageId: delivery.id, pulseEnabled: person.pulseParticipant,
+    await this.intro.sendIntro({
+      tenantId: delivery.tenantId, personId: delivery.personId, role: person.primaryRole as PrimaryOrgRole,
+      deliveryId: delivery.id,
+      conversation: {
+        id: conversation.id, channelType: 'slack', externalConversationId: dmChannelId,
+        externalWorkspaceId: delivery.externalWorkspaceId,
+      },
     });
   }
 }

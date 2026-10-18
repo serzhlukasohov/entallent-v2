@@ -9,11 +9,13 @@ import { ProactiveScanProcessor } from './proactive-scan.processor';
 import { DatabaseModule } from '../database/database.module';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { ConversationModule } from '../conversation/conversation.module';
+import { OnboardingModule } from '../onboarding/onboarding.module';
 
 @Module({
   imports: [
     DatabaseModule,
     ConversationModule,
+    OnboardingModule,
     BullModule.registerQueue(
       { name: QUEUE_NAMES.PROACTIVE_SCAN },
       { name: QUEUE_NAMES.CONVERSATION },

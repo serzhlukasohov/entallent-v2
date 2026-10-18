@@ -1372,6 +1372,47 @@ describe('buildRespondSystemPrompt accepted offers and format requests (GC round
     expect(prompt).not.toMatch(/asked for an outline with time slots/i);
   });
 });
+describe('buildRespondSystemPrompt onboarding clarification', () => {
+  const normal: ReplyStrategy = { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] };
+
+  it('asks one short question separating a pause from stopping invitations when onboardingClarify is set', () => {
+    const prompt = buildRespondSystemPrompt({ ...normal, onboardingClarify: true }, context({ userName: 'Sam' }));
+    expect(prompt).toContain('Onboarding clarification');
+    expect(prompt).toMatch(/exactly one short question/i);
+    expect(prompt).toContain('pause just for today or for now');
+    expect(prompt).toContain('stop the invitations');
+    expect(prompt).toContain('start now');
+  });
+
+  it('adds nothing about onboarding otherwise', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam' }));
+    expect(prompt).not.toContain('Onboarding clarification');
+  });
+});
+
+describe('buildRespondSystemPrompt onboarding start opener', () => {
+  const opener: ReplyStrategy = { mode: 'proactive_follow_up', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] };
+  const probeQuestion = { id: 'q-7', probeStrategies: ['how clear priorities feel'] };
+
+  it('tells the model the employee just agreed to start, without a re-introduction, keeping the probe plumbing', () => {
+    const prompt = buildRespondSystemPrompt(opener, context({
+      userName: 'Sam',
+      proactiveCheckIn: { probeQuestion, afterUserStart: true },
+    }));
+    expect(prompt).toContain('just agreed to start the conversation');
+    expect(prompt).toContain('Do not introduce yourself again');
+    expect(prompt).toContain('how clear priorities feel');
+    expect(prompt).toContain('"surveyProbeQuestionId": "q-7"');
+    expect(prompt).not.toContain('has not messaged you');
+  });
+
+  it('keeps the agent-first check-in wording for ordinary proactive check-ins', () => {
+    const prompt = buildRespondSystemPrompt(opener, context({ userName: 'Sam', proactiveCheckIn: { probeQuestion } }));
+    expect(prompt).toContain('has not messaged you');
+    expect(prompt).not.toContain('just agreed to start the conversation');
+  });
+});
+
 
 // GC round 3 CAP-1, CAP-2 (ADR-013 D8): a due topic question is a required field, not a hint.
 describe('buildRespondSystemPrompt topic question contract', () => {

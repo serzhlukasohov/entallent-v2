@@ -5,7 +5,7 @@ import { isRuntimeEligibleUser } from '@entalent/application';
 import {
   channelAccounts, conversations, createDbClient, messages, orgEmployeePlacements,
   orgOnboardingDeliveries, orgUnits, people, teamMemberships, teams, tenants, users,
-  workspaceConnections, type DbClient,
+  tenantWorkCalendars, workspaceConnections, type DbClient,
 } from '@entalent/database';
 import { HierarchyRolloutService, type LegacyEmployeeAdoption } from './hierarchy-rollout.service';
 import type { SlackDirectoryService } from './slack-directory.service';
@@ -39,6 +39,8 @@ describe.skipIf(!localDatabase)('legacy Employee adoption during Unit rollout', 
     client = createDbClient(databaseUrl!);
     service = new HierarchyRolloutService({ client: client.db } as never, directory);
     await client.db.insert(tenants).values({ id: tenantId, name: 'Legacy adoption fixture' });
+    await client.db.insert(tenantWorkCalendars).values({ tenantId, timezone: 'Europe/Kyiv',
+      workingDays: [1, 2, 3, 4, 5], workStart: '09:00', workEnd: '18:00', updatedBy: 'fixture' });
     await client.db.insert(users).values([
       { id: managerId, tenantId, status: 'inactive' },
       { id: employeeId, tenantId, status: 'active' },

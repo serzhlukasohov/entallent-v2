@@ -72,15 +72,24 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
 
   const checkInProbe = context.proactiveCheckIn?.probeQuestion;
   const numericCheckInProbe = checkInProbe?.responseType === 'numeric_0_10';
-  const checkInHint = context.proactiveCheckIn
-    ? `\nYou are writing FIRST — ${context.userName} has not messaged you. This is a light, human check-in, like a colleague pinging someone they genuinely like.
+  const checkInOpening = context.proactiveCheckIn?.afterUserStart
+    ? `\n${context.userName} just agreed to start the conversation after your introduction. Open it now.
+
+How to open:
+- Do not introduce yourself again and do not repeat the introduction; they already know who you are.
+- Briefly acknowledge that you're starting, then go straight to the topic below as one natural question.
+- 1-2 sentences, one question at most. Casual register.
+- Never sound like a survey or a wellness bot doing rounds.`
+    : `\nYou are writing FIRST — ${context.userName} has not messaged you. This is a light, human check-in, like a colleague pinging someone they genuinely like.
 
 How to open:
 - If you know things about them (see memory above), pick ONE concrete thread from their work life and start there. "How did the release end up going?" lands; "How's it going?" does not.
 - If you know NOTHING about them yet (no memory, no history), this is your first contact: say hi, one short line about who you are (someone they can talk to about work — informally, no titles), and one easy, low-stakes question like how their week is going. Nothing deeper. First contact earns trust; it does not mine for data.
 - 1-2 sentences, one question at most. Casual register.
 - Never announce the check-in ("just wanted to see how you're doing", "it's been a while") and never sound like a wellness bot doing rounds.
-- Never use assessment vocabulary: "priorities", "outcomes", "expectations", "goals" have no place in an opener.${checkInProbe ? numericCheckInProbe ? `
+- Never use assessment vocabulary: "priorities", "outcomes", "expectations", "goals" have no place in an opener.`;
+  const checkInHint = context.proactiveCheckIn
+    ? `${checkInOpening}${checkInProbe ? numericCheckInProbe ? `
 
 Ask exactly ONE direct question that requests an explicit rating from 0 to 10 for this topic:
 ${checkInProbe.probeStrategies.map(s => `• ${s}`).join('\n')}
@@ -127,6 +136,10 @@ How to handle this:
 - If included: set "containsSurveyProbe": true, "surveyProbeQuestionId": "${context.surveyProbeQuestion.id}". Otherwise: false / undefined.`
     : '';
 
+  const onboardingClarifyHint = strategy.onboardingClarify && !safetyMode
+    ? `\nOnboarding clarification (hard contract for this turn; it overrides the question policy and any acknowledgement or closing contract below): the employee may be answering the invitation to regular conversations, but it is unclear what they want. Respond briefly to what they said, then ask exactly one short question that lets them tell you whether they want to pause just for today or for now, stop the invitations, or start now. Use your own words in ${languageName}; do not list options mechanically and do not assume an answer.`
+    : '';
+
   const timeHint = context.localTime && context.isSessionStart
     ? `\nEmployee's current local time: ${context.localTime}. This looks like the start of a session — a brief time-appropriate greeting (good morning / good evening) or, if they're wrapping up, a sign-off fits. Only when natural, never as filler; at night keep it low-key, not a chirpy "good morning".`
     : context.localTime
@@ -163,7 +176,7 @@ ${strategy.includeFollowUpQuestion
 
 Thread-following: people often drop hints mid-sentence and don't develop them — "I want something with more life to it", "my lead says yes, but...", "I actually wanted to suggest it, but didn't". These side remarks are often more important than the main topic they're talking about. When you catch one, follow it: it's an invitation. Don't let it disappear while you keep drilling the current subject.
 
-Length: ${lengthGuide}. Write in ${languageName}.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${captureFactsHint}${cycleStatusHint}${memoryHint}${reportingDisclosureHint}${goalHint}${checkInHint}${probeHint}${timeHint}
+Length: ${lengthGuide}. Write in ${languageName}.${crisisNote}${followUpNote}${forbidden}${followUpIntent}${reminderConfirmation}${reminderIntent}${captureFactsHint}${cycleStatusHint}${memoryHint}${reportingDisclosureHint}${goalHint}${checkInHint}${probeHint}${onboardingClarifyHint}${timeHint}
 
 ${replyPlanBlock}${RESPOND_STYLE_EXAMPLES}${styleBlock}
 

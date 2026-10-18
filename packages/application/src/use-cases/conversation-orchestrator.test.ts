@@ -13,6 +13,8 @@ import {
 import type { GoalRepositoryPort } from '../ports/goal.repository.port';
 import type { StyleProfileRepositoryPort } from '../ports/style-profile.repository.port';
 import type { UserGoalRecord } from '../types/records';
+import type { OnboardingApplyResult } from '../ports/onboarding.port';
+import { ACK_COPY, EMPTY_BACKLOG_OPENER, type OnboardingState } from '../onboarding';
 
 const INBOUND_OCCURRED_AT = new Date('2026-09-03T10:00:00.000Z');
 const OWNERSHIP = { conversationId: 'c-1', tenantId: 't-1', userId: 'u-1' };
@@ -6214,6 +6216,450 @@ describe('ConversationOrchestrator accepted offers are delivered (GC round 3 CAP
     expect(context.replyPlan?.questionPolicy).toEqual({ maxQuestions: 0, reason: 'offer_delivery' });
     // The offer grounding item is not memory; decision metadata must not report memory grounding.
     expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata.memoryGrounding).toEqual({ used: false, count: 0 });
+  });
+});
+
+describe('ConversationOrchestrator onboarding text replies (classifier-driven)', () => {
+  type Signal = { intent: string; substantive: boolean } | null;
+  type StateOverrides = Partial<OnboardingState>;
+
+  function onboardingState(track: OnboardingState['track'], overrides: StateOverrides = {}): OnboardingState {
+    return {
+      track,
+      introStatus: 'delivered',
+      participation: track === 'management' ? 'not_applicable' : 'undecided',
+      managementAckAt: null,
+      completedAt: null,
+      reminderStatus: 'scheduled',
+      reminderOriginAt: INBOUND_OCCURRED_AT,
+      buttonsActive: true,
+      ...overrides,
+    };
+  }
+
+  function setup(opts: {
+    text: string;
+    signal: Signal;
+    state: OnboardingState | null;
+    applyResult?: Partial<OnboardingApplyResult>;
+    backlogQuestion?: { id: string; probeStrategies: string[]; responseType?: string } | null;
+    surveyReady?: boolean;
+  }) {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(
+      opts.surveyReady
+        ? d05ReadyHistory(opts.text)
+        : [{ id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: opts.text, occurredAt: INBOUND_OCCURRED_AT, metadata: undefined }],
+    );
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...BASE_CLASSIFICATION,
+      latestUserSubstance: opts.signal?.substantive ? opts.text : null,
+      onboardingSignal: opts.signal,
+    });
+    const onboardingTurn = {
+      contextFor: vi.fn().mockResolvedValue(opts.state ? { state: opts.state } : null),
+      applyTurnEvent: vi.fn().mockResolvedValue({
+        changed: true, effects: [], state: opts.state, ...opts.applyResult,
+      }),
+    };
+    const pulseBacklogService = {
+      getNextProbeQuestion: vi.fn().mockResolvedValue(
+        opts.backlogQuestion ? { question: opts.backlogQuestion, windowId: 'w-1' } : null,
+      ),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, m.scheduledActionRepo,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pulseBacklogService as any, undefined, undefined, undefined, undefined, onboardingTurn,
+    );
+    return { m, orch, onboardingTurn, pulseBacklogService };
+  }
+
+  const BASE_CLASSIFICATION = {
+    primaryIntent: 'casual_conversation',
+    secondaryIntents: [],
+    emotionalState: [],
+    urgency: 'low',
+    confidence: 0.9,
+    surveyAllowed: true,
+    requiresSafetyCheck: false,
+    reasoningSummary: 'test',
+    reminderRequest: null,
+    dialogueAct: 'new_substance',
+    topicAnchor: null,
+  };
+
+  it('passes the onboarding status to the classifier only when the person has a state row', async () => {
+    const withState = setup({ text: 'hi', signal: { intent: 'none', substantive: false }, state: onboardingState('employee') });
+    await withState.orch.orchestrate(INPUT);
+    expect(withState.m.aiProvider.classifySituation.mock.calls[0][1].onboarding).toEqual({
+      track: 'employee', participation: 'undecided', introStatus: 'delivered',
+    });
+
+    const legacy = setup({ text: 'hi', signal: null, state: null });
+    await legacy.orch.orchestrate(INPUT);
+    expect(legacy.m.aiProvider.classifySituation.mock.calls[0][1]).not.toHaveProperty('onboarding');
+    expect(legacy.onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(legacy.m.outbox.enqueueSurveyEvidence).toHaveBeenCalled();
+  });
+
+  it('active user "not now" → no onboarding event and a normal reply (bug 1.1)', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: 'not now',
+      signal: { intent: 'later', substantive: false },
+      state: onboardingState('employee', { participation: 'active', introStatus: 'completed', buttonsActive: false }),
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.responseText).toBe('reply');
+  });
+
+  it('declined user "давай" read as a non-substantive greeting → no state change (bug 1.2)', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: 'давай',
+      signal: { intent: 'none', substantive: false },
+      state: onboardingState('employee', { participation: 'declined', buttonsActive: false, reminderStatus: 'cancelled' }),
+    });
+    await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('declined user "later" → never deferred (bug 1.3)', async () => {
+    const { orch, onboardingTurn } = setup({
+      text: 'later',
+      signal: { intent: 'later', substantive: false },
+      state: onboardingState('employee', { participation: 'declined', buttonsActive: false, reminderStatus: 'cancelled' }),
+    });
+    await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+  });
+
+  it('undecided "I\'m swamped, let\'s do it later" → action later, reply is the approved ack, no generation', async () => {
+    const state = onboardingState('employee');
+    const { m, orch, onboardingTurn } = setup({
+      text: "I'm swamped, let's do it later",
+      signal: { intent: 'later', substantive: false },
+      state,
+      applyResult: {
+        effects: [{ type: 'acknowledge', key: 'later_before_reminder' }],
+        state: { ...state, participation: 'deferred', buttonsActive: false },
+        replyAck: ACK_COPY.later_before_reminder,
+      },
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', {
+      type: 'action', action: 'later', source: 'text', at: INBOUND_OCCURRED_AT,
+    });
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(result.responseText).toBe(ACK_COPY.later_before_reminder);
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'outbound', text: ACK_COPY.later_before_reminder, messageType: 'onboarding_ack',
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ text: ACK_COPY.later_before_reminder }));
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('undecided "my lead keeps changing priorities" → substantive_turn, normal reply, survey evidence (Q2b)', async () => {
+    const state = onboardingState('employee');
+    const { m, orch, onboardingTurn } = setup({
+      text: 'my lead keeps changing priorities',
+      signal: { intent: 'none', substantive: true },
+      state,
+      applyResult: { effects: [{ type: 'set_proactive', enabled: true }], state: { ...state, participation: 'active', introStatus: 'completed' } },
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', { type: 'substantive_turn', at: INBOUND_OCCURRED_AT });
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.responseText).toBe('reply');
+    expect(m.outbox.enqueueSurveyEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  it('manager "ok thanks" → got_it with the approved management ack', async () => {
+    const state = onboardingState('management');
+    const { m, orch, onboardingTurn } = setup({
+      text: 'ok thanks',
+      signal: { intent: 'acknowledge', substantive: false },
+      state,
+      applyResult: {
+        effects: [{ type: 'acknowledge', key: 'got_it_management' }],
+        state: { ...state, introStatus: 'completed', buttonsActive: false },
+        replyAck: ACK_COPY.got_it_management,
+      },
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', {
+      type: 'action', action: 'got_it', source: 'text', at: INBOUND_OCCURRED_AT,
+    });
+    expect(result.responseText).toBe(ACK_COPY.got_it_management);
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('manager substantive message → normal reply and never survey evidence (Q11)', async () => {
+    const { m, orch } = setup({
+      text: 'my team is struggling with the reorg',
+      signal: { intent: 'none', substantive: true },
+      state: onboardingState('management', { introStatus: 'completed', buttonsActive: false }),
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(result.responseText).toBe('reply');
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('a risk turn with a decline signal → the safety reply wins and decline is still applied', async () => {
+    const state = onboardingState('employee');
+    const { m, orch, onboardingTurn } = setup({
+      text: "I can't cope anymore, I don't want any of this",
+      signal: { intent: 'decline', substantive: false },
+      state,
+      applyResult: {
+        effects: [{ type: 'acknowledge', key: 'decline' }],
+        state: { ...state, participation: 'declined', buttonsActive: false },
+        replyAck: ACK_COPY.decline,
+      },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...BASE_CLASSIFICATION, primaryIntent: 'burnout_signal', requiresSafetyCheck: true, surveyAllowed: false,
+      onboardingSignal: { intent: 'decline', substantive: false },
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'burnout', severity: 'high', confidence: 0.9, evidence: ['cannot cope'],
+      immediateResponseRequired: false, escalationRecommended: false, surveyMustBeBlocked: true,
+      proactiveMessagesMustBePaused: false, reasoningSummary: 'High burnout risk.',
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'I am here with you.', confidence: 0.9, containsSurveyProbe: false });
+
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', {
+      type: 'action', action: 'decline', source: 'text', at: INBOUND_OCCURRED_AT,
+    });
+    expect(result.responseText).toBe('I am here with you.');
+    expect(result.mode).toBe('sensitive');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].messageType).toBeUndefined();
+  });
+
+  it('a later signal that carries substance → clarify, no state change, one-question strategy', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: 'the release is killing me, maybe some other time',
+      signal: { intent: 'later', substantive: true },
+      state: onboardingState('employee'),
+    });
+    await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    const strategy = m.aiProvider.generateResponse.mock.calls[0][1];
+    expect(strategy.onboardingClarify).toBe(true);
+    expect(strategy.includeFollowUpQuestion).toBe(true);
+  });
+
+  it('undecided ambiguous reply → clarify', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: "I'm not sure about this",
+      signal: { intent: 'ambiguous', substantive: false },
+      state: onboardingState('employee'),
+    });
+    await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].onboardingClarify).toBe(true);
+  });
+
+  it('a failing onboarding context read degrades to a normal reply without onboarding', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: 'later', signal: { intent: 'later', substantive: false }, state: onboardingState('employee'),
+    });
+    onboardingTurn.contextFor.mockRejectedValue(new Error('db down'));
+    const result = await orch.orchestrate(INPUT);
+    expect(m.aiProvider.classifySituation.mock.calls[0][1]).not.toHaveProperty('onboarding');
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(result.responseText).toBe('reply');
+    expect(m.outbox.enqueueSurveyEvidence).toHaveBeenCalled();
+  });
+
+  it('a failing onboarding apply degrades to a normal reply with no ack and the pre-turn evidence gate', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: "I'm swamped, let's do it later", signal: { intent: 'later', substantive: false }, state: onboardingState('employee'),
+    });
+    onboardingTurn.applyTurnEvent.mockRejectedValue(new Error('lock timeout'));
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledTimes(1);
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.responseText).toBe('reply');
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].messageType).toBeUndefined();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('declined user with an explicit text start resumes through a text start action (Q2, Q5, Q6)', async () => {
+    const state = onboardingState('employee', { participation: 'declined', buttonsActive: false, reminderStatus: 'cancelled' });
+    const { orch, onboardingTurn } = setup({
+      text: "ok, let's talk after all",
+      signal: { intent: 'start', substantive: false },
+      state,
+      applyResult: {
+        effects: [{ type: 'set_proactive', enabled: true }, { type: 'start_conversation' }],
+        state: { ...state, participation: 'active', introStatus: 'completed' }, replyStart: true,
+      },
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', {
+      type: 'action', action: 'start', source: 'text', at: INBOUND_OCCURRED_AT,
+    });
+    expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+  });
+
+  it('active user stopping inside a substantive turn → stop applied, reply ends with the approved ack (Q4)', async () => {
+    const state = onboardingState('employee', { participation: 'active', introStatus: 'completed', buttonsActive: false });
+    const { m, orch, onboardingTurn } = setup({
+      text: 'these chats make my week worse, please stop inviting me',
+      signal: { intent: 'stop_participation', substantive: true },
+      state,
+      applyResult: {
+        effects: [{ type: 'set_proactive', enabled: false }, { type: 'acknowledge', key: 'decline' }],
+        state: { ...state, participation: 'declined' },
+        replyAck: ACK_COPY.decline,
+      },
+    });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', { type: 'stop_requested', at: INBOUND_OCCURRED_AT });
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    expect(result.responseText).toBe(`reply\n\n${ACK_COPY.decline}`);
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ text: `reply\n\n${ACK_COPY.decline}` }));
+    expect(m.conversationRepo.saveMessage.mock.calls[0][0].messageType).toBeUndefined();
+    expect(m.outbox.enqueueSurveyEvidence).not.toHaveBeenCalled();
+  });
+
+  it('a substantive stop on a safety turn keeps the safety reply without the ack', async () => {
+    const state = onboardingState('employee', { participation: 'active', introStatus: 'completed', buttonsActive: false });
+    const { m, orch, onboardingTurn } = setup({
+      text: "I can't cope, stop inviting me",
+      signal: { intent: 'stop_participation', substantive: true },
+      state,
+      applyResult: { effects: [{ type: 'acknowledge', key: 'decline' }], state: { ...state, participation: 'declined' }, replyAck: ACK_COPY.decline },
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...BASE_CLASSIFICATION, primaryIntent: 'burnout_signal', requiresSafetyCheck: true, surveyAllowed: false,
+      onboardingSignal: { intent: 'stop_participation', substantive: true },
+    });
+    m.aiProvider.detectRisk.mockResolvedValue({
+      riskType: 'burnout', severity: 'high', confidence: 0.9, evidence: ['cannot cope'],
+      immediateResponseRequired: false, escalationRecommended: false, surveyMustBeBlocked: true,
+      proactiveMessagesMustBePaused: false, reasoningSummary: 'High burnout risk.',
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'I am here with you.', confidence: 0.9, containsSurveyProbe: false });
+    const result = await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).toHaveBeenCalledWith('t-1', 'u-1', { type: 'stop_requested', at: INBOUND_OCCURRED_AT });
+    expect(result.responseText).toBe('I am here with you.');
+  });
+
+  it('active user with an ambiguous reply → clarify, no state change (Q2, Q4)', async () => {
+    const { m, orch, onboardingTurn } = setup({
+      text: 'maybe I should stop this',
+      signal: { intent: 'ambiguous', substantive: false },
+      state: onboardingState('employee', { participation: 'active', introStatus: 'completed', buttonsActive: false }),
+    });
+    await orch.orchestrate(INPUT);
+    expect(onboardingTurn.applyTurnEvent).not.toHaveBeenCalled();
+    expect(m.aiProvider.generateResponse.mock.calls[0][1].onboardingClarify).toBe(true);
+  });
+
+  describe('text start', () => {
+    const startedState = (s: OnboardingState): OnboardingState => ({ ...s, participation: 'active', introStatus: 'completed', buttonsActive: false });
+
+    it('opens with the first backlog topic through the proactive check-in probe plumbing (Q25)', async () => {
+      const state = onboardingState('employee');
+      const question = { id: 'q-7', probeStrategies: ['how clear priorities feel'], responseType: 'open_ended' };
+      const { m, orch, pulseBacklogService } = setup({
+        text: "let's do it",
+        signal: { intent: 'start', substantive: false },
+        state,
+        applyResult: { effects: [{ type: 'start_conversation' }], state: startedState(state), replyStart: true },
+        backlogQuestion: question,
+      });
+      m.aiProvider.generateResponse.mockResolvedValue({
+        text: 'Great. How clear do your priorities feel this week?', confidence: 0.9,
+        containsSurveyProbe: true, surveyProbeQuestionId: 'q-7',
+      });
+
+      const result = await orch.orchestrate(INPUT);
+      expect(pulseBacklogService.getNextProbeQuestion).toHaveBeenCalledWith('u-1', 't-1');
+      const [, strategy, context] = m.aiProvider.generateResponse.mock.calls[0];
+      expect(strategy).toMatchObject({ mode: 'proactive_follow_up', includeFollowUpQuestion: true });
+      expect(context.proactiveCheckIn).toEqual({
+        probeQuestion: { id: 'q-7', probeStrategies: ['how clear priorities feel'], responseType: 'open_ended' },
+        afterUserStart: true,
+      });
+      expect(context.surveyProbeQuestion).toBeUndefined();
+      expect(result.responseText).toBe('Great. How clear do your priorities feel this week?');
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata).toMatchObject({
+        containsSurveyProbe: true, surveyProbeQuestionId: 'q-7',
+      });
+    });
+
+    it('does not append the reporting disclosure to a backlog opener even when none was delivered yet', async () => {
+      const state = onboardingState('employee');
+      const { m, orch } = setup({
+        text: "let's do it",
+        signal: { intent: 'start', substantive: false },
+        state,
+        applyResult: { effects: [{ type: 'start_conversation' }], state: startedState(state), replyStart: true },
+        backlogQuestion: { id: 'q-7', probeStrategies: ['priorities'] },
+      });
+      m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+      const result = await orch.orchestrate(INPUT);
+      expect(result.responseText).not.toContain(getReportingDisclosureText('en'));
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata).not.toHaveProperty('reportingDisclosureVersion');
+    });
+
+    it('empty backlog: opener verbatim, no model call, no disclosure even when not yet delivered (G1)', async () => {
+      const state = onboardingState('employee');
+      const { m, orch } = setup({
+        text: "let's do it",
+        signal: { intent: 'start', substantive: false },
+        state,
+        applyResult: { effects: [{ type: 'start_conversation' }], state: startedState(state), replyStart: true },
+        backlogQuestion: null,
+      });
+      m.conversationRepo.findLatestDeliveredReportingDisclosure.mockResolvedValue(null);
+      const result = await orch.orchestrate(INPUT);
+      expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+      expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+      expect(m.conversationRepo.saveMessage.mock.calls[0][0].metadata).not.toHaveProperty('reportingDisclosureVersion');
+    });
+
+    it('empty backlog with the disclosure already delivered: the opener only', async () => {
+      const state = onboardingState('employee');
+      const { m, orch } = setup({
+        text: "let's do it",
+        signal: { intent: 'start', substantive: false },
+        state,
+        applyResult: { effects: [{ type: 'start_conversation' }], state: startedState(state), replyStart: true },
+        backlogQuestion: null,
+      });
+      const result = await orch.orchestrate(INPUT);
+      expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+      expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+      expect(m.outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ text: EMPTY_BACKLOG_OPENER }));
+    });
+
+    it('a start that carries the user\'s own topic answers that topic, not a backlog question (Q25)', async () => {
+      const state = onboardingState('employee');
+      const { m, orch, pulseBacklogService } = setup({
+        surveyReady: true,
+        text: "sure, let's talk — my lead keeps changing priorities",
+        signal: { intent: 'start', substantive: true },
+        state,
+        applyResult: { effects: [{ type: 'start_conversation' }], state: startedState(state), replyStart: true },
+        backlogQuestion: { id: 'q-7', probeStrategies: ['priorities'] },
+      });
+      const result = await orch.orchestrate(INPUT);
+      expect(pulseBacklogService.getNextProbeQuestion).not.toHaveBeenCalled();
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].proactiveCheckIn).toBeUndefined();
+      expect(m.aiProvider.generateResponse.mock.calls[0][2].surveyProbeQuestion).toBeUndefined();
+      expect(result.responseText).toBe('reply');
+      expect(m.outbox.enqueueSurveyEvidence).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

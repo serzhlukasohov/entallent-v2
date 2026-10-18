@@ -3198,6 +3198,37 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: `fidelity-fixtures.ts` criterion 1 now states the re-ask definition and the allowed neighbours; the pattern is restricted to existence stems; `fidelity-checks.test.ts` keeps the allowed authority questions as negative cases. Saved live transcripts are re-scored offline with the final pattern (`findReaskedQuestions` over `runs/*.json`) rather than re-running live samples after a pattern-only change.
 - Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/harness/fidelity-checks.test.ts` (negative cases "who owns the decision to name a backup reviewer" / "let someone else cover that sign-off" stay unflagged).
 - Status: fixed
+### 2026-10-04: Requirements PR interpreted as implementation
+- Symptom: onboarding requirements discussion produced an unsolicited implementation PR.
+- Expected: document the grilled requirements only.
+- Root cause layer: context; PR artifact type was inferred incorrectly.
+- Harness fix: preserve the artifact requested by the discussion; implementation requires its own user instruction.
+- Regression check: compare PR changed files against the requested artifact before pushing.
+- Status: fixed; implementation reverted and PR converted to documentation.
+
+### 2026-10-07: Onboarding v2 classifier prompt regresses CAP-8 live scenario
+- Symptom: `pulse-capture-exact-message` fails 3/3 at HEAD (passes 3/3 at base `dedcd1b`); the model returns `dialogueAct: "pulse_capture_explanation"`, which fails `SituationClassificationSchema` parsing. Unrelated gate failures (memory-recall, annna-intent-fidelity, terse-user) fail at base too.
+- Expected: Adding `onboardingSignal` to the classify prompt leaves existing live scenarios unchanged.
+- Root cause layer: verification; unit tests assert prompt text only, and live classification is exercised only by the sim gate.
+- Harness fix: The classify system prompt schema block is byte-identical to the base wording again; `onboardingSignal` is described only in the conditional ONBOARDING STATUS user-prompt section. `classify.test.ts` pins the base schema block and asserts the system prompt never mentions `onboardingSignal`.
+- Regression check: `cd packages/conversation-sim && npx vitest run src/scenarios/pulse-capture-exact-message.sim.test.ts` (live model) repeated 3 times; passed 3/3 (plus a 4th run) after the fix.
+- Status: fixed
+
+## 2026-10-08 Emma silent when model returns null for optional confirmationSummary
+
+- Symptom: after a declined onboarding choice, two user messages got no reply; worker retried and failed with `ZodError: confirmationSummary Expected string, received null` in `OpenAiProvider.generateResponse`.
+- Expected: A null optional field from the model is treated as absent and the reply is delivered.
+- Root cause layer: verification; `GeneratedResponseSchema` was strict about null for `confirmationSummary` while only `surveyProbeQuestionId` had null normalization, and no test covered model nulls.
+- Harness fix: `confirmationSummary` now normalizes null to undefined (same preprocess as `surveyProbeQuestionId`).
+- Regression check: `pnpm --filter @entalent/contracts test` (ai.test.ts "normalizes null confirmationSummary").
+- Status: fixed
+
+## 2026-10-11: Live sim test ran in the deterministic CI gate
+- Symptom: PR CI `Deterministic harness gate` failed with `OPENAI_API_KEY is required to run conversation simulations` from `onboarding-classifier-live.sim.test.ts`.
+- Expected: The deterministic gate passes without model credentials; live sims run only on demand with a key.
+- Root cause layer: verification; `harness:check` runs every changed `*.test.ts`, and the live test built its provider at collection time, so it threw even though it was never meant for CI.
+- Harness fix: The live onboarding classifier suite now uses `describe.skipIf(!process.env.OPENAI_API_KEY)` with the provider created in `beforeAll`. Other live sims (burnout, memory-recall, terse-user, ...) still create providers at collection time and will fail the gate the same way when changed; a harness-level rule for live sims is the durable follow-up.
+- Regression check: `env -u OPENAI_API_KEY pnpm harness:check -- --base origin/main` (live suite reported as skipped).
 
 ## 2026-10-17: Harness database integration step fails on shared local state and machine load
 
@@ -3206,4 +3237,13 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Root cause layer: verification
 - Harness fix: Scope the dispatch-intent assertion to the test's inbound message ids. Give DB integration suites an explicit `testTimeout` (for example 20 s) in their Vitest configs. Document running the harness against a freshly migrated local database (`createdb` + `pnpm db:migrate` with an overridden `DATABASE_URL`) when the shared one has accumulated rows.
 - Regression check: `DATABASE_URL=<shared local> pnpm --filter @entalent/database exec vitest run --config vitest.integration.config.ts src/__tests__/conversation-turn-effects.integration.test.ts` passes after other suites have run.
+- Status: open
+
+## 2026-10-18: Local DB silently skips migrations after a branch renumbers its schema change
+
+- Symptom: After merging main into codex/onboarding-v2, `harness:check` failed in 9 DB-backed api tests (`audit_logs.idempotency_key` missing). The local `entalent` DB had 27 of 54 entries applied; its newest `created_at` belonged to the onboarding change applied before it was renumbered, so drizzle's migrator treats 0027-0050 as already applied and `db:migrate` would never add them.
+- Expected: Before a full harness run after a renumbering merge, the agent detects that the local watermark is ahead of unapplied journal entries and runs the checks on a freshly migrated database.
+- Root cause layer: environment
+- Harness fix: Run DB-backed checks on a fresh local database (`create database <name>` + `pnpm --filter @entalent/database db:migrate` with an overridden `DATABASE_URL`); recreating the shared `entalent` DB needs user approval because it holds local dev data.
+- Regression check: compare `select max(created_at) from drizzle.__drizzle_migrations` with the journal `when` values; any unapplied entry older than the watermark means the DB must be rebuilt.
 - Status: open

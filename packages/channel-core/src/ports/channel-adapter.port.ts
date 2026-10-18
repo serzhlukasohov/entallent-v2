@@ -7,9 +7,11 @@ import type {
 
 export interface UpdateOutgoingMessage {
   tenantId: string;
-  conversationId: string;
+  conversationId?: string;
+  externalChannelId: string;
   externalMessageId: string;
   text: string;
+  actions?: OutgoingMessage['actions'];
   metadata?: Record<string, unknown>;
 }
 

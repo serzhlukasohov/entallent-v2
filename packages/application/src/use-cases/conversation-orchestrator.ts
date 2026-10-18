@@ -90,6 +90,10 @@ import type {
   ProcessMessageRequest,
   ProcessMessageResult,
 } from '../ports/agent-runtime.port';
+import type { OnboardingApplyResult, OnboardingTurnPort } from '../ports/onboarding.port';
+import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
+import { interpretOnboardingSignal, type SignalOutcome } from '../onboarding/onboarding-signal';
+import type { OnboardingState } from '../onboarding/onboarding-state';
 
 export type OrchestrateInput = ProcessMessageRequest;
 /** The active runtime result. Unlike the archived ProcessMessageResult, risk may be unassessed. */
@@ -112,7 +116,21 @@ export type BundleReplyFallbackReason = BundleReplyInvalidReason | 'output_filte
 /** `unknown` covers a legacy untyped `v2_confirmation_composition_invalid` error. */
 export type BundleCompositionFallbackReason = BundleCompositionInvalidReason | 'unknown';
 
+export interface OrchestratorLogger {
+  warn(message: string, context?: Record<string, unknown>): void;
+}
+
+const SILENT_LOGGER: OrchestratorLogger = { warn: () => undefined };
+
 const TZ_REFRESH_DAYS = 30;
+// Same opener strategy as the proactive check-in path, reused for a text "let's start" (Q25).
+const ONBOARDING_OPENER_STRATEGY: ReplyStrategy = {
+  mode: 'proactive_follow_up',
+  tone: 'warm',
+  includeFollowUpQuestion: true,
+  maxResponseLength: 'short',
+  forbiddenPatterns: ['checking in', 'just wanted to check', 'reminder'],
+};
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
 
 type PreparedBundlePhase = {
@@ -153,6 +171,8 @@ export class ConversationOrchestrator {
     private readonly goalRepo?: GoalRepositoryPort,
     private readonly questionConfirmationRepo?: QuestionConfirmationPort,
     private readonly unitOfWork?: ConversationUnitOfWorkPort,
+    private readonly onboardingTurn?: OnboardingTurnPort,
+    private readonly logger: OrchestratorLogger = SILENT_LOGGER,
   ) {}
 
   async resumeCommittedTurn(input: OrchestrateInput): Promise<boolean> {
@@ -345,6 +365,13 @@ export class ConversationOrchestrator {
     const userName = conversation.userDisplayName ?? 'there';
     const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
+    // Onboarding is never allowed to break the reply: a failed read means "no onboarding context".
+    const onboarding = this.onboardingTurn
+      ? await this.onboardingTurn.contextFor(tenantId, userId).catch((error: unknown) => {
+          this.logger.warn('onboarding_context_failed', { tenantId, userId, error: errorMessage(error) });
+          return null;
+        })
+      : null;
 
     // Safety assessment is independent of classification and runs on every turn (ADR-013 D3).
     // assessRisk never rejects: a failure is `assessed: false`, which policy treats as unknown.
@@ -358,6 +385,15 @@ export class ConversationOrchestrator {
         now: currentTurnAt,
         timezone: userTimezone,
         continuitySummary: activeTopic?.summary,
+        ...(onboarding
+          ? {
+              onboarding: {
+                track: onboarding.state.track,
+                participation: onboarding.state.participation,
+                introStatus: onboarding.state.introStatus,
+              },
+            }
+          : {}),
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -466,6 +502,17 @@ export class ConversationOrchestrator {
       (m) => m.metadata?.['containsSurveyProbe'] === true,
     );
     const probePacingAllows = userTurnCount >= 3 && !probedRecently;
+
+    // The classifier only labels onboarding meaning; interpretOnboardingSignal + decideOnboarding decide.
+    const onboardingSignal = onboarding ? classification.onboardingSignal ?? null : null;
+    const onboardingOutcome: SignalOutcome = onboarding
+      ? interpretOnboardingSignal(onboarding.state, onboardingSignal, inboundMessage.occurredAt)
+      : { kind: 'none' };
+    // A text start opens with the backlog (or continues the user's own topic, Q25): no reactive probe.
+    const onboardingStartTurn = onboardingOutcome.kind === 'event'
+      && onboardingOutcome.event.type === 'action'
+      && onboardingOutcome.event.action === 'start';
+
     // Risk check and probe lookup are independent — run in parallel.
     // Probe is fetched speculatively when classify says it's allowed; discarded if risk blocks it.
     const probeGatesAllow =
@@ -475,7 +522,8 @@ export class ConversationOrchestrator {
       && classification.surveyAllowed
       && !reportingExplanationRequested
       && !dataUseExplanationRequested
-      && !pulseCaptureExplanationRequested;
+      && !pulseCaptureExplanationRequested
+      && !onboardingStartTurn;
     const speculativeProbeAllowed = probeGatesAllow && probePacingAllows;
     // GC round 3 CAP-1: inside an active V2 cycle the topic policy replaces the optional probe.
     let topicCadence = readTopicCadence(dbMessages, inboundMessage.occurredAt);
@@ -506,6 +554,34 @@ export class ConversationOrchestrator {
     const v2CycleProgress = v2CycleSnapshot ? predictCycleProgress(v2CycleSnapshot) : null;
     // A V2 window whose topics are all closed leaves the legacy path (for example engagement) alone.
     const inActiveV2Cycle = v2CycleProgress !== null && v2CycleProgress.openTopics.length > 0;
+
+    // ── Onboarding text equivalents ─────────────────────────────────────────
+    // The event is applied even on a safety turn, but a safety turn always keeps its own reply.
+    // A failed apply is treated as no state change: normal reply, no ack or opener.
+    const onboardingResult: OnboardingApplyResult | null = onboardingOutcome.kind === 'event' && this.onboardingTurn
+      ? await this.onboardingTurn.applyTurnEvent(tenantId, userId, onboardingOutcome.event).catch((error: unknown) => {
+          this.logger.warn('onboarding_apply_failed', {
+            tenantId, userId, event: onboardingOutcome.event.type, error: errorMessage(error),
+          });
+          return null;
+        })
+      : null;
+    const onboardingState: OnboardingState | null = onboardingResult?.state ?? onboarding?.state ?? null;
+    const onboardingSafetyTurn = classification.requiresSafetyCheck || isRiskTurn(risk);
+    const onboardingMayOwnReply = !onboardingSafetyTurn
+      && onboardingSignal?.substantive !== true
+      && !reportingExplanationRequested
+      && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested;
+    const onboardingAck = onboardingMayOwnReply ? onboardingResult?.replyAck : undefined;
+    const onboardingOpens = onboardingMayOwnReply && onboardingAck === undefined && onboardingResult?.replyStart === true;
+    const onboardingClarify = onboardingOutcome.kind === 'clarify' && !onboardingSafetyTurn;
+    // A decision made inside a substantive turn is still acknowledged (Q4): the approved ack closes the reply.
+    const onboardingTrailingAck = !onboardingSafetyTurn && onboardingSignal?.substantive === true
+      ? onboardingResult?.replyAck
+      : undefined;
+    const onboardingOwnsReply = onboardingAck !== undefined || onboardingOpens;
+    const onboardingTakesTurn = onboardingOwnsReply || onboardingClarify;
 
     const appliedQuestionVerdict = await this.questionConfirmationRepo
       ?.findAppliedQuestionVerdictForInbound?.({
@@ -646,6 +722,7 @@ export class ConversationOrchestrator {
       && !pulseCaptureExplanationRequested
       && !confirmationHandled
       && !phaseB.awaitingPresent
+      && !onboardingTakesTurn
     ) {
       const pending = await this.surveyRepo.findPendingConfirmationGroups(userId, tenantId);
       if (pending.length > 0) {
@@ -775,6 +852,7 @@ export class ConversationOrchestrator {
     // Inside a V2 window the optional probe hint is never sent; the topic policy decides below.
     const probeQuestion =
       !inActiveV2Cycle && !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !riskBlocksSurvey(risk)
+      && !onboardingTakesTurn
         ? speculativeProbe?.question ?? null
         : null;
 
@@ -817,7 +895,7 @@ export class ConversationOrchestrator {
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
-    const strategyWithStyle = applySessionConciseStyle(
+    const styledStrategy = applySessionConciseStyle(
       applyTerseStyle(
         confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
         memoryEnabled && !boundaryApplied ? profile : null,
@@ -825,6 +903,10 @@ export class ConversationOrchestrator {
       ),
       conciseSession,
     );
+    // Unclear onboarding choice: one question, no state change (Q2, Q4).
+    const strategyWithStyle: ReplyStrategy = onboardingClarify
+      ? { ...styledStrategy, includeFollowUpQuestion: true, onboardingClarify: true }
+      : styledStrategy;
     const sameThreadDetail = classification.latestUserSubstance?.trim();
     const canRetainExplicitDetail = !sessionStart
       && continuityDecision.action !== 'replace'
@@ -885,7 +967,8 @@ export class ConversationOrchestrator {
     let topicProbeQuestion: SurveyQuestionRecord | null = null;
     // The fallback after a broken topic rail keeps the turn's own question policy.
     let topicFallback: { strategy: ReplyStrategy; replyPlan: ResponseContext['replyPlan'] } | undefined;
-    if (inActiveV2Cycle) {
+    // An onboarding-owned or clarifying turn asks no topic question, as it carries no probe.
+    if (inActiveV2Cycle && !onboardingTakesTurn) {
       topicDecision = canAskTopicQuestion({
         activeV2Cycle: true,
         disclosureDelivered: reportingDisclosureReceipt !== null,
@@ -942,6 +1025,7 @@ export class ConversationOrchestrator {
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
       && !pulseCaptureExplanationRequested
+      && !onboardingOwnsReply
       && (reportingExplanationRequested || phaseB.awaitingPresent || v2ReadyForDisclosure);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
@@ -1058,8 +1142,18 @@ export class ConversationOrchestrator {
     let bundleReply: BundleReplyOutcome | undefined;
     let topicQuestionFallbackReason: TopicQuestionReplyInvalidReason | undefined;
     let bundleReplyFallbackReason: BundleReplyFallbackReason | undefined;
+    const onboardingOpener = onboardingOpens
+      ? await this.openOnboardingConversation({
+          userId, tenantId, turns, userName, languagePolicy, surveyEnabled, memoryContext,
+          styleAdaptation, timezone: conversation.userTimezone, isSessionStart: sessionStart,
+        })
+      : null;
     let generated: GeneratedResponse;
-    if (trailingBundle) {
+    if (onboardingAck !== undefined) {
+      generated = { text: onboardingAck, confidence: 1, containsSurveyProbe: false };
+    } else if (onboardingOpener) {
+      generated = onboardingOpener.generated;
+    } else if (trailingBundle) {
       try {
         const draft = await this.aiProvider.generateResponse(turns, strategy, {
           ...responseContext, trailingBundle, surveyProbeQuestion: undefined,
@@ -1104,7 +1198,8 @@ export class ConversationOrchestrator {
           })
         : await this.aiProvider.generateResponse(turns, strategy, responseContext);
     }
-    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
+    // The onboarding opener never carries the disclosure; existing mechanisms deliver it later (decision 2026-10-08).
+    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure && onboardingOpener === null;
     let responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
@@ -1201,16 +1296,26 @@ export class ConversationOrchestrator {
         shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage));
       }
     }
+    if (onboardingTrailingAck) responseText = `${responseText}\n\n${onboardingTrailingAck}`;
     const topicQuestionAsked = topicQuestion !== undefined && topicQuestionFallbackReason === undefined
       && generated.topicQuestion !== undefined;
     const surveyProbeSource = topicProbeQuestion ?? probeQuestion;
-    const containsSurveyProbe = topicQuestionAsked || (
-      surveyProbeSource !== null
-      && !pauseTurn
-      && topicQuestionFallbackReason === undefined
-      && generated.containsSurveyProbe === true);
+    const containsSurveyProbe = onboardingOpener
+      ? onboardingOpener.probeQuestionId !== undefined
+        && generated.containsSurveyProbe === true
+        && generated.surveyProbeQuestionId === onboardingOpener.probeQuestionId
+      : topicQuestionAsked || (
+        surveyProbeSource !== null
+        && !pauseTurn
+        && topicQuestionFallbackReason === undefined
+        && generated.containsSurveyProbe === true);
     if (topicQuestionAsked) generated = { ...generated, surveyProbeQuestionId: topicQuestion!.questionId };
 
+    // Pulse evidence only from active personal participants, read after this turn's onboarding event
+    // (a substantive first message is analysed, Q2b); management roles never (Q11).
+    const onboardingAllowsEvidence = onboardingState === null
+      || (onboardingState.track !== 'management' && onboardingState.participation === 'active');
+    const surveyEvidenceWanted = surveyEnabled && !pulseCaptureExplanationRequested && onboardingAllowsEvidence;
     let scheduledReminder: { id: string; dueAt: Date } | null = null;
     let legacyGroupReport: LegacyGroupReportIntent | null = null;
     const persistPreparedTurn = async () => {
@@ -1261,6 +1366,7 @@ export class ConversationOrchestrator {
         text: responseText,
         occurredAt: new Date(),
         traceId: input.traceId,
+        ...(onboardingAck !== undefined ? { messageType: 'onboarding_ack' } : {}),
         metadata: {
           sourceInboundMessageId: input.messageId,
           ...conversationDecisionMetadata({
@@ -1404,7 +1510,7 @@ export class ConversationOrchestrator {
         dispatchKinds: [
           'message_send',
           ...(memoryEnabled ? ['memory_extraction', 'style_analysis'] as const : []),
-          ...(surveyEnabled && !pulseCaptureExplanationRequested ? ['survey_evidence'] as const : []),
+          ...(surveyEvidenceWanted ? ['survey_evidence'] as const : []),
           ...(profileHydrationNeeded ? ['profile_hydration'] as const : []),
         ],
         followUpActions: scheduledReminder ? [scheduledReminder] : [],
@@ -1421,7 +1527,7 @@ export class ConversationOrchestrator {
     await this.dispatchCommittedTurn(input, conversation.channelType, outbound, [
       'message_send',
       ...(memoryEnabled ? ['memory_extraction', 'style_analysis'] as const : []),
-      ...(surveyEnabled && !pulseCaptureExplanationRequested ? ['survey_evidence'] as const : []),
+      ...(surveyEvidenceWanted ? ['survey_evidence'] as const : []),
       ...(profileHydrationNeeded ? ['profile_hydration'] as const : []),
     ], scheduledReminder ? [scheduledReminder] : [],
     legacyGroupReport ? [legacyGroupReport] : []);
@@ -1879,6 +1985,48 @@ export class ConversationOrchestrator {
     });
   }
 
+  /**
+   * Text "let's start" without the user's own topic: open with the first backlog topic through the
+   * proactive check-in probe plumbing, or the approved opener with no model call when there is none (G1, Q25).
+   */
+  private async openOnboardingConversation(input: {
+    userId: string;
+    tenantId: string;
+    turns: ConversationTurn[];
+    userName: string;
+    languagePolicy: ResponseContext['languagePolicy'];
+    surveyEnabled: boolean;
+    memoryContext: NonNullable<ResponseContext['memoryContext']>;
+    styleAdaptation: ResponseContext['styleAdaptation'];
+    timezone: string | null | undefined;
+    isSessionStart: boolean;
+  }): Promise<{ generated: GeneratedResponse; probeQuestionId?: string }> {
+    const probe = input.surveyEnabled ? await this.findSurveyProbe(input.userId, input.tenantId) : null;
+    const question = probe?.question;
+    if (!question) {
+      return { generated: { text: EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } };
+    }
+    const generated = await this.aiProvider.generateResponse(input.turns, ONBOARDING_OPENER_STRATEGY, {
+      userName: input.userName,
+      languagePolicy: input.languagePolicy,
+      memoryContext: input.memoryContext.items.length > 0 || input.memoryContext.goals.length > 0
+        ? input.memoryContext
+        : undefined,
+      styleAdaptation: input.styleAdaptation,
+      localTime: describeLocalTime(input.timezone),
+      isSessionStart: input.isSessionStart,
+      proactiveCheckIn: {
+        probeQuestion: {
+          id: question.id,
+          probeStrategies: question.probeStrategies,
+          ...(question.responseType ? { responseType: question.responseType } : {}),
+        },
+        afterUserStart: true,
+      },
+    });
+    return { generated, probeQuestionId: question.id };
+  }
+
   private async findSurveyProbe(
     userId: string,
     tenantId: string,
@@ -2211,6 +2359,10 @@ function computeRiskExpiry(severity: string): Date {
   else if (severity === 'medium') d.setDate(d.getDate() + 30);
   else d.setDate(d.getDate() + 7);
   return d;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
