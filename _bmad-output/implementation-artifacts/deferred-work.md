@@ -267,3 +267,10 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s4b-corrected-statement-reclarify.md`
   summary: The clarification interpreter prompt still says a clarified answer "authorizes the corrected meaning; no second bundle confirmation is needed". That has been stale since S4 shows the correction back for a verdict. Updating it changes the interpreter contract, which is an Ask First item.
   evidence: Read while implementing S4b, in `packages/ai-openai/src/prompts/question-clarification.ts`.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
+  summary: A V2 question completed across two messages is closed in the backlog by the coverage reconcile (`markDone(..., 0)`), so its group is not re-prioritized and `evidenceCapturedCount` stays 0.
+  evidence: S5 review (both reviewers); `markQuestionCovered` fires only when one message alone makes the question ready.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
+  summary: Topic selection issues one idempotent `markDone` update per settled V2 question on every lookup; batch it or read backlog statuses first.
+  evidence: S5 Blind Hunter finding 10; correct but adds writes on the conversation path (lookups now run only when the cadence and cap allow).

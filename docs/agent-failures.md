@@ -3115,6 +3115,7 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Run the suite against a freshly migrated database to separate state leakage from a real trigger regression; then fix the test or the trigger.
 - Regression check: `DATABASE_URL=<fresh-migrated-db> pnpm --filter @entalent/database test:integration`.
 - Update 2026-10-14: in a full `pnpm test:integration` run `survey-cycle-policy-activation` also failed once (`…_unapproved` instead of `…_incomplete`) but passes alone on main and on the branch, twice. Treat the database suite as order/state-dependent on a reused local DB until it runs against a fresh database.
+- Update 2026-10-17 (S5): the same test failed again in `pnpm harness:check` against the reused local `entalent` database and passed (24/24) against a freshly created and migrated `entalent_s5_fresh` on the same server, so the failure is state leakage in the reused database, not a trigger regression. Workaround until the suite isolates its state: run the harness with `DATABASE_URL` pointing at a fresh migrated database. The worker suite `v2-cohort-report-input.repository.integration.test.ts` showed the same class the same day (`survey_insight_v2_cycle_policy_unapproved` on the reused database, passing on the fresh one).
 - Status: open
 
 ## 2026-10-14: V2 queue integration suite silently broken after Wave 1

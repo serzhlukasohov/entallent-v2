@@ -53,6 +53,9 @@ import type {
 import {
   BundleCompositionInvalidError,
   BundleReplyInvalidError,
+  TopicQuestionReplyInvalidError,
+  validateTopicQuestionReply,
+  composeTopicQuestionReplyText,
   composeBundleReplyText,
   isBundleCompositionInvalidError,
   maxReplyChars,
@@ -160,6 +163,32 @@ function stripExposedConfirmationSummaryLabel(response: GeneratedResponse): Gene
 }
 
 /** A draft that fails to parse is a contract break like any other: repair once, then fail closed. */
+const TOPIC_QUESTION_RETRY_INSTRUCTION =
+  '\n\nYour previous draft broke the topic-question contract. Return "replyText" as up to 3 sentences that answer the employee\'s latest message with no question mark or other question punctuation, and "topicQuestion" as exactly one direct question on the given topic that ends with its question mark and contains no other question. Keep both within the length limit.';
+
+/** GC round 3 CAP-1: validate the required topic question; probe metadata is set by code, not echoed. */
+function assembleTopicQuestionReply(
+  raw: string,
+  questionId: string,
+  options: { maxReplyChars: number },
+): GeneratedResponse | TopicQuestionReplyInvalidError {
+  let response: GeneratedResponse;
+  try {
+    response = GeneratedResponseSchema.parse(JSON.parse(raw));
+  } catch {
+    return new TopicQuestionReplyInvalidError('draft_unparseable');
+  }
+  try {
+    const parts = validateTopicQuestionReply(response, options);
+    return {
+      ...response, ...parts, text: composeTopicQuestionReplyText(parts), confirmationSummary: undefined,
+      containsSurveyProbe: true, surveyProbeQuestionId: questionId,
+    };
+  } catch (error) {
+    return error instanceof TopicQuestionReplyInvalidError ? error : new TopicQuestionReplyInvalidError('reply_missing');
+  }
+}
+
 function assembleBundleReply(
   raw: string,
   bundleText: string,
@@ -466,6 +495,9 @@ export class OpenAiProvider implements AiProviderPort {
     if (context.trailingBundle) {
       return this.generateBundleReply(system, user, strategy, context, context.trailingBundle);
     }
+    if (context.topicQuestion) {
+      return this.generateTopicQuestionReply(system, user, strategy, context, context.topicQuestion.questionId);
+    }
 
     const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
@@ -532,6 +564,27 @@ export class OpenAiProvider implements AiProviderPort {
       await this.complete(system + BUNDLE_REPLY_RETRY_INSTRUCTION, user, this.generationModel), bundle.text, options,
     );
     if (!(corrected instanceof BundleReplyInvalidError)) return corrected;
+    throw corrected;
+  }
+
+  /**
+   * GC round 3 CAP-1 (ADR-013 D8): the topic question is a required field. One repair, then fail
+   * closed with the typed reason so the orchestrator can reply without the topic this turn.
+   */
+  private async generateTopicQuestionReply(
+    system: string,
+    user: string,
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    questionId: string,
+  ): Promise<GeneratedResponse> {
+    const options = { maxReplyChars: maxReplyChars(strategy, context) };
+    const first = assembleTopicQuestionReply(await this.complete(system, user, this.generationModel), questionId, options);
+    if (!(first instanceof TopicQuestionReplyInvalidError)) return first;
+    const corrected = assembleTopicQuestionReply(
+      await this.complete(system + TOPIC_QUESTION_RETRY_INSTRUCTION, user, this.generationModel), questionId, options,
+    );
+    if (!(corrected instanceof TopicQuestionReplyInvalidError)) return corrected;
     throw corrected;
   }
 

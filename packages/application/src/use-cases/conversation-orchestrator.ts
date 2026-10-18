@@ -51,6 +51,19 @@ import {
 } from '../utils/question-bundle-composition';
 import { maxReplyChars } from '../utils/reply-length';
 import {
+  canAskTopicQuestion,
+  isTopicCadenceSatisfied,
+  readTopicCadence,
+  type TopicQuestionDecision,
+} from '../utils/topic-question-policy';
+import {
+  composeTopicQuestionReplyText,
+  isTopicQuestionReplyInvalidError,
+  validateTopicQuestionReply,
+  type TopicQuestionReplyInvalidReason,
+} from '../utils/topic-question-reply';
+import type { ProbeFocus } from '../services/pulse-backlog.service';
+import {
   MAX_QUESTION_CLARIFICATIONS, resolveCorrectedStatementVerdict, validateQuestionBundleVerdict,
 } from '../utils/question-bundle-verdict';
 import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
@@ -453,24 +466,46 @@ export class ConversationOrchestrator {
       (m) => m.metadata?.['containsSurveyProbe'] === true,
     );
     const probePacingAllows = userTurnCount >= 3 && !probedRecently;
-
     // Risk check and probe lookup are independent — run in parallel.
     // Probe is fetched speculatively when classify says it's allowed; discarded if risk blocks it.
-    const speculativeProbeAllowed =
+    const probeGatesAllow =
       reportingDisclosureReceipt !== null
       && !pauseTurn
       && surveyEnabled
-      && probePacingAllows
       && classification.surveyAllowed
       && !reportingExplanationRequested
       && !dataUseExplanationRequested
       && !pulseCaptureExplanationRequested;
-    const [risk, speculativeProbe] = await Promise.all([
+    const speculativeProbeAllowed = probeGatesAllow && probePacingAllows;
+    // GC round 3 CAP-1: inside an active V2 cycle the topic policy replaces the optional probe.
+    let topicCadence = readTopicCadence(dbMessages, inboundMessage.occurredAt);
+    if (probeGatesAllow && isTopicCadenceSatisfied(topicCadence) && this.conversationRepo.countTopicQuestionsSince) {
+      // The cap holds beyond the loaded message window.
+      const durable = await this.conversationRepo.countTopicQuestionsSince({
+        tenantId, userId, conversationId, since: new Date(inboundMessage.occurredAt.getTime() - 86_400_000),
+      });
+      topicCadence = { ...topicCadence, topicQuestionsLast24h: Math.max(topicCadence.topicQuestionsLast24h, durable) };
+    }
+    const v2WindowLookupAllowed = probeGatesAllow && this.questionConfirmationRepo?.findCycleProgress !== undefined;
+    const topicLookupAllowed = v2WindowLookupAllowed && isTopicCadenceSatisfied(topicCadence);
+    // Survey lookups must not be able to skip the escalation below: their failures surface after it.
+    const [risk, probeLookup, cycleLookup] = await Promise.all([
       riskAssessment,
-      speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
+      settle(speculativeProbeAllowed || topicLookupAllowed
+        ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null)),
+      settle(v2WindowLookupAllowed
+        ? this.questionConfirmationRepo!.findCycleProgress!({ tenantId, userId })
+        : Promise.resolve(null)),
     ]);
     // Escalate as soon as risk is known, so no later survey/confirmation failure can skip it.
     await this.raiseEscalationIfRequired(risk, { tenantId, userId, input });
+    if (!probeLookup.ok) throw probeLookup.error;
+    if (!cycleLookup.ok) throw cycleLookup.error;
+    const speculativeProbe = probeLookup.value;
+    const v2CycleSnapshot = cycleLookup.value;
+    const v2CycleProgress = v2CycleSnapshot ? predictCycleProgress(v2CycleSnapshot) : null;
+    // A V2 window whose topics are all closed leaves the legacy path (for example engagement) alone.
+    const inActiveV2Cycle = v2CycleProgress !== null && v2CycleProgress.openTopics.length > 0;
 
     const appliedQuestionVerdict = await this.questionConfirmationRepo
       ?.findAppliedQuestionVerdictForInbound?.({
@@ -737,9 +772,10 @@ export class ConversationOrchestrator {
         : [],
     };
 
+    // Inside a V2 window the optional probe hint is never sent; the topic policy decides below.
     const probeQuestion =
-      !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !riskBlocksSurvey(risk)
-        ? speculativeProbe
+      !inActiveV2Cycle && !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !riskBlocksSurvey(risk)
+        ? speculativeProbe?.question ?? null
         : null;
 
     // Persist risk signal when a real risk is detected. Unassessed (tripwire-only) risk has no
@@ -839,9 +875,58 @@ export class ConversationOrchestrator {
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
     let strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
-    const responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
+    let responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
       ? null
       : probeQuestion;
+
+    // ── GC round 3 CAP-1, CAP-2: topic steering (ADR-013 D4 policy, D8 required field) ──────────
+    let topicDecision: TopicQuestionDecision | undefined;
+    let topicQuestion: ResponseContext['topicQuestion'];
+    let topicProbeQuestion: SurveyQuestionRecord | null = null;
+    // The fallback after a broken topic rail keeps the turn's own question policy.
+    let topicFallback: { strategy: ReplyStrategy; replyPlan: ResponseContext['replyPlan'] } | undefined;
+    if (inActiveV2Cycle) {
+      topicDecision = canAskTopicQuestion({
+        activeV2Cycle: true,
+        disclosureDelivered: reportingDisclosureReceipt !== null,
+        surveyAllowed: surveyEnabled && classification.surveyAllowed,
+        safetyTurn: safetyTurn || riskBlocksSurvey(risk)
+          || strategyWithStyle.mode === 'crisis' || strategyWithStyle.mode === 'sensitive',
+        pauseTurn,
+        correctionTurn: classification.dialogueAct === 'correction',
+        confirmationTurn: phaseB.awaitingPresent || clarificationWasPresent || confirmationRequest !== undefined
+          || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null,
+        topicCompletedThisTurn: confirmationHandled,
+        explanationTurn: reportingExplanationRequested || dataUseExplanationRequested
+          || pulseCaptureExplanationRequested || classification.cycleStatusQuestion === true,
+        replyAllowsQuestion: replyPlan !== undefined
+          && replyPlan.questionPolicy.reason !== 'offer_delivery'
+          && replyPlan.questionPolicy.reason !== 'format_request',
+        cadence: topicCadence,
+      });
+      topicProbeQuestion = topicDecision.due ? speculativeProbe?.question ?? null : null;
+      if (topicProbeQuestion && replyPlan) {
+        topicFallback = { strategy, replyPlan };
+        // When due the question is mandatory: one question is allowed even on a terse turn.
+        replyPlan = {
+          ...replyPlan,
+          questionPolicy: { maxQuestions: 1, reason: 'topic_question' },
+          forbiddenMoves: replyPlan.forbiddenMoves.filter((move) => move !== 'survey_probe'),
+        };
+        strategy = applyReplyPlanToStrategy({ ...strategyWithStyle, includeFollowUpQuestion: true }, replyPlan);
+        if (topicProbeQuestion.responseType === 'numeric_0_10') {
+          // The numeric probe already has its own mandatory, validated path.
+          responseProbeQuestion = topicProbeQuestion;
+        } else {
+          topicQuestion = {
+            questionId: topicProbeQuestion.id,
+            questionGroup: topicProbeQuestion.questionGroup,
+            focus: speculativeProbe?.focus ?? 'open',
+            probeStrategies: topicProbeQuestion.probeStrategies,
+          };
+        }
+      }
+    }
     const clarificationText = clarificationRequest
       ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
           turns, clarificationRequest, languagePolicy.responseLanguage,
@@ -935,6 +1020,7 @@ export class ConversationOrchestrator {
         ? getReportingDisclosureText(languagePolicy.responseLanguage)
         : undefined,
       reminderConfirmation,
+      topicQuestion,
       surveyProbeQuestion: responseProbeQuestion
         ? {
             id: responseProbeQuestion.id,
@@ -970,6 +1056,7 @@ export class ConversationOrchestrator {
           }
         : undefined;
     let bundleReply: BundleReplyOutcome | undefined;
+    let topicQuestionFallbackReason: TopicQuestionReplyInvalidReason | undefined;
     let bundleReplyFallbackReason: BundleReplyFallbackReason | undefined;
     let generated: GeneratedResponse;
     if (trailingBundle) {
@@ -1011,6 +1098,10 @@ export class ConversationOrchestrator {
             confidence: 1,
             containsSurveyProbe: false,
           }
+        : responseContext.topicQuestion
+        ? await this.generateWithTopicQuestion(turns, strategy, responseContext, topicFallback!, (reason) => {
+            topicQuestionFallbackReason = reason;
+          })
         : await this.aiProvider.generateResponse(turns, strategy, responseContext);
     }
     let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
@@ -1110,10 +1201,15 @@ export class ConversationOrchestrator {
         shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage));
       }
     }
-    const containsSurveyProbe =
-      probeQuestion !== null
+    const topicQuestionAsked = topicQuestion !== undefined && topicQuestionFallbackReason === undefined
+      && generated.topicQuestion !== undefined;
+    const surveyProbeSource = topicProbeQuestion ?? probeQuestion;
+    const containsSurveyProbe = topicQuestionAsked || (
+      surveyProbeSource !== null
       && !pauseTurn
-      && generated.containsSurveyProbe === true;
+      && topicQuestionFallbackReason === undefined
+      && generated.containsSurveyProbe === true);
+    if (topicQuestionAsked) generated = { ...generated, surveyProbeQuestionId: topicQuestion!.questionId };
 
     let scheduledReminder: { id: string; dueAt: Date } | null = null;
     let legacyGroupReport: LegacyGroupReportIntent | null = null;
@@ -1124,6 +1220,14 @@ export class ConversationOrchestrator {
       });
       if (committed) return committed;
       legacyGroupReport = await phaseB.commitLegacy?.() ?? null;
+      if (topicQuestionAsked && topicQuestion!.focus === 'driver' && v2CycleSnapshot
+        && this.questionConfirmationRepo?.recordDriverRequested) {
+        // GC round 3 CAP-2: the driver is asked at most once per question and window.
+        await this.questionConfirmationRepo.recordDriverRequested({
+          tenantId, userId, surveyWindowId: v2CycleSnapshot.surveyWindowId,
+          surveyQuestionId: topicQuestion!.questionId, requestedAt: new Date(),
+        });
+      }
       if (v2PhaseB.verdictProposal && this.questionConfirmationRepo) {
         const applied = await this.questionConfirmationRepo.applyQuestionBundleVerdict({
           tenantId, userId, conversationId, inboundMessageId: input.messageId,
@@ -1189,6 +1293,18 @@ export class ConversationOrchestrator {
           ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
           ...(readyBundleFallbackReason ? { v2BundleCompositionFallbackReason: readyBundleFallbackReason } : {}),
           ...(correctedStatementFallbackReason ? { v2CorrectedStatementFallbackReason: correctedStatementFallbackReason } : {}),
+          ...(topicQuestionAsked
+            ? { topicQuestion: {
+                questionGroup: topicQuestion!.questionGroup,
+                focus: topicQuestion!.focus,
+                policyVersion: topicDecision!.policyVersion,
+              } }
+            : {}),
+          ...(topicDecision && !topicDecision.due ? { topicQuestionDecision: topicDecision.reason } : {}),
+          ...(topicDecision?.due && !topicProbeQuestion ? { topicQuestionDecision: 'no_open_question' } : {}),
+          ...(topicQuestionFallbackReason ? { topicQuestionFallbackReason } : {}),
+          // The cadence counts from a completion reply: the next topic opens on the next turn.
+          ...(typeof confirmedGroup === 'string' ? { topicCompleted: confirmedGroup } : {}),
           ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
             ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
             : {}),
@@ -1763,10 +1879,39 @@ export class ConversationOrchestrator {
     });
   }
 
-  private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
+  private async findSurveyProbe(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ question: SurveyQuestionRecord; focus: ProbeFocus } | null> {
     if (!this.pulseBacklogService) return null;
     const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
-    return result?.question ?? null;
+    return result ? { question: result.question, focus: result.focus ?? 'open' } : null;
+  }
+
+  /**
+   * GC round 3 CAP-1 (ADR-013 D8): the topic question is a required field checked by the rail here,
+   * whichever provider produced it. When it breaks its contract after the provider's one repair,
+   * the turn still answers the employee, without the topic, and the reason is recorded.
+   */
+  private async generateWithTopicQuestion(
+    turns: ConversationTurn[],
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    fallbackPolicy: { strategy: ReplyStrategy; replyPlan: ResponseContext['replyPlan'] },
+    onFallback: (reason: TopicQuestionReplyInvalidReason) => void,
+  ): Promise<GeneratedResponse> {
+    try {
+      const draft = await this.aiProvider.generateResponse(turns, strategy, context);
+      const parts = validateTopicQuestionReply(draft, { maxReplyChars: maxReplyChars(strategy, context) });
+      return { ...draft, ...parts, text: composeTopicQuestionReplyText(parts), containsSurveyProbe: true };
+    } catch (error) {
+      if (!isTopicQuestionReplyInvalidError(error)) throw error;
+      onFallback(error.reason);
+      const fallback = await this.aiProvider.generateResponse(turns, fallbackPolicy.strategy, {
+        ...context, topicQuestion: undefined, replyPlan: fallbackPolicy.replyPlan, replyBrief: fallbackPolicy.replyPlan,
+      });
+      return { ...fallback, topicQuestion: undefined, containsSurveyProbe: false, surveyProbeQuestionId: undefined };
+    }
   }
 }
 
@@ -2289,4 +2434,9 @@ function buildReplyStrategy(
     maxResponseLength: classification.urgency === 'high' ? 'short' : 'medium',
     forbiddenPatterns: [],
   };
+}
+
+/** Lets parallel lookups finish without their failure overtaking a safety step that must run first. */
+function settle<T>(promise: Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
+  return promise.then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
 }

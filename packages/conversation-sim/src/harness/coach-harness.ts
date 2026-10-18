@@ -22,6 +22,7 @@ import {
   type PendingQuestionClarification,
   type QuestionClarificationVerdict,
   type QuestionConfirmationPort,
+  type PulseBacklogService,
   type StyleProfileRecord,
 } from '@entalent/application';
 import type {
@@ -65,6 +66,8 @@ export interface CoachHarnessOptions {
   surveyRepo?: SurveyRepositoryPort;
   /** V2 question-confirmation state (ready bundles, clarifications); omitted means no V2 turns. */
   questionConfirmationRepo?: QuestionConfirmationPort;
+  /** Topic selection for the pulse cycle (GC round 3 CAP-1); omitted means no topic questions. */
+  pulseBacklogService?: Pick<PulseBacklogService, 'getNextProbeQuestion'>;
 }
 
 export interface GenerateResponseCall {
@@ -174,7 +177,7 @@ export class CoachHarness {
       this.escalation,
       undefined,
       options.scheduledActionRepo,
-      undefined,
+      options.pulseBacklogService as PulseBacklogService | undefined,
       this.styleRepo,
       this.goalRepo,
       options.questionConfirmationRepo,
