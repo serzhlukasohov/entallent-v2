@@ -68,7 +68,7 @@ function exactDisplayedStatement(text: string, statement: string): string | null
 }
 
 // Question punctuation across scripts; the second entry is U+037E (Greek question mark), not ';'.
-const QUESTION_PUNCTUATION = /[?\u037E\u055E\u061F\u1367\u1945\u2047\u2048\u2049\u2E2E\uFE56\uFF1F\u2753\u2754]/u;
+export const QUESTION_PUNCTUATION = /[?\u037E\u055E\u061F\u1367\u1945\u2047\u2048\u2049\u2E2E\uFE56\uFF1F\u2753\u2754]/u;
 export const BUNDLE_REPLY_INVALID = 'v2_bundle_reply_invalid';
 
 export type BundleReplyInvalidReason =

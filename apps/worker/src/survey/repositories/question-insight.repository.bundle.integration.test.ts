@@ -93,6 +93,8 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       survey_question_id uuid not null, question_version text not null,
       status text not null default 'collecting', working_summary text,
       ready_for_confirmation boolean not null default false,
+      meaning_sufficient boolean not null default false, driver_resolved boolean not null default false,
+      driver_requested_at timestamptz,
       confirmed_semantic_summary text,
       source_message_ids uuid[] not null default array[]::uuid[],
       confirmation_bundle_id uuid, confirmation_message_id uuid,

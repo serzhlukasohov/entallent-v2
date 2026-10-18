@@ -272,6 +272,62 @@ describe('SurveyEvidenceExtractionUseCase', () => {
     expect(surveyRepo.upsertGroupState).not.toHaveBeenCalled();
   });
 
+  // GC round 3 CAP-2 (T2): "motivation 9/10" with no reason keeps the topic open.
+  it.each([
+    { driverCaptured: undefined, driverDeclined: undefined, covered: false },
+    { driverCaptured: true, driverDeclined: false, covered: true },
+    { driverCaptured: false, driverDeclined: true, covered: true },
+  ])('passes typed driver signals to V2 capture (driver=$driverCaptured declined=$driverDeclined)', async (row) => {
+    const ai = makeAi('covered');
+    const evaluation = await vi.mocked(ai.evaluateSurveyEvidence).getMockImplementation()?.([], []);
+    vi.mocked(ai.evaluateSurveyEvidence).mockResolvedValue({
+      candidateQuestionIds: ['q-1'],
+      ...evaluation,
+      evidence: [{ ...(evaluation as { evidence: object[] }).evidence[0], driverCaptured: row.driverCaptured,
+        driverDeclined: row.driverDeclined }],
+    } as never);
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn().mockResolvedValue('captured'),
+    } as unknown as QuestionWorkingCapturePort;
+    const pulseService = makePulseService();
+    await new SurveyEvidenceExtractionUseCase(
+      ai, makeConversationRepo(), makeSurveyRepo('insufficient_evidence'), pulseService, questionCapture,
+    ).execute(BASE_INPUT);
+
+    expect(questionCapture.captureMeaning).toHaveBeenCalledWith(expect.objectContaining({
+      sufficientMeaning: true,
+      driverCaptured: row.driverCaptured === true,
+      driverDeclined: row.driverDeclined === true,
+    }));
+    if (row.covered) {
+      expect(pulseService.markQuestionCovered).toHaveBeenCalledWith('u-1', 'w-1', 'q-1', 1);
+    } else {
+      expect(pulseService.markQuestionCovered).not.toHaveBeenCalled();
+    }
+  });
+
+  it('records an explicit driver decline that carries no new meaning', async () => {
+    const ai = makeAi('covered');
+    vi.mocked(ai.evaluateSurveyEvidence).mockResolvedValue({
+      candidateQuestionIds: [], voluntaryReopenQuestionIds: [], evidence: [], driverDeclinedQuestionIds: ['q-1', 'q-unknown'],
+    } as never);
+    const questionCapture = {
+      getWindowMode: vi.fn().mockResolvedValue('v2'),
+      captureMeaning: vi.fn(),
+      recordDriverDeclined: vi.fn().mockResolvedValue(true),
+    } as unknown as QuestionWorkingCapturePort;
+    await new SurveyEvidenceExtractionUseCase(
+      ai, makeConversationRepo(), makeSurveyRepo('insufficient_evidence'), makePulseService(), questionCapture,
+    ).execute(BASE_INPUT);
+
+    expect(questionCapture.recordDriverDeclined).toHaveBeenCalledOnce();
+    expect(questionCapture.recordDriverDeclined).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', surveyWindowId: 'w-1',
+      surveyQuestionId: 'q-1', questionVersion: '1', sourceMessageId: 'm-1',
+    });
+  });
+
   it('evaluates V2 evidence before writes and rejects changed source history', async () => {
     const conversationRepo = makeConversationRepo();
     const surveyRepo = makeSurveyRepo('insufficient_evidence');

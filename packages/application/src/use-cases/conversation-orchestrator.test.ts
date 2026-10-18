@@ -3,6 +3,7 @@ import { ModerationSignalError } from '@entalent/contracts';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import { ProviderContentFilterError } from '../ports/provider-error';
 import { BundleReplyInvalidError } from '../utils/question-bundle-composition';
+import { TopicQuestionReplyInvalidError } from '../utils/topic-question-reply';
 import {
   REPORTING_DISCLOSURE_VERSION,
   getDataUseExplanationText,
@@ -6328,5 +6329,288 @@ describe('GC round 3 S4b: a rejected corrected statement gets one more clarifica
     expect(repo.applyQuestionBundleVerdict).not.toHaveBeenCalled();
     const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
     expect(context.questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+  });
+});
+
+// GC round 3 CAP-1, CAP-2 (T1, T2): the policy decides; a due topic question is required (ADR-013 D4, D8).
+describe('GC round 3 CAP-1: topic steering inside an active V2 cycle', () => {
+  const at = (minute: number) => new Date(INBOUND_OCCURRED_AT.getTime() + minute * 60_000);
+  const disclosure = {
+    id: 'disclosure-1', ...OWNERSHIP, direction: 'outbound', text: 'Your reflections can be used in aggregated reporting.',
+    occurredAt: at(-10), metadata: { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION },
+  };
+  const inbound = (id: string, minute: number) => ({ id, ...OWNERSHIP, direction: 'inbound', text: `turn ${id}`, occurredAt: at(minute), metadata: undefined });
+  const outbound = (id: string, minute: number, metadata: Record<string, unknown> = {}) => ({
+    id, ...OWNERSHIP, direction: 'outbound', text: `reply ${id}`, occurredAt: at(minute), metadata,
+  });
+  const current = inbound('m-1', 0);
+  const openSnapshot = {
+    surveyWindowId: 'w-v2',
+    groups: [
+      { questionGroup: 'autonomy', questions: [{ surveyQuestionId: 'q-a1', status: 'collecting' }] },
+      { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-g1', status: 'confirmed' }] },
+    ],
+  };
+  const candidate = {
+    question: { id: 'q-a1', questionGroup: 'autonomy', responseType: 'open_ended', probeStrategies: ['How free they are to choose methods'] },
+    windowId: 'w-v2',
+    focus: 'open',
+  };
+  const topicReply = {
+    text: 'That release sounds tight. How much say do you have over how you plan it?',
+    replyText: 'That release sounds tight.', topicQuestion: 'How much say do you have over how you plan it?',
+    confidence: 0.9, containsSurveyProbe: true, surveyProbeQuestionId: 'q-a1',
+  };
+
+  function setup(messages: unknown[], overrides: { probe?: unknown; snapshot?: unknown; escalation?: unknown } = {}) {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(messages);
+    m.aiProvider.generateResponse.mockResolvedValue(topicReply);
+    const pulseBacklog = { getNextProbeQuestion: vi.fn().mockResolvedValue(overrides.probe ?? candidate) };
+    const repo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn(),
+      findCycleProgress: vi.fn().mockResolvedValue(overrides.snapshot === undefined ? openSnapshot : overrides.snapshot),
+      recordDriverRequested: vi.fn().mockResolvedValue(true),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, overrides.escalation as never, m.featureFlags, undefined, pulseBacklog as never,
+      undefined, undefined, repo,
+    );
+    return { m, orch, pulseBacklog, repo };
+  }
+  const lastContext = (m: ReturnType<typeof baseMocks>) => m.aiProvider.generateResponse.mock.calls.at(-1)[2];
+  const savedOutbound = (m: ReturnType<typeof baseMocks>) => m.conversationRepo.saveMessage.mock.calls
+    .map((call: [{ direction: string; metadata?: Record<string, unknown>; text: string }]) => call[0])
+    .find((message: { direction: string }) => message.direction === 'outbound');
+
+  it('three turns after disclosure with no topic yet, the reply carries the required topic question', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ]);
+
+    const result = await orch.orchestrate(INPUT);
+
+    const context = lastContext(m);
+    expect(context.topicQuestion).toEqual({
+      questionId: 'q-a1', questionGroup: 'autonomy', focus: 'open',
+      probeStrategies: ['How free they are to choose methods'],
+    });
+    expect(context.surveyProbeQuestion).toBeUndefined();
+    expect(context.replyPlan.questionPolicy).toEqual({ maxQuestions: 1, reason: 'topic_question' });
+    expect(context.replyPlan.forbiddenMoves).not.toContain('survey_probe');
+    expect(result.responseText).toBe(topicReply.text);
+    expect(savedOutbound(m).metadata).toMatchObject({
+      containsSurveyProbe: true, surveyProbeQuestionId: 'q-a1',
+      topicQuestion: { questionGroup: 'autonomy', focus: 'open', policyVersion: 'topic-question-v1' },
+    });
+  });
+
+  it('two turns after disclosure: no topic question and no optional probe hint inside a V2 window', async () => {
+    const { m, orch } = setup([disclosure, inbound('m-a', -8), outbound('o-a', -7), current]);
+
+    await orch.orchestrate(INPUT);
+
+    const context = lastContext(m);
+    expect(context.topicQuestion).toBeUndefined();
+    expect(context.surveyProbeQuestion).toBeUndefined();
+    expect(savedOutbound(m).metadata).toMatchObject({ containsSurveyProbe: false, topicQuestionDecision: 'cadence_not_reached' });
+  });
+
+  it('a completed topic opens the next topic on the next eligible turn', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7, { containsSurveyProbe: true }), inbound('m-b', -6),
+      outbound('o-b', -5, { topicCompleted: 'growth' }), current,
+    ]);
+
+    await orch.orchestrate(INPUT);
+
+    expect(lastContext(m).topicQuestion).toMatchObject({ questionId: 'q-a1', questionGroup: 'autonomy' });
+  });
+
+  it('asks for the driver when the next question holds a status without one (CAP-2)', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ], { probe: { ...candidate, focus: 'driver' } });
+
+    await orch.orchestrate(INPUT);
+
+    expect(lastContext(m).topicQuestion).toMatchObject({ questionId: 'q-a1', focus: 'driver' });
+  });
+
+  it('a safety turn carries no topic question', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ]);
+    m.aiProvider.detectRisk.mockResolvedValue({
+      ...NO_RISK, riskType: 'burnout', severity: 'high', confidence: 0.9, surveyMustBeBlocked: true,
+    });
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'I am here with you.', confidence: 0.9, containsSurveyProbe: false });
+
+    await orch.orchestrate(INPUT);
+
+    expect(lastContext(m).topicQuestion).toBeUndefined();
+    expect(lastContext(m).surveyProbeQuestion).toBeUndefined();
+  });
+
+  it('no active V2 window keeps the legacy optional probe', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ], { snapshot: null });
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false });
+
+    await orch.orchestrate(INPUT);
+
+    expect(lastContext(m).topicQuestion).toBeUndefined();
+    expect(lastContext(m).surveyProbeQuestion).toMatchObject({ id: 'q-a1' });
+  });
+
+  it('when the topic rail fails after its repair, replies without the topic and records why', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ]);
+    m.aiProvider.generateResponse
+      .mockRejectedValueOnce(new TopicQuestionReplyInvalidError('question_count'))
+      .mockResolvedValueOnce({ text: 'That release sounds tight.', confidence: 0.9, containsSurveyProbe: false });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(2);
+    expect(m.aiProvider.generateResponse.mock.calls[1][2].topicQuestion).toBeUndefined();
+    expect(result.responseText).toBe('That release sounds tight.');
+    expect(savedOutbound(m).metadata).toMatchObject({
+      containsSurveyProbe: false, topicQuestionFallbackReason: 'question_count',
+    });
+  });
+
+  it('records that the driver was asked, so it is asked at most once (CAP-2)', async () => {
+    const { m, orch, repo } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ], { probe: { ...candidate, focus: 'driver' } });
+
+    await orch.orchestrate(INPUT);
+
+    expect(repo.recordDriverRequested).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', surveyQuestionId: 'q-a1',
+    }));
+    expect(lastContext(m).topicQuestion.focus).toBe('driver');
+  });
+
+  it('does not record a driver request when the topic fell back', async () => {
+    const { m, orch, repo } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ], { probe: { ...candidate, focus: 'driver' } });
+    m.aiProvider.generateResponse
+      .mockRejectedValueOnce(new TopicQuestionReplyInvalidError('question_count'))
+      .mockResolvedValueOnce({ text: 'Noted.', confidence: 0.9, containsSurveyProbe: false });
+
+    await orch.orchestrate(INPUT);
+
+    expect(repo.recordDriverRequested).not.toHaveBeenCalled();
+  });
+
+  it('falls back with the original question policy, not the forced topic allowance', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ]);
+    m.aiProvider.generateResponse
+      .mockRejectedValueOnce(new TopicQuestionReplyInvalidError('reply_question'))
+      .mockResolvedValueOnce({ text: 'Noted.', confidence: 0.9, containsSurveyProbe: false });
+
+    await orch.orchestrate(INPUT);
+
+    const fallback = m.aiProvider.generateResponse.mock.calls[1];
+    expect(fallback[2].replyPlan.questionPolicy).toEqual({ maxQuestions: 1, reason: 'new_substance_allows_question' });
+    expect(fallback[2].replyBrief.questionPolicy.reason).toBe('new_substance_allows_question');
+  });
+
+  it('stops at three topic questions in 24 hours using the durable count', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ]);
+    m.conversationRepo.countTopicQuestionsSince = vi.fn().mockResolvedValue(3);
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.conversationRepo.countTopicQuestionsSince).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 't-1', conversationId: 'c-1',
+    }));
+    expect(lastContext(m).topicQuestion).toBeUndefined();
+    expect(lastContext(m).surveyProbeQuestion).toBeUndefined();
+    expect(savedOutbound(m).metadata).toMatchObject({ topicQuestionDecision: 'daily_cap_reached' });
+  });
+
+  it('keeps the legacy probe when every V2 topic is already closed', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ], { snapshot: { surveyWindowId: 'w-v2', groups: [
+      { questionGroup: 'autonomy', questions: [{ surveyQuestionId: 'q-a1', status: 'confirmed' }] },
+    ] } });
+    m.aiProvider.generateResponse.mockResolvedValue({ text: 'reply', confidence: 0.9, containsSurveyProbe: false });
+
+    await orch.orchestrate(INPUT);
+
+    expect(lastContext(m).topicQuestion).toBeUndefined();
+    expect(lastContext(m).surveyProbeQuestion).toMatchObject({ id: 'q-a1' });
+  });
+
+  it('escalates a risk turn before a failed cycle lookup fails the turn', async () => {
+    const escalation = { raise: vi.fn() };
+    const { m, orch, repo } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), current,
+    ], { escalation });
+    repo.findCycleProgress.mockRejectedValue(new Error('v2_multiple_active_survey_windows'));
+    m.aiProvider.detectRisk.mockResolvedValue({
+      ...NO_RISK, riskType: 'potential_self_harm', severity: 'critical', confidence: 0.95,
+      immediateResponseRequired: true, escalationRecommended: true, surveyMustBeBlocked: true,
+    });
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('v2_multiple_active_survey_windows');
+    expect(escalation.raise).toHaveBeenCalledOnce();
+  });
+
+  it('marks the completion reply so the next turn can open the next topic', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'agree' });
+    const repo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue({
+        id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy',
+        displayedText: 'Is that fair?',
+        components: [{ surveyQuestionId: 'q-a1', questionVersion: 'v2', statement: 'You choose methods.' }],
+      }),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn(),
+      findCycleProgress: vi.fn().mockResolvedValue({
+        surveyWindowId: 'w-v2',
+        groups: [
+          { questionGroup: 'autonomy', questions: [{ surveyQuestionId: 'q-a1', status: 'pending_confirmation' }] },
+          { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-g1', status: 'collecting' }] },
+        ],
+      }),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, { getNextProbeQuestion: vi.fn().mockResolvedValue(candidate) } as never,
+      undefined, undefined, repo,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(lastContext(m).topicQuestion).toBeUndefined();
+    expect(savedOutbound(m).metadata).toMatchObject({ topicCompleted: 'autonomy' });
   });
 });

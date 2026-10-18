@@ -157,6 +157,21 @@ describe('ProactiveCheckInUseCase', () => {
     });
   });
 
+  // GC round 3 CAP-2: the driver of a captured status is asked inside the conversation, never as a
+  // generic proactive probe that would re-ask the status.
+  it('does not turn a driver follow-up into a generic proactive probe', async () => {
+    const ai = makeAiProvider();
+    const backlog = makePulseBacklogService(makeQuestion());
+    vi.mocked(backlog.getNextProbeQuestion).mockResolvedValue({ question: makeQuestion(), windowId: 'w-1', focus: 'driver' });
+    const useCase = new ProactiveCheckInUseCase(makeConversationRepo(), ai, makeOutbox(), undefined, backlog);
+
+    await useCase.execute(BASE_INPUT);
+
+    const context = (ai.generateResponse as ReturnType<typeof vi.fn>).mock.calls[0][2];
+    expect(context.proactiveCheckIn.probeQuestion).toBeUndefined();
+    expect(backlog.recordProbeSent).not.toHaveBeenCalled();
+  });
+
   it('sends disclosure and suppresses a probe until delivery is recorded', async () => {
     const conversationRepo = makeConversationRepo({
       findLatestDeliveredReportingDisclosure: vi.fn().mockResolvedValue(null),

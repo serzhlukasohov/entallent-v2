@@ -28,6 +28,13 @@ export interface ConversationRepositoryPort {
   findMessageById?(id: string, tenantId: string, conversationId: string): Promise<MessageRecord | null>;
   findById(id: string, tenantId: string): Promise<ConversationRecord | null>;
   findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]>;
+  /**
+   * GC round 3 CAP-1: outbound topic questions (`containsSurveyProbe`) of this conversation since
+   * `since`, so the topic cap holds beyond the loaded message window.
+   */
+  countTopicQuestionsSince?(input: {
+    tenantId: string; userId: string; conversationId: string; since: Date;
+  }): Promise<number>;
   /** Historical context ending at the scoped inbound source, even after newer messages arrive. */
   findMessagesThrough?(input: {
     conversationId: string;
