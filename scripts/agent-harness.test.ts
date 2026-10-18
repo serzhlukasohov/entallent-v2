@@ -338,6 +338,46 @@ function testDefaultBaseCoversAllUnpushedCommits(): void {
   ]);
 }
 
+function testDefaultBaseExcludesChangesBroughtByAMainMerge(): void {
+  const repo = mkdtempSync(join(tmpdir(), 'agent-harness-main-merge-'));
+  const git = (...args: string[]): string =>
+    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const commit = (path: string, body: string, message: string): string => {
+    mkdirSync(join(repo, path, '..'), { recursive: true });
+    writeFileSync(join(repo, path), body);
+    git('add', path);
+    git('commit', '-qm', message);
+    return git('rev-parse', 'HEAD');
+  };
+  git('init', '-q', '-b', 'feature');
+  git('config', 'user.email', 'harness@example.invalid');
+  git('config', 'user.name', 'Harness Test');
+  const baseline = commit('README.md', 'baseline\n', 'baseline');
+  git('update-ref', 'refs/remotes/origin/main', baseline);
+  const pushed = commit('feature.ts', 'export const feature = true;\n', 'feature');
+  git('update-ref', 'refs/remotes/origin/feature', pushed);
+  git('remote', 'add', 'origin', repo);
+  git('config', 'branch.feature.remote', 'origin');
+  git('config', 'branch.feature.merge', 'refs/heads/feature');
+
+  // Before main moves: the base stays the upstream, so only unpushed work is checked.
+  const local = commit('local.ts', 'export const local = true;\n', 'local');
+  assert.equal(resolveDefaultBase(repo), pushed);
+  assert.deepEqual(readChangedFiles(repo, resolveDefaultBase(repo)).paths, ['local.ts']);
+
+  // Main adds a migration and is merged into the branch after the last push.
+  git('checkout', '-q', '-b', 'main-tip', baseline);
+  const mainTip = commit('packages/database/migrations/0099_other.sql', 'select 1;\n', 'other migration');
+  git('update-ref', 'refs/remotes/origin/main', mainTip);
+  git('checkout', '-q', 'feature');
+  git('merge', '-q', '--no-edit', 'origin/main');
+  assert.notEqual(git('rev-parse', 'HEAD'), local);
+
+  assert.equal(resolveDefaultBase(repo), mainTip);
+  const changed = readChangedFiles(repo, resolveDefaultBase(repo)).paths;
+  assert.deepEqual(changed, ['feature.ts', 'local.ts']);
+}
+
 function testRetiredRenameKeepsDeletedSourcePath(): void {
   const repo = mkdtempSync(join(tmpdir(), 'agent-harness-rename-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
@@ -483,6 +523,7 @@ async function main(): Promise<void> {
   testReflectionRetrievesRelevantOpenFailure();
   testChangedFilesIncludeWorkingTreeAndMissingBaseFallsBack();
   testDefaultBaseCoversAllUnpushedCommits();
+testDefaultBaseExcludesChangesBroughtByAMainMerge();
   testRetiredRenameKeepsDeletedSourcePath();
   testDiffCheckUsesCommittedBase();
   testCheckRunsOnlyChangedActiveTests();

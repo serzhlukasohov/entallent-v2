@@ -21,9 +21,9 @@ Use this file to turn agent misses into harness improvements.
 - Symptom: After merging `origin/main` (which carried migration `0051`) into PR #25's branch, `git push` failed in the pre-push hook with `database integration target required`. `harness:check` without `--base` resolves the base to the branch upstream, so the diff `upstream..HEAD` contained the migration brought in by the merge; the PR itself changes no migration. `--base main` failed the same way because the local `main` in the main checkout was stale.
 - Expected: The pre-push gate checks the branch's changes relative to the branch it will merge into, so syncing with `main` never demands a database for someone else's migration.
 - Root cause layer: tooling
-- Harness fix: In `resolveDefaultBase`, prefer the merge base with `origin/main` (or the PR base) over the upstream when HEAD contains `origin/main`; until then push with `HARNESS_BASE_SHA=$(git rev-parse origin/main) git push`.
-- Regression check: On a branch, merge an `origin/main` that adds a migration, then run `pnpm harness:check` with no base and no `DATABASE_URL`; it must not require a database.
-- Status: open
+- Harness fix: `resolveDefaultBase` uses `origin/main` as the base when `origin/main` was merged into HEAD since the last push (HEAD contains it, the upstream does not); otherwise it keeps the upstream, so ordinary pushes still check only unpushed work. `--base` and `HARNESS_BASE_SHA` still win.
+- Regression check: `pnpm exec tsx scripts/agent-harness.test.ts` (`testDefaultBaseExcludesChangesBroughtByAMainMerge`: a temp repo whose branch merges a main that adds a migration resolves the base to the main tip and sees only the branch's own files).
+- Status: fixed
 
 ## 2026-10-02: Multiple active tenant definitions made V2 routing arbitrary
 

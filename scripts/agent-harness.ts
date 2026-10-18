@@ -333,7 +333,15 @@ export function resolveDefaultBase(repoRoot: string): string | null {
     ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
     { cwd: repoRoot, encoding: 'utf8' },
   );
-  const candidates = [upstream.status === 0 ? upstream.stdout.trim() : '', 'origin/main'].filter(
+  const upstreamRef = upstream.status === 0 ? upstream.stdout.trim() : '';
+  const isAncestor = (ancestor: string, descendant: string): boolean =>
+    spawnSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], { cwd: repoRoot }).status === 0;
+  // Main merged into the branch since the last push: diffing against the upstream would count
+  // main's own changes (for example its migrations) as this branch's, so use the PR's base.
+  const mainMergedSincePush = Boolean(upstreamRef)
+    && isAncestor('origin/main', 'HEAD')
+    && !isAncestor('origin/main', upstreamRef);
+  const candidates = (mainMergedSincePush ? ['origin/main'] : [upstreamRef, 'origin/main']).filter(
     Boolean,
   );
   for (const candidate of [...new Set(candidates)]) {
