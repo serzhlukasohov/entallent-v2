@@ -345,6 +345,11 @@ export type RiskAssessment = AssessedRisk | UnassessedRisk;
 export const SurveyEvidenceEvaluationSchema = z.object({
   candidateQuestionIds: z.array(z.string()),
   voluntaryReopenQuestionIds: z.array(z.string()).optional(),
+  /**
+   * GC round 3 CAP-2: questions whose driver the employee explicitly declined to give in the latest
+   * message when that refusal carries no new meaning of its own. Malformed output fails closed to [].
+   */
+  driverDeclinedQuestionIds: z.array(z.string()).optional().catch([]),
   evidence: z.array(
     z.object({
       questionId: z.string(),
@@ -357,6 +362,13 @@ export const SurveyEvidenceEvaluationSchema = z.object({
       followUpProbeNeeded: z.boolean(),
       thresholdReached: z.boolean(),
       assessmentShouldRemainUnknown: z.boolean(),
+      /**
+       * GC round 3 CAP-2: the employee said what drives or explains the status (a cause in their
+       * own words). A missing or malformed value fails closed to false: the question stays open.
+       */
+      driverCaptured: z.boolean().optional().catch(false),
+      /** The employee explicitly declined to say what drives it; honoured on the first refusal. */
+      driverDeclined: z.boolean().optional().catch(false),
     }),
   ),
 });
@@ -418,11 +430,13 @@ const optionalNullableText = z.preprocess((value) => value === null ? undefined 
 
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
-  confirmationSummary: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),
+  confirmationSummary: optionalNullableText,
   /** Two-part reply on a V2 bundle or clarification turn (GC round 3 CAP-4): the answer to the latest message. */
   replyText: optionalNullableText,
   /** The composed bundle or clarification text the model must return byte-for-byte. */
   bundleText: optionalNullableText,
+  /** GC round 3 CAP-1: the one topic question of the turn, required when a topic question is due. */
+  topicQuestion: optionalNullableText,
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
   surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),

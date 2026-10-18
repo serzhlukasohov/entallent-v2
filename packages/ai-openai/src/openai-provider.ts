@@ -51,8 +51,13 @@ import type {
   QuestionScoreResult,
 } from '@entalent/application';
 import {
+  BundleCompositionInvalidError,
   BundleReplyInvalidError,
+  TopicQuestionReplyInvalidError,
+  validateTopicQuestionReply,
+  composeTopicQuestionReplyText,
   composeBundleReplyText,
+  isBundleCompositionInvalidError,
   maxReplyChars,
   validateBundleReply,
   validateQuestionBundleComposition,
@@ -68,7 +73,9 @@ import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
 import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey';
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
-import { buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt } from './prompts/question-bundle';
+import {
+  buildQuestionBundleRepairInstruction, buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt,
+} from './prompts/question-bundle';
 import { buildQuestionBundleInterpretSystemPrompt, buildQuestionBundleInterpretUserPrompt } from './prompts/question-bundle-interpret';
 import {
   buildQuestionClarificationSystemPrompt,
@@ -156,6 +163,32 @@ function stripExposedConfirmationSummaryLabel(response: GeneratedResponse): Gene
 }
 
 /** A draft that fails to parse is a contract break like any other: repair once, then fail closed. */
+const TOPIC_QUESTION_RETRY_INSTRUCTION =
+  '\n\nYour previous draft broke the topic-question contract. Return "replyText" as up to 3 sentences that answer the employee\'s latest message with no question mark or other question punctuation, and "topicQuestion" as exactly one direct question on the given topic that ends with its question mark and contains no other question. Keep both within the length limit.';
+
+/** GC round 3 CAP-1: validate the required topic question; probe metadata is set by code, not echoed. */
+function assembleTopicQuestionReply(
+  raw: string,
+  questionId: string,
+  options: { maxReplyChars: number },
+): GeneratedResponse | TopicQuestionReplyInvalidError {
+  let response: GeneratedResponse;
+  try {
+    response = GeneratedResponseSchema.parse(JSON.parse(raw));
+  } catch {
+    return new TopicQuestionReplyInvalidError('draft_unparseable');
+  }
+  try {
+    const parts = validateTopicQuestionReply(response, options);
+    return {
+      ...response, ...parts, text: composeTopicQuestionReplyText(parts), confirmationSummary: undefined,
+      containsSurveyProbe: true, surveyProbeQuestionId: questionId,
+    };
+  } catch (error) {
+    return error instanceof TopicQuestionReplyInvalidError ? error : new TopicQuestionReplyInvalidError('reply_missing');
+  }
+}
+
 function assembleBundleReply(
   raw: string,
   bundleText: string,
@@ -253,6 +286,16 @@ function keepValid<T>(value: unknown, schema: SafeParser<T>): T[] {
     if (result.success) out.push(result.data);
   }
   return out;
+}
+
+/** A draft that is not JSON is a composition failure the model can repair, not a parser crash. */
+function parseCompositionDraft(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new BundleCompositionInvalidError('draft_unparseable');
+    throw error;
+  }
 }
 
 export class OpenAiProvider implements AiProviderPort {
@@ -454,6 +497,9 @@ export class OpenAiProvider implements AiProviderPort {
     if (context.trailingBundle) {
       return this.generateBundleReply(system, user, strategy, context, context.trailingBundle);
     }
+    if (context.topicQuestion) {
+      return this.generateTopicQuestionReply(system, user, strategy, context, context.topicQuestion.questionId);
+    }
 
     const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
@@ -523,22 +569,53 @@ export class OpenAiProvider implements AiProviderPort {
     throw corrected;
   }
 
+  /**
+   * GC round 3 CAP-1 (ADR-013 D8): the topic question is a required field. One repair, then fail
+   * closed with the typed reason so the orchestrator can reply without the topic this turn.
+   */
+  private async generateTopicQuestionReply(
+    system: string,
+    user: string,
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    questionId: string,
+  ): Promise<GeneratedResponse> {
+    const options = { maxReplyChars: maxReplyChars(strategy, context) };
+    const first = assembleTopicQuestionReply(await this.complete(system, user, this.generationModel), questionId, options);
+    if (!(first instanceof TopicQuestionReplyInvalidError)) return first;
+    const corrected = assembleTopicQuestionReply(
+      await this.complete(system + TOPIC_QUESTION_RETRY_INSTRUCTION, user, this.generationModel), questionId, options,
+    );
+    if (!(corrected instanceof TopicQuestionReplyInvalidError)) return corrected;
+    throw corrected;
+  }
+
   async composeQuestionBundle(
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
     variant: QuestionBundleVariant = 'confirmation',
   ): Promise<QuestionBundleComposition> {
-    const raw = await this.complete(
-      buildQuestionBundleSystemPrompt(responseLanguage, questions.length, variant),
-      buildQuestionBundleUserPrompt(turns, questions),
-      this.generationModel,
-      2048,
-    );
-    return validateQuestionBundleComposition(
-      JSON.parse(raw) as unknown,
-      questions.map((question) => question.surveyQuestionId),
-    );
+    const system = buildQuestionBundleSystemPrompt(responseLanguage, questions.length, variant);
+    const user = buildQuestionBundleUserPrompt(turns, questions);
+    const questionIds = questions.map((question) => question.surveyQuestionId);
+    try {
+      return validateQuestionBundleComposition(
+        parseCompositionDraft(await this.complete(system, user, this.generationModel, 2048)),
+        questionIds,
+      );
+    } catch (error) {
+      if (!isBundleCompositionInvalidError(error)) throw error;
+      // ONE corrective recomposition naming the broken rule, then fail closed with the reason
+      // of the second draft so the turn can degrade diagnosably.
+      const repaired = await this.complete(
+        system + buildQuestionBundleRepairInstruction(error.reason),
+        user,
+        this.generationModel,
+        2048,
+      );
+      return validateQuestionBundleComposition(parseCompositionDraft(repaired), questionIds);
+    }
   }
 
   async interpretQuestionBundleResponse(

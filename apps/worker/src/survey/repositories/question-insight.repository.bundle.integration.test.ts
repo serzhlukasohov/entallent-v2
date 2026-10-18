@@ -85,7 +85,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       user_id uuid not null, survey_window_id uuid not null, question_group text not null,
       version text not null, displayed_text text, components jsonb, prompt_message_id uuid,
       status text not null default 'pending_delivery', created_at timestamptz not null default now(),
-      purged_at timestamptz, unique (tenant_id, user_id, survey_window_id, question_group, version)
+      purged_at timestamptz, kind text not null default 'confirmation', unique (tenant_id, user_id, survey_window_id, question_group, version)
     )`;
     await client`create temp table survey_question_working_insights (
       id uuid primary key default gen_random_uuid(), tenant_id uuid not null,
@@ -93,10 +93,12 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       survey_question_id uuid not null, question_version text not null,
       status text not null default 'collecting', working_summary text,
       ready_for_confirmation boolean not null default false,
+      meaning_sufficient boolean not null default false, driver_resolved boolean not null default false,
+      driver_requested_at timestamptz,
       confirmed_semantic_summary text,
       source_message_ids uuid[] not null default array[]::uuid[],
       confirmation_bundle_id uuid, confirmation_message_id uuid,
-      clarification_prompt_message_id uuid,
+      clarification_prompt_message_id uuid, clarification_attempts integer not null default 0,
       confirmed_at timestamptz, finalized_at timestamptz, purged_at timestamptz,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
@@ -600,6 +602,222 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       from survey_question_confirmation_bundles where id = ${bundleId}`;
     expect(fullyResolved.components).toBeNull();
     expect(fullyResolved.purged_at).not.toBeNull();
+  });
+
+  it('gives a rejected corrected statement one more clarification, then closes it as not collected (GC round 3 S4b)', async () => {
+    if (!client || !repository) return;
+    const windowId = randomUUID();
+    const ids = secondaryIds(1);
+    const meanings = ['Purpose statement one.', 'Purpose statement two.', 'Purpose statement three.'];
+    const corrected = 'My work matters when I see who uses it.';
+    await client`insert into survey_windows (id, tenant_id, user_id, survey_definition_id, status, period_end)
+      values (${windowId}, ${tenantId}, ${userId}, ${definitionId}, 'active', ${activePeriodEnd})`;
+    await client`insert into survey_window_scoring_policies values (${windowId}, ${tenantId}, ${policyId})`;
+    for (const [index, id] of ids.entries()) {
+      await client`insert into survey_question_working_insights (
+        tenant_id, user_id, survey_window_id, survey_question_id, question_version,
+        working_summary, source_message_ids, ready_for_confirmation)
+        values (${tenantId}, ${userId}, ${windowId}, ${id}, 'v2', ${meanings[index]}, array[${id}]::uuid[], true)`;
+      await client`insert into pulse_backlog (tenant_id, user_id, survey_window_id, survey_question_id, status)
+        values (${tenantId}, ${userId}, ${windowId}, ${id}, 'done')`;
+    }
+    let minute = 0;
+    const at = () => new Date(Date.UTC(2026, 8, 28, 20, minute++, 0)).toISOString();
+    const outbound = async (text: string) => {
+      const id = randomUUID();
+      await client`insert into messages values (${id}, ${tenantId}, ${userId}, ${conversationId}, 'outbound',
+        ${text}, ${at()}::timestamptz, null, null)`;
+      return id;
+    };
+    const deliver = async (id: string) => {
+      const sentAt = at();
+      await client`update messages set sent_at = ${sentAt}::timestamptz where id = ${id}`;
+      await repository.activateDeliveredQuestionBundle({ promptMessageId: id, tenantId, conversationId, deliveredAt: new Date(sentAt) });
+    };
+    const inbound = async (text: string) => {
+      const id = randomUUID();
+      await client`insert into messages values (${id}, ${tenantId}, ${userId}, ${conversationId}, 'inbound',
+        ${text}, ${at()}::timestamptz, null, null)`;
+      return id;
+    };
+    const [disputedRow] = await client`select id from survey_question_working_insights
+      where survey_window_id = ${windowId} and survey_question_id = ${ids[1]}`;
+    const clarify = async (expectedAttempts: number) => {
+      const text = 'What did I miss there?';
+      const promptId = await outbound(text);
+      expect(await repository.stageQuestionClarificationPrompt({
+        tenantId, userId, conversationId, workingInsightId: disputedRow.id, promptMessageId: promptId, displayedText: text,
+      })).toBe(true);
+      await deliver(promptId);
+      const [row] = await client`select clarification_attempts from survey_question_working_insights where id = ${disputedRow.id}`;
+      expect(row.clarification_attempts).toBe(expectedAttempts);
+      const replyId = await inbound('It is about who uses my work.');
+      expect(await repository.applyQuestionClarificationVerdict({
+        tenantId, userId, conversationId, workingInsightId: disputedRow.id, inboundMessageId: replyId,
+        verdict: { kind: 'clarified', correctedSummary: corrected },
+      })).toBe(true);
+      const displayed = `So the corrected version is: ${corrected} Is that right now?`;
+      const shownId = await outbound(displayed);
+      const bundleId = await repository.stageCorrectedStatementConfirmation({
+        tenantId, userId, conversationId, surveyWindowId: windowId, questionGroup: 'purpose',
+        workingInsightId: disputedRow.id, surveyQuestionId: ids[1], questionVersion: 'v2',
+        promptMessageId: shownId, displayedText: displayed, statement: corrected, expectedWorkingSummary: corrected,
+      });
+      await deliver(shownId);
+      return bundleId;
+    };
+
+    const text = `I heard that ${meanings.join(' ')} Is that fair?`;
+    const firstPrompt = await outbound(text);
+    const firstBundle = await repository.stageQuestionConfirmationBundle({
+      tenantId, userId, conversationId, surveyWindowId: windowId, questionGroup: 'purpose',
+      promptMessageId: firstPrompt, displayedText: text,
+      components: ids.map((surveyQuestionId, index) => ({
+        surveyQuestionId, questionVersion: 'v2', statement: meanings[index], expectedWorkingSummary: meanings[index],
+      })),
+    });
+    await deliver(firstPrompt);
+    const firstReply = await inbound('One and three yes, two is off.');
+    expect(await repository.findAwaitingQuestionBundle({ tenantId, userId, conversationId, inboundMessageId: firstReply }))
+      .toMatchObject({ id: firstBundle, kind: 'confirmation' });
+    expect(await repository.applyQuestionBundleVerdict({
+      tenantId, userId, conversationId, inboundMessageId: firstReply, bundleId: firstBundle,
+      verdict: { kind: 'partial', acceptedQuestionIds: [ids[0]!, ids[2]!], disputedQuestionIds: [ids[1]!], declinedQuestionIds: [] },
+    })).toBe(true);
+
+    const correctedOnce = await clarify(1);
+    const firstRejection = await inbound('No, that is still not it.');
+    expect(await repository.findAwaitingQuestionBundle({ tenantId, userId, conversationId, inboundMessageId: firstRejection }))
+      .toMatchObject({ id: correctedOnce, kind: 'corrected_statement', clarificationAttempts: 1 });
+    // A reject on a corrected statement must never wipe the correction.
+    await expect(repository.applyQuestionBundleVerdict({
+      tenantId, userId, conversationId, inboundMessageId: firstRejection, bundleId: correctedOnce, verdict: { kind: 'reject' },
+    })).rejects.toThrow('v2_corrected_statement_reject_unmapped');
+    expect(await repository.applyQuestionBundleVerdict({
+      tenantId, userId, conversationId, inboundMessageId: firstRejection, bundleId: correctedOnce,
+      verdict: { kind: 'partial', acceptedQuestionIds: [], disputedQuestionIds: [ids[1]!], declinedQuestionIds: [] },
+    })).toBe(true);
+    const [reopened] = await client`select status, working_summary from survey_question_working_insights where id = ${disputedRow.id}`;
+    expect(reopened).toMatchObject({ status: 'pending_clarification', working_summary: corrected });
+
+    const correctedTwice = await clarify(2);
+    const secondRejection = await inbound('Still no.');
+    expect(await repository.findAwaitingQuestionBundle({ tenantId, userId, conversationId, inboundMessageId: secondRejection }))
+      .toMatchObject({ id: correctedTwice, kind: 'corrected_statement', clarificationAttempts: 2 });
+    await expect(repository.applyQuestionBundleVerdict({
+      tenantId, userId, conversationId, inboundMessageId: secondRejection, bundleId: correctedTwice,
+      verdict: { kind: 'partial', acceptedQuestionIds: [], disputedQuestionIds: [ids[1]!], declinedQuestionIds: [] },
+    })).rejects.toThrow('v2_clarification_budget_exhausted');
+    expect(await repository.applyQuestionBundleVerdict({
+      tenantId, userId, conversationId, inboundMessageId: secondRejection, bundleId: correctedTwice,
+      verdict: { kind: 'partial', acceptedQuestionIds: [], disputedQuestionIds: [], declinedQuestionIds: [ids[1]!] },
+    })).toBe(true);
+    const [closed] = await client`select status, working_summary, confirmed_semantic_summary, source_message_ids, purged_at
+      from survey_question_working_insights where id = ${disputedRow.id}`;
+    expect(closed).toMatchObject({ status: 'declined', working_summary: null, confirmed_semantic_summary: null, source_message_ids: [] });
+    expect(closed.purged_at).not.toBeNull();
+    const [backlog] = await client`select status, resulted_in_coverage from pulse_backlog
+      where survey_window_id = ${windowId} and survey_question_id = ${ids[1]}`;
+    expect(backlog).toMatchObject({ status: 'done', resulted_in_coverage: false });
+    expect(await repository.findAppliedQuestionVerdictForInbound({
+      tenantId, userId, conversationId, inboundMessageId: secondRejection,
+    })).toEqual({ kind: 'bundle', verdictKind: 'partial', questionGroup: 'purpose', questionNotCollected: true });
+    expect(await repository.findAppliedQuestionVerdictForInbound({
+      tenantId, userId, conversationId, inboundMessageId: firstReply,
+    })).toEqual({ kind: 'bundle', verdictKind: 'partial', questionGroup: 'purpose', questionNotCollected: false });
+  });
+
+  it('offers a corrected meaning that was not shown on its turn as a corrected statement later (GC round 3 S4b review)', async () => {
+    if (!client || !repository) return;
+    const otherUser = randomUUID();
+    const windowId = randomUUID();
+    const ids = secondaryIds(2);
+    const meanings = ['Belonging one.', 'Belonging two.', 'Belonging three.'];
+    const corrected = 'I feel part of the team when I am asked first.';
+    await client`insert into survey_windows (id, tenant_id, user_id, survey_definition_id, status, period_end)
+      values (${windowId}, ${tenantId}, ${otherUser}, ${definitionId}, 'active', ${activePeriodEnd})`;
+    await client`insert into survey_window_scoring_policies values (${windowId}, ${tenantId}, ${policyId})`;
+    for (const [index, id] of ids.entries()) {
+      await client`insert into survey_question_working_insights (
+        tenant_id, user_id, survey_window_id, survey_question_id, question_version,
+        working_summary, source_message_ids, ready_for_confirmation)
+        values (${tenantId}, ${otherUser}, ${windowId}, ${id}, 'v2', ${meanings[index]}, array[${id}]::uuid[], true)`;
+    }
+    let minute = 0;
+    const at = () => new Date(Date.UTC(2026, 8, 28, 21, minute++, 0)).toISOString();
+    const outbound = async (text: string) => {
+      const id = randomUUID();
+      await client`insert into messages values (${id}, ${tenantId}, ${otherUser}, ${conversationId}, 'outbound',
+        ${text}, ${at()}::timestamptz, null, null)`;
+      return id;
+    };
+    const deliver = async (id: string) => {
+      const sentAt = at();
+      await client`update messages set sent_at = ${sentAt}::timestamptz where id = ${id}`;
+      await repository.activateDeliveredQuestionBundle({ promptMessageId: id, tenantId, conversationId, deliveredAt: new Date(sentAt) });
+    };
+    const inbound = async (text: string) => {
+      const id = randomUUID();
+      await client`insert into messages values (${id}, ${tenantId}, ${otherUser}, ${conversationId}, 'inbound',
+        ${text}, ${at()}::timestamptz, null, null)`;
+      return id;
+    };
+    const text = `I heard that ${meanings.join(' ')} Is that fair?`;
+    const prompt = await outbound(text);
+    const bundleId = await repository.stageQuestionConfirmationBundle({
+      tenantId, userId: otherUser, conversationId, surveyWindowId: windowId, questionGroup: 'belonging',
+      promptMessageId: prompt, displayedText: text,
+      components: ids.map((surveyQuestionId, index) => ({
+        surveyQuestionId, questionVersion: 'v2', statement: meanings[index], expectedWorkingSummary: meanings[index],
+      })),
+    });
+    await deliver(prompt);
+    const reply = await inbound('One and three yes, two is off.');
+    expect(await repository.applyQuestionBundleVerdict({
+      tenantId, userId: otherUser, conversationId, inboundMessageId: reply, bundleId,
+      verdict: { kind: 'partial', acceptedQuestionIds: [ids[0]!, ids[2]!], disputedQuestionIds: [ids[1]!], declinedQuestionIds: [] },
+    })).toBe(true);
+    // The accepted siblings are finalized and purged by the finalizer in production.
+    await client`update survey_question_working_insights set purged_at = now(), finalized_at = now(),
+      working_summary = null, confirmed_semantic_summary = null, source_message_ids = array[]::uuid[]
+      where survey_window_id = ${windowId} and status = 'confirmed'`;
+    const [row] = await client`select id from survey_question_working_insights
+      where survey_window_id = ${windowId} and survey_question_id = ${ids[1]}`;
+    const clarifyText = 'What did I miss there?';
+    const clarifyPrompt = await outbound(clarifyText);
+    expect(await repository.stageQuestionClarificationPrompt({
+      tenantId, userId: otherUser, conversationId, workingInsightId: row.id, promptMessageId: clarifyPrompt, displayedText: clarifyText,
+    })).toBe(true);
+    await deliver(clarifyPrompt);
+    const correction = await inbound('It is about being asked first. Bye for now.');
+    expect(await repository.applyQuestionClarificationVerdict({
+      tenantId, userId: otherUser, conversationId, workingInsightId: row.id, inboundMessageId: correction,
+      verdict: { kind: 'clarified', correctedSummary: corrected },
+    })).toBe(true);
+
+    // The closing turn did not show the correction; the ordinary ready path must show it as one.
+    const ready = await repository.findReadyQuestionBundle({ tenantId, userId: otherUser });
+    expect(ready).toMatchObject({
+      questionGroup: 'belonging', kind: 'corrected_statement',
+      questions: [{ surveyQuestionId: ids[1], workingSummary: corrected }],
+    });
+    const shownText = `So the corrected version is: ${corrected} Is that right now?`;
+    const shown = await outbound(shownText);
+    const shownBundle = await repository.stageQuestionConfirmationBundle({
+      tenantId, userId: otherUser, conversationId, surveyWindowId: windowId, questionGroup: 'belonging',
+      promptMessageId: shown, displayedText: shownText,
+      components: [{ surveyQuestionId: ids[1]!, questionVersion: 'v2', statement: corrected, expectedWorkingSummary: corrected }],
+    });
+    const [stored] = await client`select kind from survey_question_confirmation_bundles where id = ${shownBundle}`;
+    expect(stored.kind).toBe('corrected_statement');
+    await deliver(shown);
+    const rejection = await inbound('No, that is still not it.');
+    expect(await repository.findAwaitingQuestionBundle({
+      tenantId, userId: otherUser, conversationId, inboundMessageId: rejection,
+    })).toMatchObject({ id: shownBundle, kind: 'corrected_statement', clarificationAttempts: 1 });
+    await expect(repository.applyQuestionBundleVerdict({
+      tenantId, userId: otherUser, conversationId, inboundMessageId: rejection, bundleId: shownBundle, verdict: { kind: 'reject' },
+    })).rejects.toThrow('v2_corrected_statement_reject_unmapped');
   });
 
   it.each([true, false])(

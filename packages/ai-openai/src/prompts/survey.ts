@@ -17,6 +17,9 @@ Evidence extraction rules:
 - thresholdReached: true when completeness ≥ 0.70 AND confidence ≥ 0.75 simultaneously
 - assessmentShouldRemainUnknown: true when there is NO relevant signal at all, or when a contraindication is present (e.g. employee in crisis, actively distressed, discussing the contraindication topic)
 - numericValue: for responseType "numeric_0_10", copy the employee's explicit rating only when it is clearly an answer to that question and is between 0 and 10 inclusive. Never infer a rating from sentiment or polarity. Omit numericValue when no explicit rating was given.
+- driverCaptured: true only when the employee stated, in this item's evidence, what drives or explains their status on this question: a cause, reason, or concrete circumstance behind it in their own words (for example "9/10, because the new project lets me own the design"), and the latest employee message states or explicitly reaffirms it. A rating or status alone ("motivation is 9/10", "I want to leave", "it's fine") is not a driver; neither is your own guess at a cause, nor a reason the employee gave only in an earlier turn.
+- driverDeclined: true only when the employee explicitly declined to say what drives it (for example "I'd rather not go into why"). Not answering, changing the subject, or a short reply is not a decline.
+- driverDeclinedQuestionIds: list question IDs only when the latest employee message explicitly declines to say what drives a status they gave earlier on that question, and the refusal adds no new meaning (so there is no evidence item to carry driverDeclined). Otherwise return [].
 - voluntaryReopenQuestionIds: list open-ended question IDs only when the latest employee message explicitly volunteers to discuss them after a previous skip or refusal (for example, "I changed my mind; let's talk about growth"). A topic mention, older transcript content, or inferred willingness is insufficient. This list is independent of evidence[]: the employee may reopen a question without yet giving a substantive answer. Otherwise return [].
 ${options?.focusLatestEmployeeMessage ? '- For this evaluation, extract evidence only when the latest employee message expresses or explicitly reaffirms it. Earlier turns are context only: they may clarify what a short answer refers to, but must not create evidence by themselves. If the latest employee message adds no relevant meaning, return empty evidence[] and candidateQuestionIds[].' : ''}
 
@@ -35,6 +38,7 @@ Return JSON only:
 {
   "candidateQuestionIds": ["id1", "id2"],
   "voluntaryReopenQuestionIds": [],
+  "driverDeclinedQuestionIds": [],
   "evidence": [
     {
       "questionId": "uuid",
@@ -45,7 +49,9 @@ Return JSON only:
       "confidence": 0.0,
       "followUpProbeNeeded": false,
       "thresholdReached": false,
-      "assessmentShouldRemainUnknown": false
+      "assessmentShouldRemainUnknown": false,
+      "driverCaptured": false,
+      "driverDeclined": false
     }
   ]
 }${INJECTION_GUARD}`;

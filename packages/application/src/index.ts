@@ -16,17 +16,33 @@ export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from '.
 export type { FollowUpContextPort, FollowUpContextData } from './ports/follow-up-context.port';
 export type { ProactiveSchedulerRepositoryPort, FindCheckInCandidatesParams, CheckInCandidate, CheckInEnqueuePort, CheckInEnqueuePayload } from './ports/proactive-scheduler.repository.port';
 export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams, StageGroupConfirmationParams, RecordGroupDeidentificationDecisionParams, TransitionAwaitingGroupStateParams, WithdrawGroupStateParams, ConfirmGroupStateParams, FindConfirmedGroupStatesParams, ConfirmedGroupReportStateRecord, SurveyTeamRecord, OpenSurveyReportingCycleParams, FindReportingCohortsReadyForFinalReportsParams, ExpireTemporaryGroupStatesForClosedCohortsParams } from './ports/survey.repository.port';
-export type { QuestionWorkingCapturePort, CaptureQuestionMeaningInput } from './ports/question-working-capture.port';
-export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict, CycleProgressSnapshot } from './ports/question-confirmation.port';
+export type { QuestionWorkingCapturePort, CaptureQuestionMeaningInput, QuestionWorkingCoverage } from './ports/question-working-capture.port';
+export { accumulateQuestionReadiness, needsDriver } from './utils/question-readiness';
+export type { QuestionReadinessState } from './utils/question-readiness';
+export {
+  TOPIC_QUESTION_POLICY, canAskTopicQuestion, readTopicCadence, isTopicQuestionMessage, isTopicCompletionMessage,
+} from './utils/topic-question-policy';
+export type {
+  TopicCadence, TopicCadenceMessage, TopicQuestionFacts, TopicQuestionDecision, TopicQuestionBlockReason,
+} from './utils/topic-question-policy';
+export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleKind, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict, CycleProgressSnapshot } from './ports/question-confirmation.port';
 export type { QuestionBundleComposition } from './ports/ai-provider.port';
 export {
   validateQuestionBundleComposition, validateBundleReply, composeBundleReplyText, isBundleShownIn,
   isBundleReplyInvalidError, BundleReplyInvalidError, BUNDLE_REPLY_INVALID,
+  isBundleCompositionInvalidError, BundleCompositionInvalidError, BUNDLE_COMPOSITION_INVALID,
 } from './utils/question-bundle-composition';
-export type { BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason } from './utils/question-bundle-composition';
+export type {
+  BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason, BundleCompositionInvalidReason,
+} from './utils/question-bundle-composition';
 export { maxReplyChars } from './utils/reply-length';
-export type { TrailingBundle } from './ports/ai-provider.port';
-export { validateQuestionBundleVerdict } from './utils/question-bundle-verdict';
+export {
+  TopicQuestionReplyInvalidError, isTopicQuestionReplyInvalidError, validateTopicQuestionReply,
+  composeTopicQuestionReplyText,
+} from './utils/topic-question-reply';
+export type { TopicQuestionReplyParts, TopicQuestionReplyInvalidReason } from './utils/topic-question-reply';
+export type { TrailingBundle, TopicQuestionRequest } from './ports/ai-provider.port';
+export { validateQuestionBundleVerdict, resolveCorrectedStatementVerdict, MAX_QUESTION_CLARIFICATIONS } from './utils/question-bundle-verdict';
 export { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from './utils/question-clarification';
 export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';
 export type { PulseBacklogRepositoryPort, PulseBacklogRecord, ResolvedIgnore, ProactivePulseConfig } from './ports/pulse-backlog.repository.port';

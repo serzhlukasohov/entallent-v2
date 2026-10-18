@@ -65,9 +65,13 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     QuestionCutoffProcessor,
     {
       provide: PulseBacklogService,
-      useFactory: (backlogRepo: PulseBacklogRepository, surveyRepo: SurveyRepository) =>
-        new PulseBacklogService(backlogRepo, surveyRepo),
-      inject: [PulseBacklogRepository, SurveyRepository],
+      // GC round 3 CAP-1: topic selection reads V2 working insights as coverage.
+      useFactory: (
+        backlogRepo: PulseBacklogRepository,
+        surveyRepo: SurveyRepository,
+        questionInsightRepo: QuestionInsightRepository,
+      ) => new PulseBacklogService(backlogRepo, surveyRepo, questionInsightRepo),
+      inject: [PulseBacklogRepository, SurveyRepository, QuestionInsightRepository],
     },
     {
       provide: SurveyEvidenceExtractionUseCase,

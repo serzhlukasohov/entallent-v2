@@ -153,6 +153,25 @@ export class ConversationRepository implements ConversationRepositoryPort {
       );
   }
 
+  /** GC round 3 CAP-1: delivered-or-staged topic questions since `since`, for the rolling cap. */
+  async countTopicQuestionsSince(input: {
+    tenantId: string; userId: string; conversationId: string; since: Date;
+  }): Promise<number> {
+    const [row] = await this.db.client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(messages)
+      .where(and(
+        eq(messages.tenantId, input.tenantId),
+        eq(messages.userId, input.userId),
+        eq(messages.conversationId, input.conversationId),
+        eq(messages.direction, 'outbound'),
+        isNull(messages.deletedAt),
+        gte(messages.occurredAt, input.since),
+        sql`${messages.metadata}->>'containsSurveyProbe' = 'true'`,
+      ));
+    return row?.count ?? 0;
+  }
+
   async findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
     const messageOrderKey = sql<string>`coalesce(${messages.externalMessageId}, ${messages.id}::text)`;
     const rows = await this.db.client

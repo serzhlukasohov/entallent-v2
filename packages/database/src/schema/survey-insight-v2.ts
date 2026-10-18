@@ -4,6 +4,7 @@ import {
   check,
   foreignKey,
   index,
+  integer,
   jsonb,
   numeric,
   pgTable,
@@ -93,11 +94,19 @@ export const surveyQuestionWorkingInsights = pgTable(
     questionVersion: text('question_version').notNull(),
     status: text('status').notNull().default('collecting'),
     readyForConfirmation: boolean('ready_for_confirmation').notNull().default(false),
+    /** GC round 3 CAP-2: some captured message carried enough meaning for the question. */
+    meaningSufficient: boolean('meaning_sufficient').notNull().default(false),
+    /** GC round 3 CAP-2: the employee gave what drives the status, or explicitly declined to. */
+    driverResolved: boolean('driver_resolved').notNull().default(false),
+    /** GC round 3 CAP-2: the bot asked for the driver once; it is not asked again this window. */
+    driverRequestedAt: timestamp('driver_requested_at', { withTimezone: true }),
     workingSummary: text('working_summary'),
     confirmedSemanticSummary: text('confirmed_semantic_summary'),
     sourceMessageIds: uuid('source_message_ids').array().notNull().default(sql`ARRAY[]::uuid[]`),
     confirmationBundleId: uuid('confirmation_bundle_id').references(() => surveyQuestionConfirmationBundles.id),
     clarificationPromptMessageId: uuid('clarification_prompt_message_id').references(() => messages.id),
+    // Clarification questions asked for the current meaning; reset when the question is reset (GC round 3 S4b).
+    clarificationAttempts: integer('clarification_attempts').notNull().default(0),
     confirmationMessageId: uuid('confirmation_message_id').references(() => messages.id),
     confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
     finalizedAt: timestamp('finalized_at', { withTimezone: true }),
@@ -135,10 +144,16 @@ export const surveyQuestionConfirmationBundles = pgTable(
     components: jsonb('components'),
     promptMessageId: uuid('prompt_message_id').references(() => messages.id),
     status: text('status').notNull().default('pending_delivery'),
+    // 'corrected_statement' shows back one meaning the employee corrected (GC round 3 S4b).
+    kind: text('kind').notNull().default('confirmation'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     purgedAt: timestamp('purged_at', { withTimezone: true }),
   },
   (t) => ({
+    validKind: check(
+      'survey_question_confirmation_bundles_kind_check',
+      sql`${t.kind} IN ('confirmation', 'corrected_statement')`,
+    ),
     bundleVersion: unique('survey_question_confirmation_bundles_version_key').on(
       t.tenantId, t.userId, t.surveyWindowId, t.questionGroup, t.version,
     ),

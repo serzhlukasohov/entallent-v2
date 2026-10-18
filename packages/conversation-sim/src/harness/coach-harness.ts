@@ -17,11 +17,13 @@ import {
   type SurveyRepositoryPort,
   type SurveyQuestionForEvaluation,
   type QuestionBundleComposition,
+  type QuestionBundleVariant,
   type AwaitingQuestionBundle,
   type QuestionBundleVerdict,
   type PendingQuestionClarification,
   type QuestionClarificationVerdict,
   type QuestionConfirmationPort,
+  type PulseBacklogService,
   type StyleProfileRecord,
 } from '@entalent/application';
 import type {
@@ -66,6 +68,8 @@ export interface CoachHarnessOptions {
   onboardingTurn?: OnboardingTurnPort;
   /** V2 question-confirmation state (ready bundles, clarifications); omitted means no V2 turns. */
   questionConfirmationRepo?: QuestionConfirmationPort;
+  /** Topic selection for the pulse cycle (GC round 3 CAP-1); omitted means no topic questions. */
+  pulseBacklogService?: Pick<PulseBacklogService, 'getNextProbeQuestion'>;
 }
 
 export interface GenerateResponseCall {
@@ -175,7 +179,7 @@ export class CoachHarness {
       this.escalation,
       undefined,
       options.scheduledActionRepo,
-      undefined,
+      options.pulseBacklogService as PulseBacklogService | undefined,
       this.styleRepo,
       this.goalRepo,
       options.questionConfirmationRepo,
@@ -241,7 +245,8 @@ export class CoachHarness {
   }
 }
 
-class RecordingAiProvider implements AiProviderPort {
+/** Exported for tests; scenarios reach it only through `CoachHarness`. */
+export class RecordingAiProvider implements AiProviderPort {
   constructor(
     private readonly delegate: AiProviderPort,
     private readonly generateCalls: GenerateResponseCall[],
@@ -283,8 +288,9 @@ class RecordingAiProvider implements AiProviderPort {
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
+    variant?: QuestionBundleVariant,
   ): Promise<QuestionBundleComposition> {
-    return this.delegate.composeQuestionBundle(turns, questions, responseLanguage);
+    return this.delegate.composeQuestionBundle(turns, questions, responseLanguage, variant);
   }
 
   interpretQuestionBundleResponse(

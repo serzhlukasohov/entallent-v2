@@ -152,7 +152,11 @@ export class ProactiveCheckInUseCase {
         ? await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId, pulseConfig)
         : null;
 
-    const probeQuestion: SurveyQuestionRecord | null = probeResult?.question ?? null;
+    // GC round 3 CAP-2: a driver follow-up belongs to the conversation's typed topic question; a
+    // generic proactive probe would re-ask the status the employee already gave.
+    const probeQuestion: SurveyQuestionRecord | null = probeResult && probeResult.focus !== 'driver'
+      ? probeResult.question
+      : null;
 
     const strategy: ReplyStrategy = {
       mode: 'proactive_follow_up',

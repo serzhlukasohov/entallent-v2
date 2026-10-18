@@ -1186,6 +1186,41 @@ describe('buildRespondSystemPrompt topic completion and cycle status (GC round 3
   });
 });
 
+describe('buildRespondSystemPrompt question not collected (GC round 3 S4b)', () => {
+  it('asks for one plain sentence that the point is left out for this cycle, in the model\'s own words', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', questionNotCollected: { questionGroup: 'autonomy' },
+    }));
+    expect(prompt).toMatch(/not collected \(hard contract\)/i);
+    expect(prompt).toMatch(/one plain sentence/i);
+    expect(prompt).toMatch(/own words/i);
+    expect(prompt).toMatch(/this cycle/i);
+    expect(prompt).toContain('how much say you have over your own work');
+    expect(prompt).not.toContain('"autonomy"');
+    expect(prompt).toMatch(/do not ask about (that|this) point again/i);
+    expect(prompt).toMatch(/never (repeat|restate|quote) the (disputed|earlier) wording/i);
+  });
+
+  it('keeps the not-collected sentence separate from completion and a fixed text, and claims nothing about stored data', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      questionNotCollected: { questionGroup: 'autonomy' },
+      topicConfirmed: { questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 },
+      trailingBundle: { kind: 'clarification', text: 'What would you change about the other point?' },
+    }));
+    expect(prompt).toMatch(/not collected \(hard contract\)/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toMatch(/in addition to any completion/i);
+    expect(prompt).toMatch(/fixed text .*(another|a different|other) point/i);
+    expect(prompt).not.toMatch(/nothing about it is noted/i);
+  });
+
+  it('adds nothing when no point was left uncollected', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
+    expect(prompt).not.toMatch(/not collected \(hard contract\)/i);
+  });
+});
+
 describe('buildRespondSystemPrompt accepted offers and format requests (GC round 3 CAP-6/CAP-9)', () => {
   const normal: ReplyStrategy = { ...strategy, mode: 'normal', includeFollowUpQuestion: true };
   const acceptancePlan: NonNullable<ResponseContext['replyPlan']> = {
@@ -1375,5 +1410,55 @@ describe('buildRespondSystemPrompt onboarding start opener', () => {
     const prompt = buildRespondSystemPrompt(opener, context({ userName: 'Sam', proactiveCheckIn: { probeQuestion } }));
     expect(prompt).toContain('has not messaged you');
     expect(prompt).not.toContain('just agreed to start the conversation');
+  });
+});
+
+
+// GC round 3 CAP-1, CAP-2 (ADR-013 D8): a due topic question is a required field, not a hint.
+describe('buildRespondSystemPrompt topic question contract', () => {
+  const normal: ReplyStrategy = { ...strategy, mode: 'normal', includeFollowUpQuestion: true };
+  const topicQuestion = {
+    questionId: 'q-autonomy-1', questionGroup: 'autonomy', focus: 'open' as const,
+    probeStrategies: ['How much freedom they have to choose their methods'],
+  };
+
+  it('requires one separate topic question on the topic meaning, never the optional hint', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Test', topicQuestion }));
+    expect(prompt).toMatch(/topic question \(hard contract\)/i);
+    expect(prompt).toContain('autonomy, how much say you have over your own work');
+    expect(prompt).toContain('How much freedom they have to choose their methods');
+    expect(prompt).toContain('"topicQuestion": string');
+    expect(prompt).toContain('"replyText": string');
+    expect(prompt).toContain('"surveyProbeQuestionId": "q-autonomy-1"');
+    expect(prompt).not.toMatch(/you may skip this entirely/i);
+    expect(prompt).not.toMatch(/Optional — a topic worth exploring/);
+    expect(prompt).toMatch(/Do not preview, announce, or paraphrase the topic question in "replyText"/);
+    // The one question is written first, so the answer part is composed knowing it exists.
+    expect(prompt.indexOf('"topicQuestion": string')).toBeLessThan(prompt.indexOf('"replyText": string'));
+    expect(prompt.indexOf('1. "topicQuestion"')).toBeGreaterThan(-1);
+  });
+
+  it('asks for the driver when the employee gave a status without one', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({
+      userName: 'Test', topicQuestion: { ...topicQuestion, focus: 'driver' },
+    }));
+    expect(prompt).toMatch(/what drives/i);
+    expect(prompt).toMatch(/already gave a status/i);
+  });
+
+  it('scopes any no-question rule to the reply part', () => {
+    const prompt = buildRespondSystemPrompt({ ...normal, includeFollowUpQuestion: false }, context({
+      userName: 'Test', topicQuestion,
+    }));
+    expect(prompt).toMatch(/applies to "replyText" only/);
+  });
+
+  it('keeps the optional hint outside a topic turn', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({
+      userName: 'Test',
+      surveyProbeQuestion: { id: 'q-1', probeStrategies: ['ask about autonomy'] },
+    }));
+    expect(prompt).not.toMatch(/topic question \(hard contract\)/i);
+    expect(prompt).not.toContain('"topicQuestion"');
   });
 });

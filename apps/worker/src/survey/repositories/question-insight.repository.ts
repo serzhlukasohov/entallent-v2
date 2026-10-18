@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne } from 'drizzle-orm';
 import {
   messages,
   pulseBacklog,
@@ -29,17 +29,22 @@ import type {
   QuestionConfirmationPort,
   ReadyQuestionBundle,
   AwaitingQuestionBundle,
+  QuestionBundleKind,
   QuestionBundleVerdict,
   PendingQuestionClarification,
   QuestionClarificationVerdict,
   AppliedQuestionVerdict,
   CycleProgressSnapshot,
+  QuestionWorkingCoverage,
 } from '@entalent/application';
 import {
+  accumulateQuestionReadiness,
+  needsDriver,
   hasCompleteV2ScoringPolicy,
   hasLegacyV2ScoringPolicy,
   isApprovedQuestionRubric,
   isBundleShownIn,
+  MAX_QUESTION_CLARIFICATIONS,
   validateQuestionBundleVerdict,
   validateQuestionClarificationPrompt,
 } from '@entalent/application';
@@ -67,11 +72,27 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     if (!row) return null;
     if (row.bundleId && (row.verdictKind === 'agree' || row.verdictKind === 'partial'
       || row.verdictKind === 'reject')) {
-      return { kind: 'bundle', verdictKind: row.verdictKind, questionGroup: row.questionGroup };
+      // GC round 3 S4b: a statement this verdict declined stays reported as not collected.
+      const [declined] = row.verdictKind === 'partial'
+        ? await this.db.client.select({ id: surveyQuestionWorkingInsights.id })
+          .from(surveyQuestionWorkingInsights).where(and(
+            eq(surveyQuestionWorkingInsights.confirmationBundleId, row.bundleId),
+            eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+            eq(surveyQuestionWorkingInsights.userId, input.userId),
+            eq(surveyQuestionWorkingInsights.status, 'declined'),
+          )).limit(1)
+        : [];
+      return {
+        kind: 'bundle', verdictKind: row.verdictKind, questionGroup: row.questionGroup,
+        questionNotCollected: Boolean(declined),
+      };
     }
     if (row.workingInsightId && (row.verdictKind === 'clarified'
       || row.verdictKind === 'declined')) {
-      return { kind: 'clarification', verdictKind: row.verdictKind, questionGroup: row.questionGroup };
+      return {
+        kind: 'clarification', verdictKind: row.verdictKind, questionGroup: row.questionGroup,
+        questionNotCollected: row.verdictKind === 'declined',
+      };
     }
     throw new Error('v2_verdict_receipt_invalid');
   }
@@ -290,6 +311,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         )).for('update').limit(1);
       if (!working || working.status !== 'pending_clarification'
         || working.clarificationPromptMessageId || working.purgedAt) return false;
+      if (working.clarificationAttempts >= MAX_QUESTION_CLARIFICATIONS) {
+        throw new Error('v2_clarification_budget_exhausted');
+      }
       const [bundle] = await tx.select({
         promptMessageId: surveyQuestionConfirmationBundles.promptMessageId,
         purgedAt: surveyQuestionConfirmationBundles.purgedAt,
@@ -337,6 +361,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       }
       await tx.update(surveyQuestionWorkingInsights).set({
         clarificationPromptMessageId: input.promptMessageId,
+        clarificationAttempts: working.clarificationAttempts + 1,
         updatedAt: new Date(),
       }).where(eq(surveyQuestionWorkingInsights.id, working.id));
       return true;
@@ -507,6 +532,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       questionGroup: surveyQuestionConfirmationBundles.questionGroup,
       displayedText: surveyQuestionConfirmationBundles.displayedText,
       components: surveyQuestionConfirmationBundles.components,
+      kind: surveyQuestionConfirmationBundles.kind,
       periodEnd: surveyWindows.periodEnd,
     }).from(surveyQuestionConfirmationBundles)
       .innerJoin(messages, eq(messages.id, surveyQuestionConfirmationBundles.promptMessageId))
@@ -529,6 +555,22 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     if (bundles.length !== 1) throw new Error('v2_multiple_awaiting_question_bundles');
     const bundle = bundles[0];
     if (inbound.occurredAt >= bundle.periodEnd) return null;
+    const kind = parseBundleKind(bundle.kind);
+    let clarificationAttempts: number | undefined;
+    if (kind === 'corrected_statement') {
+      // A read never fails the turn: a missing link counts as a spent budget, and applying the
+      // verdict then reports the stale working state through its own guard.
+      const [linked] = await this.db.client.select({
+        clarificationAttempts: surveyQuestionWorkingInsights.clarificationAttempts,
+      }).from(surveyQuestionWorkingInsights).where(and(
+        eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+        eq(surveyQuestionWorkingInsights.userId, input.userId),
+        eq(surveyQuestionWorkingInsights.surveyWindowId, bundle.surveyWindowId),
+        eq(surveyQuestionWorkingInsights.confirmationBundleId, bundle.id),
+        isNull(surveyQuestionWorkingInsights.purgedAt),
+      )).limit(1);
+      clarificationAttempts = linked?.clarificationAttempts ?? MAX_QUESTION_CLARIFICATIONS;
+    }
     return {
       id: bundle.id,
       tenantId: input.tenantId,
@@ -537,6 +579,8 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       questionGroup: bundle.questionGroup,
       displayedText: bundle.displayedText ?? '',
       components: parseBundleComponents(bundle.components),
+      kind,
+      ...(clarificationAttempts !== undefined ? { clarificationAttempts } : {}),
     };
   }
 
@@ -599,6 +643,15 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           && component.questionVersion === row.questionVersion))) {
         throw new Error('v2_confirmation_working_state_stale');
       }
+      // GC round 3 S4b: a corrected meaning (one that used a clarification) is never reset, and a
+      // dispute needs clarification budget. Checked per row, whatever the bundle kind says.
+      if (verdict.kind === 'reject' && working.some((row) => row.clarificationAttempts > 0)) {
+        throw new Error('v2_corrected_statement_reject_unmapped');
+      }
+      if (verdict.kind === 'partial' && working.some((row) => verdict.disputedQuestionIds.includes(row.surveyQuestionId)
+        && row.clarificationAttempts >= MAX_QUESTION_CLARIFICATIONS)) {
+        throw new Error('v2_clarification_budget_exhausted');
+      }
 
       for (const row of working) {
         const component = components.find((item) => item.surveyQuestionId === row.surveyQuestionId)!;
@@ -625,6 +678,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         } else {
           await tx.update(surveyQuestionWorkingInsights).set({
             status: outcome === 'reset' ? 'reset' : 'declined',
+            ...(outcome === 'reset' ? { clarificationAttempts: 0 } : {}),
             workingSummary: null,
             confirmedSemanticSummary: null,
             sourceMessageIds: [],
@@ -734,6 +788,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       workingSummary: surveyQuestionWorkingInsights.workingSummary,
       purgedAt: surveyQuestionWorkingInsights.purgedAt,
       finalizedAt: surveyQuestionWorkingInsights.finalizedAt,
+      clarificationAttempts: surveyQuestionWorkingInsights.clarificationAttempts,
     }).from(surveyQuestionWorkingInsights).where(and(
       eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
       eq(surveyQuestionWorkingInsights.userId, input.userId),
@@ -748,10 +803,27 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       const ready = rows.map((row, index) => ({ row, question: groupQuestions[index]! }))
         .filter(({ row }) => row?.status === 'collecting' && row.readyForConfirmation
           && row.workingSummary?.trim() && row.purgedAt === null);
+      // GC round 3 S4b: a clarified meaning not yet shown back travels alone as a corrected statement;
+      // its siblings may already be confirmed or declined.
+      const corrected = ready.find(({ row }) => row!.clarificationAttempts > 0);
       if (ready.length === 0 || rows.some((row, index) => !row
         || row.questionVersion !== groupQuestions[index]!.version
         || (!ready.some((item) => item.row === row)
-          && !(row.status === 'confirmed' && row.purgedAt && row.finalizedAt)))) continue;
+          && !(row.status === 'confirmed' && row.purgedAt && row.finalizedAt)
+          && !(corrected && row.status === 'declined' && row.purgedAt)))) continue;
+      if (corrected) {
+        return {
+          ...input,
+          surveyWindowId: window.id,
+          questionGroup,
+          kind: 'corrected_statement',
+          questions: [{
+            surveyQuestionId: corrected.question.id,
+            questionVersion: corrected.question.version,
+            workingSummary: corrected.row!.workingSummary!,
+          }],
+        };
+      }
       return {
         ...input,
         surveyWindowId: window.id,
@@ -861,6 +933,12 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         )).orderBy(surveyQuestionWorkingInsights.surveyQuestionId).for('update');
       const selected = working.filter((row) => input.components.some(
         (component) => component.surveyQuestionId === row.surveyQuestionId));
+      // GC round 3 S4b: the kind follows the meaning. A clarified meaning is shown alone, and other
+      // ready meanings of its group wait for a later bundle.
+      const correctedSelection = selected.some((row) => row.clarificationAttempts > 0);
+      if (correctedSelection && selected.length !== 1) {
+        throw new Error('v2_confirmation_bundle_invalid_composition');
+      }
       if (working.length !== 3 || selected.length !== input.components.length
         || working.some((row) => {
           const component = input.components.find((item) => item.surveyQuestionId === row.surveyQuestionId);
@@ -869,7 +947,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
               || !row.workingSummary?.trim() || row.sourceMessageIds.length === 0 || row.purgedAt !== null
               || component.questionVersion !== row.questionVersion
               || component.expectedWorkingSummary !== row.workingSummary
-            : row.status !== 'confirmed' || !row.purgedAt || !row.finalizedAt;
+            : !(row.status === 'confirmed' && row.purgedAt && row.finalizedAt)
+              && !(correctedSelection && row.status === 'collecting' && !row.confirmationBundleId)
+              && !(correctedSelection && row.status === 'declined' && row.purgedAt);
         })) {
         throw new Error('v2_confirmation_bundle_working_state_stale');
       }
@@ -880,6 +960,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         surveyWindowId: input.surveyWindowId,
         questionGroup: input.questionGroup,
         version: `message:${input.promptMessageId}`,
+        kind: correctedSelection ? 'corrected_statement' : 'confirmation',
         displayedText: input.displayedText,
         components: input.components.map((component) => ({
           surveyQuestionId: component.surveyQuestionId,
@@ -976,6 +1057,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         surveyWindowId: input.surveyWindowId,
         questionGroup: input.questionGroup,
         version: `message:${input.promptMessageId}`,
+        kind: 'corrected_statement',
         displayedText: input.displayedText,
         components: [{
           surveyQuestionId: input.surveyQuestionId,
@@ -1199,7 +1281,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
 
       await tx.update(surveyQuestionWorkingInsights).set({
         status: 'reset', workingSummary: null, confirmedSemanticSummary: null,
-        sourceMessageIds: [], readyForConfirmation: false,
+        sourceMessageIds: [], readyForConfirmation: false, clarificationAttempts: 0,
         confirmationBundleId: null, confirmationMessageId: null,
         clarificationPromptMessageId: null, confirmedAt: null,
         finalizedAt: null, updatedAt: scope.sourceOccurredAt,
@@ -1214,6 +1296,104 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(pulseBacklog.surveyQuestionId, input.surveyQuestionId),
         eq(pulseBacklog.status, 'done'),
       ));
+      return true;
+    });
+  }
+
+  /** GC round 3 CAP-1, CAP-2: per-question V2 working state of one window for topic selection. */
+  async findQuestionCoverage(input: { tenantId: string; userId: string; surveyWindowId: string }):
+    Promise<QuestionWorkingCoverage[]> {
+    const rows = await this.db.client.select({
+      surveyQuestionId: surveyQuestionWorkingInsights.surveyQuestionId,
+      questionVersion: surveyQuestionWorkingInsights.questionVersion,
+      status: surveyQuestionWorkingInsights.status,
+      readyForConfirmation: surveyQuestionWorkingInsights.readyForConfirmation,
+      meaningSufficient: surveyQuestionWorkingInsights.meaningSufficient,
+      driverResolved: surveyQuestionWorkingInsights.driverResolved,
+      driverRequestedAt: surveyQuestionWorkingInsights.driverRequestedAt,
+    }).from(surveyQuestionWorkingInsights).where(and(
+      eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+      eq(surveyQuestionWorkingInsights.userId, input.userId),
+      eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
+    ));
+    return rows.map((row) => {
+      const driverRequested = row.driverRequestedAt !== null;
+      return {
+        surveyQuestionId: row.surveyQuestionId,
+        questionVersion: row.questionVersion,
+        status: row.status,
+        readyForConfirmation: row.readyForConfirmation,
+        needsDriver: needsDriver({ ...row, driverRequested }),
+        driverRequested,
+      };
+    });
+  }
+
+  /** GC round 3 CAP-2: the driver is asked at most once per question and window. */
+  async recordDriverRequested(input: {
+    tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId: string; requestedAt: Date;
+  }): Promise<boolean> {
+    const updated = await this.db.client.update(surveyQuestionWorkingInsights)
+      .set({ driverRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
+      .where(and(
+        eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+        eq(surveyQuestionWorkingInsights.userId, input.userId),
+        eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
+        eq(surveyQuestionWorkingInsights.surveyQuestionId, input.surveyQuestionId),
+        eq(surveyQuestionWorkingInsights.status, 'collecting'),
+        isNull(surveyQuestionWorkingInsights.driverRequestedAt),
+      )).returning({ id: surveyQuestionWorkingInsights.id });
+    return updated.length > 0;
+  }
+
+  /**
+   * GC round 3 CAP-2: an explicit decline to say what drives a captured status resolves the driver
+   * (honoured on the first refusal). Only a newer in-period employee message of the same
+   * conversation counts; the working summary is not touched.
+   */
+  async recordDriverDeclined(input: {
+    tenantId: string; userId: string; conversationId: string; surveyWindowId: string;
+    surveyQuestionId: string; questionVersion: string; sourceMessageId: string;
+  }): Promise<boolean> {
+    return this.db.client.transaction(async (tx) => {
+      const [scope] = await tx.select({
+        periodStart: surveyWindows.periodStart,
+        periodEnd: surveyWindows.periodEnd,
+        sourceOccurredAt: messages.occurredAt,
+      }).from(surveyWindows)
+        .innerJoin(messages, eq(messages.id, input.sourceMessageId))
+        .where(and(
+          eq(surveyWindows.id, input.surveyWindowId),
+          eq(surveyWindows.tenantId, input.tenantId),
+          eq(surveyWindows.userId, input.userId),
+          eq(surveyWindows.status, 'active'),
+          eq(messages.tenantId, input.tenantId),
+          eq(messages.userId, input.userId),
+          eq(messages.conversationId, input.conversationId),
+          eq(messages.direction, 'inbound'),
+          isNull(messages.deletedAt),
+        )).limit(1);
+      if (!scope || scope.periodEnd <= new Date() || scope.sourceOccurredAt < scope.periodStart
+        || scope.sourceOccurredAt >= scope.periodEnd) return false;
+      const [working] = await tx.select().from(surveyQuestionWorkingInsights).where(and(
+        eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
+        eq(surveyQuestionWorkingInsights.userId, input.userId),
+        eq(surveyQuestionWorkingInsights.surveyWindowId, input.surveyWindowId),
+        eq(surveyQuestionWorkingInsights.surveyQuestionId, input.surveyQuestionId),
+        eq(surveyQuestionWorkingInsights.questionVersion, input.questionVersion),
+      )).for('update').limit(1);
+      if (!working || working.status !== 'collecting' || working.purgedAt !== null
+        || working.driverResolved || working.sourceMessageIds.includes(input.sourceMessageId)) return false;
+      const [latestSource] = working.sourceMessageIds.length === 0 ? [] : await tx.select({
+        occurredAt: messages.occurredAt,
+      }).from(messages).where(inArray(messages.id, working.sourceMessageIds))
+        .orderBy(desc(messages.occurredAt)).limit(1);
+      if (latestSource && scope.sourceOccurredAt <= latestSource.occurredAt) return false;
+      await tx.update(surveyQuestionWorkingInsights).set({
+        driverResolved: true,
+        readyForConfirmation: working.readyForConfirmation || working.meaningSufficient,
+        updatedAt: new Date(),
+      }).where(eq(surveyQuestionWorkingInsights.id, working.id));
       return true;
     });
   }
@@ -1279,7 +1459,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           surveyQuestionId: input.surveyQuestionId,
           questionVersion: input.questionVersion,
           workingSummary: meaning,
-          readyForConfirmation: input.sufficientMeaning,
+          ...readinessColumns(accumulateQuestionReadiness(null, input)),
           sourceMessageIds: [input.sourceMessageId],
         }).onConflictDoNothing().returning({ id: surveyQuestionWorkingInsights.id });
         if (created) return 'captured';
@@ -1291,10 +1471,13 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         || working.sourceMessageIds.includes(input.sourceMessageId)) return 'ignored';
 
       const reopened = working.status === 'reset' || Boolean(working.purgedAt && working.finalizedAt);
+      // GC round 3 CAP-2: ready only with sufficient meaning and a driver or decline, which may
+      // arrive in different messages. A row already ready (including legacy rows) stays ready.
+      const readiness = accumulateQuestionReadiness(reopened ? null : working, input);
       await tx.update(surveyQuestionWorkingInsights).set({
         status: 'collecting',
-        readyForConfirmation: reopened ? input.sufficientMeaning
-          : working.readyForConfirmation || input.sufficientMeaning,
+        ...readinessColumns(readiness),
+        ...(reopened ? {} : { readyForConfirmation: working.readyForConfirmation || readiness.ready }),
         workingSummary: reopened || !working.workingSummary
           ? meaning
           : working.workingSummary.includes(meaning)
@@ -1305,6 +1488,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           : [...working.sourceMessageIds, input.sourceMessageId],
         ...(reopened ? {
           confirmedSemanticSummary: null,
+          clarificationAttempts: 0,
           confirmationBundleId: null,
           clarificationPromptMessageId: null,
           confirmationMessageId: null,
@@ -1652,6 +1836,11 @@ function rubricForQuestion(value: unknown, stableKey: string): ApprovedQuestionR
   return rubric as unknown as ApprovedQuestionRubric;
 }
 
+function parseBundleKind(value: string): QuestionBundleKind {
+  if (value === 'confirmation' || value === 'corrected_statement') return value;
+  throw new Error('v2_confirmation_bundle_kind_invalid');
+}
+
 function parseBundleComponents(
   value: unknown,
   mode: 'bundle' | 'clarification' = 'bundle',
@@ -1680,4 +1869,12 @@ function parseBundleComponents(
     throw new Error('v2_confirmation_bundle_components_invalid');
   }
   return components;
+}
+
+function readinessColumns(readiness: { meaningSufficient: boolean; driverResolved: boolean; ready: boolean }) {
+  return {
+    readyForConfirmation: readiness.ready,
+    meaningSufficient: readiness.meaningSufficient,
+    driverResolved: readiness.driverResolved,
+  };
 }

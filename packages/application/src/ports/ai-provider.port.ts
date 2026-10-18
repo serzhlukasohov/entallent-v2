@@ -97,7 +97,9 @@ export interface ReplyPlan {
       | 'asked_recently'
       | 'new_substance_allows_question'
       | 'offer_delivery'
-      | 'format_request';
+      | 'format_request'
+      /** GC round 3 CAP-1: the topic policy made one topic question mandatory this turn. */
+      | 'topic_question';
   };
   requiredGrounding: Array<
     | {
@@ -171,6 +173,12 @@ export interface ResponseContext {
    * the reminder the employee asked for.
    */
   reminderIntent?: string;
+  /**
+   * GC round 3 CAP-1 (ADR-013 D8): the topic policy made a topic question mandatory this turn. The
+   * reply returns it in a separate required field; `focus: 'driver'` asks what drives a status the
+   * employee already gave (CAP-2). Never set together with `surveyProbeQuestion` or a trailing bundle.
+   */
+  topicQuestion?: TopicQuestionRequest;
   /** Survey probe to embed naturally in the response */
   surveyProbeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
   /** Agent-initiated check-in: the agent writes first, optionally steering toward a survey topic */
@@ -189,6 +197,11 @@ export interface ResponseContext {
     topicsClosed?: number;
     topicsTotal?: number;
   };
+  /**
+   * Set when this turn closed one disputed point of a topic for this cycle without an agreed
+   * wording (GC round 3 S4b). The reply says so in one plain sentence; no evidence travels here.
+   */
+  questionNotCollected?: { questionGroup: string };
   /**
    * Set when the employee asked what is left in the pulse cycle (GC round 3 CAP-3). The reply is
    * grounded on these counts and topic names only; evidence text never travels here.
@@ -235,6 +248,13 @@ export interface ResponseContext {
    * The reply answers the employee's latest message first; this text is shown last, byte-for-byte.
    */
   trailingBundle?: TrailingBundle;
+}
+
+export interface TopicQuestionRequest {
+  questionId: string;
+  questionGroup: string;
+  focus: 'open' | 'driver';
+  probeStrategies: string[];
 }
 
 export interface TrailingBundle {
