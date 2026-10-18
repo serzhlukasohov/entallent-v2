@@ -2,54 +2,91 @@ import type { QuestionBundleComposition } from '../ports/ai-provider.port';
 
 const QUESTIONNAIRE_LABELS = /(?<![\p{L}\p{N}])(?:questions?|questionnaires?|surveys?|forms?|index(?:es)?|scores?|rubrics?|q[1-3]\s*[:.)-]|вопрос\p{L}*|опрос\p{L}*|анкет\p{L}*|оценк\p{L}*|индекс\p{L}*|питанн\p{L}*|запитанн\p{L}*|опитуванн\p{L}*|оцінк\p{L}*|індекс\p{L}*|pytani\p{L}*|pytań|ankiet\p{L}*|kwestionariusz\p{L}*|formularz\p{L}*|indeks\p{L}*|punktacj\p{L}*)(?![\p{L}\p{N}])/iu;
 
+export const BUNDLE_COMPOSITION_INVALID = 'v2_confirmation_composition_invalid';
+
+export type BundleCompositionInvalidReason =
+  | 'draft_unparseable'
+  | 'text_missing'
+  | 'text_list_markers'
+  | 'questionnaire_label'
+  | 'question_count'
+  | 'statements_missing'
+  | 'question_ids_invalid'
+  | 'statement_count'
+  | 'statement_malformed'
+  | 'statement_question'
+  | 'statement_not_in_text'
+  | 'question_mapping_invalid'
+  | 'statements_overlap';
+
+/**
+ * The composed bundle broke a rule; `reason` names it so the provider can repair once and the
+ * turn can degrade diagnosably. The message stays the stable code matched by the worker.
+ */
+export class BundleCompositionInvalidError extends Error {
+  constructor(readonly reason: BundleCompositionInvalidReason) {
+    super(BUNDLE_COMPOSITION_INVALID);
+    this.name = 'BundleCompositionInvalidError';
+  }
+}
+
+export function isBundleCompositionInvalidError(error: unknown): error is BundleCompositionInvalidError {
+  return error instanceof BundleCompositionInvalidError
+    || (error instanceof Error && error.message === BUNDLE_COMPOSITION_INVALID);
+}
+
 /** Model output is untrusted; keep the displayed statement-to-question map exact. */
 export function validateQuestionBundleComposition(
   value: unknown,
   requiredQuestionIds: readonly string[],
 ): QuestionBundleComposition {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('v2_confirmation_composition_invalid');
+    throw new BundleCompositionInvalidError('draft_unparseable');
   }
   const draft = value as Record<string, unknown>;
-  if (typeof draft['text'] !== 'string' || !draft['text'].trim()
-    || /[\r\n]|(?:^|\s)[1-3][.)]\s|[•●]/.test(draft['text'])
-    || QUESTIONNAIRE_LABELS.test(draft['text'])
-    || (draft['text'].match(/[?？]/g)?.length ?? 0) !== 1
-    || !Array.isArray(draft['statements'])
-    || requiredQuestionIds.length < 1 || requiredQuestionIds.length > 3
-    || new Set(requiredQuestionIds).size !== requiredQuestionIds.length
-    || draft['statements'].length !== requiredQuestionIds.length) {
-    throw new Error('v2_confirmation_composition_invalid');
+  if (typeof draft['text'] !== 'string' || !draft['text'].trim()) {
+    throw new BundleCompositionInvalidError('text_missing');
   }
-  const text = draft['text'] as string;
+  const text = draft['text'];
+  if (/[\r\n]|(?:^|\s)[1-3][.)]\s|[•●]/.test(text)) throw new BundleCompositionInvalidError('text_list_markers');
+  if (QUESTIONNAIRE_LABELS.test(text)) throw new BundleCompositionInvalidError('questionnaire_label');
+  if ((text.match(/[?？]/g)?.length ?? 0) !== 1) throw new BundleCompositionInvalidError('question_count');
+  if (!Array.isArray(draft['statements'])) throw new BundleCompositionInvalidError('statements_missing');
+  if (requiredQuestionIds.length < 1 || requiredQuestionIds.length > 3
+    || new Set(requiredQuestionIds).size !== requiredQuestionIds.length) {
+    throw new BundleCompositionInvalidError('question_ids_invalid');
+  }
+  if (draft['statements'].length !== requiredQuestionIds.length) {
+    throw new BundleCompositionInvalidError('statement_count');
+  }
   const statements: QuestionBundleComposition['statements'] = [];
   for (const raw of draft['statements']) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      throw new Error('v2_confirmation_composition_invalid');
+      throw new BundleCompositionInvalidError('statement_malformed');
     }
     const entry = raw as Record<string, unknown>;
     if (typeof entry['surveyQuestionId'] !== 'string'
-      || typeof entry['statement'] !== 'string' || !entry['statement'].trim()
-      || /[?？]/.test(entry['statement'])) {
-      throw new Error('v2_confirmation_composition_invalid');
+      || typeof entry['statement'] !== 'string' || !entry['statement'].trim()) {
+      throw new BundleCompositionInvalidError('statement_malformed');
     }
+    if (/[?？]/.test(entry['statement'])) throw new BundleCompositionInvalidError('statement_question');
     const displayed = exactDisplayedStatement(text, entry['statement']);
     if (!displayed || text.split(displayed).length !== 2) {
-      throw new Error('v2_confirmation_composition_invalid');
+      throw new BundleCompositionInvalidError('statement_not_in_text');
     }
     statements.push({ surveyQuestionId: entry['surveyQuestionId'], statement: displayed });
   }
   if (new Set(statements.map((statement) => statement.surveyQuestionId)).size !== statements.length
     || new Set(statements.map((statement) => statement.statement)).size !== statements.length
     || requiredQuestionIds.some((id) => !statements.some((statement) => statement.surveyQuestionId === id))) {
-    throw new Error('v2_confirmation_composition_invalid');
+    throw new BundleCompositionInvalidError('question_mapping_invalid');
   }
   const spans = statements.map((statement) => ({
     start: text.indexOf(statement.statement),
     end: text.indexOf(statement.statement) + statement.statement.length,
   })).sort((a, b) => a.start - b.start);
   if (spans.some((span, index) => index > 0 && span.start < spans[index - 1].end)) {
-    throw new Error('v2_confirmation_composition_invalid');
+    throw new BundleCompositionInvalidError('statements_overlap');
   }
   return { text, statements };
 }

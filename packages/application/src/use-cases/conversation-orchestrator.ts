@@ -7,7 +7,7 @@ import {
   type ConversationMode,
   type GeneratedResponse,
 } from '@entalent/contracts';
-import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
+import type { AiProviderPort, ConversationTurn, ResponseContext, QuestionBundleComposition } from '../ports/ai-provider.port';
 import type { ConversationDispatchKind, ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { ConversationUnitOfWorkPort } from '../ports/conversation-unit-of-work.port';
 import { ProviderContentFilterError } from '../ports/provider-error';
@@ -45,8 +45,9 @@ import type {
 } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 import {
-  composeBundleReplyText, isBundleReplyInvalidError, validateBundleReply, validateQuestionBundleComposition,
-  type BundleReplyInvalidReason,
+  BundleCompositionInvalidError, composeBundleReplyText, isBundleCompositionInvalidError, isBundleReplyInvalidError,
+  validateBundleReply, validateQuestionBundleComposition,
+  type BundleCompositionInvalidReason, type BundleReplyInvalidReason,
 } from '../utils/question-bundle-composition';
 import { maxReplyChars } from '../utils/reply-length';
 import {
@@ -101,11 +102,15 @@ export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
   bundleReply?: BundleReplyOutcome;
   /** Why the fixed text went alone (diagnostics only). */
   bundleReplyFallbackReason?: BundleReplyFallbackReason;
+  /** Why a ready V2 bundle was skipped this turn: its composition stayed invalid (diagnostics only). */
+  bundleCompositionFallbackReason?: BundleCompositionFallbackReason;
 };
 
 /** `answer_then_bundle`: the employee's message was answered before the fixed text; otherwise the fixed text went alone. */
 export type BundleReplyOutcome = 'answer_then_bundle' | 'bundle_without_reply';
 export type BundleReplyFallbackReason = BundleReplyInvalidReason | 'output_filtered';
+/** `unknown` covers a legacy untyped `v2_confirmation_composition_invalid` error. */
+export type BundleCompositionFallbackReason = BundleCompositionInvalidReason | 'unknown';
 
 const TZ_REFRESH_DAYS = 30;
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
@@ -677,6 +682,59 @@ export class ConversationOrchestrator {
       }
     }
 
+    // An invalid composition (after the adapter's one repair, or on re-validation here) skips the
+    // bundle for this turn instead of failing the employee's message: the turn continues as an
+    // ordinary reply, the bundle stays ready for a later turn, and the reason is recorded.
+    const languagePolicy = resolveLanguagePolicy();
+    let v2Composition: QuestionBundleComposition | null = null;
+    /** Either composition that stayed invalid this turn; the metadata keys below name which one. */
+    let bundleCompositionFallbackReason: BundleCompositionFallbackReason | undefined;
+    let readyBundleFallbackReason: BundleCompositionFallbackReason | undefined;
+    if (v2BundleRequest) {
+      try {
+        v2Composition = validateQuestionBundleComposition(
+          await this.aiProvider.composeQuestionBundle(
+            turns,
+            v2BundleRequest.questions.map((question) => ({
+              surveyQuestionId: question.surveyQuestionId,
+              workingSummary: question.workingSummary,
+            })),
+            languagePolicy.responseLanguage,
+            // A clarified meaning that was not shown on its own turn is still a corrected statement.
+            ...(v2BundleRequest.kind === 'corrected_statement' ? ['corrected_statement' as const] : []),
+          ),
+          v2BundleRequest.questions.map((question) => question.surveyQuestionId),
+        );
+      } catch (error) {
+        if (!isBundleCompositionInvalidError(error)) throw error;
+        readyBundleFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
+        bundleCompositionFallbackReason = readyBundleFallbackReason;
+        v2BundleRequest = null;
+      }
+    }
+    // The corrected statement (GC round 3 CAP-3) degrades the same way: the clarified verdict is
+    // still applied, the row stays ready and the ordinary bundle path shows it on a later turn.
+    let correctedComposition: QuestionBundleComposition | null = null;
+    let correctedStatementFallbackReason: BundleCompositionFallbackReason | undefined;
+    if (correctedStatementRequest) {
+      try {
+        correctedComposition = validateQuestionBundleComposition(
+          await this.aiProvider.composeQuestionBundle(
+            turns,
+            [{ surveyQuestionId: correctedStatementRequest.surveyQuestionId, workingSummary: correctedStatementRequest.correctedSummary }],
+            languagePolicy.responseLanguage,
+            'corrected_statement',
+          ),
+          [correctedStatementRequest.surveyQuestionId],
+        );
+      } catch (error) {
+        if (!isBundleCompositionInvalidError(error)) throw error;
+        correctedStatementFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
+        bundleCompositionFallbackReason = correctedStatementFallbackReason;
+        correctedStatementRequest = null;
+      }
+    }
+
     const currentTurnHasTopicAnchor = !!classification.topicAnchor?.trim();
     const safetyTurn = classification.requiresSafetyCheck || isRiskTurn(risk);
     const continuity = resolveContinuity({
@@ -869,37 +927,10 @@ export class ConversationOrchestrator {
         }
       }
     }
-    const languagePolicy = resolveLanguagePolicy();
     const clarificationText = clarificationRequest
       ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
           turns, clarificationRequest, languagePolicy.responseLanguage,
         ))
-      : null;
-    const correctedComposition = correctedStatementRequest
-      ? validateQuestionBundleComposition(
-          await this.aiProvider.composeQuestionBundle(
-            turns,
-            [{ surveyQuestionId: correctedStatementRequest.surveyQuestionId, workingSummary: correctedStatementRequest.correctedSummary }],
-            languagePolicy.responseLanguage,
-            'corrected_statement',
-          ),
-          [correctedStatementRequest.surveyQuestionId],
-        )
-      : null;
-    const v2Composition = v2BundleRequest
-      ? validateQuestionBundleComposition(
-          await this.aiProvider.composeQuestionBundle(
-            turns,
-            v2BundleRequest.questions.map((question) => ({
-              surveyQuestionId: question.surveyQuestionId,
-              workingSummary: question.workingSummary,
-            })),
-            languagePolicy.responseLanguage,
-            // A clarified meaning that was not shown on its own turn is still a corrected statement.
-            ...(v2BundleRequest.kind === 'corrected_statement' ? ['corrected_statement' as const] : []),
-          ),
-          v2BundleRequest.questions.map((question) => question.surveyQuestionId),
-        )
       : null;
     const shouldOfferReportingDisclosure =
       this.surveyRepo !== undefined
@@ -1260,6 +1291,8 @@ export class ConversationOrchestrator {
           ...(correctedComposition ? { v2CorrectedStatement: true } : {}),
           ...(bundleReply ? { v2BundleReply: bundleReply } : {}),
           ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
+          ...(readyBundleFallbackReason ? { v2BundleCompositionFallbackReason: readyBundleFallbackReason } : {}),
+          ...(correctedStatementFallbackReason ? { v2CorrectedStatementFallbackReason: correctedStatementFallbackReason } : {}),
           ...(topicQuestionAsked
             ? { topicQuestion: {
                 questionGroup: topicQuestion!.questionGroup,
@@ -1401,6 +1434,7 @@ export class ConversationOrchestrator {
       risk,
       ...(bundleReply ? { bundleReply } : {}),
       ...(bundleReplyFallbackReason ? { bundleReplyFallbackReason } : {}),
+      ...(bundleCompositionFallbackReason ? { bundleCompositionFallbackReason } : {}),
     };
   }
 

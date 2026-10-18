@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ModerationSignalError } from '@entalent/contracts';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import { ProviderContentFilterError } from '../ports/provider-error';
-import { BundleReplyInvalidError } from '../utils/question-bundle-composition';
+import { BundleCompositionInvalidError, BundleReplyInvalidError } from '../utils/question-bundle-composition';
 import { TopicQuestionReplyInvalidError } from '../utils/topic-question-reply';
 import {
   REPORTING_DISCLOSURE_VERSION,
@@ -5544,6 +5544,55 @@ describe('ConversationOrchestrator answer first, then the bundle (GC round 3 CAP
     expect(result.bundleReplyFallbackReason).toBe('reply_question');
   });
 
+  it('skips the bundle and answers normally when the provider composition fails closed, recording the reason', async () => {
+    const { m, questionConfirmationRepo, orch } = bundleMocks();
+    m.aiProvider.composeQuestionBundle = vi.fn().mockRejectedValue(new BundleCompositionInvalidError('question_count'));
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toContain(replyText);
+    expect(result.responseText).not.toContain(bundleText);
+    expect(result.bundleReply).toBeUndefined();
+    expect(result.bundleCompositionFallbackReason).toBe('question_count');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
+    const [, strategy, context] = m.aiProvider.generateResponse.mock.calls[0]!;
+    expect(strategy.mode).not.toBe('confirmation');
+    expect(context.trailingBundle).toBeUndefined();
+    expect(context.replyPlan).toBeDefined();
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'outbound',
+      metadata: expect.objectContaining({ v2BundleCompositionFallbackReason: 'question_count' }),
+    }));
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ v2ConfirmationBundle: true }),
+    }));
+    expect(m.outbox.enqueueMessageSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the bundle when its own re-validation rejects what the adapter returned', async () => {
+    const { m, questionConfirmationRepo, orch } = bundleMocks();
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({
+      text: `${bundleText} Anything else?`, statements,
+    });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.bundleCompositionFallbackReason).toBe('question_count');
+    expect(result.responseText).not.toContain('Is that fair?');
+    expect(questionConfirmationRepo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
+  });
+
+  it('still fails the turn when composition hits a transport or provider failure', async () => {
+    const { m, orch } = bundleMocks();
+    m.aiProvider.composeQuestionBundle = vi.fn().mockRejectedValue(new Error('fetch failed'));
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('fetch failed');
+
+    expect(m.aiProvider.generateResponse).not.toHaveBeenCalled();
+    expect(m.outbox.enqueueMessageSend).not.toHaveBeenCalled();
+  });
+
   it('sends the bundle alone when the provider output filter blocks the reply part', async () => {
     const { m, orch } = bundleMocks();
     m.aiProvider.generateResponse = vi.fn().mockRejectedValue(new ProviderContentFilterError('output'));
@@ -5806,6 +5855,54 @@ describe('GC round 3 CAP-3: shown corrections, topic completion, cycle status', 
     expect(repo.stageQuestionConfirmationBundle).not.toHaveBeenCalled();
     expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ v2CorrectedStatement: true, v2BundleReply: 'answer_then_bundle' }),
+    }));
+  });
+
+  it('skips the corrected statement for this turn when its composition stays invalid, keeping the verdict', async () => {
+    const m = baseMocks();
+    const corrected = 'I can decide my work methods, but not my priorities.';
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'clarified', correctedSummary: corrected });
+    m.aiProvider.composeQuestionBundle = vi.fn().mockRejectedValue(new BundleCompositionInvalidError('statement_not_in_text'));
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: `Thanks for clearing that up.${context.trailingBundle ? `\n\n${context.trailingBundle.text}` : ''}`,
+      confidence: 0.9, containsSurveyProbe: false,
+    }));
+    const pending = {
+      workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1',
+      surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+      workingSummary: 'I choose all my work.', disputedStatement: 'You set your priorities.',
+      clarificationPromptMessageId: 'clarify-out',
+      clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+    };
+    const repo = repoMocks({
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(pending),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_clarification', 'confirmed'])),
+    });
+
+    const result = await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(m.aiProvider.composeQuestionBundle).toHaveBeenCalledWith(
+      expect.any(Array), [{ surveyQuestionId: 'q-b', workingSummary: corrected }], 'en', 'corrected_statement',
+    );
+    const [, strategy, context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toBeUndefined();
+    expect(strategy.mode).not.toBe('confirmation');
+    expect(result.responseText).toBe('Thanks for clearing that up.');
+    expect(result.bundleReply).toBeUndefined();
+    expect(result.bundleCompositionFallbackReason).toBe('statement_not_in_text');
+    expect(repo.applyQuestionClarificationVerdict).toHaveBeenCalledWith(expect.objectContaining({
+      workingInsightId: 'working-b', verdict: { kind: 'clarified', correctedSummary: corrected },
+    }));
+    expect(repo.stageCorrectedStatementConfirmation).not.toHaveBeenCalled();
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'outbound',
+      metadata: expect.objectContaining({ v2CorrectedStatementFallbackReason: 'statement_not_in_text' }),
+    }));
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ v2CorrectedStatement: true }),
+    }));
+    expect(m.conversationRepo.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ v2BundleCompositionFallbackReason: expect.anything() }),
     }));
   });
 

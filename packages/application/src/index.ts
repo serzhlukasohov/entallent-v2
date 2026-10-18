@@ -30,8 +30,11 @@ export type { QuestionBundleComposition } from './ports/ai-provider.port';
 export {
   validateQuestionBundleComposition, validateBundleReply, composeBundleReplyText, isBundleShownIn,
   isBundleReplyInvalidError, BundleReplyInvalidError, BUNDLE_REPLY_INVALID,
+  isBundleCompositionInvalidError, BundleCompositionInvalidError, BUNDLE_COMPOSITION_INVALID,
 } from './utils/question-bundle-composition';
-export type { BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason } from './utils/question-bundle-composition';
+export type {
+  BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason, BundleCompositionInvalidReason,
+} from './utils/question-bundle-composition';
 export { maxReplyChars } from './utils/reply-length';
 export {
   TopicQuestionReplyInvalidError, isTopicQuestionReplyInvalidError, validateTopicQuestionReply,

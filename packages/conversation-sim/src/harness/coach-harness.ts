@@ -16,6 +16,7 @@ import {
   type SurveyRepositoryPort,
   type SurveyQuestionForEvaluation,
   type QuestionBundleComposition,
+  type QuestionBundleVariant,
   type AwaitingQuestionBundle,
   type QuestionBundleVerdict,
   type PendingQuestionClarification,
@@ -240,7 +241,8 @@ export class CoachHarness {
   }
 }
 
-class RecordingAiProvider implements AiProviderPort {
+/** Exported for tests; scenarios reach it only through `CoachHarness`. */
+export class RecordingAiProvider implements AiProviderPort {
   constructor(
     private readonly delegate: AiProviderPort,
     private readonly generateCalls: GenerateResponseCall[],
@@ -282,8 +284,9 @@ class RecordingAiProvider implements AiProviderPort {
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
+    variant?: QuestionBundleVariant,
   ): Promise<QuestionBundleComposition> {
-    return this.delegate.composeQuestionBundle(turns, questions, responseLanguage);
+    return this.delegate.composeQuestionBundle(turns, questions, responseLanguage, variant);
   }
 
   interpretQuestionBundleResponse(

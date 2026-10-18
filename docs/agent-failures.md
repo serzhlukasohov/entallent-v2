@@ -16,6 +16,15 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-10-18: Pre-push harness treats a base-branch merge's migration as the branch's own change
+
+- Symptom: After merging `origin/main` (which carried migration `0051`) into PR #25's branch, `git push` failed in the pre-push hook with `database integration target required`. `harness:check` without `--base` resolves the base to the branch upstream, so the diff `upstream..HEAD` contained the migration brought in by the merge; the PR itself changes no migration. `--base main` failed the same way because the local `main` in the main checkout was stale.
+- Expected: The pre-push gate checks the branch's changes relative to the branch it will merge into, so syncing with `main` never demands a database for someone else's migration.
+- Root cause layer: tooling
+- Harness fix: `resolveDefaultBase` uses `origin/main` as the base when `origin/main` was merged into HEAD since the last push (HEAD contains it, the upstream does not); otherwise it keeps the upstream, so ordinary pushes still check only unpushed work. `--base` and `HARNESS_BASE_SHA` still win.
+- Regression check: `pnpm exec tsx scripts/agent-harness.test.ts` (`testDefaultBaseExcludesChangesBroughtByAMainMerge`: a temp repo whose branch merges a main that adds a migration resolves the base to the main tip and sees only the branch's own files).
+- Status: fixed
+
 ## 2026-10-02: Multiple active tenant definitions made V2 routing arbitrary
 
 - Symptom: V2 activation could leave an older tenant survey definition active, while `findOrCreateActiveWindow` selected one active definition with an unordered `LIMIT 1`. The activation script also accepted a global V2 definition, which could lose to a tenant-specific V1 definition at runtime.
@@ -3153,6 +3162,15 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: In a worktree session, confirm the index covers the worktree (compare one `grep -n` hit with the CodeGraph line for the same symbol) before trusting CodeGraph line numbers; fall back to direct reads when they disagree. Longer term: index worktrees separately or have CodeGraph refuse paths outside its root.
 - Regression check: `grep -n "const v2Composition" packages/application/src/use-cases/conversation-orchestrator.ts` and the CodeGraph line for the same symbol must agree.
 - Status: open
+
+## 2026-10-15: Live bundle composition fails validation without a reason or a repair attempt
+
+- Symptom: One live `answer-then-bundle` sample on `main` (275febc) threw `Error: v2_confirmation_composition_invalid` from `validateQuestionBundleComposition` inside `OpenAiProvider.composeQuestionBundle`, before any generation call; the same class failed one of 14 samples on 2026-10-15 before the harness kept evidence (`runs/live-sample/*-answer-then-bundle-1-attempt-1.json`, gate id `live-check-275febc`). The validator has seven throw sites with one reason-less message, so which rule the model broke (newline or list marker, questionnaire label, question-mark count, statement not found verbatim, overlapping spans) is not recoverable from the error. Unlike `generateResponse` (one corrective regeneration) and the bundle reply (`BundleReplyInvalidError` with a reason and a `bundle_without_reply` fallback), composition has no repair attempt; in the worker the whole turn fails, retries, and on the last attempt the employee receives the generic processing-failed reply.
+- Expected: A malformed composition is diagnosable by rule, gets one corrective recomposition, and when still invalid the turn degrades (reply without the bundle, bundle left ready for a later turn) instead of failing the employee's message.
+- Root cause layer: architecture and verification
+- Harness fix: `BundleCompositionInvalidError` with a `reason` per rule (13 reasons, message unchanged); `OpenAiProvider.composeQuestionBundle` does one corrective recomposition with the rule named in the system prompt and fails closed with the second draft's reason; `ConversationOrchestrator` composes before strategy selection and, when the composition is still invalid, skips the bundle for this turn (ordinary reply, bundle stays ready) with `v2BundleCompositionFallbackReason` on the outbound metadata and `bundleCompositionFallbackReason` on the result; the worker writes `conversation_v2_bundle_composition_invalid:<reason>` to `llm_runs.error_code` on that successful turn. Transport and provider failures still fail the turn.
+- Regression check: `pnpm --filter @entalent/application exec vitest run src/utils/question-bundle-composition.test.ts src/use-cases/conversation-orchestrator.test.ts -t "BundleCompositionInvalidError|skips the bundle"`, `pnpm --filter @entalent/ai-openai exec vitest run src/openai-provider.test.ts -t composeQuestionBundle`, `pnpm --filter @entalent/worker exec vitest run src/conversation/conversation.processor.test.ts -t "skipped V2 bundle"`; live: several `answer-then-bundle` samples with output written to a log file first, any `agent-turn-error` in the sample JSON must not be `v2_confirmation_composition_invalid`.
+- Status: fixed
 
 ## 2026-10-15: Live sim failure detail lost to a filtered verification command
 

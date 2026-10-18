@@ -151,7 +151,8 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
 });
 
 describe('OpenAiProvider.composeQuestionBundle', () => {
-  beforeEach(() => createMock.mockReset());
+  // Braces matter: a returned mock would be run by Vitest as a cleanup hook after each test.
+  beforeEach(() => { createMock.mockReset(); });
 
   it('requires an exact three-question mapping in the one displayed message', async () => {
     const statements = [
@@ -169,6 +170,64 @@ describe('OpenAiProvider.composeQuestionBundle', () => {
       surveyQuestionId: item.surveyQuestionId,
       workingSummary: item.statement,
     })), 'en')).toEqual({ text, statements });
+    expect(createMock).toHaveBeenCalledOnce();
+  });
+
+  const compositionStatements = [
+    { surveyQuestionId: 'q1', statement: 'You have room to choose.' },
+    { surveyQuestionId: 'q2', statement: 'You set priorities.' },
+    { surveyQuestionId: 'q3', statement: 'You can raise concerns.' },
+  ];
+  const compositionText = `It sounds like ${compositionStatements.map((item) => item.statement).join(' ')} Is that fair?`;
+  const compositionQuestions = compositionStatements.map((item) => ({
+    surveyQuestionId: item.surveyQuestionId, workingSummary: item.statement,
+  }));
+  const compositionDraft = (text: string) => ({
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text, statements: compositionStatements }) } }],
+  });
+
+  it('recomposes once when the draft breaks a rule, naming the rule in the repair prompt', async () => {
+    createMock
+      .mockResolvedValueOnce(compositionDraft(`${compositionText} Really?`))
+      .mockResolvedValueOnce(compositionDraft(compositionText));
+    const provider = makeProvider();
+
+    expect(await provider.composeQuestionBundle(turns, compositionQuestions, 'en'))
+      .toEqual({ text: compositionText, statements: compositionStatements });
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const firstSystemPrompt = createMock.mock.calls[0]![0].messages[0].content as string;
+    const repairSystemPrompt = createMock.mock.calls[1]![0].messages[0].content as string;
+    expect(repairSystemPrompt.startsWith(firstSystemPrompt)).toBe(true);
+    expect(repairSystemPrompt).toMatch(/exactly one question/i);
+    expect(createMock.mock.calls[1]![0].messages[1].content).toBe(createMock.mock.calls[0]![0].messages[1].content);
+  });
+
+  it('recomposes once when the first draft is not parseable', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text": "half a' } }] })
+      .mockResolvedValueOnce(compositionDraft(compositionText));
+    const provider = makeProvider();
+
+    expect(await provider.composeQuestionBundle(turns, compositionQuestions, 'en'))
+      .toEqual({ text: compositionText, statements: compositionStatements });
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(createMock.mock.calls[1]![0].messages[0].content).toMatch(/JSON/);
+  });
+
+  it('fails closed with v2_confirmation_composition_invalid after one recomposition, naming the rule', async () => {
+    createMock.mockResolvedValue(compositionDraft(`${compositionText}\nAnything to add?`));
+    const provider = makeProvider();
+
+    await expect(provider.composeQuestionBundle(turns, compositionQuestions, 'en'))
+      .rejects.toMatchObject({ message: 'v2_confirmation_composition_invalid', reason: 'text_list_markers' });
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not recompose on a transport or provider failure', async () => {
+    createMock.mockRejectedValue(new Error('fetch failed'));
+    const provider = makeProvider();
+
+    await expect(provider.composeQuestionBundle(turns, compositionQuestions, 'en')).rejects.toThrow('fetch failed');
     expect(createMock).toHaveBeenCalledOnce();
   });
 });

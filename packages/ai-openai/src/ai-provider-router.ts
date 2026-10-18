@@ -8,6 +8,7 @@ import type {
   SurveyQuestionForEvaluation,
   SurveyEvidenceEvaluationOptions,
   QuestionBundleComposition,
+  QuestionBundleVariant,
   AwaitingQuestionBundle,
   QuestionBundleVerdict,
   PendingQuestionClarification,
@@ -73,8 +74,9 @@ export class AiProviderWithFallback implements AiProviderPort {
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
+    variant?: QuestionBundleVariant,
   ): Promise<QuestionBundleComposition> {
-    return this.withFallback((provider) => provider.composeQuestionBundle(turns, questions, responseLanguage));
+    return this.withFallback((provider) => provider.composeQuestionBundle(turns, questions, responseLanguage, variant));
   }
 
   async interpretQuestionBundleResponse(
