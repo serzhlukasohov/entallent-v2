@@ -141,8 +141,8 @@ Cadence anchor is the latest of: last topic-question outbound (threshold 3 emplo
 
 **Peripherals**
 
-- Migration (0051 readiness columns, 0052 driver request time).
-  [`0051_quiet_hitman.sql:1`](../../packages/database/migrations/0051_quiet_hitman.sql#L1)
+- Migration 0052 (readiness columns and driver request time, numbered after S4b's 0051).
+  [`0052_hard_groot.sql:1`](../../packages/database/migrations/0052_hard_groot.sql#L1)
 
 - End-to-end queue case, orchestrator cases, live sim scenario.
   [`v2-conversation-flow.integration.test.ts:1216`](../../apps/worker/src/conversation/v2-conversation-flow.integration.test.ts#L1216)

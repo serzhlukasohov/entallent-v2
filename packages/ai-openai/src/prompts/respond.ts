@@ -97,6 +97,7 @@ If your message does touch this territory, set "containsSurveyProbe": true, "sur
     ? buildTopicCompletionBlock(context.topicConfirmed)
     : '';
   const cycleStatusHint = context.cycleProgress ? buildCycleStatusBlock(context.cycleProgress) : '';
+  const notCollectedHint = context.questionNotCollected ? buildNotCollectedBlock(context.questionNotCollected) : '';
 
   const confirmationHint = context.confirmationRequest
     ? `\nIMPORTANT — this reply is a confirmation check for the "${context.confirmationRequest.questionGroup}" topic. Do ALL of this in one message:
@@ -132,7 +133,7 @@ How to handle this:
       ? `\nEmployee's current local time: ${context.localTime}. Mid-conversation — do NOT open with a greeting.`
       : '';
 
-  return `${topicConfirmedHint}${confirmationHint}${trailingBundleHint}${topicQuestionHint}${deliveryContracts}You are speaking directly with the employee as their work companion — someone they trust to talk to about work, not a coach running a session.
+  return `${notCollectedHint}${topicConfirmedHint}${confirmationHint}${trailingBundleHint}${topicQuestionHint}${deliveryContracts}You are speaking directly with the employee as their work companion — someone they trust to talk to about work, not a coach running a session.
 
 The employee is the person reading your reply. Address the employee in the second person in the response language. If they ask who you are or what you do, answer how you help "you"; never describe the employee as "her", "him", or "them" to an imagined third-party audience. If they explicitly ask you to draft text for a real third-party audience, use the perspective that draft requires.
 
@@ -256,6 +257,14 @@ function buildTopicCompletionBlock(topic: NonNullable<ResponseContext['topicConf
     ? `That was the last topic of this cycle: ${topic.topicsClosed} of ${topic.topicsTotal} topics are done and nothing is left to cover; the employee can still change or exclude anything later.`
     : `${topic.topicsClosed} of ${topic.topicsTotal} topics are now done and ${remaining} ${remaining === 1 ? 'topic remains' : 'topics remain'} for later; make no promise about when.`;
   return `\nIMPORTANT — topic completion (hard contract): the employee's reply just completed the topic of ${label}. In one or two plain sentences, in your own words and in the response language, say that this topic is complete and give these numbers: ${progress} Describe the topic by its meaning, never by an internal name or label. Do not ask another question about it, do not probe deeper, do not start the next topic in this reply, and never mention a questionnaire, survey, form, index, or scores. Then either end naturally or respond to anything else the employee said.`;
+}
+
+/**
+ * S4b (GC round 3): a disputed point closed without an agreed wording is said plainly, once.
+ * The fact is typed (the topic only); the sentence is the model's own words.
+ */
+function buildNotCollectedBlock(point: NonNullable<ResponseContext['questionNotCollected']>): string {
+  return `\nIMPORTANT — point not collected (hard contract): the employee's reply leaves one point of the topic "${topicLabel(point.questionGroup)}" without a wording they agreed with, so it is left out of this cycle's results. In one plain sentence of its own, in addition to any completion statement below, in your own words and in the response language, say that you will leave that point out for this cycle. If this reply ends with a fixed text, that fixed text is about another point; keep this sentence in the answer part. Do not ask about that point again, never repeat the disputed wording or quote your earlier understanding of it, do not apologise at length, do not argue for your earlier understanding, and never mention a questionnaire, survey, form, index, or scores. Describe the topic by its meaning, never by an internal name or label. Then respond to anything else the employee said.\n\n`;
 }
 
 /**

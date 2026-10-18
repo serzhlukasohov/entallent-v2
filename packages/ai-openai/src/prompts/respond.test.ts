@@ -1186,6 +1186,41 @@ describe('buildRespondSystemPrompt topic completion and cycle status (GC round 3
   });
 });
 
+describe('buildRespondSystemPrompt question not collected (GC round 3 S4b)', () => {
+  it('asks for one plain sentence that the point is left out for this cycle, in the model\'s own words', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', questionNotCollected: { questionGroup: 'autonomy' },
+    }));
+    expect(prompt).toMatch(/not collected \(hard contract\)/i);
+    expect(prompt).toMatch(/one plain sentence/i);
+    expect(prompt).toMatch(/own words/i);
+    expect(prompt).toMatch(/this cycle/i);
+    expect(prompt).toContain('how much say you have over your own work');
+    expect(prompt).not.toContain('"autonomy"');
+    expect(prompt).toMatch(/do not ask about (that|this) point again/i);
+    expect(prompt).toMatch(/never (repeat|restate|quote) the (disputed|earlier) wording/i);
+  });
+
+  it('keeps the not-collected sentence separate from completion and a fixed text, and claims nothing about stored data', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      questionNotCollected: { questionGroup: 'autonomy' },
+      topicConfirmed: { questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 },
+      trailingBundle: { kind: 'clarification', text: 'What would you change about the other point?' },
+    }));
+    expect(prompt).toMatch(/not collected \(hard contract\)/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toMatch(/in addition to any completion/i);
+    expect(prompt).toMatch(/fixed text .*(another|a different|other) point/i);
+    expect(prompt).not.toMatch(/nothing about it is noted/i);
+  });
+
+  it('adds nothing when no point was left uncollected', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
+    expect(prompt).not.toMatch(/not collected \(hard contract\)/i);
+  });
+});
+
 describe('buildRespondSystemPrompt accepted offers and format requests (GC round 3 CAP-6/CAP-9)', () => {
   const normal: ReplyStrategy = { ...strategy, mode: 'normal', includeFollowUpQuestion: true };
   const acceptancePlan: NonNullable<ResponseContext['replyPlan']> = {

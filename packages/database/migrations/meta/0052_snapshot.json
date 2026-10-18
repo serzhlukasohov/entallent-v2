@@ -1,6 +1,6 @@
 {
-  "id": "9527201f-e0a6-45d9-bc79-0dc47d161a6f",
-  "prevId": "f77618b8-ac1a-422b-8f7c-745d112aeb6a",
+  "id": "cf86a1da-8607-4a4b-a4c4-4ef7f0b62f66",
+  "prevId": "06012f5d-b887-4f44-9247-109c56f0f733",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -5971,6 +5971,13 @@
           "notNull": true,
           "default": "'pending_delivery'"
         },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'confirmation'"
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -6055,6 +6062,10 @@
         }
       },
       "checkConstraints": {
+        "survey_question_confirmation_bundles_kind_check": {
+          "name": "survey_question_confirmation_bundles_kind_check",
+          "value": "\"survey_question_confirmation_bundles\".\"kind\" IN ('confirmation', 'corrected_statement')"
+        },
         "survey_question_confirmation_bundles_purged_content_check": {
           "name": "survey_question_confirmation_bundles_purged_content_check",
           "value": "\"survey_question_confirmation_bundles\".\"purged_at\" IS NULL OR (\"survey_question_confirmation_bundles\".\"displayed_text\" IS NULL AND \"survey_question_confirmation_bundles\".\"components\" IS NULL)"
@@ -6682,6 +6693,13 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "clarification_attempts": {
+          "name": "clarification_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         },
         "confirmation_message_id": {
           "name": "confirmation_message_id",

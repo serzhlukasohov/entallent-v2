@@ -1,1 +1,0 @@
-ALTER TABLE "survey_question_working_insights" ADD COLUMN "driver_requested_at" timestamp with time zone;

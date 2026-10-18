@@ -6120,6 +6120,218 @@ describe('ConversationOrchestrator accepted offers are delivered (GC round 3 CAP
   });
 });
 
+describe('GC round 3 S4b: a rejected corrected statement gets one more clarification, then closes', () => {
+  const correctedBundle = (clarificationAttempts: number) => ({
+    id: 'bundle-3', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy',
+    displayedText: 'So the fair version is: you set your own priorities. Right?',
+    components: [{ surveyQuestionId: 'q-b', questionVersion: 'v2', statement: 'you set your own priorities' }],
+    kind: 'corrected_statement' as const,
+    clarificationAttempts,
+  });
+  const snapshot = (autonomy: string[]) => ({
+    surveyWindowId: 'w-v2',
+    groups: [
+      { questionGroup: 'autonomy', questions: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId, index) => ({ surveyQuestionId, status: autonomy[index]! })) },
+      { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-d', status: 'no_data' }] },
+    ],
+  });
+  const nextClarification = {
+    workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+    surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+    workingSummary: 'I set my own priorities.', disputedStatement: 'you set your own priorities',
+    clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+  };
+  function repoMocks(overrides: Record<string, unknown> = {}) {
+    return {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      previewPendingQuestionClarificationAfterBundleVerdict: vi.fn().mockResolvedValue(nextClarification),
+      previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue('bundle-2'),
+      stageCorrectedStatementConfirmation: vi.fn().mockResolvedValue('bundle-4'),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_confirmation', 'confirmed'])),
+      ...overrides,
+    };
+  }
+  function orchestrator(m: ReturnType<typeof baseMocks>, repo: ReturnType<typeof repoMocks>) {
+    return new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, repo,
+    );
+  }
+  function twoPartReplies(m: ReturnType<typeof baseMocks>) {
+    m.aiProvider.composeQuestionClarification = vi.fn().mockResolvedValue('What part of it still feels off?');
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => (
+      context.trailingBundle
+        ? {
+            text: `Got it.\n\n${context.trailingBundle.text}`, replyText: 'Got it.', bundleText: context.trailingBundle.text,
+            confidence: 0.9, containsSurveyProbe: false,
+          }
+        : { text: 'reply', confidence: 0.9, containsSurveyProbe: false }));
+  }
+  const disputedVerdict = { kind: 'partial', acceptedQuestionIds: [], disputedQuestionIds: ['q-b'], declinedQuestionIds: [] };
+  const declinedVerdict = { kind: 'partial', acceptedQuestionIds: [], disputedQuestionIds: [], declinedQuestionIds: ['q-b'] };
+
+  it('asks one more clarification instead of wiping the correction when the budget lasts', async () => {
+    const m = baseMocks();
+    twoPartReplies(m);
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'reject' });
+    const repo = repoMocks({ findAwaitingQuestionBundle: vi.fn().mockResolvedValue(correctedBundle(1)) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionBundleVerdict).toHaveBeenCalledWith(expect.objectContaining({
+      bundleId: 'bundle-3', verdict: disputedVerdict,
+    }));
+    expect(repo.previewPendingQuestionClarificationAfterBundleVerdict).toHaveBeenCalledWith(expect.objectContaining({
+      bundleId: 'bundle-3', disputedQuestionIds: ['q-b'],
+    }));
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toMatchObject({ kind: 'clarification', text: 'What part of it still feels off?' });
+    expect(context.questionNotCollected).toBeUndefined();
+    expect(context.topicConfirmed).toBeUndefined();
+    expect(repo.stageQuestionClarificationPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      workingInsightId: 'working-b', promptMessageId: 'out-1',
+    }));
+  });
+
+  it.each([
+    ['a second reject', { kind: 'reject' }],
+    ['a second dispute', disputedVerdict],
+    ['a skip', declinedVerdict],
+  ])('closes the question as not collected on %s once the budget is spent', async (_label, verdict) => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue(verdict);
+    m.aiProvider.composeQuestionClarification = vi.fn();
+    const repo = repoMocks({ findAwaitingQuestionBundle: vi.fn().mockResolvedValue(correctedBundle(2)) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionBundleVerdict).toHaveBeenCalledWith(expect.objectContaining({
+      bundleId: 'bundle-3', verdict: declinedVerdict,
+    }));
+    expect(repo.previewPendingQuestionClarificationAfterBundleVerdict).not.toHaveBeenCalled();
+    expect(m.aiProvider.composeQuestionClarification).not.toHaveBeenCalled();
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+    // The declined statement was the last open one of the topic: completion is stated too.
+    expect(context.topicConfirmed).toEqual({ questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 2 });
+    expect(context.trailingBundle).toBeUndefined();
+  });
+
+  it('closes as not collected when the adapter does not say how many clarifications were asked', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'reject' });
+    const withoutAttempts: Partial<ReturnType<typeof correctedBundle>> = correctedBundle(1);
+    delete withoutAttempts.clarificationAttempts;
+    const repo = repoMocks({ findAwaitingQuestionBundle: vi.fn().mockResolvedValue(withoutAttempts) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionBundleVerdict).toHaveBeenCalledWith(expect.objectContaining({ verdict: declinedVerdict }));
+  });
+
+  it('states the point is not collected when one statement of an ordinary bundle is skipped', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({
+      kind: 'partial', acceptedQuestionIds: ['q-a', 'q-c'], disputedQuestionIds: [], declinedQuestionIds: ['q-b'],
+    });
+    const ordinary = {
+      ...correctedBundle(0), kind: 'confirmation' as const, clarificationAttempts: undefined,
+      components: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId) => ({ surveyQuestionId, questionVersion: 'v2', statement: `${surveyQuestionId}.` })),
+    };
+    const repo = repoMocks({
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(ordinary),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['pending_confirmation', 'pending_confirmation', 'pending_confirmation'])),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+  });
+
+  it('shows a ready corrected meaning with the corrected-statement wording on the ordinary path', async () => {
+    const m = baseMocks();
+    twoPartReplies(m);
+    const corrected = 'I set my own priorities.';
+    const shown = `So the corrected version is: ${corrected} Right?`;
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({
+      text: shown, statements: [{ surveyQuestionId: 'q-b', statement: corrected }],
+    });
+    const repo = repoMocks({
+      findReadyQuestionBundle: vi.fn().mockResolvedValue({
+        tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy', kind: 'corrected_statement',
+        questions: [{ surveyQuestionId: 'q-b', questionVersion: 'v2', workingSummary: corrected }],
+      }),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(m.aiProvider.composeQuestionBundle).toHaveBeenCalledWith(
+      expect.any(Array), [{ surveyQuestionId: 'q-b', workingSummary: corrected }], 'en', 'corrected_statement',
+    );
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.trailingBundle).toMatchObject({ kind: 'corrected_statement', text: shown });
+    expect(repo.stageQuestionConfirmationBundle).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the ordinary bundle reject semantics unchanged', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'reject' });
+    const ordinary = { ...correctedBundle(0), kind: 'confirmation' as const, clarificationAttempts: undefined };
+    const repo = repoMocks({ findAwaitingQuestionBundle: vi.fn().mockResolvedValue(ordinary) });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionBundleVerdict).toHaveBeenCalledWith(expect.objectContaining({ verdict: { kind: 'reject' } }));
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.questionNotCollected).toBeUndefined();
+  });
+
+  it('states the point is not collected when the employee skips a clarification', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'declined' });
+    const repo = repoMocks({
+      findPendingQuestionClarification: vi.fn().mockResolvedValue({
+        ...nextClarification, clarificationPromptMessageId: 'clarify-out',
+        clarificationPromptSentAt: new Date('2026-09-03T09:59:00Z'),
+      }),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'pending_clarification', 'confirmed'])),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+    expect(context.topicConfirmed).toEqual({ questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 2 });
+  });
+
+  it.each([
+    ['bundle', { kind: 'bundle', verdictKind: 'partial', questionGroup: 'autonomy', questionNotCollected: true }],
+    ['clarification', { kind: 'clarification', verdictKind: 'declined', questionGroup: 'autonomy', questionNotCollected: true }],
+  ])('keeps the not-collected statement on a retried %s turn', async (_label, applied) => {
+    const m = baseMocks();
+    const repo = repoMocks({
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(applied),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'declined', 'confirmed'])),
+    });
+
+    await orchestrator(m, repo).orchestrate(INPUT);
+
+    expect(repo.applyQuestionBundleVerdict).not.toHaveBeenCalled();
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+  });
+});
+
 // GC round 3 CAP-1, CAP-2 (T1, T2): the policy decides; a due topic question is required (ADR-013 D4, D8).
 describe('GC round 3 CAP-1: topic steering inside an active V2 cycle', () => {
   const at = (minute: number) => new Date(INBOUND_OCCURRED_AT.getTime() + minute * 60_000);

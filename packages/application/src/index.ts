@@ -25,7 +25,7 @@ export {
 export type {
   TopicCadence, TopicCadenceMessage, TopicQuestionFacts, TopicQuestionDecision, TopicQuestionBlockReason,
 } from './utils/topic-question-policy';
-export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict, CycleProgressSnapshot } from './ports/question-confirmation.port';
+export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleKind, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict, CycleProgressSnapshot } from './ports/question-confirmation.port';
 export type { QuestionBundleComposition } from './ports/ai-provider.port';
 export {
   validateQuestionBundleComposition, validateBundleReply, composeBundleReplyText, isBundleShownIn,
@@ -39,7 +39,7 @@ export {
 } from './utils/topic-question-reply';
 export type { TopicQuestionReplyParts, TopicQuestionReplyInvalidReason } from './utils/topic-question-reply';
 export type { TrailingBundle, TopicQuestionRequest } from './ports/ai-provider.port';
-export { validateQuestionBundleVerdict } from './utils/question-bundle-verdict';
+export { validateQuestionBundleVerdict, resolveCorrectedStatementVerdict, MAX_QUESTION_CLARIFICATIONS } from './utils/question-bundle-verdict';
 export { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from './utils/question-clarification';
 export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';
 export type { PulseBacklogRepositoryPort, PulseBacklogRecord, ResolvedIgnore, ProactivePulseConfig } from './ports/pulse-backlog.repository.port';
