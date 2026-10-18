@@ -16,6 +16,15 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-10-18: Pre-push harness treats a base-branch merge's migration as the branch's own change
+
+- Symptom: After merging `origin/main` (which carried migration `0051`) into PR #25's branch, `git push` failed in the pre-push hook with `database integration target required`. `harness:check` without `--base` resolves the base to the branch upstream, so the diff `upstream..HEAD` contained the migration brought in by the merge; the PR itself changes no migration. `--base main` failed the same way because the local `main` in the main checkout was stale.
+- Expected: The pre-push gate checks the branch's changes relative to the branch it will merge into, so syncing with `main` never demands a database for someone else's migration.
+- Root cause layer: tooling
+- Harness fix: In `resolveDefaultBase`, prefer the merge base with `origin/main` (or the PR base) over the upstream when HEAD contains `origin/main`; until then push with `HARNESS_BASE_SHA=$(git rev-parse origin/main) git push`.
+- Regression check: On a branch, merge an `origin/main` that adds a migration, then run `pnpm harness:check` with no base and no `DATABASE_URL`; it must not require a database.
+- Status: open
+
 ## 2026-10-02: Multiple active tenant definitions made V2 routing arbitrary
 
 - Symptom: V2 activation could leave an older tenant survey definition active, while `findOrCreateActiveWindow` selected one active definition with an unordered `LIMIT 1`. The activation script also accepted a global V2 definition, which could lose to a tenant-specific V1 definition at runtime.
