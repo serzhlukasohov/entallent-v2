@@ -327,7 +327,7 @@ So that rule-based and time-based criteria are checked on every pull request wit
 
 **Given** an `observation` case (P-06)
 **When** it runs
-**Then** the executor seeds users with timezones from `proactiveUsers`, advances the clock across the window at `scanEveryMs`, drives `ProactiveSchedulerUseCase` and check-in generation with the scripted model, and fills `window.outbound` with bot-initiated messages carrying `occurredAt`
+**Then** the executor seeds users with timezones from `proactiveUsers`, advances the clock across the window at `scanEveryMs`, drives `ProactiveSchedulerUseCase` through an in-memory `ProactiveSchedulerRepositoryPort` fake that returns cadence facts from the recorded messages, drives `ProactiveCheckInUseCase` with the scripted model, and fills `window.outbound` with bot-initiated messages carrying `occurredAt`
 
 **Given** fixtures in `src/suite/fixtures/`
 **When** applied at L0
@@ -499,7 +499,7 @@ So that meaning-based criteria are judged on what actually ships.
 
 **Given** `src/suite/executors/l1-orchestrator-executor.ts` implements `SuiteExecutor` with `level: 'L1'`
 **When** it runs a `conversation` case
-**Then** it creates a fresh `CoachHarness` per case with the production coach provider wiring and in-memory repositories, drives Scenario `run()` with `user(text)` and `agent()` steps ending in `succeed()`, `setId: 'entalent-suite-p-v1'`, no judge agent and no user simulator, realizes `interMessageGapMs` and `advanceClock` through the harness clock, attributes replies by the orchestrator result, declares `observed` fields including `turn.*` and `reply.messages[].metadata.*`, and `supports()` every fixture except none (all six are implemented in memory)
+**Then** it creates a fresh `CoachHarness` per case with the production coach provider wiring and in-memory repositories, drives Scenario `run()` with `user(text)` and `agent()` steps ending in `succeed()`, `setId: 'entalent-suite-p-v1'`, no judge agent and no user simulator, realizes `interMessageGapMs` and `advanceClock` through the harness clock, attributes replies by the orchestrator result, declares `observed` fields including `turn.*` and `reply.messages[].metadata.*`, and `supports()` all six fixtures, each implemented against the in-memory repositories
 **And** with `LANGWATCH_API_KEY` set the run streams to LangWatch, and without it the `CaseRun` is identical
 
 **Given** `src/suite/fixtures/state-queries.ts`
@@ -512,7 +512,7 @@ So that meaning-based criteria are judged on what actually ships.
 
 **Given** P-06 criteria C4 and C5 at L1
 **When** the observation case runs
-**Then** the executor drives check-in generation with the live model over the fixture clock and fills `window.outbound` for the restatement and S criteria
+**Then** the executor wires `ProactiveCheckInUseCase` to the harness repositories (the harness does not wire it today), drives check-in generation with the live model over the fixture clock, and fills `window.outbound` for the restatement and S criteria
 
 ### Story 13.5: Live Run Budgets, Usage and the First L1 Baseline
 
@@ -596,7 +596,7 @@ So that the application-level run can observe what the dashboard shows without t
 
 **Given** `apps/api/src/dev/dev-simulate.controller.ts`
 **When** `GET /api/v1/dev/conversation/:id/messages?after=` is called
-**Then** each row additionally carries `metadata` and `jobStatus` (`queued`, `processing`, `completed`, `failed`, or `null` for outbound) derived from existing repositories and queue state, and the response for an unknown `after` id is `400` instead of the full history
+**Then** each row additionally carries `metadata` and `jobStatus` (`queued`, `processing`, `completed`, `failed`, or `null` for outbound) where `jobStatus` is resolved by looking up the conversation queue job whose payload `messageId` equals the inbound row id, and the response for an unknown `after` id is `400` instead of the full history
 
 **Given** `GET /api/v1/dev/user/:userId/question-confirmation?group=<questionGroup>`
 **When** called

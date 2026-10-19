@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-08-09T18:55:00+02:00
+# last_updated: 2026-10-19T13:36:01+02:00
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -42,7 +42,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-28T11:09:38+02:00
+last_updated: 2026-10-19T13:36:01+02:00
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -109,6 +109,35 @@ development_status:
   9-1-enable-fast-maf-primary-runtime-cutover: done
   9-2-run-full-app-primary-runtime-smoke: done
   epic-9-retrospective: done
+
+  epic-12: backlog
+  12-1-case-schema-loader-and-rule-registry-contract: backlog
+  12-2-evaluation-scoring-and-report-core: backlog
+  12-3-suite-rule-implementations: backlog
+  12-4-p-suite-case-records-p-01-p-10: backlog
+  12-5-clockport-in-the-application-layer: backlog
+  12-6-cadence-policy-extracted-from-worker-sql: backlog
+  12-7-l0-deterministic-executor-and-fixtures: backlog
+  12-8-runner-suite-run-and-suite-baseline-accept: backlog
+  12-9-suite-diff-with-regression-categories: backlog
+  12-10-l0-gate-in-ci-and-baseline-governance: backlog
+  epic-12-retrospective: optional
+
+  epic-13: backlog
+  13-1-per-criterion-structured-judge: backlog
+  13-2-calibration-labels-import-adapter-and-agreement-file: backlog
+  13-3-judge-trust-advisory-statuses-and-the-qa-review-list: backlog
+  13-4-l1-orchestrator-executor-live-fixtures-and-state-queries: backlog
+  13-5-live-run-budgets-usage-and-the-first-l1-baseline: backlog
+  13-6-pull-request-gate-for-prompt-and-orchestrator-changes: backlog
+  13-7-scheduled-nightly-and-weekly-l1-runs: backlog
+  epic-13-retrospective: optional
+
+  epic-14: backlog
+  14-1-additive-development-read-endpoints: backlog
+  14-2-l2-application-executor-with-isolation-and-reply-attribution: backlog
+  14-3-weekly-l2-workflow-and-the-first-l2-baseline: backlog
+  epic-14-retrospective: optional
 
 action_items:
   - epic: 1
