@@ -481,6 +481,7 @@ Use this file to turn agent misses into harness improvements.
 - Expected: Required reflection and final harness commands should use already provisioned tooling and must not mutate or install the workspace before a documentation-only task.
 - Root cause layer: environment
 - Harness fix: Provision workspace dependencies before the task or provide a dependency-independent reflection launcher that fails fast when its runtime is absent.
+- Recurrence, 2026-10-21 (documentation-only Reports worktree): the direct Node/tsx launcher found tsx but failed on eager `ioredis` imports even though the reflection/docs gate needs no database. Task workaround: use ignored worktree-local links to already installed tsx, ioredis, and postgres packages. The bundled pnpm also attempted an automatic dependency install before the script; it was interrupted, then `verify-deps-before-run=false` allowed the actual docs-only harness to pass without installing. No tracked lockfile or runtime edit resulted. The durable dependency-independent launcher remains open.
 - Regression check: Run reflection and `harness:check` in a clean checkout with network disabled; each must produce its artifact or a clear no-runtime diagnostic without invoking `pnpm install`.
 - Status: open
 
