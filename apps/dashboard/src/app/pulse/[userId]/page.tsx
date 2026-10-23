@@ -6,6 +6,7 @@ import { Badge, Freshness, Legend, Notice, PageHeader, ViewBadge } from '../../c
 import { fetchAdminV2PilotPeople, TENANT_ID } from '../../lib';
 import { DevControls } from '../DevControls';
 import { devControlsEnabled } from '../dev-controls-gate';
+import { RestartOnboardingButton } from '../RestartOnboardingButton';
 import {
   cohortLabel, draftStatusBadge, isShownWorking, lastMessageLabel, personProgress, personStageBadge, TOPIC_GROUPS,
 } from '../../v2-pilot-progress';
@@ -58,6 +59,7 @@ export default async function UserInsightsPage({ params }: { params: Promise<{ u
           <ViewBadge badge={personStageBadge(person)} />
           <span>{personProgress(person).nextStep}</span>
         </div>
+        <RestartOnboardingButton userId={person.userId} tenantId={TENANT_ID} displayName={person.displayName} />
         {/* Local QA only: never rendered in production (see dev-controls-gate). */}
         {showDevControls && <DevControls userId={person.userId} tenantId={TENANT_ID} />}
       </>}
