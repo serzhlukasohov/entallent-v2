@@ -12,8 +12,13 @@ export function RestartOnboardingButton({ userId, tenantId, displayName }: { use
     setStatus('loading');
     setMsg('');
     try {
-      const result = await restartOnboarding(userId, tenantId);
-      setMsg(result.introQueued
+      const response = await restartOnboarding(userId, tenantId);
+      if (!response.ok) {
+        setMsg(response.error);
+        setStatus('error');
+        return;
+      }
+      setMsg(response.result.introQueued
         ? 'Онбординг перезапущен, intro поставлено в очередь'
         : 'Онбординг перезапущен, но доставки для повторной отправки нет');
       setStatus('done');
