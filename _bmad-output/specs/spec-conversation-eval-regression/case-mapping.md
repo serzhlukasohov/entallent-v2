@@ -50,8 +50,31 @@ Each substituted criterion is reported with `method: substituted` so QA can see 
 | `clock` | P-01, P-02, P-04, P-06 | Injected `now()` into orchestrator, scheduler, quiet-hours; advance by duration |
 | `pulseCycle` | P-07, P-09, P-10 | Survey window, question group, per-question progress (0/3), uncovered topics list, canonical questions |
 | `pendingBotQuestion` | P-03 | Last outbound message is a bot question, no inbound after it |
+| `seededHistory` | every atomic test (L0, L1) | Seed turns written through the conversation repository with fixture-clock timestamps, verified by read-back; unsupported at L2 |
+| `confirmationState` | later P-09 and P-10 atomic tests (L0, L1) | Staged bundle, applied verdicts per question and pending clarification written through `questionConfirmationRepo`; unsupported at L2 |
 | `freshPersona` | P-05 | Empty conversation, memory, style, survey state |
 | `disclosureDelivered` | P-07, P-09, P-10 | Outbound with `reportingDisclosureVersion` metadata, delivered |
 | `proactiveUsers` | P-06 | Users with timezones and scheduler config for the observation window |
 
 Isolation is not a fixture: every case runs `isolated`, which each executor realizes itself (new harness and repositories at L0/L1; a fresh external user plus `reset-user` with `deep: true` at L2, see spine AD-14 and AD-18).
+
+## 5. Atomic decomposition
+
+Amended 2026-10-24 by `planning-artifacts/sprint-change-proposal-2026-10-24.md`.
+
+- Each P-case in section 1 is a source case. It becomes one atomic test (`P-xx.A<n>`) per distinct `evaluatedAt` reply or step, carrying the criteria evaluated there. Criterion ids stay `P-xx.C<n>`.
+- The seed of an atomic test holds the suite's earlier user messages verbatim and representative coach replies for the turns before the evaluated one; the single evaluated turn is the suite text verbatim.
+- `conversation`-scoped criteria (for example P-08 "no two consecutive replies without a cause question") become an atomic test whose seed holds the preceding turns.
+- Change-type `state` criteria are paired with an `effect-count` check on the evaluated step and are INVALID when already satisfied in the before-snapshot; invariant criteria are not (see the amendment below).
+- P-06 stays an observation test. Atomic tests declare L0 and/or L1 only.
+- Smoke journeys (`P-xx.J`) run the full Confluence case verbatim at L1 and L2. Proposed journeys: P-09, P-10 (pending QA, SPEC Open Questions).
+- Amended again by `planning-artifacts/sprint-change-proposal-2026-10-24-b.md`:
+  - The source manifest `cases/p-v1/sources.ts` is the single list of each source case's criteria, layers, verbatim pass conditions, NOT TESTABLE reasons and, for change-type state criteria, `stateEffect { port, method, expected }`.
+  - Seeded coach text is approved by QA, and a seed must not itself satisfy a criterion of its test.
+  - Seeds may carry message metadata (`SeedTurn.metadata`); later P-09 and P-10 moments use the `confirmationState` fixture.
+  - State criteria are `change` or `invariant`; P-09 "summaries count not greater than seen" is `invariant` and is never marked already-satisfied.
+  - L0 carries only criteria decided by rules over orchestrator-produced inputs (time, cadence, message metadata, state, events), never over reply text the test scripted; P-02 does not run at L0. Each L0 test carries its scripted model outputs.
+  - L2 reports the verdict as n/a (journeys only); journey rule and S regressions fail the diff.
+  - `evaluate` synthesizes the `effect-count` pairing from `stateEffect` where events are observed.
+  - Journeys are reported and diffed separately and do not count toward the verdict.
+- The per-case decomposition table (source case, test id, seed summary, evaluated turn, criteria, levels) is produced by Story 12.4 and replaces this paragraph's proposal once QA confirms.

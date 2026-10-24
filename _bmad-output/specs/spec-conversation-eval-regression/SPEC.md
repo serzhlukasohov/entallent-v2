@@ -19,12 +19,12 @@ QA runs the Framework v2.1.1 suites by hand in Slack: 10 P-cases, 37 criteria, 6
 ## Capabilities
 
 - **CAP-1 — Case as data**
-  - **intent:** A test case is a structured record mirroring the Confluence case: id, requirement, setup fixtures, exact user messages with waits, and a criteria table with layer, evaluated reply, pass condition and check type.
-  - **success:** P-01..P-10 exist as case records; loading rejects a case whose expected behavior has no criterion, or a criterion missing layer, evaluatedAt or checkType (framework 3.1 rule).
+  - **intent:** The primary executable unit is an atomic test: seeded state and seeded conversation history, exactly one user turn or proactive trigger, and the criteria evaluated on that one reply or that step's effects. Each Confluence P-case is decomposed into atomic tests, one per evaluated moment; a small set of P-cases also runs as verbatim multi-turn smoke journeys mirroring the Confluence case. Every test carries the id, requirement, setup fixtures and a criteria table with layer, evaluated reply, pass condition and check type.
+  - **success:** Every testable criterion of the conversation cases P-01..P-05 and P-07..P-10 is covered by an atomic test, and P-06 by its observation test; at least two P-cases (including P-09) exist as smoke journeys; loading rejects a test whose expected behavior has no criterion, or a criterion missing layer, evaluatedAt or checkType (framework 3.1 rule).
 
 - **CAP-2 — Framework statuses and verdict**
   - **intent:** Every criterion of a run receives exactly one framework status, and the run is scored and judged per framework sections 5 and 6.
-  - **success:** Report shows PASS / FAIL / NOT TESTABLE / INVALID / ERROR / NOT RUN per criterion; pass rate per layer is PASS/(PASS+FAIL); any S FAIL yields NOT ADEQUATE; a run with ERROR, INVALID or unplanned NOT RUN is INCOMPLETE with a provisional verdict.
+  - **success:** Report shows PASS / FAIL / NOT TESTABLE / INVALID / ERROR / NOT RUN per criterion; pass rate per layer is PASS/(PASS+FAIL); any S FAIL yields NOT ADEQUATE; a run with ERROR, INVALID or unplanned NOT RUN is INCOMPLETE with a provisional verdict; pass rates and the verdict count atomic and observation tests, and smoke journeys are reported separately.
 
 - **CAP-3 — Rule-based checks**
   - **intent:** Criteria tagged rule-based are decided by named deterministic checks, without a model call.
@@ -32,11 +32,11 @@ QA runs the Framework v2.1.1 suites by hand in Slack: 10 P-cases, 37 criteria, 6
 
 - **CAP-4 — Meaning-based checks with calibration**
   - **intent:** Criteria tagged meaning-based are decided by an LLM judge on the reply named by evaluatedAt, and the judge is trusted only after it agrees with human labels.
-  - **success:** One structured PASS/FAIL/reason per criterion, judged with the transcript up to that reply; the report carries the judge's agreement with the labeled calibration set; below the threshold, meaning-based statuses are marked advisory and excluded from the verdict; every meaning-based FAIL is listed for QA review.
+  - **success:** One structured PASS/FAIL/reason/evidence per criterion, judged by meaning with the transcript up to that reply; a PASS carries a verbatim fragment of the evaluated reply as evidence, and fixture context is reference, never evidence; the report carries the judge's agreement with the labeled calibration set; below the threshold, meaning-based statuses are marked advisory and excluded from the verdict; every meaning-based FAIL is listed for QA review.
 
 - **CAP-5 — Deterministic executor (L0)**
   - **intent:** Cases whose criteria are rule-based or depend on time can run offline, deterministically and in seconds.
-  - **success:** With a scripted model and an injected clock, P-06 (initiation, 48-hour spacing, working hours, timezone), the working-hours setups of P-01/P-02 and the gap of P-04 pass or fail from the scheduler and orchestrator code alone; the executor runs in PR CI.
+  - **success:** With a scripted model and an injected clock, P-06 (initiation, 48-hour spacing, working hours, timezone), the working-hours setup of P-01 and the gap of P-04 (L0 evaluates only rules over orchestrator-produced inputs (time, cadence, message metadata, state, events), never over reply text the test scripted) pass or fail from the scheduler and orchestrator code alone; the executor runs in PR CI.
 
 - **CAP-6 — Orchestrator executor (L1)**
   - **intent:** Cases run against the real orchestration and prompts with a live model, in the exact state the suite setup describes.
@@ -44,7 +44,7 @@ QA runs the Framework v2.1.1 suites by hand in Slack: 10 P-cases, 37 criteria, 6
 
 - **CAP-7 — Application executor (L2)**
   - **intent:** The same case records can verify what only the full application path shows: queueing, persistence and dashboard counts.
-  - **success:** Through the development endpoints against local API, worker, Postgres and Redis, P-09 dashboard criteria read from `survey-state` and the admin read model; `reset-user` restores the persona before each run; a failed precondition marks the case INVALID instead of FAIL.
+  - **success:** Through the development endpoints against local API, worker, Postgres and Redis, P-09 dashboard criteria read from `survey-state` and the admin read model; `reset-user` restores the persona before each run; a failed precondition marks the case INVALID instead of FAIL. L2 runs the smoke journeys only; atomic tests run at L0 and L1, because seeding history at L2 would need a development write path. An L2 report shows the verdict as n/a (journeys only); journey rule and S regressions fail the diff, journey meaning results are reported.
 
 - **CAP-8 — Baseline and regression diff**
   - **intent:** Each run is persisted per criterion with git sha, models and level, and compared with the last accepted baseline.
@@ -62,6 +62,10 @@ QA runs the Framework v2.1.1 suites by hand in Slack: 10 P-cases, 37 criteria, 6
   - **intent:** Runs can be viewed in LangWatch cloud without becoming dependent on it.
   - **success:** With `LANGWATCH_API_KEY` set, L1 runs stream to LangWatch; without it, results are identical locally.
 
+- **CAP-12 — Step evidence and vacuous-pass guards**
+  - **intent:** Every L0/L1 run records what happened inside each step, and a criterion cannot pass on state that already held before the step.
+  - **success:** Each run carries an ordered event log (port, method, step, result) for model calls, repository writes and outbox effects; change-type state criteria assert the change caused by the evaluated step and are INVALID when already satisfied in the before-snapshot, while invariant state criteria are checked as they stand; every rule has an L0 fixture on which it must FAIL.
+
 ## Constraints
 
 - TypeScript-only; retired MAF and `agent-service` untouched.
@@ -69,8 +73,8 @@ QA runs the Framework v2.1.1 suites by hand in Slack: 10 P-cases, 37 criteria, 6
 - Rule checks live in the test framework only; no lexical heuristic migrates into product code (ADR-013 D2).
 - L0 and L1 need no Postgres or Redis; the `conversation-sim` `test` script stays offline.
 - L2 targets only the local docker stack through development-only `/dev` endpoints, never Railway production.
-- Suite texts are sent verbatim through scripted steps; the user simulator is not used for suite cases.
-- The judge model is pinned per suite version; changing it requires recalibration and a new baseline.
+- Suite texts are sent verbatim through scripted steps (the full sequence in smoke journeys, the single evaluated turn and the seeded history in atomic tests); the user simulator is not used for suite cases.
+- The judge is pinned per suite version by fingerprint (provider, model, decoding settings, prompt hash, output schema hash, guidance hash); changing any part requires recalibration and a new baseline. When the judge and a human label disagree, the criterion's judge guidance is clarified; labels are never changed to match judge output.
 - Existing `ScenarioRunReport` and gate summary consumers keep working (additive fields or a new schemaVersion).
 - Case data is canonical in the repository and versioned with the code it tests.
 - Product-side changes are limited to those the spine's AD-12 authorizes: `ClockPort` injection, the proactive cadence policy moved from worker SQL into `packages/application`, additive read-only `/dev` GET fields, and the failure-kind extraction inside `conversation-sim`.
@@ -96,6 +100,7 @@ One command runs P-01..P-10 at L0 and L1, prints the framework scoring table and
 - Confluence remains the human-readable mirror of case data, updated by hand.
 - L0 P-06 tests the specified cadence with configuration as input; the temporary hourly production override is not the requirement; the cadence predicates move into an application policy so L0 can reach them.
 - The P-suite runs in the framework's Isolated profile (fresh persona per case); Sequential and Anytime profiles are not needed for the first slice.
+- Atomic tests are the primary unit and verbatim smoke journeys complement them; L0/L1 runs record a per-step event log; judge verdicts carry evidence from the reply; amended on 2026-10-24 by `planning-artifacts/sprint-change-proposal-2026-10-24.md` and `sprint-change-proposal-2026-10-24-b.md` (source manifest per suite, QA-approved seeds, L0 limited to time, cadence and rule criteria).
 - Cases are typed TypeScript modules; one executor port with three adapters; `ClockPort` instead of fake timers; baselines committed in the repository; everything lives under `packages/conversation-sim`; a per-criterion structured judge instead of the Scenario verdict.
 
 ## Open Questions
@@ -107,3 +112,4 @@ One command runs P-01..P-10 at L0 and L1, prints the framework scoring table and
 - When QA edits a case: repository PR by QA, or a generator from Confluence?
 - Numeric thresholds left as assumptions in the spine: agreement 0.85 and kappa 0.6 over at least 40 labels, `minSamples` L1 5 / L2 3 for baselines and 3 for diffs, meaning pass threshold 80 percent of samples, budgets 600 coach and 150 judge calls per sample set.
 - Does a QA CODEOWNERS entry for `baselines/**` exist, or must one be created?
+- Does QA accept atomic decomposition plus verbatim smoke journeys as the report that replaces the manual sheet? Which P-cases are the smoke journeys (proposed: P-09, P-10)?

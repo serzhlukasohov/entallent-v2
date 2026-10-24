@@ -4,7 +4,9 @@ baseline_commit: 9814b7cf48c9be064d082253e8e4675436d83c05
 
 # Story 12.1: Case Schema, Loader and Rule Registry Contract
 
-Status: ready-for-dev
+Status: backlog
+
+> **Superseded (2026-10-24).** The amended AD-1 and AD-3 (`planning-artifacts/sprint-change-proposal-2026-10-24.md`) change this story's schema and loader contract. Regenerate the story before development; do not implement from this version.
 Epic: 12 - Rule-Based Regression Gate on Every Pull Request (L0)
 Story ID: 12.1
 

@@ -14,6 +14,8 @@ inputDocuments:
   - conversation-eval-regression/epics.md
 ---
 
+> **Superseded (2026-10-24).** The SPEC, architecture spine and Epics 12-14 were amended by `sprint-change-proposal-2026-10-24.md` (atomic tests, per-step event log, judge evidence and fingerprint, vacuous-pass guards). This READY assessment no longer applies; re-check readiness with `bmad-sprint-planning` before development.
+
 # Implementation Readiness Assessment Report
 
 **Date:** 2026-10-19

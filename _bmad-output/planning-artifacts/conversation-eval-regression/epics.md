@@ -10,45 +10,47 @@ inputDocuments:
   - ../../specs/spec-conversation-eval-regression/case-mapping.md
   - ../../specs/spec-conversation-eval-regression/architecture-diagrams.md
   - ../architecture/architecture-conversation-eval-regression-2026-10-17/ARCHITECTURE-SPINE.md
+  - ../sprint-change-proposal-2026-10-24.md
+  - ../sprint-change-proposal-2026-10-24-b.md
 ---
 
 # Conversation Evaluation Regression Framework - Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for the Conversation Evaluation Regression Framework, decomposing the spec (SPEC-conversation-eval-regression, CAP-1..CAP-11) and the architecture spine (AD-1..AD-18) into implementable stories. Epic numbering continues from the project's existing epics (1-11), so this feature starts at Epic 12. No PRD or UX contract exists for this work; the spec package is the requirements source.
+This document provides the complete epic and story breakdown for the Conversation Evaluation Regression Framework, decomposing the spec (SPEC-conversation-eval-regression, CAP-1..CAP-12) and the architecture spine (AD-1..AD-18) into implementable stories. Epic numbering continues from the project's existing epics (1-11), so this feature starts at Epic 12. No PRD or UX contract exists for this work; the spec package is the requirements source. Amended on 2026-10-24 by `sprint-change-proposal-2026-10-24.md` (atomic tests, per-step event log, judge evidence and fingerprint, vacuous-pass guards) and by `sprint-change-proposal-2026-10-24-b.md` (source manifest, change versus invariant state criteria, mid-flow seeding, injectable harness, L0 scope, journeys outside the verdict).
 
 ## Requirements Inventory
 
 ### Functional Requirements
 
-FR1: A suite case is a typed record mirroring the Confluence case: id, requirement, kind, levels, setup fixtures, preconditions, exact user messages with optional clock advance and checkpoint, and a criteria table with layer, evaluated reply, verbatim pass condition and checks (rule, meaning or not-testable). (CAP-1, AD-1)
+FR1: A suite test is a typed record of kind atomic (seeded state and history, one turn), journey (verbatim multi-step Confluence case) or observation, referencing a source case in the suite's source manifest (requirement, expected behavior, criteria with layer and verbatim pass condition, NOT TESTABLE reasons, state effects), with levels, setup fixtures, preconditions, steps with optional clock advance (and checkpoint in journeys), and a criteria table with layer, evaluated reply, verbatim pass condition, optional judge guidance and checks (rule, meaning or not-testable). (CAP-1, AD-1)
 
-FR2: Loading a suite validates every case against the schema and rejects a case whose expected behavior has no criterion, whose criterion lacks layer, evaluatedAt or checks, or whose kind and steps are inconsistent. (CAP-1, AD-1)
+FR2: Loading a suite validates every test against the schema and rejects a test whose expected behavior has no criterion, whose criterion lacks layer, evaluatedAt or checks, or whose kind and steps are inconsistent; atomic tests with other than one step, without a seed, with a checkpoint or declaring L2; and conversation source cases whose testable criteria are not all covered by an atomic test (an observation source case is covered by its observation test). (CAP-1, AD-1)
 
-FR3: Case and criterion ids are stable keys for results, baselines and diffs; retired criteria remain as not-testable entries. (CAP-1, CAP-8, AD-2)
+FR3: Test and criterion ids are stable; criterion ids are the Confluence ids; results, baselines and diffs are keyed by suite, level, test and criterion; retired criteria remain as not-testable entries. (CAP-1, CAP-8, AD-2)
 
 FR4: Every in-scope criterion of a run receives exactly one framework status: PASS, FAIL, NOT_TESTABLE, INVALID, ERROR or NOT_RUN, following the precedence and scope rules. (CAP-2, AD-9)
 
-FR5: A run is scored per layer (P, D, C, S) with pass rate PASS/(PASS+FAIL) over non-advisory statuses, is COMPLETE or INCOMPLETE, and receives the verdict ADEQUATE, ACCEPTABLE WITH ISSUES or NOT ADEQUATE with S as a hard gate and a provisional flag for incomplete runs. (CAP-2, AD-9)
+FR5: A run is scored per layer (P, D, C, S) with pass rate PASS/(PASS+FAIL) over non-advisory statuses, is COMPLETE or INCOMPLETE, counts atomic and observation tests only (journeys are reported and diffed separately), and receives the verdict ADEQUATE, ACCEPTABLE WITH ISSUES or NOT ADEQUATE with S as a hard gate and a provisional flag for incomplete runs. (CAP-2, AD-9)
 
 FR6: Rule-based checks are named entries in a registry with declared observation requirements, returning PASS, FAIL or NOT_OBSERVABLE with evidence, deterministic for the same observations; legacy rules are wrapped, new rules keep their term lists as suite data. (CAP-3, AD-6, AD-17)
 
-FR7: Meaning-based checks are decided by a per-criterion structured judge call on the reply named by evaluatedAt, with the transcript up to that reply, the expected behavior, the pass condition, the layer and fixture context; judge failures become per-criterion ERROR. (CAP-4, AD-7)
+FR7: Meaning-based checks are decided by a per-criterion structured judge call on the reply named by evaluatedAt, with the transcript up to that reply, the expected behavior, the pass condition, the layer and fixture context; judge failures become per-criterion ERROR; the judge decides by meaning and returns evidence, and a PASS without a verbatim fragment of the evaluated reply is re-asked once, then ERROR. (CAP-4, AD-7)
 
-FR8: Judge trust is measured by a calibration command against a self-contained human-labeled set, written to one agreement file, and computed once per run into a trust record; untrusted meaning statuses are advisory and excluded from pass rate and verdict, and every meaning-based FAIL is listed for QA review. (CAP-4, AD-8)
+FR8: Judge trust is measured by a calibration command against a self-contained human-labeled set, written to one agreement file, and computed once per run into a trust record; untrusted meaning statuses are advisory and excluded from pass rate and verdict, and every meaning-based FAIL is listed for QA review; trust is bound to a judge fingerprint of provider, model, decoding settings and prompt, schema and guidance hashes. (CAP-4, AD-8)
 
-FR9: The L0 deterministic executor runs cases with a scripted model and a fixed or advancing clock, with no network, covering P-06 initiation, spacing and working-hours criteria and the time-dependent setups of P-01, P-02 and P-04. (CAP-5, AD-5, AD-14)
+FR9: The L0 deterministic executor runs cases with a scripted model and a fixed or advancing clock, with no network, covering P-06 initiation, spacing and working-hours criteria and the time-dependent setups of P-01 and P-04, evaluating at L0 only rules over orchestrator-produced inputs (time, cadence, message metadata, state, events), never over reply text the test scripted. (CAP-5, AD-5, AD-14)
 
 FR10: The L1 orchestrator executor runs cases through the existing harness with a live coach model, in-memory repositories, and fixtures for pulse cycle, pending bot question, fresh persona, delivered disclosure and proactive users; L1 scripts drive Scenario and end with succeed(). (CAP-6, AD-4, AD-14, AD-16)
 
-FR11: The L2 application executor runs the same cases against the local API, worker, Postgres and Redis through /api/v1/dev endpoints with a fresh external user per case, deep reset, traceId-based reply attribution, 500 ms polling up to 60 s and a localhost-only base URL guard. (CAP-7, AD-14)
+FR11: The L2 application executor runs the same cases against the local API, worker, Postgres and Redis through /api/v1/dev endpoints with a fresh external user per case, deep reset, traceId-based reply attribution, 500 ms polling up to 60 s and a localhost-only base URL guard; L2 runs journey tests only. (CAP-7, AD-14)
 
 FR12: State criteria are answered from one state-query table (questionProgress, stagedBundleCount, surveyEvidenceCount, outboundCount) with an L1 accessor and an L2 route each, and every result carries method observed or substituted. (CAP-6, CAP-7, CAP-10, AD-10)
 
 FR13: Each executor declares the fixtures it supports and the observation fields it fills; an unsupported fixture yields NOT_RUN with reason and an INCOMPLETE run, never FAIL; fixture apply failures are ERROR and failed verifications are INVALID. (CAP-5..7, AD-4, AD-17)
 
-FR14: Every run writes a versioned SuiteRunReport (JSON and Markdown) with run id, sample count, git sha, models, judge trust, per-criterion results with pass counts and samples, layer table, verdict, coverage table (CF requirement to case to criterion), judge errors and token usage. (CAP-2, CAP-8, CAP-10, AD-11)
+FR14: Every run writes a versioned SuiteRunReport (JSON and Markdown) with run id, sample count, git sha, models, judge trust, per-criterion results with pass counts and samples, layer table, verdict, coverage table (CF requirement to source case to test to criterion), judge errors and token usage. (CAP-2, CAP-8, CAP-10, AD-11)
 
 FR15: Baselines are committed per suite and level, carry judge and coach provenance, and change only through an accept command that refuses too few samples, incomplete runs, dirty trees or a judge pin mismatch. (CAP-8, AD-11)
 
@@ -62,9 +64,13 @@ FR19: The report shows which EP1 requirement each case and criterion verifies an
 
 FR20: With LANGWATCH_API_KEY set, L1 runs stream to LangWatch cloud under a suite set id; without it, results are identical locally. (CAP-11, AD-16)
 
-FR21: The P-suite cases P-01..P-10 exist as case records with the fixtures, levels, check types and NOT TESTABLE reasons given in case-mapping.md. (CAP-1, CAP-10)
+FR21: P-01..P-10 exist as atomic tests covering every testable criterion, P-06 as an observation test, and the agreed smoke journeys verbatim, with the fixtures, levels, check types and NOT TESTABLE reasons given in case-mapping.md. (CAP-1, CAP-10)
 
-FR22: The between-message gap and advanceClock are realized uniformly per level and recorded; checkpoints are rule-only and their failure marks dependent criteria INVALID; infrastructure errors retry once per case, product errors never. (CAP-2, CAP-5..7, AD-18)
+FR22: The between-message gap and advanceClock are realized uniformly per level and recorded; atomic gaps come from seed offsets; checkpoints exist in journeys only, are rule-only and their failure marks dependent criteria INVALID; infrastructure errors retry once per case, product errors never. (CAP-2, CAP-5..7, AD-18)
+
+FR23: L0 and L1 runs record an ordered event log per step (port, method, arguments summary, outcome, duration, model request and response) through recording proxies on the harness ports, written only to run artifacts. (CAP-12, AD-3, AD-17)
+
+FR24: At L0 and L1, change-type state criteria are paired with a per-step effect check from the manifest's state effect; a change-type state criterion already satisfied before the step is INVALID; invariant state criteria are not; every rule has a synthetic fixture on which it must FAIL. (CAP-12, AD-6, AD-9, AD-10)
 
 ### NonFunctional Requirements
 
@@ -78,9 +84,9 @@ NFR4: L0 and L1 need no Postgres or Redis; L0 needs no model credentials; the co
 
 NFR5: L2 targets only the local docker stack through development-only /dev endpoints with NODE_ENV=test; never Railway production; no level reads SLACK_*.
 
-NFR6: Suite user texts are sent verbatim through scripted steps; the user simulator is not used.
+NFR6: Suite user texts are sent verbatim through scripted steps (the full sequence in journeys; the seeded history and the single turn in atomic tests); the user simulator is not used.
 
-NFR7: The judge model and prompt version are pinned per suite; changing either invalidates agreement and baselines; env overrides cannot silently change the evaluating model.
+NFR7: The judge is pinned per suite by fingerprint (provider, model, decoding, prompt, schema and guidance hashes); changing any part invalidates agreement and baselines; env overrides cannot silently change the evaluating model or its settings.
 
 NFR8: Existing ScenarioRunReport, gate.config.json and run-gate.ts consumers keep working; suite artifacts are new, versioned types.
 
@@ -117,7 +123,7 @@ Not applicable: this feature has no user interface. Outputs are Markdown, JSON a
 
 ### FR Coverage Map
 
-FR1: Epic 12 - Case schema and typed case records
+FR1: Epic 12 - Test schema, source manifest and typed test records
 FR2: Epic 12 - Loader validation and refinements
 FR3: Epic 12 - Stable ids as result and baseline keys
 FR4: Epic 12 - Status precedence and scope
@@ -137,18 +143,20 @@ FR17: Epic 12 (run, diff, accept) and Epic 13 (calibrate) - CLI
 FR18: Epic 12 (ci.yml L0), Epic 13 (L1 PR workflow, nightly, weekly), Epic 14 (L2 workflow) - CI
 FR19: Epic 12 - Coverage table, NOT_TESTABLE reasons, judge-only and unobservable listings
 FR20: Epic 13 - LangWatch streaming via Scenario set id
-FR21: Epic 12 - P-01..P-10 case records
+FR21: Epic 12 - P-01..P-10 atomic tests and smoke journeys
 FR22: Epic 12 - Gap, advanceClock, checkpoints, retry semantics
+FR23: Epic 12 (L0 recording proxies) and Epic 13 (L1 recording proxies) - Event log
+FR24: Epic 12 (effect-count, already-satisfied, fail fixtures) and Epic 13 (L1 pairing) - Vacuous-pass guards
 
 ## Epic List
 
 ### Epic 12: Rule-Based Regression Gate on Every Pull Request (L0)
 A developer opening any pull request gets a framework-scored P-suite verdict for every rule-based and time-based criterion, diffed against the committed baseline, in seconds and without model credentials. Includes the two authorized product changes (ClockPort and the cadence policy) because P-06 cannot be tested at L0 without them.
-**FRs covered:** FR1, FR2, FR3, FR4, FR5, FR6, FR9, FR13, FR14, FR15, FR16, FR17 (run, diff, accept), FR18 (L0 job), FR19, FR21, FR22
+**FRs covered:** FR1, FR2, FR3, FR4, FR5, FR6, FR9, FR13, FR14, FR15, FR16, FR17 (run, diff, accept), FR18 (L0 job), FR19, FR21, FR22, FR23 (L0), FR24
 
 ### Epic 13: Calibrated Live Judging and the Prompt-Change Gate (L1)
 QA and developers get meaning-based verdicts from a judge whose agreement with human labels is measured and reported; prompt and orchestrator changes are gated on a live L1 run against the merge-base baseline; nightly and weekly runs build the trend, optionally visible in LangWatch.
-**FRs covered:** FR7, FR8, FR10, FR12 (L1 accessors), FR15 and FR16 (sample thresholds, inconclusive, judge provenance), FR17 (calibrate), FR18 (PR workflow, nightly, weekly), FR20
+**FRs covered:** FR7, FR8, FR10, FR12 (L1 accessors), FR15 and FR16 (sample thresholds, inconclusive, judge provenance), FR17 (calibrate), FR18 (PR workflow, nightly, weekly), FR20, FR23 (L1), FR24 (L1 pairing)
 
 ### Epic 14: Full-Application Verification on the Real Path (L2)
 QA sees the criteria the suite checks on the dashboard and in the database observed on the real API, queue, worker and Postgres path once a week and on demand, with persona isolation and reply attribution that survive an asynchronous worker.
@@ -161,17 +169,19 @@ A developer opening any pull request gets a framework-scored P-suite verdict for
 ### Story 12.1: Case Schema, Loader and Rule Registry Contract
 
 As a case author,
-I want suite cases to be typed records validated at load against one schema, with rule references checked against a registry,
-So that a malformed case or a dangling rule name fails before any run and every criterion carries a stable id.
+I want suite tests and the source manifest to be typed records validated at load against one schema, with rule references checked against a registry,
+So that a malformed test or a dangling rule name fails before any run and every criterion carries a stable id.
 
-**Covers:** FR1, FR2, FR3, FR6; NFR3, NFR9
+**Covers:** FR1, FR2, FR3, FR6, FR24 (fail fixtures); NFR3, NFR9
 
 **Acceptance Criteria:**
 
-**Given** `packages/conversation-sim/src/suite/schema.ts` defines Zod schemas and types for `SuiteCase`, `Step`, `Criterion`, `Check`, `FixtureRef`, `CaseRun`, `StepObservation`, `ReplyMessage`, `StateSnapshot`, `CriterionResult` and `CriterionStatus` exactly as AD-1 and AD-3 list them
+**Given** `packages/conversation-sim/src/suite/schema.ts` defines Zod schemas and types for `SuiteCase`, `Step`, `Criterion`, `Check`, `FixtureRef`, `SeedTurn`, `CaseRun`, `RunEvent`, `StepObservation`, `ReplyMessage`, `StateSnapshot`, `StateQueryName` with one schema per query, `ObservationField`, `SourceCase`, `SourceCriterion`, `CriterionResult` and `CriterionStatus` exactly as the amended AD-1 and AD-3 list them (`kind: 'atomic' | 'journey' | 'observation'`, `sourceCase`, `seed` with `SeedTurn.metadata`, `scripted`, `judgeGuidance`, `stateQuery.kind`, `CaseRun.testId`, `CaseRun.events`)
+**And** `src/suite/cases/p-v1/sources.ts` exports the source manifest (it may be empty in this story)
 **When** `loadSuite('p-v1')` reads `src/suite/cases/p-v1/*.case.ts`
 **Then** every case is validated and the first invalid case fails the load with the case id and the Zod path
-**And** the loader rejects a `conversation` case with zero steps, an `observation` case with any step or `reply:<n>` criterion, an `evaluatedAt` index outside `1..steps.length`, a `state` criterion without `stateQuery`, a checkpoint containing a meaning check, and a criterion id not matching `<caseId>.C<n>`
+**And** the loader rejects an `atomic` test with other than one step, without `seed`, with a checkpoint or declaring L2; a `journey` with zero steps; an `observation` test with any step or `reply:<n>` criterion; an `evaluatedAt` index outside `1..steps.length`; a `state` criterion without `stateQuery`; a checkpoint containing a meaning check; a test id not matching `<sourceCase>.A<n>`, `<sourceCase>.J` or the observation case id; a criterion id not matching `<sourceCase>.C<n>`; a criterion id absent from the source manifest; a `conversation` source case whose testable criteria are not all covered by an atomic test (an `observation` source case is covered by its observation test); and a test declaring L0 without `scripted`
+**And** the loader joins `layer` and `passCondition` from the manifest into each test criterion
 **And** a case with any `advanceClock` step gets the `clock` fixture added to `setup` by the loader
 
 **Given** `src/suite/rules/registry.ts` exports `RuleName` and a registry of `{ requires: ObservationField[], run }` entries
@@ -179,6 +189,7 @@ So that a malformed case or a dangling rule name fails before any run and every 
 **Then** the loader rejects any name absent from the registry
 **And** the registry wraps the existing `too-many-questions`, `repeated-question` and `reflective-opener` rules from `harness/assertions.ts` without copying their definitions, each declaring `requires: ['reply.text']`
 **And** a rule invoked on a `CaseRun` lacking a required field returns `NOT_OBSERVABLE`
+**And** every registry entry, including the wrapped legacy rules, declares synthetic `CaseRun` fixtures `pass` and `fail`, and a colocated test fails when a rule does not FAIL on its `fail` fixture
 
 **Given** the offline test command `pnpm --filter @entalent/conversation-sim test`
 **When** it runs
@@ -191,30 +202,32 @@ As a QA engineer,
 I want every criterion of a run to receive one framework status, a layer table and a verdict computed by one pure module,
 So that L0, L1 and L2 cannot disagree on what "passed" means.
 
-**Covers:** FR4, FR5, FR13, FR14, FR19, FR22; NFR8, NFR14
+**Covers:** FR3, FR4, FR5, FR13, FR14, FR19, FR22, FR24; NFR8, NFR14
 
 **Acceptance Criteria:**
 
 **Given** `evaluate(case, run, judge | null, trust)` in `src/suite/evaluate.ts` is a pure function over a `CaseRun`
 **When** it is called with `judge: null`
-**Then** it produces exactly one `CriterionResult` per criterion in scope, rules are evaluated through the registry, a criterion whose checks are all meaning is `NOT_RUN` with reason `no-judge-at-level`, and a rule-plus-meaning criterion is decided by the rule with `meaningSkipped: true`
+**Then** it produces exactly one `CriterionResult` per test and criterion in scope, keyed `<testId>/<criterionId>`, rules are evaluated through the registry, a criterion whose checks are all meaning is `NOT_RUN` with reason `no-judge-at-level`, and a rule-plus-meaning criterion is decided by the rule with `meaningSkipped: true`
 **And** it asserts `run.steps[i].index === i + 1` and throws on mismatch
 
 **Given** `src/suite/score.ts`
 **When** results are scored
-**Then** out-of-scope criteria (case or criterion does not declare the level) are `NOT_RUN` reason `level-not-declared` and excluded from COMPLETE, pass rate and verdict
-**And** precedence for in-scope criteria is NOT_TESTABLE, then INVALID (failed precondition, failed fixture verify, or failed checkpoint at step k for criteria with n > k and for `conversation`/`state` criteria without `independentOfCheckpoints`), then ERROR (executor error at or before the step, fixture apply failure), then NOT_RUN (step not reached, unsupported fixture, unobservable field), then PASS/FAIL where any rule FAIL makes the criterion FAIL
+**Then** out-of-scope criteria (test or criterion does not declare the level, or all checks are meaning at a level without a judge) are `NOT_RUN` reason `level-not-declared` or `no-judge-at-level` and excluded from COMPLETE, pass rate and verdict
+**And** layer pass rates and the verdict count `atomic` and `observation` tests only; `journey` results are reported in a separate section, and a run with only journeys in scope (L2) reports the verdict `n/a (journeys only)`
+**And** `evaluate` synthesizes `effect-count { ...stateEffect, step: <evaluated step> }` for each `kind: 'change'` state criterion when the run declares `events`, and never at L2
+**And** precedence for in-scope criteria is NOT_TESTABLE, then INVALID (failed precondition, failed fixture verify, a `state` criterion with `stateQuery.kind: 'change'` already satisfied on `state.before` with reason `precondition:already-satisfied`, or, in journeys only, a failed checkpoint at step k for criteria with n > k and for `conversation`/`state` criteria without `independentOfCheckpoints`), then ERROR (executor error at or before the step, fixture apply failure), then NOT_RUN (step not reached, unsupported fixture, unobservable field), then PASS/FAIL where any rule FAIL makes the criterion FAIL
 **And** layer pass rate is PASS/(PASS+FAIL) over non-advisory statuses, a run is COMPLETE only when every in-scope status is PASS, FAIL or pre-declared NOT_TESTABLE, any S FAIL yields NOT ADEQUATE, else combined P+D+C pass rate ≥ 0.90 is ADEQUATE, 0.75–0.89 is ACCEPTABLE WITH ISSUES, otherwise NOT ADEQUATE, and INCOMPLETE runs carry `provisional: true` with the reason
 **And** the thresholds are quoted from Framework v2.1.1 sections 5 and 6 in doc comments with the page version
 
 **Given** `src/suite/report.ts`
 **When** a run is reported
-**Then** `SuiteRunReport` (`schemaVersion: 1`) is written as `.json` and `.md` under `packages/conversation-sim/runs/suites/<runId>/` (gitignored) with run id, suite, level, `n`, git sha and dirty flag, models, judge trust, per-criterion results with `status`, `passCount`, `n`, `advisory`, `method`, `reason`, layer table, verdict, provisional flag, coverage table (CF requirement to case to criterion with NOT_TESTABLE reasons, judge-only criteria and unobservable fields), judge errors and usage
+**Then** `SuiteRunReport` (`schemaVersion: 1`) is written as `.json` and `.md` under `packages/conversation-sim/runs/suites/<runId>/` (gitignored) with run id, suite, level, `n`, git sha and dirty flag, models, judge trust, per-criterion results with `status`, `passCount`, `n`, `advisory`, `method`, `reason`, layer table, verdict, provisional flag, coverage table (CF requirement to source case to test to criterion with NOT_TESTABLE reasons, judge-only criteria and unobservable fields), judge errors and usage
 **And** `ScenarioRunReport`, `gate.config.json` and `run-gate.ts` are unchanged
 
 **Given** synthetic `CaseRun` fixtures in tests
 **When** the test suite runs
-**Then** each status, each precedence branch, checkpoint propagation, scope exclusion and each verdict band has at least one test
+**Then** each status, each precedence branch (including `precondition:already-satisfied`), journey checkpoint propagation, scope exclusion and each verdict band has at least one test
 
 ### Story 12.3: Suite Rule Implementations
 
@@ -222,13 +235,13 @@ As a QA engineer,
 I want the rule-based pass conditions of the P-suite implemented as named, deterministic checks with their phrase lists kept as test data,
 So that the same transcript always yields the same status and no heuristic leaks into product code.
 
-**Covers:** FR6; NFR3
+**Covers:** FR6, FR24; NFR3
 
 **Acceptance Criteria:**
 
 **Given** one file per rule under `src/suite/rules/`
 **When** the registry is loaded
-**Then** it contains `single-question` (exactly one question in the reply), `no-internal-terms` (none of topic, index, pulse, cycle as data list), `no-greeting-restart` (greeting and self-introduction phrase list), `cause-question-present` (a question about the cause in the reply), `no-two-replies-without-cause-question` (`conversation` scope), `reply-present` (reply not null), `bundle-staged` (requires `reply.messages[].metadata.v2ConfirmationBundle`), `answer-then-bundle` (requires `turn.bundleReply`), `proactive-spacing` (≥ 48 h between consecutive bot-initiated outbounds in `window.outbound`), `proactive-working-hours` (every bot-initiated first message between 09:00 and 18:00 in the user's timezone), `proactive-initiated` (≥ 1 bot-initiated outbound in the window), `state-equals` and `state-not-greater-than` (parameterized state comparisons) and `clock-leak` (no persisted timestamp outside the fixed clock range)
+**Then** it contains `single-question` (exactly one question in the reply), `no-internal-terms` (none of topic, index, pulse, cycle as data list), `no-greeting-restart` (greeting and self-introduction phrase list), `cause-question-present` (a question about the cause in the reply), `no-two-replies-without-cause-question` (`conversation` scope), `reply-present` (reply not null), `bundle-staged` (requires `reply.messages[].metadata.v2ConfirmationBundle`), `answer-then-bundle` (requires `turn.bundleReply`), `proactive-spacing` (≥ 48 h between consecutive bot-initiated outbounds in `window.outbound`), `proactive-working-hours` (every bot-initiated first message between 09:00 and 18:00 in the user's timezone), `proactive-initiated` (≥ 1 bot-initiated outbound in the window), `state-equals` and `state-not-greater-than` (parameterized state comparisons), `effect-count` (exactly `expected` successful calls of a port method on the evaluated step; requires `events`) and `clock-leak` (no persisted timestamp outside the fixed clock range)
 **And** every rule declares `requires` and returns `PASS`, `FAIL` or `NOT_OBSERVABLE` with evidence text
 **And** no rule branches on `level`
 
@@ -238,29 +251,34 @@ So that the same transcript always yields the same status and no heuristic leaks
 
 **Given** each rule
 **When** tests run
-**Then** each rule has at least one PASS, one FAIL and one NOT_OBSERVABLE case
+**Then** each rule has at least one PASS, one FAIL and one NOT_OBSERVABLE case, and its registry `fail` fixture is asserted to FAIL
 
-### Story 12.4: P-Suite Case Records P-01..P-10
+### Story 12.4: P-Suite Atomic Tests and Smoke Journeys
 
 As a QA engineer,
-I want the ten Confluence cases encoded as case records with their exact texts, fixtures, levels, check types and NOT TESTABLE reasons,
-So that an automated run is traceable row by row to the suite I run by hand.
+I want the ten Confluence cases decomposed into atomic tests with their exact texts, fixtures, levels, check types and NOT TESTABLE reasons, plus the agreed cases as verbatim smoke journeys,
+So that every criterion is checked on one isolated moment and an automated run stays traceable row by row to the suite I run by hand.
 
 **Covers:** FR1, FR3, FR19, FR21; NFR6, NFR9
 
 **Acceptance Criteria:**
 
-**Given** `src/suite/cases/p-v1/` contains one `*.case.ts` per case P-01..P-10
+**Given** `src/suite/cases/p-v1/sources.ts` lists P-01..P-10 with requirement, expected behavior, every criterion id, layer, verbatim pass condition, NOT TESTABLE reason and, for change-type state criteria, `stateEffect { port, method, expected }`
+**And** `case-mapping.md` section 5 is extended with the per-case decomposition table (source case, test id, seed summary, seed approved by QA, evaluated turn, criteria, levels)
+**And** `src/suite/cases/p-v1/` contains one `*.case.ts` per atomic test, per journey and for the P-06 observation test
 **When** `loadSuite('p-v1')` runs
-**Then** every case loads, user texts match the suite verbatim, `requirement` lists the CF ids, `kind`, `levels`, `setup`, `preconditions`, `steps`, `observationWindow` and `criteria` follow `case-mapping.md` section 1 and the fixture table in section 4
+**Then** every test loads, the evaluated turn and seeded user messages match the suite verbatim, `requirement` lists the CF ids, `kind`, `levels`, `setup`, `seed`, `preconditions`, `steps`, `observationWindow` and `criteria` follow `case-mapping.md` sections 1, 4 and 5, and every testable criterion is covered by an atomic test
+**And** no seeded coach turn satisfies a criterion of its own test, and every seeded coach text is marked QA-approved in the table
+**And** only criteria decided by rules over orchestrator-produced inputs (time, cadence, message metadata, state, events), never over reply text the test scripted declare L0 (P-02 has none and does not run at L0), and each L0 test carries its `scripted` model outputs
+**And** the agreed journeys (proposed P-09, P-10, pending QA) send the full Confluence sequence verbatim at L1 and L2
 **And** P-06 is `kind: 'observation'` with `observationWindow: { durationMs: 7 days }`, criteria C1–C3 at `levels: ['L0']` and C4–C5 at `levels: ['L1']`
-**And** P-09 has a rule-only checkpoint after step 3 (`bundle-staged`, `onFail: 'stop'`) and `state` criteria with `stateQuery` names `questionProgress`, `stagedBundleCount` and `surveyEvidenceCount` at `before` and `after`
+**And** the P-09 journey has a rule-only checkpoint after step 3 (`bundle-staged`, `onFail: 'stop'`), and the P-09 `state` criteria use `stateQuery` names `questionProgress`, `stagedBundleCount` and `surveyEvidenceCount` at `before` and `after`, with `kind: 'change'` for progress, staged bundles and evidence and `kind: 'invariant'` for "summaries count not greater than seen"; later P-09 and P-10 moments are seeded with `confirmationState` and `SeedTurn.metadata`
 **And** the two NOT TESTABLE criteria (P-05 opening, P-09 progress content) carry the suite's reason text
 **And** every criterion has a `passCondition` equal to the suite's pass condition text and a `layer` from P, D, C, S
 
 **Given** the coverage table produced by the report
 **When** the suite is loaded
-**Then** it lists CF-002, CF-003, CF-004, CF-005, CF-006 and CF-008 with their cases and criteria, matching the suite's requirements coverage table
+**Then** it lists CF-002, CF-003, CF-004, CF-005, CF-006 and CF-008 with their source cases, tests and criteria, matching the suite's requirements coverage table
 
 ### Story 12.5: ClockPort in the Application Layer
 
@@ -316,14 +334,19 @@ As a developer,
 I want the P-suite to run offline with a scripted model and a controlled clock,
 So that rule-based and time-based criteria are checked on every pull request without tokens.
 
-**Covers:** FR9, FR13, FR22; NFR4
+**Covers:** FR9, FR13, FR22, FR23 (L0); NFR4
 
 **Acceptance Criteria:**
 
 **Given** `src/suite/executors/l0-deterministic-executor.ts` implements `SuiteExecutor` with `level: 'L0'`
-**When** it runs a `conversation` case
-**Then** it creates a fresh `CoachHarness` per case with `aiProvider: ScriptedAiProvider` and a `FixedClock`/`AdvancingClock`, realizes `interMessageGapMs` and `advanceClock` by advancing the clock before each step after the first and records `gapMs`, attributes the reply by the orchestrator result with 1-based `index`, sets `reply: null` with `turn.outcome` on silence, declares `observed` fields and `supports()` for `clock`, `freshPersona`, `pendingBotQuestion`, `disclosureDelivered` and `proactiveUsers`
-**And** it evaluates a `stop` checkpoint inline with the pure rule and records `stoppedAtStep`
+**When** it runs an atomic or journey test
+**Then** it creates a fresh `CoachHarness` per test with `aiProvider: ScriptedAiProvider` fed by the test's `scripted` outputs and a `FixedClock`/`AdvancingClock`, realizes `interMessageGapMs` and `advanceClock` by advancing the clock before each step after the first and records `gapMs`, attributes the reply by the orchestrator result with 1-based `index`, sets `reply: null` with `turn.outcome` on silence, declares `observed` fields including `events` and `supports()` for `clock`, `seededHistory`, `confirmationState`, `freshPersona`, `pendingBotQuestion`, `disclosureDelivered` and `proactiveUsers`
+**And** it evaluates a journey `stop` checkpoint inline with the pure rule and records `stoppedAtStep`
+**And** for an `atomic` test it applies `seededHistory`, realizes the gap from the last `SeedTurn.atOffsetMs`, and sends the single turn
+
+**Given** `src/suite/executors/recording-proxy.ts`
+**When** the L0 executor wires the harness
+**Then** every port it passes in (scripted AI provider, conversation, memory, goal and style repositories, outbox, scheduler-facing ports; `CoachHarness` is extended to accept these injected, defaulting to its current in-memory implementations) is wrapped, `CaseRun.events` holds one `RunEvent` per call in order with `stepIndex` 0 for fixtures and seed, and product code is unchanged
 
 **Given** an `observation` case (P-06)
 **When** it runs
@@ -360,8 +383,8 @@ So that I can produce a scored report locally and make its results the reference
 
 **Given** `pnpm suite:baseline:accept --run <runId>`
 **When** invoked
-**Then** it writes `packages/conversation-sim/baselines/p-v1/L0.json` with `schemaVersion`, suite, level, judge and coach provenance, `acceptedFrom { runId, gitSha, ciRunUrl? }`, `acceptedAt` and `results[criterionId] = { status, passCount, n }` for every in-scope criterion
-**And** it refuses a run with `n` below `baseline.minSamples[level]`, an INCOMPLETE run without `--allow-incomplete` (which records `provisional: true`), a dirty tree without `--allow-dirty`, or a judge pin differing from config
+**Then** it writes `packages/conversation-sim/baselines/p-v1/L0.json` with `schemaVersion`, suite, level, judge fingerprint (none at L0) and coach provenance, `acceptedFrom { runId, gitSha, ciRunUrl? }`, `acceptedAt` and `results['<testId>/<criterionId>'] = { status, passCount, n }` for every in-scope criterion
+**And** it refuses a run with `n` below `baseline.minSamples[level]`, an INCOMPLETE run without `--allow-incomplete` (which records `provisional: true`), a dirty tree without `--allow-dirty`, or a judge fingerprint differing from the current one
 **And** an initial L0 baseline for `p-v1` is committed with the story, with the expected-red criteria (P-06 working hours) recorded as FAIL
 
 ### Story 12.9: suite:diff with Regression Categories
@@ -376,8 +399,9 @@ So that a broken job, a flaky sample and a real regression are reported differen
 
 **Given** `pnpm suite:diff --run <runId> [--baseline <path>]`
 **When** invoked
-**Then** every criterion is classified as `regressed`, `fixed`, `unchanged`, `lost-coverage`, `gained-coverage`, `new`, `retired` or `inconclusive` per AD-13, with `minPasses` of `n/n` for rule checks and `ceil(0.8 n)` for meaning checks, and `inconclusive` for meaning criteria with `n < diff.minSamples[level]` or advisory
-**And** the command exits 1 on any `regressed` or `lost-coverage` S or rule criterion and on `regressed` non-advisory meaning criteria, exits 2 (`baseline-invalid`) when the baseline's judge pin, prompt version or coach model differ from the run's, and exits 0 otherwise
+**Then** every test and criterion pair is classified as `regressed`, `fixed`, `unchanged`, `lost-coverage`, `gained-coverage`, `new`, `retired` or `inconclusive` per AD-13, with `minPasses` of `n/n` for rule checks and `ceil(0.8 n)` for meaning checks, and `inconclusive` for meaning criteria with `n < diff.minSamples[level]` or advisory
+**And** journey results are diffed in a separate section, where `regressed` or `lost-coverage` rule and S criteria also exit 1 and meaning criteria are reported only
+**And** the command exits 1 on any `regressed` or `lost-coverage` S or rule criterion and on `regressed` non-advisory meaning criteria, exits 2 (`baseline-invalid`) when the baseline's judge fingerprint or coach model differ from the run's, and exits 0 otherwise
 **And** the diff is appended to the run's `SuiteRunReport` and printed with `lost-coverage` first
 
 **Given** the `--merge-base` flag
@@ -426,9 +450,11 @@ So that a judge verdict maps to one row of the suite instead of one opinion abou
 
 **Acceptance Criteria:**
 
-**Given** `src/suite/judge/criterion-judge.ts` exports `judgeCriterion(input: JudgeInput): Promise<MeaningOutcome>` and `src/suite/judge/prompt.ts` exports a versioned prompt template (`judgePromptVersion`)
-**When** called with the transcript up to the evaluated reply, the case's expected behavior, the criterion `passCondition` and `layer`, and `fixtureContext`
-**Then** it calls `generateText` on the configured judge model with `output: Output.object({ schema })`, where the schema has only nullable fields (`status`, `reason`, `evidence`), and returns `{ status: 'PASS' | 'FAIL', reason, evidence }`
+**Given** `src/suite/judge/criterion-judge.ts` exports `judgeCriterion(input: JudgeInput): Promise<MeaningOutcome>` and `src/suite/judge/prompt.ts` exports the prompt template (identified by its content hash in the judge fingerprint)
+**When** called with the transcript up to the evaluated reply (in atomic tests, the seeded history plus the single turn), the expected behavior, the criterion `passCondition`, `judgeGuidance` and `layer`, and `fixtureContext`
+**Then** it calls `generateText` on the configured judge model with `output: Output.object({ schema })`, where the schema has only nullable fields (`status`, `reason`, `evidence`), and returns `{ status: 'PASS' | 'FAIL', reason, evidence }`, deciding by meaning, never by wording
+**And** the prompt states that `fixtureContext` is reference material, not evidence of what the coach said
+**And** `evaluate` checks that a PASS `evidence` is a substring of the evaluated `reply.text` after whitespace normalization, re-asks once on a missing or non-matching fragment, and then records `ERROR` reason `judge-invalid-output`; FAIL may carry `evidence: null`
 **And** `conversation`-scoped criteria receive the whole transcript, and a `reply: null` is judged `FAIL` with evidence `no-reply` without a model call
 **And** `fixtureContext` for P-07 carries the canonical questions of the uncovered topics from the `pulseCycle` fixture
 
@@ -438,7 +464,7 @@ So that a judge verdict maps to one row of the suite instead of one opinion abou
 
 **Given** a mock language model in tests
 **When** the judge tests run
-**Then** they cover PASS, FAIL, null reply, invalid output and transport failure, and `usage` tokens from each call are recorded on the outcome
+**Then** they cover PASS, FAIL, null reply, invalid output, PASS without evidence, PASS with evidence not found in the reply, and transport failure, and `usage` tokens from each call are recorded on the outcome
 
 ### Story 13.2: Calibration Labels, Import Adapter and Agreement File
 
@@ -446,7 +472,7 @@ As a QA engineer,
 I want to turn my manual-run results into a labeled set and measure how often the judge agrees with me,
 So that we know whether the judge can be trusted before its verdicts count.
 
-**Covers:** FR8
+**Covers:** FR8; NFR7
 
 **Acceptance Criteria:**
 
@@ -456,8 +482,9 @@ So that we know whether the judge can be trusted before its verdicts count.
 
 **Given** `pnpm suite:calibrate --suite p-v1`
 **When** it runs with the pinned judge
-**Then** it builds `JudgeInput` for each label exactly as `evaluate` would, calls `judgeCriterion`, and writes `calibration/p-v1/agreement.json` with `{ schemaVersion, judgeModel, judgePromptVersion, labelsSha256, n, overall, kappa, perLayer, computedAt }`
+**Then** it builds `JudgeInput` for each label exactly as `evaluate` would, calls `judgeCriterion`, and writes `calibration/p-v1/agreement.json` with `{ schemaVersion, fingerprint, labelsSha256, n, overall, kappa, perLayer, computedAt }`, where `fingerprint` is the `JudgeFingerprint` (provider, model, decoding, prompt, schema and guidance hashes)
 **And** `suite:calibrate` is the only writer of `agreement.json`, and the command prints the per-layer table and the disagreements for QA review
+**And** label statuses are never edited after import; a disagreement is resolved by the criterion's `judgeGuidance` or a proposal to QA to change the Confluence text
 
 **Given** fewer labels than `minLabels` in config
 **When** calibration runs
@@ -473,10 +500,10 @@ So that an uncalibrated or swapped judge cannot fail or pass a release on its ow
 
 **Acceptance Criteria:**
 
-**Given** `suite.config.json` carries `judgeModel`, `judgePromptVersion`, `agreementThreshold` (overall 0.85, kappa 0.6) and `minLabels` (40)
+**Given** `suite.config.json` carries the judge `provider`, `judgeModel` and `decoding` (temperature, reasoning effort, max output tokens), `agreementThreshold` (overall 0.85, kappa 0.6) and `minLabels` (40)
 **When** the runner starts an L1 run
-**Then** it computes `JudgeTrust = { trusted, reason, pin, agreement | null }` once from config and `agreement.json` (which must match the pin and the current `labelsSha256`), passes it to `evaluate`, and `evaluate` sets `advisory = !trust.trusted` on every meaning-derived result
-**And** `score` and `report` copy `trust` verbatim and never recompute it; advisory statuses are excluded from pass rate and verdict; the report header reads `meaning checks: advisory (uncalibrated)` when untrusted
+**Then** it computes `JudgeTrust = { trusted, reason, pin, agreement | null }` once from config, the run-time prompt, schema and guidance hashes, and `agreement.json` (every fingerprint field must match, otherwise `trusted = false` reason `fingerprint-mismatch:<field>`; `labelsSha256` must match the current labels), passes it to `evaluate`, and `evaluate` sets `advisory = !trust.trusted` on every meaning-derived result
+**And** `score` and `report` copy `trust` verbatim and never recompute it; advisory statuses are excluded from pass rate and verdict; the report header reads `meaning checks: advisory (uncalibrated)` when untrusted and every report prints the effective judge fingerprint
 
 **Given** `SIM_JUDGE_MODEL` is set to a value different from the pin
 **When** `suite:run` starts
@@ -485,7 +512,7 @@ So that an uncalibrated or swapped judge cannot fail or pass a release on its ow
 **Given** a completed run
 **When** the report is written
 **Then** it contains a QA review section listing every meaning-based FAIL with case, criterion, reply text and judge reason
-**And** `suite:diff` treats advisory meaning criteria as `inconclusive`, and `suite:baseline:accept` refuses a run whose judge pin or prompt version differ from config
+**And** `suite:diff` treats advisory meaning criteria as `inconclusive`, and `suite:baseline:accept` refuses a run whose judge fingerprint differs from the current one
 
 ### Story 13.4: L1 Orchestrator Executor, Live Fixtures and State Queries
 
@@ -493,18 +520,20 @@ As a QA engineer,
 I want the P-suite to run against the real orchestration and prompts with a live model in the exact state each setup describes,
 So that meaning-based criteria are judged on what actually ships.
 
-**Covers:** FR10, FR12 (L1), FR20; NFR2, NFR4, NFR6
+**Covers:** FR10, FR12 (L1), FR20, FR23 (L1), FR24 (L1 pairing); NFR2, NFR4, NFR6
 
 **Acceptance Criteria:**
 
 **Given** `src/suite/executors/l1-orchestrator-executor.ts` implements `SuiteExecutor` with `level: 'L1'`
-**When** it runs a `conversation` case
-**Then** it creates a fresh `CoachHarness` per case with the production coach provider wiring and in-memory repositories, drives Scenario `run()` with `user(text)` and `agent()` steps ending in `succeed()`, `setId: 'entalent-suite-p-v1'`, no judge agent and no user simulator, realizes `interMessageGapMs` and `advanceClock` through the harness clock, attributes replies by the orchestrator result, declares `observed` fields including `turn.*` and `reply.messages[].metadata.*`, and `supports()` all six fixtures, each implemented against the in-memory repositories
+**When** it runs an atomic or journey test
+**Then** it creates a fresh `CoachHarness` per test with the production coach provider wiring and in-memory repositories, drives Scenario `run()` with `user(text)` and `agent()` steps ending in `succeed()`, `setId: 'entalent-suite-p-v1'`, no judge agent and no user simulator, realizes `interMessageGapMs` and `advanceClock` through the harness clock, attributes replies by the orchestrator result, declares `observed` fields including `turn.*` and `reply.messages[].metadata.*`, and `supports()` all eight fixtures including `seededHistory` and `confirmationState`, each implemented against the in-memory repositories
+**And** atomic tests apply `seededHistory` and send the single turn; every port passed into the harness, including the live AI provider, is wrapped by `recording-proxy.ts` so `CaseRun.events` records model requests, responses and settings
 **And** with `LANGWATCH_API_KEY` set the run streams to LangWatch, and without it the `CaseRun` is identical
 
-**Given** `src/suite/fixtures/state-queries.ts`
+**Given** `src/suite/fixtures/state-queries.ts` holding only the L1 accessors (the query names and schemas come from `schema.ts`, Story 12.1)
 **When** a `state` criterion is evaluated at L1
 **Then** `questionProgress(group)`, `stagedBundleCount`, `surveyEvidenceCount` and `outboundCount` are answered from the repository fakes against the shared Zod schema per query, snapshots are taken at `before`, `after` and named `afterStep`, and `CriterionResult.method` is `substituted` for dashboard-origin criteria
+**And** each `state` criterion with `kind: 'change'` in an atomic test is paired with an `effect-count` check on the evaluated step synthesized by `evaluate` from the manifest's `stateEffect` (Story 12.2)
 
 **Given** fixtures `pulseCycle` (survey window, question group, per-question progress, uncovered topics with canonical questions) and `disclosureDelivered`
 **When** applied at L1
@@ -534,7 +563,7 @@ So that a misconfigured run cannot burn the budget and a coin-flip sample cannot
 
 **Given** `pnpm suite:run --suite p-v1 --level L1 --runs 5`
 **When** the run completes
-**Then** `results[criterionId].passCount` and `samples` are filled for all five samples, and `pnpm suite:baseline:accept` writes `baselines/p-v1/L1.json` with judge and coach provenance, refusing `n < 5`
+**Then** `results['<testId>/<criterionId>'].passCount` and `samples` are filled for all five samples, and `pnpm suite:baseline:accept` writes `baselines/p-v1/L1.json` with judge and coach provenance, refusing `n < 5`
 **And** the initial L1 baseline is committed with the story, with the round-3 expected-red criteria recorded as they are
 
 ### Story 13.6: Pull-Request Gate for Prompt and Orchestrator Changes
@@ -624,20 +653,20 @@ So that P-09's dashboard criteria are observed on the real path and an asynchron
 **When** a run starts
 **Then** the executor reads `SUITE_L2_API_BASE`, `SUITE_L2_TENANT_ID` and `ADMIN_API_KEY`, refuses a base URL whose host is not `localhost`, `127.0.0.1` or `[::1]`, and sends `X-Api-Key` on every call under `/api/v1`
 
-**Given** a `conversation` case
+**Given** a `journey` test (L2 runs journeys only; atomic tests never declare L2)
 **When** it runs
-**Then** the executor creates external user `suite-<runId>-<caseId>` through `GET /dev/find-conversation`, calls `POST /dev/reset-user { userId, tenantId, deep: true }`, verifies the conversation is empty, records the ids in `CaseRun.subject`, applies and verifies fixtures through the development endpoints, waits `interMessageGapMs` for real between steps, sends each step with `POST /dev/simulate-message`, polls `GET /dev/conversation/:id/messages?after=<inboundMessageId>` every 500 ms up to 60 s, attributes replies by `traceId` from the `simulate-message` response, records foreign-trace outbounds in `unsolicited`, ends polling when the trace has at least one outbound and the next poll adds none, and treats a `400` on `after` as an infrastructure error
+**Then** the executor creates external user `suite-<runId>-<testId>` through `GET /dev/find-conversation`, calls `POST /dev/reset-user { userId, tenantId, deep: true }`, verifies the conversation is empty, records the ids in `CaseRun.subject`, applies and verifies fixtures through the development endpoints, waits `interMessageGapMs` for real between steps, sends each step with `POST /dev/simulate-message`, polls `GET /dev/conversation/:id/messages?after=<inboundMessageId>` every 500 ms up to 60 s, attributes replies by `traceId` from the `simulate-message` response, records foreign-trace outbounds in `unsolicited`, ends polling when the trace has at least one outbound and the next poll adds none, and treats a `400` on `after` as an infrastructure error
 **And** a foreign-trace outbound before the reply fails the run `ERROR kind: infrastructure` reason `unsolicited-outbound`
 **And** a timeout with `jobStatus: completed` and no outbound is `reply: null`; a timeout with any other job status is `ERROR`
 
 **Given** `state` criteria
 **When** evaluated at L2
 **Then** `questionProgress`, `stagedBundleCount`, `surveyEvidenceCount` and `outboundCount` are answered from the development endpoints against the shared schema, and `CriterionResult.method` is `observed`
-**And** `observation` cases report every criterion `NOT_RUN` reason `unsupported-fixture:proactiveUsers` at L2
+**And** `observation` tests do not declare L2, so their criteria are `NOT_RUN` reason `level-not-declared` there
 
 **Given** a local docker stack with API and worker running
-**When** `pnpm suite:run --suite p-v1 --level L2 --case P-10` runs
-**Then** a report is produced with P-10 criteria evaluated and `pulseCycle`, `disclosureDelivered` and `freshPersona` supported at L2
+**When** `pnpm suite:run --suite p-v1 --level L2 --case P-10.J` runs
+**Then** a report is produced with the P-10 journey criteria evaluated and `pulseCycle`, `disclosureDelivered` and `freshPersona` supported at L2
 
 ### Story 14.3: Weekly L2 Workflow and the First L2 Baseline
 
@@ -651,7 +680,7 @@ So that the real path is verified regularly without anyone running docker by han
 
 **Given** `.github/workflows/conversation-suite-l2.yml` with `schedule` and `workflow_dispatch`
 **When** it runs
-**Then** it starts `pgvector/pgvector:pg16` and `redis:7-alpine` services, applies migrations and seed, starts `api` with `NODE_ENV=test` and `ADMIN_API_KEY` set, starts `worker` with proactive scheduling disabled through the environment named in `suite.config.json.l2.workerEnv`, waits for health, runs `pnpm suite:run --suite p-v1 --level L2 --runs 3` and `suite:diff --merge-base`, uploads `runs/suites/**` and the API and worker logs, and appends the layer table, verdict and diff to the step summary
+**Then** it starts `pgvector/pgvector:pg16` and `redis:7-alpine` services, applies migrations and seed, starts `api` with `NODE_ENV=test` and `ADMIN_API_KEY` set, starts `worker` with proactive scheduling disabled through the environment named in `suite.config.json.l2.workerEnv`, waits for health, runs `pnpm suite:run --suite p-v1 --level L2 --runs 3` and `suite:diff --merge-base`, uploads `runs/suites/**` and the API and worker logs, and appends the journey results, the verdict `n/a (journeys only)` and the journey diff to the step summary
 
 **Given** the first successful workflow run
 **When** its artifact is reviewed
