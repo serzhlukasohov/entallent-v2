@@ -281,3 +281,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-1-case-schema-loader-and-rule-registry-contract.md`
   summary: `RuleCheck.params` is free-form and never validated against the rule; give `RuleEntry` an optional params schema when the first parameterized rule (`effect-count`, `state-equals`) lands in 12.3, so a mistyped param fails at load instead of being ignored.
   evidence: Blind Hunter and Edge Case Hunter (Story 12.1 review); no 12.1 rule takes params and no case data exists before 12.4, so there is no live harm yet.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3-suite-rule-implementations.md`
+  summary: Story 12.3 split; the proactive-window rules, `clock-leak` and the state/event rules (`effect-count`, `state-equals`, `state-not-greater-than`) moved to Story 12.3b (`spec-12-3b-proactive-state-and-clock-rules.md`, draft).
+  evidence: The full 12.3 spec was about 2,300 tokens; the user approved the split on 2026-10-25.
