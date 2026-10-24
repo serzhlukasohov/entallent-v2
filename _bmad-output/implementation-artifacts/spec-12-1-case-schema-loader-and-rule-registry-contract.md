@@ -56,9 +56,10 @@ context:
 
 - `packages/conversation-sim/package.json` -- add `zod ^3.25.76` (already resolved in the workspace for config/contracts; `ai` 6 peers on it) and `src/suite` to the `test` script path list. Keep the existing `--exclude` flags.
 - `packages/conversation-sim/vitest.config.ts:13` -- `include` lacks `src/suite/**/*.test.ts`. Without it the new tests never run.
+- `packages/conversation-sim/src/harness/fidelity-checks.ts` -- deterministic fidelity checks from main; not wrapped here, candidate for reuse in Story 12.3.
 - `packages/conversation-sim/src/harness/assertions.ts:131,151,169` -- `findRepeatedQuestions`, `extractQuestions` and `firstSentence` are private. Add `export` only; no body changes; `findViolations`, `describeViolations` and `normalizeQuestion` stay untouched.
 - `packages/ai-openai/src/prompts/style-antipatterns.ts:19` -- `hasReflectiveOpener`, the product-shared definition the wrapper calls.
-- `packages/conversation-sim/src/fakes/scripted-ai.ts:13` -- `ScriptedAiOptions` takes functions, so `scripted` is plain data that 12.7 converts. Do not import fakes into `schema.ts`.
+- `packages/conversation-sim/src/fakes/scripted-ai.ts:33` -- `ScriptedAiOptions` takes functions, so `scripted` is plain data that 12.7 converts. Do not import fakes into `schema.ts`.
 - `packages/application/src/use-cases/conversation-orchestrator.ts` (`OrchestrateResult`) -- producer of `TurnTrace` values (`outcome`: `input_filtered`/`processing_failed`; `bundleReply`: `answer_then_bundle`/`bundle_without_reply`). Keep them as plain strings.
 - `packages/conversation-sim/tsconfig.json` -- CommonJS, ES2022 lib: no `findLast`, `toSorted` or `Object.groupBy`; use `__dirname`, not `import.meta`.
 
@@ -90,4 +91,4 @@ L0 refinement uses the registry passed to `validateSuite`: a criterion is L0-val
 **Commands:**
 - `pnpm --filter @entalent/conversation-sim test` -- expected: all suite and existing offline tests pass.
 - `pnpm --filter @entalent/conversation-sim typecheck` and `lint` -- expected: clean.
-- `pnpm harness:check -- --base 07a376b5bc6bfed8820ef7ea43889a5e7de88614` -- expected: receipt path reported.
+- `pnpm harness:check -- --base 3af7d0ed02bbe34e7178f4be8755f56f373162c5` -- expected: receipt path reported.
