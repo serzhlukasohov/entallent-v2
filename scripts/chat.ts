@@ -68,10 +68,12 @@ if (!TENANT_ID) {
 
 // ── API helpers ─────────────────────────────────────────────────────────────
 
+const API_KEY_HEADERS: Record<string, string> = env['ADMIN_API_KEY'] ? { 'X-Api-Key': env['ADMIN_API_KEY'] } : {};
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...API_KEY_HEADERS },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
@@ -79,14 +81,22 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`);
+  const res = await fetch(`${API}${path}`, { headers: API_KEY_HEADERS });
   if (!res.ok) throw new Error(`GET ${path} → ${res.status}: ${await res.text()}`);
   return res.json() as Promise<T>;
 }
 
 // ── Polling ─────────────────────────────────────────────────────────────────
 
-interface Message { id: string; direction: string; text: string; occurredAt: string }
+interface Message {
+  id: string;
+  direction: string;
+  text: string;
+  occurredAt: string;
+  messageType?: string;
+  sentAt?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
 
 async function waitForReply(
   conversationId: string,
@@ -127,6 +137,20 @@ const YELLOW = '\x1b[33m';
 const BLUE   = '\x1b[34m';
 const RED    = '\x1b[31m';
 
+const HELP_TEXT = `Commands:
+  ${BOLD}/memory${RESET}               — show what AI remembers about you
+  ${BOLD}/survey${RESET}               — show survey assessment state
+  ${BOLD}/actions${RESET}              — show scheduled follow-ups
+  ${BOLD}/checkin${RESET}              — trigger a proactive check-in (mentor writes first)
+  ${BOLD}/onboard <role>${RESET}       — onboarding v2: reset and send the intro (employee|team_lead|manager|hr|hrbp|leadership)
+  ${BOLD}/click <action>${RESET}       — press an intro button (start|later|decline|got_it)
+  ${BOLD}/remind-now${RESET}           — fire the scheduled onboarding reminder now
+  ${BOLD}/role <role>${RESET}          — change the person's role (role_changed event)
+  ${BOLD}/state${RESET}                — show the onboarding state
+  ${BOLD}/help${RESET}                 — show this list
+  ${BOLD}/quit${RESET}                 — exit
+`;
+
 function printBanner() {
   console.log(`
 ${CYAN}${BOLD}╔════════════════════════════════════════╗
@@ -135,13 +159,7 @@ ${CYAN}${BOLD}╔═════════════════════
 ${DIM}User: ${USER_NAME} (${USER_ID})
 Tenant: ${TENANT_ID}
 ${RESET}
-Commands:
-  ${BOLD}/memory${RESET}    — show what AI remembers about you
-  ${BOLD}/survey${RESET}    — show survey assessment state
-  ${BOLD}/actions${RESET}   — show scheduled follow-ups
-  ${BOLD}/checkin${RESET}   — trigger a proactive check-in (mentor writes first)
-  ${BOLD}/quit${RESET}      — exit
-
+${HELP_TEXT}
 Type your message and press Enter.
 ${DIM}─────────────────────────────────────────${RESET}
 `);
@@ -216,6 +234,193 @@ async function showActions(userId: string) {
   console.log();
 }
 
+// ── Onboarding v2 dev console ───────────────────────────────────────────────
+
+interface OnboardingStateView {
+  personId: string;
+  proactiveMessagingEnabled: boolean | null;
+  state: null | {
+    track: string; introStatus: string; participation: string; reminderStatus: string;
+    reminderDueAt: string | null; buttonsActive: boolean; version: number;
+  };
+}
+
+interface DevApiError extends Error { status?: number }
+
+async function devPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...API_KEY_HEADERS },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err: DevApiError = new Error(`${res.status}: ${await res.text()}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json() as Promise<T>;
+}
+
+/** Outbound messages already shown, so polling prints only what the worker delivered since. */
+const seenOutbound = new Set<string>();
+
+function buttonsOf(m: Message): string[] {
+  const actions = m.metadata?.['onboardingActions'];
+  return Array.isArray(actions)
+    ? actions.map((a) => (a && typeof a === 'object' ? String((a as { label?: unknown }).label ?? '') : '')).filter(Boolean)
+    : [];
+}
+
+function printOutbound(m: Message) {
+  printAI(m.text);
+  const buttons = buttonsOf(m);
+  if (buttons.length) console.log(`  ${YELLOW}${buttons.map((b) => `[${b}]`).join(' ')}${RESET}\n`);
+}
+
+async function markAllSeen(conversationId: string) {
+  const all = await get<Message[]>(`/dev/conversation/${conversationId}/messages`);
+  for (const m of all) if (m.direction === 'outbound' && m.sentAt) seenOutbound.add(m.id);
+}
+
+/** Prints newly delivered outbound messages until `done` holds, or after `quietMs` without new ones, or timeout. */
+async function pollOutbound(conversationId: string, opts: {
+  timeoutMs: number; quietMs?: number; done?: (printed: Message[]) => boolean;
+}): Promise<Message[]> {
+  const printed: Message[] = [];
+  const deadline = Date.now() + opts.timeoutMs;
+  let lastNew = Date.now();
+  while (Date.now() < deadline) {
+    await sleep(POLL_INTERVAL_MS);
+    const all = await get<Message[]>(`/dev/conversation/${conversationId}/messages`);
+    for (const m of all) {
+      if (m.direction !== 'outbound' || !m.sentAt || seenOutbound.has(m.id)) continue;
+      seenOutbound.add(m.id);
+      printed.push(m);
+      printOutbound(m);
+      lastNew = Date.now();
+    }
+    if (opts.done?.(printed)) break;
+    if (opts.quietMs !== undefined && printed.length > 0 && Date.now() - lastNew >= opts.quietMs) break;
+  }
+  return printed;
+}
+
+async function fetchOnboardingState(): Promise<OnboardingStateView> {
+  return get<OnboardingStateView>(`/dev/onboarding/state/${encodeURIComponent(USER_ID)}?tenantId=${TENANT_ID}`);
+}
+
+function printStateLine(view: OnboardingStateView) {
+  const s = view.state;
+  if (!s) {
+    console.log(`${DIM}  state: (no onboarding state)  proactive=${view.proactiveMessagingEnabled}${RESET}\n`);
+    return;
+  }
+  const due = s.reminderDueAt ? ` due=${new Date(s.reminderDueAt).toLocaleString()}` : '';
+  console.log(`${DIM}  state: track=${s.track} intro=${s.introStatus} participation=${s.participation} ` +
+    `reminder=${s.reminderStatus}${due} buttons=${s.buttonsActive ? 'active' : 'inactive'} ` +
+    `proactive=${view.proactiveMessagingEnabled} v=${s.version}${RESET}\n`);
+}
+
+async function waitForStateChange(before: OnboardingStateView, timeoutMs: number): Promise<OnboardingStateView> {
+  const deadline = Date.now() + timeoutMs;
+  let current = before;
+  while (Date.now() < deadline) {
+    current = await fetchOnboardingState();
+    if (current.state?.version !== before.state?.version) return current;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return current;
+}
+
+const ONBOARD_ROLES = ['employee', 'team_lead', 'manager', 'hr', 'hrbp', 'leadership'];
+const CLICK_ACTIONS = ['start', 'later', 'decline', 'got_it'];
+
+async function onboard(conversationId: string, role: string | undefined) {
+  if (!role || !ONBOARD_ROLES.includes(role)) {
+    console.log(`\n${RED}Usage: /onboard <${ONBOARD_ROLES.join('|')}>${RESET}\n`);
+    return;
+  }
+  await markAllSeen(conversationId);
+  const res = await devPost<{ personId: string; calendarCreated: boolean; calendar: Record<string, unknown> | null }>(
+    '/dev/onboarding/start', { tenantId: TENANT_ID, userId: USER_ID, userName: USER_NAME, role },
+  );
+  if (res.calendarCreated) {
+    console.log(`\n${YELLOW}  Created dev work calendar: ${JSON.stringify(res.calendar)}${RESET}`);
+  }
+  console.log(`${DIM}  onboarding reset; intro queued for role=${role} (person ${res.personId})${RESET}`);
+  const printed = await pollOutbound(conversationId, {
+    timeoutMs: 15_000,
+    done: (msgs) => msgs.some((m) => m.metadata?.['onboardingIntroPart'] === 'trust'),
+  });
+  if (!printed.length) console.log(`\n  ${RED}No intro delivered — is the worker running? Check its log.${RESET}\n`);
+  printStateLine(await fetchOnboardingState());
+}
+
+async function click(conversationId: string, action: string | undefined) {
+  if (!action || !CLICK_ACTIONS.includes(action)) {
+    console.log(`\n${RED}Usage: /click <${CLICK_ACTIONS.join('|')}>${RESET}\n`);
+    return;
+  }
+  await markAllSeen(conversationId);
+  const before = await fetchOnboardingState();
+  try {
+    await devPost('/dev/onboarding/click', { tenantId: TENANT_ID, userId: USER_ID, action });
+  } catch (err) {
+    if ((err as DevApiError).status === 409) {
+      console.log(`\n${RED}  Buttons not delivered yet — run /onboard first.${RESET}\n`);
+      return;
+    }
+    throw err;
+  }
+  console.log(`\n${DIM}  clicked [${action}]${RESET}`);
+  const after = await waitForStateChange(before, 8_000);
+  // "start" kicks off the model-generated first conversation turn; give it time.
+  await pollOutbound(conversationId, { timeoutMs: action === 'start' ? 30_000 : 4_000, quietMs: 1_500 });
+  if (before.state?.buttonsActive && after.state && !after.state.buttonsActive) {
+    console.log(`${YELLOW}  buttons replaced: intro buttons removed (worker log: [DEV BUTTONS REPLACED] <text>)${RESET}`);
+  }
+  if (after.state?.version === before.state?.version) console.log(`${DIM}  (no state change — stale or no-op click)${RESET}`);
+  printStateLine(await fetchOnboardingState());
+}
+
+async function remindNow(conversationId: string) {
+  await markAllSeen(conversationId);
+  try {
+    const res = await devPost<{ dueAt: string }>('/dev/onboarding/remind-now', { tenantId: TENANT_ID, userId: USER_ID });
+    console.log(`\n${DIM}  reminder re-queued for ${res.dueAt} (postponed if outside work hours or you wrote <30 min ago)${RESET}`);
+  } catch (err) {
+    if ((err as DevApiError).status === 409) {
+      console.log(`\n${RED}  No scheduled reminder: ${(err as Error).message}${RESET}\n`);
+      return;
+    }
+    throw err;
+  }
+  await pollOutbound(conversationId, { timeoutMs: 8_000, quietMs: 1_000 });
+  printStateLine(await fetchOnboardingState());
+}
+
+async function changeRole(conversationId: string, role: string | undefined) {
+  if (!role || !ONBOARD_ROLES.includes(role)) {
+    console.log(`\n${RED}Usage: /role <${ONBOARD_ROLES.join('|')}>${RESET}\n`);
+    return;
+  }
+  await markAllSeen(conversationId);
+  const before = await fetchOnboardingState();
+  try {
+    const res = await devPost<{ from: string; to: string }>('/dev/onboarding/role', { tenantId: TENANT_ID, userId: USER_ID, role });
+    console.log(`\n${DIM}  role ${res.from} → ${res.to}${RESET}`);
+  } catch (err) {
+    if ((err as DevApiError).status === 409) {
+      console.log(`\n${RED}  ${(err as Error).message}${RESET}\n`);
+      return;
+    }
+    throw err;
+  }
+  await waitForStateChange(before, 8_000);
+  await pollOutbound(conversationId, { timeoutMs: 6_000, quietMs: 1_500 });
+  printStateLine(await fetchOnboardingState());
+}
+
 // ── Main loop ────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -266,6 +471,27 @@ async function main() {
 
       if (text === '/actions') {
         await showActions(userId);
+        ask();
+        return;
+      }
+
+      if (text === '/help') {
+        console.log(`\n${HELP_TEXT}`);
+        ask();
+        return;
+      }
+
+      const [command, arg] = text.split(/\s+/);
+      if (command && ['/onboard', '/click', '/remind-now', '/role', '/state'].includes(command)) {
+        try {
+          if (command === '/onboard') await onboard(conversationId, arg);
+          else if (command === '/click') await click(conversationId, arg);
+          else if (command === '/remind-now') await remindNow(conversationId);
+          else if (command === '/role') await changeRole(conversationId, arg);
+          else printStateLine(await fetchOnboardingState());
+        } catch (err) {
+          console.error(`\n${RED}Error: ${(err as Error).message}${RESET}\n`);
+        }
         ask();
         return;
       }

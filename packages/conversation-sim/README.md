@@ -197,6 +197,36 @@ and a byte-for-byte copy of the composed bundle in one generation. The test asse
 once at the end after a non-empty answer, and a judge rubric on whether the answer part
 addresses the question. A `bundle_without_reply` fallback is a hard failure here.
 
+`reasked-question`, `changed-advice` and `sentiment-amplification` are the GC round 3
+S8 fidelity cases (CAP-8 T9/T13, CAP-10 T12). Their employee turns and judge rubrics live in
+`src/scenarios/fidelity-fixtures.ts`; the offline `fidelity-fixtures.sim.test.ts` replays each
+fixture through the real orchestrator with scripted model output so the wiring and the
+deterministic checks in `src/harness/fidelity-checks.ts` are proven without credentials
+(including counter-cases that reproduce the tester's T9 and T13 transcripts). Live,
+`reasked-question` hard-fails when any coach question asks for a detail the employee already
+stated (`findReaskedQuestions`), `sentiment-amplification` hard-fails when a reply contains
+emotional-weight vocabulary absent from the employee's own messages
+(`findUnstatedEmotionWords`), and all three assert the judge rubric. T12 has no deterministic
+reply check: whether a changed suggestion is named is the judge's call. These checks are eval
+rails only; a repeated live failure is handled through the resolved-details and
+evidence-boundary contracts in `packages/ai-openai/src/prompts/respond.ts`, never by porting
+the word lists into the reply path (ADR-013). `reasked-question` did fail repeatedly on its
+first live pass (every miss was the first coach reply asking whether anyone else could sign
+off, a turn on which the classifier emits no resolved details by design), so the reply-plan
+block now carries an answered-detail contract whenever a question is allowed: what the
+employee stated, including in the latest message, is answered and is not re-asked in other
+words.
+
+`offer-delivered` gates GC round 3 CAP-6: after a seeded coach reply that ends with an offer
+("If you want, I can give you exact phrases"), the employee's "Yes, a bit more direct please"
+must reach generation as `answer_request` with a `prior_offer` / `deliver_now` grounding item
+and `offer_again` forbidden, and the live reply must deliver the phrases without restating the
+previous reply or offering again (judge rubric; "if you want, I can" is a hard failure).
+
+`format-request-outline` gates GC round 3 CAP-9: an explicit request for an outline with time
+slots must carry `formatRequest` in the reply plan and come back as at least three separated
+items on their own lines; the judge checks that each item has a slot and that no re-offer follows.
+
 `proactivity-reminders` and `planning-memory` are deterministic structural
 scenarios for action discipline, reminder deduplication, delayed follow-up policy,
 assessment preparation, goal state, memory extraction, memory correction, and

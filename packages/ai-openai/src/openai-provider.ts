@@ -42,6 +42,7 @@ import type {
   SurveyQuestionForEvaluation,
   SurveyEvidenceEvaluationOptions,
   QuestionBundleComposition,
+  QuestionBundleVariant,
   AwaitingQuestionBundle,
   QuestionBundleVerdict,
   PendingQuestionClarification,
@@ -50,8 +51,13 @@ import type {
   QuestionScoreResult,
 } from '@entalent/application';
 import {
+  BundleCompositionInvalidError,
   BundleReplyInvalidError,
+  TopicQuestionReplyInvalidError,
+  validateTopicQuestionReply,
+  composeTopicQuestionReplyText,
   composeBundleReplyText,
+  isBundleCompositionInvalidError,
   maxReplyChars,
   validateBundleReply,
   validateQuestionBundleComposition,
@@ -67,7 +73,9 @@ import { buildRiskSystemPrompt, buildRiskUserPrompt } from './prompts/risk';
 import { buildRespondSystemPrompt, buildRespondUserPrompt } from './prompts/respond';
 import { buildSurveySystemPrompt, buildSurveyUserPrompt } from './prompts/survey';
 import { buildGroupConfirmationSystemPrompt, buildGroupConfirmationUserPrompt } from './prompts/group-confirmation';
-import { buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt } from './prompts/question-bundle';
+import {
+  buildQuestionBundleRepairInstruction, buildQuestionBundleSystemPrompt, buildQuestionBundleUserPrompt,
+} from './prompts/question-bundle';
 import { buildQuestionBundleInterpretSystemPrompt, buildQuestionBundleInterpretUserPrompt } from './prompts/question-bundle-interpret';
 import {
   buildQuestionClarificationSystemPrompt,
@@ -155,6 +163,32 @@ function stripExposedConfirmationSummaryLabel(response: GeneratedResponse): Gene
 }
 
 /** A draft that fails to parse is a contract break like any other: repair once, then fail closed. */
+const TOPIC_QUESTION_RETRY_INSTRUCTION =
+  '\n\nYour previous draft broke the topic-question contract. Return "replyText" as up to 3 sentences that answer the employee\'s latest message with no question mark or other question punctuation, and "topicQuestion" as exactly one direct question on the given topic that ends with its question mark and contains no other question. Keep both within the length limit.';
+
+/** GC round 3 CAP-1: validate the required topic question; probe metadata is set by code, not echoed. */
+function assembleTopicQuestionReply(
+  raw: string,
+  questionId: string,
+  options: { maxReplyChars: number },
+): GeneratedResponse | TopicQuestionReplyInvalidError {
+  let response: GeneratedResponse;
+  try {
+    response = GeneratedResponseSchema.parse(JSON.parse(raw));
+  } catch {
+    return new TopicQuestionReplyInvalidError('draft_unparseable');
+  }
+  try {
+    const parts = validateTopicQuestionReply(response, options);
+    return {
+      ...response, ...parts, text: composeTopicQuestionReplyText(parts), confirmationSummary: undefined,
+      containsSurveyProbe: true, surveyProbeQuestionId: questionId,
+    };
+  } catch (error) {
+    return error instanceof TopicQuestionReplyInvalidError ? error : new TopicQuestionReplyInvalidError('reply_missing');
+  }
+}
+
 function assembleBundleReply(
   raw: string,
   bundleText: string,
@@ -188,8 +222,12 @@ function isValidConfirmationResponse(response: GeneratedResponse): boolean {
 }
 
 /** Firm rewrite instruction when a reply overruns its length budget. */
-function lengthRetryInstruction(maxChars: number): string {
+function lengthRetryInstruction(maxChars: number, context?: Pick<ResponseContext, 'replyPlan' | 'replyBrief'>): string {
   const words = Math.max(8, Math.round(maxChars / 6));
+  const replyPlan = context?.replyPlan ?? context?.replyBrief;
+  if (replyPlan?.formatRequest) {
+    return `\n\nYour previous draft was too long for this turn. Rewrite it within ${words} words: keep the list shape the employee asked for (one item per line), trim each item to its essentials, and drop any prose around the items.`;
+  }
   return `\n\nYour previous draft was too long for this turn. Rewrite it much shorter — at most ${words} words, one sentence if you can. Keep only the single most useful thing and drop the extra observation.`;
 }
 
@@ -197,10 +235,26 @@ function countQuestionGroups(text: string): number {
   return text.match(/[?;՞؟፧᥅⁇⁈⁉⸮﹖？❓❔]+/gu)?.length ?? 0;
 }
 
-function maxAllowedQuestions(strategy: ReplyStrategy, context: ResponseContext): 0 | 1 {
+const SOFT_QUESTION_RETRY_INSTRUCTION =
+  '\n\nYour previous draft asked a question or ended with an offer of your own. This turn delivers the item and stops: remove any question, offer, or "do you want" of your own. Quoted phrases or items the employee could say may keep their own question marks.';
+
+/**
+ * Question limit the deterministic gate enforces. On a delivery turn (an accepted offer or a
+ * requested list) the gate is soft: it drives ONE repair of a trailing question or offer but never
+ * fails the turn, because delivered phrases and items legitimately quote question marks the mentor
+ * is not asking (ADR-013 D2: a lexical count validates structure, it does not override the typed
+ * contract that allows them).
+ */
+function questionGateFor(strategy: ReplyStrategy, context: ResponseContext): { maxQuestions: 0 | 1; soft: boolean } {
   const replyPlan = context.replyPlan ?? context.replyBrief;
-  if (replyPlan) return replyPlan.questionPolicy.maxQuestions;
-  return strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0;
+  if (replyPlan) {
+    const reason = replyPlan.questionPolicy.reason;
+    return {
+      maxQuestions: replyPlan.questionPolicy.maxQuestions,
+      soft: reason === 'offer_delivery' || reason === 'format_request',
+    };
+  }
+  return { maxQuestions: strategy.includeFollowUpQuestion || context.proactiveCheckIn ? 1 : 0, soft: false };
 }
 
 function numericProbeQuestion(context: ResponseContext): { id: string } | undefined {
@@ -232,6 +286,16 @@ function keepValid<T>(value: unknown, schema: SafeParser<T>): T[] {
     if (result.success) out.push(result.data);
   }
   return out;
+}
+
+/** A draft that is not JSON is a composition failure the model can repair, not a parser crash. */
+function parseCompositionDraft(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new BundleCompositionInvalidError('draft_unparseable');
+    throw error;
+  }
 }
 
 export class OpenAiProvider implements AiProviderPort {
@@ -289,7 +353,7 @@ export class OpenAiProvider implements AiProviderPort {
         record['primaryIntent'] = 'casual_conversation';
       }
     }
-    return normalizeExplicitClosing(
+    const classification = normalizeExplicitClosing(
       normalizePulseCaptureExplanation(
         normalizeExplicitCorrectionRequest(
           normalizeDataUseExplanation(
@@ -302,6 +366,8 @@ export class OpenAiProvider implements AiProviderPort {
       ),
       turns,
     );
+    // Without onboarding context there is no status to read the signal against.
+    return context.onboarding ? classification : { ...classification, onboardingSignal: null };
   }
 
   /**
@@ -431,6 +497,9 @@ export class OpenAiProvider implements AiProviderPort {
     if (context.trailingBundle) {
       return this.generateBundleReply(system, user, strategy, context, context.trailingBundle);
     }
+    if (context.topicQuestion) {
+      return this.generateTopicQuestionReply(system, user, strategy, context, context.topicQuestion.questionId);
+    }
 
     const first = stripExposedConfirmationSummaryLabel(GeneratedResponseSchema.parse(
       JSON.parse(await this.complete(system, user, this.generationModel)),
@@ -443,11 +512,11 @@ export class OpenAiProvider implements AiProviderPort {
       if (!isValidConfirmationResponse(first)) retries.push(CONFIRMATION_RETRY_INSTRUCTION);
     } else {
       if (first.text.length > maxReplyChars(strategy, context)) {
-        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context)));
+        retries.push(lengthRetryInstruction(maxReplyChars(strategy, context), context));
       }
-      const maxQuestions = maxAllowedQuestions(strategy, context);
-      if (countQuestionGroups(first.text) > maxQuestions) {
-        retries.push(questionRetryInstruction(maxQuestions));
+      const questionGate = questionGateFor(strategy, context);
+      if (countQuestionGroups(first.text) > questionGate.maxQuestions) {
+        retries.push(questionGate.soft ? SOFT_QUESTION_RETRY_INSTRUCTION : questionRetryInstruction(questionGate.maxQuestions));
       }
     }
     const numericProbe = numericProbeQuestion(context);
@@ -466,7 +535,9 @@ export class OpenAiProvider implements AiProviderPort {
         'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
       );
     }
-    if (!context.confirmationRequest && countQuestionGroups(corrected.text) > maxAllowedQuestions(strategy, context)) {
+    const correctedGate = questionGateFor(strategy, context);
+    if (!context.confirmationRequest && !correctedGate.soft
+      && countQuestionGroups(corrected.text) > correctedGate.maxQuestions) {
       throw new Error('Generated response exceeds the question limit after one corrective attempt');
     }
     if (numericProbe && !isValidNumericProbeResponse(corrected, numericProbe.id)) {
@@ -498,21 +569,53 @@ export class OpenAiProvider implements AiProviderPort {
     throw corrected;
   }
 
+  /**
+   * GC round 3 CAP-1 (ADR-013 D8): the topic question is a required field. One repair, then fail
+   * closed with the typed reason so the orchestrator can reply without the topic this turn.
+   */
+  private async generateTopicQuestionReply(
+    system: string,
+    user: string,
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    questionId: string,
+  ): Promise<GeneratedResponse> {
+    const options = { maxReplyChars: maxReplyChars(strategy, context) };
+    const first = assembleTopicQuestionReply(await this.complete(system, user, this.generationModel), questionId, options);
+    if (!(first instanceof TopicQuestionReplyInvalidError)) return first;
+    const corrected = assembleTopicQuestionReply(
+      await this.complete(system + TOPIC_QUESTION_RETRY_INSTRUCTION, user, this.generationModel), questionId, options,
+    );
+    if (!(corrected instanceof TopicQuestionReplyInvalidError)) return corrected;
+    throw corrected;
+  }
+
   async composeQuestionBundle(
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
+    variant: QuestionBundleVariant = 'confirmation',
   ): Promise<QuestionBundleComposition> {
-    const raw = await this.complete(
-      buildQuestionBundleSystemPrompt(responseLanguage, questions.length),
-      buildQuestionBundleUserPrompt(turns, questions),
-      this.generationModel,
-      2048,
-    );
-    return validateQuestionBundleComposition(
-      JSON.parse(raw) as unknown,
-      questions.map((question) => question.surveyQuestionId),
-    );
+    const system = buildQuestionBundleSystemPrompt(responseLanguage, questions.length, variant);
+    const user = buildQuestionBundleUserPrompt(turns, questions);
+    const questionIds = questions.map((question) => question.surveyQuestionId);
+    try {
+      return validateQuestionBundleComposition(
+        parseCompositionDraft(await this.complete(system, user, this.generationModel, 2048)),
+        questionIds,
+      );
+    } catch (error) {
+      if (!isBundleCompositionInvalidError(error)) throw error;
+      // ONE corrective recomposition naming the broken rule, then fail closed with the reason
+      // of the second draft so the turn can degrade diagnosably.
+      const repaired = await this.complete(
+        system + buildQuestionBundleRepairInstruction(error.reason),
+        user,
+        this.generationModel,
+        2048,
+      );
+      return validateQuestionBundleComposition(parseCompositionDraft(repaired), questionIds);
+    }
   }
 
   async interpretQuestionBundleResponse(

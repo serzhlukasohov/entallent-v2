@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { and, eq, inArray } from 'drizzle-orm';
 import { planEmployeeMove, planManagerPromotion, planTeamLeadPromotion, type ActiveGraphIssue, type ActiveHierarchyGraph, type PreviousManagerAction, type PreviousTeamLeadAction } from '@entalent/application';
 import { auditLogs, orgEmployeePlacements, orgOnboardingDeliveries, orgTeams, orgUnits, people, users } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { actorId, assertHierarchyActorAuthorized, HierarchyAuthorizationError, type HierarchyActor } from './hierarchy-authorization';
 import { withSerializableRetry } from './serializable-retry';
+import { OnboardingEventPublisher, type OnboardingSystemEvent } from '../onboarding/onboarding-event-publisher';
 
 export class HierarchyMutationError extends Error {
   constructor(readonly code: string, readonly issues: ActiveGraphIssue[] = []) {
@@ -15,14 +16,30 @@ export class HierarchyMutationError extends Error {
 
 @Injectable()
 export class HierarchyMutationService {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly logger = new Logger(HierarchyMutationService.name);
+
+  constructor(
+    private readonly db: DatabaseService,
+    @Optional() private readonly onboardingEvents?: OnboardingEventPublisher,
+  ) {}
+
+  /** Post-commit and best effort: the worker's reconcile sweep recovers a lost event. */
+  private async publishOnboarding(tenantId: string, events: OnboardingSystemEvent[]): Promise<void> {
+    if (!this.onboardingEvents || events.length === 0) return;
+    try {
+      await this.onboardingEvents.publish(tenantId, events);
+    } catch (error) {
+      this.logger.error(`Onboarding event publish failed: ${(error as Error).message}`);
+    }
+  }
 
   async promoteManager(
     tenantId: string, unitId: string, employeePersonId: string,
     previousManagerAction: PreviousManagerAction, actor: HierarchyActor,
   ) {
+    let onboardingEvents: OnboardingSystemEvent[] = [];
     try {
-      return await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
+      const result = await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
         await assertHierarchyActorAuthorized(tx, tenantId, actor);
         const graph: ActiveHierarchyGraph = {
           tenantId,
@@ -89,7 +106,7 @@ export class HierarchyMutationService {
             eq(orgUnits.managerPersonId, plan.previousManagerPersonId), eq(orgUnits.lifecycleStatus, 'active')))
           .returning({ id: orgUnits.id });
         if (!unit) throw new HierarchyMutationError('manager_promotion_stale');
-        await tx.insert(auditLogs).values({
+        const [audit] = await tx.insert(auditLogs).values({
           tenantId, actorType: actor.type, actorId: actorId(actor),
           action: 'org.manager.promote', resourceType: 'unit', resourceId: unitId,
           metadata: { newManagerPersonId: employeePersonId,
@@ -102,10 +119,19 @@ export class HierarchyMutationService {
               previousManager: { id: plan.previousManagerPersonId,
                 primaryRole: previousManagerAction === 'become_employee' ? 'employee' : 'manager',
                 lifecycleStatus: previousManagerAction === 'deactivate' ? 'inactive' : 'active' } } },
-        });
+        }).returning({ id: auditLogs.id });
+        onboardingEvents = [
+          { personId: employeePersonId, auditLogId: audit.id,
+            event: { type: 'role_changed', from: 'employee', to: 'manager' } },
+          { personId: plan.previousManagerPersonId, auditLogId: audit.id,
+            event: previousManagerAction === 'become_employee'
+              ? { type: 'role_changed', from: 'manager', to: 'employee' } : { type: 'deactivated' } },
+        ];
         return { unitId, newManagerPersonId: employeePersonId,
           previousManagerPersonId: plan.previousManagerPersonId, previousManagerAction };
       }, { isolationLevel: 'serializable' }));
+      await this.publishOnboarding(tenantId, onboardingEvents);
+      return result;
     } catch (error) {
       await this.db.client.insert(auditLogs).values({
         tenantId, actorType: actor.type, actorId: actorId(actor),
@@ -123,8 +149,9 @@ export class HierarchyMutationService {
     tenantId: string, teamId: string, employeePersonId: string,
     previousLeadAction: PreviousTeamLeadAction, actor: HierarchyActor,
   ) {
+    let onboardingEvents: OnboardingSystemEvent[] = [];
     try {
-      return await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
+      const result = await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
         await assertHierarchyActorAuthorized(tx, tenantId, actor);
         const graph: ActiveHierarchyGraph = {
           tenantId,
@@ -189,7 +216,7 @@ export class HierarchyMutationService {
             eq(orgTeams.teamLeadPersonId, plan.previousLeadPersonId), eq(orgTeams.lifecycleStatus, 'active')))
           .returning({ id: orgTeams.id });
         if (!team) throw new HierarchyMutationError('team_lead_promotion_stale');
-        await tx.insert(auditLogs).values({
+        const [audit] = await tx.insert(auditLogs).values({
           tenantId, actorType: actor.type, actorId: actorId(actor),
           action: 'org.team_lead.promote', resourceType: 'team', resourceId: teamId,
           metadata: { newLeadPersonId: employeePersonId,
@@ -202,10 +229,19 @@ export class HierarchyMutationService {
               previousLead: { id: plan.previousLeadPersonId,
                 primaryRole: previousLeadAction === 'become_employee' ? 'employee' : 'team_lead',
                 lifecycleStatus: previousLeadAction === 'deactivate' ? 'inactive' : 'active' } } },
-        });
+        }).returning({ id: auditLogs.id });
+        onboardingEvents = [
+          { personId: employeePersonId, auditLogId: audit.id,
+            event: { type: 'role_changed', from: 'employee', to: 'team_lead' } },
+          { personId: plan.previousLeadPersonId, auditLogId: audit.id,
+            event: previousLeadAction === 'become_employee'
+              ? { type: 'role_changed', from: 'team_lead', to: 'employee' } : { type: 'deactivated' } },
+        ];
         return { teamId, newLeadPersonId: employeePersonId,
           previousLeadPersonId: plan.previousLeadPersonId, previousLeadAction };
       }, { isolationLevel: 'serializable' }));
+      await this.publishOnboarding(tenantId, onboardingEvents);
+      return result;
     } catch (error) {
       await this.db.client.insert(auditLogs).values({
         tenantId, actorType: actor.type, actorId: actorId(actor),

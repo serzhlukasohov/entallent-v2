@@ -151,7 +151,8 @@ describe('OpenAiProvider.interpretConfirmationResponse', () => {
 });
 
 describe('OpenAiProvider.composeQuestionBundle', () => {
-  beforeEach(() => createMock.mockReset());
+  // Braces matter: a returned mock would be run by Vitest as a cleanup hook after each test.
+  beforeEach(() => { createMock.mockReset(); });
 
   it('requires an exact three-question mapping in the one displayed message', async () => {
     const statements = [
@@ -169,6 +170,64 @@ describe('OpenAiProvider.composeQuestionBundle', () => {
       surveyQuestionId: item.surveyQuestionId,
       workingSummary: item.statement,
     })), 'en')).toEqual({ text, statements });
+    expect(createMock).toHaveBeenCalledOnce();
+  });
+
+  const compositionStatements = [
+    { surveyQuestionId: 'q1', statement: 'You have room to choose.' },
+    { surveyQuestionId: 'q2', statement: 'You set priorities.' },
+    { surveyQuestionId: 'q3', statement: 'You can raise concerns.' },
+  ];
+  const compositionText = `It sounds like ${compositionStatements.map((item) => item.statement).join(' ')} Is that fair?`;
+  const compositionQuestions = compositionStatements.map((item) => ({
+    surveyQuestionId: item.surveyQuestionId, workingSummary: item.statement,
+  }));
+  const compositionDraft = (text: string) => ({
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text, statements: compositionStatements }) } }],
+  });
+
+  it('recomposes once when the draft breaks a rule, naming the rule in the repair prompt', async () => {
+    createMock
+      .mockResolvedValueOnce(compositionDraft(`${compositionText} Really?`))
+      .mockResolvedValueOnce(compositionDraft(compositionText));
+    const provider = makeProvider();
+
+    expect(await provider.composeQuestionBundle(turns, compositionQuestions, 'en'))
+      .toEqual({ text: compositionText, statements: compositionStatements });
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const firstSystemPrompt = createMock.mock.calls[0]![0].messages[0].content as string;
+    const repairSystemPrompt = createMock.mock.calls[1]![0].messages[0].content as string;
+    expect(repairSystemPrompt.startsWith(firstSystemPrompt)).toBe(true);
+    expect(repairSystemPrompt).toMatch(/exactly one question/i);
+    expect(createMock.mock.calls[1]![0].messages[1].content).toBe(createMock.mock.calls[0]![0].messages[1].content);
+  });
+
+  it('recomposes once when the first draft is not parseable', async () => {
+    createMock
+      .mockResolvedValueOnce({ choices: [{ finish_reason: 'stop', message: { content: '{"text": "half a' } }] })
+      .mockResolvedValueOnce(compositionDraft(compositionText));
+    const provider = makeProvider();
+
+    expect(await provider.composeQuestionBundle(turns, compositionQuestions, 'en'))
+      .toEqual({ text: compositionText, statements: compositionStatements });
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(createMock.mock.calls[1]![0].messages[0].content).toMatch(/JSON/);
+  });
+
+  it('fails closed with v2_confirmation_composition_invalid after one recomposition, naming the rule', async () => {
+    createMock.mockResolvedValue(compositionDraft(`${compositionText}\nAnything to add?`));
+    const provider = makeProvider();
+
+    await expect(provider.composeQuestionBundle(turns, compositionQuestions, 'en'))
+      .rejects.toMatchObject({ message: 'v2_confirmation_composition_invalid', reason: 'text_list_markers' });
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not recompose on a transport or provider failure', async () => {
+    createMock.mockRejectedValue(new Error('fetch failed'));
+    const provider = makeProvider();
+
+    await expect(provider.composeQuestionBundle(turns, compositionQuestions, 'en')).rejects.toThrow('fetch failed');
     expect(createMock).toHaveBeenCalledOnce();
   });
 });
@@ -234,6 +293,35 @@ describe('OpenAiProvider.classifySituation', () => {
       temperature: 0,
       max_completion_tokens: 2048,
     });
+  });
+
+  it('keeps the onboarding signal only when onboarding context was supplied', async () => {
+    const content = JSON.stringify({
+      primaryIntent: 'casual_conversation',
+      secondaryIntents: [],
+      emotionalState: ['neutral'],
+      urgency: 'low',
+      confidence: 0.9,
+      requiresSafetyCheck: false,
+      surveyAllowed: true,
+      reasoningSummary: 'Postpones.',
+      reminderRequest: null,
+      dialogueAct: 'closing',
+      latestUserSubstance: null,
+      topicAnchor: null,
+      onboardingSignal: { intent: 'later', substantive: false },
+    });
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content } }] });
+    const provider = makeProvider();
+
+    const withContext = await provider.classifySituation(turns, {
+      userName: 'X',
+      onboarding: { track: 'employee', participation: 'undecided', introStatus: 'delivered' },
+    });
+    const withoutContext = await provider.classifySituation(turns, { userName: 'X' });
+
+    expect(withContext.onboardingSignal).toEqual({ intent: 'later', substantive: false });
+    expect(withoutContext.onboardingSignal).toBeNull();
   });
 
   it('normalizes only known dialogue acts misplaced in primaryIntent', async () => {
@@ -2624,5 +2712,137 @@ describe('OpenAiProvider.generateResponse trailing bundle (GC round 3 CAP-4)', (
     const provider = makeProvider();
     const res = await provider.generateResponse(turns, confirmation, bundleContext);
     expect(res.text).toBe(`${replyText}\n\n${bundleText}`);
+  });
+});
+
+describe('OpenAiProvider.generateResponse offer delivery and format requests (GC round 3 CAP-6/CAP-9)', () => {
+  beforeEach(() => createMock.mockReset());
+  const medium = {
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [],
+  } as ReplyStrategy;
+  const basePlan: NonNullable<ResponseContext['replyPlan']> = {
+    dialogueAct: 'request',
+    responseMove: 'answer_request',
+    latestUserSubstance: 'yes please',
+    topicAnchor: null,
+    memoryAnchors: [],
+    requiredGrounding: [],
+    resolvedDetails: [],
+    questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+    mayInferFromBrevity: true,
+    forbiddenMoves: ['unsupported_interpretation'],
+    formatRequest: null,
+  };
+  const reply = (text: string) => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ text, confidence: 0.9, containsSurveyProbe: false }) } }] });
+
+  const deliveryContext = responseContext({
+    userName: 'X',
+    replyPlan: {
+      ...basePlan,
+      requiredGrounding: [{ source: 'prior_offer', category: 'offer', content: 'the item offered in the previous assistant turn', requirement: 'deliver_now' }],
+      questionPolicy: { maxQuestions: 0, reason: 'offer_delivery' },
+      forbiddenMoves: ['unsupported_interpretation', 'offer_again', 'new_offer'],
+    },
+  });
+
+  it('repairs a delivered reply that ends with an offer question, once, and tells the model quoted phrases may keep theirs', async () => {
+    const withOffer = 'Try: "I need the review by Wednesday." Do you want me to make it firmer?';
+    const delivered = 'Try: "I need the review by Wednesday."';
+    createMock.mockResolvedValueOnce(reply(withOffer)).mockResolvedValueOnce(reply(delivered));
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(turns, medium, deliveryContext);
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe(delivered);
+    const repairSystemPrompt = createMock.mock.calls[1]?.[0]?.messages?.[0]?.content as string;
+    expect(repairSystemPrompt).toMatch(/quoted phrases[^.]*may keep/i);
+  });
+
+  it('accepts the repaired draft even when quoted phrases still carry question marks, instead of failing the turn', async () => {
+    const first = 'Try: "Can you get my PR reviewed by Wednesday?" Want a softer version?';
+    const delivered = 'Try: "Can you get my PR reviewed by Wednesday?" and if it slips again: "What is blocking the review?"';
+    createMock.mockResolvedValueOnce(reply(first)).mockResolvedValueOnce(reply(delivered));
+    const provider = makeProvider();
+
+    const res = await provider.generateResponse(turns, medium, deliveryContext);
+
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(res.text).toBe(delivered);
+  });
+
+  it('gives a format request the long length budget and keeps the list shape in a length repair', async () => {
+    const item = (n: number) => `${n}. ${n * 5}-${n * 5 + 5} min: a line of the outline that carries enough detail to take up real space in the length budget`;
+    const withinLong = Array.from({ length: 8 }, (_, i) => item(i)).join('\n');
+    expect(withinLong.length).toBeGreaterThan(680);
+    expect(withinLong.length).toBeLessThanOrEqual(980);
+    createMock.mockResolvedValueOnce(reply(withinLong));
+    const provider = makeProvider();
+    const formatContext = responseContext({
+      userName: 'X',
+      replyPlan: { ...basePlan, formatRequest: 'outline', questionPolicy: { maxQuestions: 0, reason: 'format_request' } },
+    });
+
+    const res = await provider.generateResponse(turns, medium, formatContext);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res.text).toBe(withinLong);
+
+    createMock.mockReset();
+    const overLong = Array.from({ length: 12 }, (_, i) => item(i)).join('\n');
+    createMock
+      .mockResolvedValueOnce(reply(overLong))
+      .mockResolvedValueOnce(reply(withinLong));
+    await provider.generateResponse(turns, medium, formatContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    const repairSystemPrompt = createMock.mock.calls[1]?.[0]?.messages?.[0]?.content as string;
+    expect(repairSystemPrompt).toMatch(/keep the list shape/i);
+    expect(repairSystemPrompt).not.toMatch(/one sentence if you can/i);
+  });
+});
+
+describe('OpenAiProvider.generateResponse topic question (GC round 3 CAP-1)', () => {
+  beforeEach(() => createMock.mockReset());
+  const question = 'How much say do you have over how you plan the release work?';
+  const reply = 'That release week sounds packed.';
+  const normal = {
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'medium', forbiddenPatterns: [],
+  } as ReplyStrategy;
+  const topicContext = responseContext({
+    userName: 'X',
+    topicQuestion: { questionId: 'q-a1', questionGroup: 'autonomy', focus: 'open', probeStrategies: ['methods'] },
+  });
+  const draft = (replyText: string, topicQuestion: unknown) => ({
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: '', replyText, topicQuestion, confidence: 0.9, containsSurveyProbe: false,
+    }) } }],
+  });
+
+  it('returns the answer then the required question from one call, with probe metadata set by code', async () => {
+    createMock.mockResolvedValue({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      text: '', replyText: reply, topicQuestion: question, confirmationSummary: 'stray', confidence: 0.9,
+      containsSurveyProbe: false,
+    }) } }] });
+    const res = await makeProvider().generateResponse(turns, normal, topicContext);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({
+      text: `${reply} ${question}`, replyText: reply, topicQuestion: question,
+      containsSurveyProbe: true, surveyProbeQuestionId: 'q-a1',
+    });
+    expect(res.confirmationSummary).toBeUndefined();
+  });
+
+  it('repairs once when the topic question is missing, naming the contract', async () => {
+    createMock.mockResolvedValueOnce(draft(reply, null)).mockResolvedValueOnce(draft(reply, question));
+    const res = await makeProvider().generateResponse(turns, normal, topicContext);
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(createMock.mock.calls[1]![0].messages[0].content).toMatch(/"topicQuestion"/);
+    expect(res.topicQuestion).toBe(question);
+  });
+
+  it('fails closed with the typed reason after one repair', async () => {
+    createMock.mockResolvedValue(draft('Busy week?', question));
+    await expect(makeProvider().generateResponse(turns, normal, topicContext))
+      .rejects.toMatchObject({ message: 'topic_question_reply_invalid', reason: 'reply_question' });
+    expect(createMock).toHaveBeenCalledTimes(2);
   });
 });

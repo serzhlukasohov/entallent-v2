@@ -105,3 +105,99 @@ describe('SlackAdapter.getDirectMessageUser', () => {
     assert.equal(await adapter.getDirectMessageUser('D123'), null);
   });
 });
+const teamLeadActions = [
+  { actionId: 'onboarding:start', label: 'Start My Conversation', value: 'start' },
+  { actionId: 'onboarding:got_it', label: 'Got It', value: 'got_it' },
+  { actionId: 'onboarding:later', label: 'Later', value: 'later' },
+  { actionId: 'onboarding:decline', label: 'No Personal Check-ins', value: 'decline' },
+];
+
+type Block = Record<string, unknown>;
+type Element = { action_id: string; value: string; text: { text: string } };
+
+describe('SlackAdapter buttons', () => {
+  it('sends section blocks split on blank lines plus the four Team Lead buttons in order', async () => {
+    let posted: Record<string, unknown> | undefined;
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', {
+      chat: { postMessage: async (input: Record<string, unknown>) => {
+        posted = input;
+        return { ok: true, ts: '1788430496.123456' };
+      } },
+    });
+    await adapter.sendMessage({ ...message, text: 'One\n\nTwo', actions: teamLeadActions });
+
+    assert.equal(posted?.['text'], 'One\n\nTwo');
+    const blocks = posted?.['blocks'] as Block[];
+    assert.equal(blocks.length, 3);
+    assert.equal(blocks[0]?.['type'], 'section');
+    assert.equal((blocks[1]?.['text'] as { text: string }).text, 'Two');
+    const actions = blocks[2]!;
+    assert.equal(actions['type'], 'actions');
+    assert.deepEqual((actions['elements'] as Element[]).map((e) => e.action_id), [
+      'onboarding:start', 'onboarding:got_it', 'onboarding:later', 'onboarding:decline',
+    ]);
+    assert.deepEqual((actions['elements'] as Element[]).map((e) => e.text.text), teamLeadActions.map((a) => a.label));
+    assert.equal((actions['elements'] as Element[])[0]?.value, 'start');
+  });
+
+  it('sends plain text with no blocks when there are no actions', async () => {
+    let posted: Record<string, unknown> | undefined;
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', {
+      chat: { postMessage: async (input: Record<string, unknown>) => {
+        posted = input;
+        return { ok: true, ts: '1788430496.123456' };
+      } },
+    });
+    await adapter.sendMessage(message);
+    assert.equal(posted?.['blocks'], undefined);
+  });
+
+  it('splits a section paragraph longer than the Slack limit', async () => {
+    let posted: Record<string, unknown> | undefined;
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', {
+      chat: { postMessage: async (input: Record<string, unknown>) => {
+        posted = input;
+        return { ok: true, ts: '1788430496.123456' };
+      } },
+    });
+    await adapter.sendMessage({ ...message, text: 'x'.repeat(3500), actions: teamLeadActions });
+    const blocks = posted?.['blocks'] as Block[];
+    assert.equal(blocks.length, 3);
+    assert.ok(blocks.slice(0, 2).every((b) => (b['text'] as { text: string }).text.length <= 3000));
+  });
+});
+
+describe('SlackAdapter.updateMessage', () => {
+  it('calls chat.update with the DM channel, ts and blocks without buttons', async () => {
+    let updated: Record<string, unknown> | undefined;
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', {
+      chat: { update: async (input: Record<string, unknown>) => {
+        updated = input;
+        return { ok: true };
+      } },
+    });
+    await adapter.updateMessage({
+      tenantId: message.tenantId,
+      externalChannelId: 'D123',
+      externalMessageId: '1788430496.123456',
+      text: 'Body\n\n_Done_',
+    });
+    assert.equal(updated?.['channel'], 'D123');
+    assert.equal(updated?.['ts'], '1788430496.123456');
+    const blocks = updated?.['blocks'] as Block[];
+    assert.ok(blocks.every((b) => b['type'] === 'section'));
+  });
+
+  it('throws when Slack rejects the update', async () => {
+    const adapter = new SlackAdapter({ botToken: 'test-token' });
+    Reflect.set(adapter, 'webClient', { chat: { update: async () => ({ ok: false, error: 'message_not_found' }) } });
+    await assert.rejects(
+      adapter.updateMessage({ tenantId: message.tenantId, externalChannelId: 'D1', externalMessageId: '1.1', text: 't' }),
+      /message_not_found/,
+    );
+  });
+});

@@ -79,3 +79,22 @@ describe('AiProviderWithFallback', () => {
     expect(p3.classifySituation).toHaveBeenCalledOnce();
   });
 });
+
+describe('AiProviderWithFallback.composeQuestionBundle', () => {
+  const questions = [{ surveyQuestionId: 'q-b', workingSummary: 'I can decide my methods, not my priorities.' }];
+  const composition = { text: 'So you decide your methods, not your priorities. Is that right?', statements: [
+    { surveyQuestionId: 'q-b', statement: 'you decide your methods, not your priorities' },
+  ] };
+
+  it('forwards the bundle variant to the primary and to the fallback', async () => {
+    const primary = makeProvider(CLASSIFICATION);
+    const fallback = makeProvider(CLASSIFICATION);
+    primary.composeQuestionBundle = vi.fn().mockRejectedValue(new Error('primary down'));
+    fallback.composeQuestionBundle = vi.fn().mockResolvedValue(composition);
+    const router = new AiProviderWithFallback(primary, fallback);
+
+    expect(await router.composeQuestionBundle(TURNS, questions, 'en', 'corrected_statement')).toEqual(composition);
+    expect(primary.composeQuestionBundle).toHaveBeenCalledWith(TURNS, questions, 'en', 'corrected_statement');
+    expect(fallback.composeQuestionBundle).toHaveBeenCalledWith(TURNS, questions, 'en', 'corrected_statement');
+  });
+});

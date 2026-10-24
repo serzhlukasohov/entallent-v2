@@ -16,17 +16,33 @@ export type { ScheduledActionRepositoryPort, SaveScheduledActionParams } from '.
 export type { FollowUpContextPort, FollowUpContextData } from './ports/follow-up-context.port';
 export type { ProactiveSchedulerRepositoryPort, FindCheckInCandidatesParams, CheckInCandidate, CheckInEnqueuePort, CheckInEnqueuePayload } from './ports/proactive-scheduler.repository.port';
 export type { SurveyRepositoryPort, SaveSurveyEvidenceParams, SurveyEvidencePolarity, UpsertAssessmentParams, UpsertGroupStateParams, StageGroupConfirmationParams, RecordGroupDeidentificationDecisionParams, TransitionAwaitingGroupStateParams, WithdrawGroupStateParams, ConfirmGroupStateParams, FindConfirmedGroupStatesParams, ConfirmedGroupReportStateRecord, SurveyTeamRecord, OpenSurveyReportingCycleParams, FindReportingCohortsReadyForFinalReportsParams, ExpireTemporaryGroupStatesForClosedCohortsParams } from './ports/survey.repository.port';
-export type { QuestionWorkingCapturePort, CaptureQuestionMeaningInput } from './ports/question-working-capture.port';
-export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict } from './ports/question-confirmation.port';
+export type { QuestionWorkingCapturePort, CaptureQuestionMeaningInput, QuestionWorkingCoverage } from './ports/question-working-capture.port';
+export { accumulateQuestionReadiness, needsDriver } from './utils/question-readiness';
+export type { QuestionReadinessState } from './utils/question-readiness';
+export {
+  TOPIC_QUESTION_POLICY, canAskTopicQuestion, readTopicCadence, isTopicQuestionMessage, isTopicCompletionMessage,
+} from './utils/topic-question-policy';
+export type {
+  TopicCadence, TopicCadenceMessage, TopicQuestionFacts, TopicQuestionDecision, TopicQuestionBlockReason,
+} from './utils/topic-question-policy';
+export type { QuestionConfirmationPort, ReadyQuestionBundle, AwaitingQuestionBundle, QuestionBundleKind, QuestionBundleVerdict, PendingQuestionClarification, QuestionClarificationVerdict, AppliedQuestionVerdict, CycleProgressSnapshot } from './ports/question-confirmation.port';
 export type { QuestionBundleComposition } from './ports/ai-provider.port';
 export {
   validateQuestionBundleComposition, validateBundleReply, composeBundleReplyText, isBundleShownIn,
   isBundleReplyInvalidError, BundleReplyInvalidError, BUNDLE_REPLY_INVALID,
+  isBundleCompositionInvalidError, BundleCompositionInvalidError, BUNDLE_COMPOSITION_INVALID,
 } from './utils/question-bundle-composition';
-export type { BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason } from './utils/question-bundle-composition';
+export type {
+  BundleReplyParts, BundleReplyOptions, BundleReplyInvalidReason, BundleCompositionInvalidReason,
+} from './utils/question-bundle-composition';
 export { maxReplyChars } from './utils/reply-length';
-export type { TrailingBundle } from './ports/ai-provider.port';
-export { validateQuestionBundleVerdict } from './utils/question-bundle-verdict';
+export {
+  TopicQuestionReplyInvalidError, isTopicQuestionReplyInvalidError, validateTopicQuestionReply,
+  composeTopicQuestionReplyText,
+} from './utils/topic-question-reply';
+export type { TopicQuestionReplyParts, TopicQuestionReplyInvalidReason } from './utils/topic-question-reply';
+export type { TrailingBundle, TopicQuestionRequest } from './ports/ai-provider.port';
+export { validateQuestionBundleVerdict, resolveCorrectedStatementVerdict, MAX_QUESTION_CLARIFICATIONS } from './utils/question-bundle-verdict';
 export { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from './utils/question-clarification';
 export { SURVEY_EVIDENCE_POLARITIES } from './ports/survey.repository.port';
 export type { PulseBacklogRepositoryPort, PulseBacklogRecord, ResolvedIgnore, ProactivePulseConfig } from './ports/pulse-backlog.repository.port';
@@ -46,7 +62,7 @@ export { DEIDENTIFICATION_POLICY_VERSION, evaluateDeidentification, isAcceptedDe
 export type { DeidentificationDecision, DeidentificationRejectionReason, DeidentificationPolicyInput } from './utils/deidentification-policy';
 export { RISK_TRIPWIRE_POLICY_VERSION, applyModerationTripwire, assessRisk, isRiskTurn, mustEscalate, riskBlocksSurvey, toAssessedRisk, tripwireRaise, unassessedRisk } from './utils/risk-policy';
 export { ConversationOrchestrator } from './use-cases/conversation-orchestrator';
-export type { OrchestrateInput, OrchestrateResult } from './use-cases/conversation-orchestrator';
+export type { OrchestrateInput, OrchestrateResult, OrchestratorLogger } from './use-cases/conversation-orchestrator';
 export { AgentRuntimeRouter } from './use-cases/agent-runtime-router';
 export type { AgentRuntimeConfigurationDiagnostic, AgentRuntimeConfigurationDiagnosticRecorder, AgentRuntimeDecision, AgentRuntimeDecisionRecord, AgentRuntimeDecisionSource, AgentRuntimeFallbackExecutor, AgentRuntimeMode, AgentRuntimeModeEvaluationResult, AgentRuntimeModeEvaluator, AgentRuntimeRouterLogger, AgentRuntimeRouterOptions, AgentRuntimeShadowCandidateRecord, AgentRuntimeShadowCandidateRecorder } from './use-cases/agent-runtime-router';
 export { MafAgentRuntimeClient, MafAgentRuntimeConfigurationError } from './use-cases/maf-agent-runtime-client';
@@ -72,6 +88,9 @@ export type { ProactiveScanConfig, ProactiveScanResult } from './use-cases/proac
 export { isInQuietHours, getLocalHour } from './utils/quiet-hours';
 export { BASE_STYLE } from './utils/style-adaptation';
 export { buildReplyPlan } from './utils/reply-plan';
+export { predictCycleProgress, EMPTY_CYCLE_PROGRESS } from './utils/cycle-progress';
+export type { QuestionBundleVariant } from './ports/ai-provider.port';
+export type { CycleProgress, PendingVerdictChange } from './utils/cycle-progress';
 export type { ReplyPlanInput } from './utils/reply-plan';
 export type { QuietHours } from './utils/quiet-hours';
 export { MemoryExtractionUseCase } from './use-cases/memory-extraction.use-case';
@@ -125,6 +144,8 @@ export { isRuntimeEligibleUser } from './hierarchy/runtime-eligibility';
 export type { RuntimeUserState } from './hierarchy/runtime-eligibility';
 export { validateActiveHierarchy, planEmployeeMove, planEmployeeDeactivation, planTeamLeadPromotion, planManagerPromotion, planTeamDeactivation, planUnitTransferDeactivation } from './hierarchy/active-graph';
 export type { ActiveHierarchyGraph, ActiveGraphIssue, EmployeeMovePlan, EmployeeDeactivationPlan, PreviousTeamLeadAction, TeamLeadPromotionPlan, PreviousManagerAction, ManagerPromotionPlan, TeamDeactivationPlan, UnitTransferDeactivationPlan } from './hierarchy/active-graph';
+export * from './onboarding';
+export type { OnboardingApplyResult, OnboardingEffectsPort, OnboardingTurnPort } from './ports/onboarding.port';
 export { selectV2CohortReportInputs } from './use-cases/select-v2-cohort-report-inputs.use-case';
 export type { V2CohortQuestionInput, V2CohortReportScope, V2CohortReportInputSelection } from './use-cases/select-v2-cohort-report-inputs.use-case';
 export { buildV2IndexReport, V2_REPORT_CALCULATION_VERSION, V2_REPORT_APPROVED_DECISION_ID } from './use-cases/build-v2-index-report';

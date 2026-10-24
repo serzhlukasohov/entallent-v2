@@ -10,6 +10,7 @@ import type {
   ConfirmationResponse,
   ObservedStyle,
 } from '@entalent/contracts';
+import type { OnboardingTrack, Participation } from '../onboarding/onboarding-state';
 import type { SurveyResponseType, PulseCaptureRecord } from '../types/records';
 import type {
   AwaitingQuestionBundle,
@@ -17,6 +18,8 @@ import type {
   QuestionBundleVerdict,
   QuestionClarificationVerdict,
 } from './question-confirmation.port';
+
+export type QuestionBundleVariant = 'confirmation' | 'corrected_statement';
 
 export interface ConversationTurn {
   role: 'user' | 'assistant';
@@ -33,6 +36,8 @@ export interface ClassifyContext {
   now?: string;
   /** IANA timezone of the employee — reminder times are interpreted in it */
   timezone?: string;
+  /** Present only when the person has an onboarding state; enables the onboardingSignal reading. */
+  onboarding?: { track: OnboardingTrack; participation: Participation; introStatus: string };
 }
 
 export interface RiskContext {
@@ -90,15 +95,41 @@ export interface ReplyPlan {
       | 'social_checkin_returns_question'
       | 'acknowledgement_no_new_substance'
       | 'asked_recently'
-      | 'new_substance_allows_question';
+      | 'new_substance_allows_question'
+      | 'offer_delivery'
+      | 'format_request'
+      /** GC round 3 CAP-1: the topic policy made one topic question mandatory this turn. */
+      | 'topic_question';
   };
-  requiredGrounding: Array<{
-    source: 'memory';
-    category: string;
-    content: string;
-    requirement: 'mention_explicitly';
-  }>;
-  forbiddenMoves: Array<'comment_on_brevity' | 'diagnose' | 'survey_probe' | 'operational_status' | 'action_plan' | 'unsupported_interpretation'>;
+  requiredGrounding: Array<
+    | {
+        source: 'memory';
+        category: string;
+        content: string;
+        requirement: 'mention_explicitly';
+      }
+    | {
+        /** GC round 3 CAP-6: the employee accepted the offer made in the previous mentor turn. */
+        source: 'prior_offer';
+        category: 'offer';
+        content: string;
+        requirement: 'deliver_now';
+      }
+  >;
+  forbiddenMoves: Array<
+    | 'comment_on_brevity'
+    | 'diagnose'
+    | 'survey_probe'
+    | 'operational_status'
+    | 'action_plan'
+    | 'unsupported_interpretation'
+    /** Do not repeat or re-offer the accepted item; deliver it. */
+    | 'offer_again'
+    /** Do not end with a new "if you want, I can..." this turn. */
+    | 'new_offer'
+  >;
+  /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; null keeps the prose default. */
+  formatRequest?: import('@entalent/contracts').FormatRequest | null;
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
@@ -142,17 +173,46 @@ export interface ResponseContext {
    * the reminder the employee asked for.
    */
   reminderIntent?: string;
+  /**
+   * GC round 3 CAP-1 (ADR-013 D8): the topic policy made a topic question mandatory this turn. The
+   * reply returns it in a separate required field; `focus: 'driver'` asks what drives a status the
+   * employee already gave (CAP-2). Never set together with `surveyProbeQuestion` or a trailing bundle.
+   */
+  topicQuestion?: TopicQuestionRequest;
   /** Survey probe to embed naturally in the response */
   surveyProbeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
   /** Agent-initiated check-in: the agent writes first, optionally steering toward a survey topic */
   proactiveCheckIn?: {
     probeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
+    /** The employee just agreed (by text) to start after the onboarding introduction. */
+    afterUserStart?: boolean;
   };
   /**
    * Set when the employee just confirmed a summary the agent proposed.
    * Signals that this topic is now closed — acknowledge and move on, no more probing.
    */
-  topicConfirmed?: { questionGroup: string };
+  topicConfirmed?: {
+    questionGroup: string;
+    /** Progress after this confirmation (GC round 3 CAP-3); the reply states it plainly. */
+    topicsClosed?: number;
+    topicsTotal?: number;
+  };
+  /**
+   * Set when this turn closed one disputed point of a topic for this cycle without an agreed
+   * wording (GC round 3 S4b). The reply says so in one plain sentence; no evidence travels here.
+   */
+  questionNotCollected?: { questionGroup: string };
+  /**
+   * Set when the employee asked what is left in the pulse cycle (GC round 3 CAP-3). The reply is
+   * grounded on these counts and topic names only; evidence text never travels here.
+   */
+  cycleProgress?: {
+    inCycle: boolean;
+    topicsTotal: number;
+    topicsClosed: number;
+    openTopics: string[];
+    awaitingReply: boolean;
+  };
   /**
    * Set when a question group has completed and the agent should reflect its
    * understanding back and ask for confirmation IN THIS REPLY (confirm-only, no
@@ -190,8 +250,15 @@ export interface ResponseContext {
   trailingBundle?: TrailingBundle;
 }
 
+export interface TopicQuestionRequest {
+  questionId: string;
+  questionGroup: string;
+  focus: 'open' | 'driver';
+  probeStrategies: string[];
+}
+
 export interface TrailingBundle {
-  kind: 'confirmation_bundle' | 'clarification';
+  kind: 'confirmation_bundle' | 'clarification' | 'corrected_statement';
   /** Validated composition text; the only question of the turn lives here. */
   text: string;
   /** Bundle statements the reply part must not restate (confirmation bundles only). */
@@ -225,6 +292,8 @@ export interface AiProviderPort {
     turns: ConversationTurn[],
     questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
     responseLanguage: string,
+    /** 'corrected_statement' reflects one meaning the employee just corrected (GC round 3 CAP-3). */
+    variant?: QuestionBundleVariant,
   ): Promise<QuestionBundleComposition>;
 
   interpretQuestionBundleResponse(

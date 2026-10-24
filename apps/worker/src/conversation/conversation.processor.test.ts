@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
@@ -175,6 +177,23 @@ describe('ConversationProcessor TypeScript-only routing', () => {
 
     expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
     expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+  });
+
+  it('records a skipped V2 bundle composition in the llm_runs error code of a successful turn', async () => {
+    const orchestrator = {
+      orchestrate: vi.fn(async () => ({ ...runtimeResult, bundleCompositionFallbackReason: 'question_count' })),
+    };
+    const { processor, conversationRepo, llmRunRepo } = createProcessor({ orchestrator });
+
+    await expect(processor.process({
+      id: 'skipped-bundle-job', name: 'process', attemptsMade: 0,
+      opts: { delay: 2_000 }, data: conversationJob,
+    } as Job<ConversationJob>)).resolves.toBeUndefined();
+
+    expect(conversationRepo.markInboundConversationJobProcessed).toHaveBeenCalled();
+    expect(llmRunRepo.record).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'success', errorCode: 'conversation_v2_bundle_composition_invalid:question_count',
+    }));
   });
 
   it('records the provider filter categories in the llm_runs error code of a committed input-filtered turn (GC round 3 CAP-11)', async () => {
@@ -375,6 +394,54 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       ...checkInJob,
       pulseConfig: { ignoreWindowHours: 24 },
     });
+  });
+
+  it('passes an onboarding start check-in to ProactiveCheckInUseCase only, with no agent-service path', async () => {
+    const checkInUseCase = {
+      execute: vi.fn(async () => ({ outboundMessageId: 'o-1', responseText: 'opener', probeQuestionId: null })),
+    };
+    const orchestrator = { orchestrate: vi.fn() };
+    const { processor } = createProcessor({
+      checkInUseCase, orchestrator,
+      conversationRepo: { shouldSkipInboundMessage: vi.fn(), isUserRuntimeEligible: vi.fn(async () => true),
+        findOnboardingParticipation: vi.fn(async () => 'active') } as never,
+      db: { client: { select: vi.fn(() => tenantQuery()) } },
+    });
+
+    await processor.process({
+      id: 'onb-start:p1:3', name: 'check-in', attemptsMade: 0,
+      data: { ...checkInJob, onboardingStart: true },
+    } as Job<CheckInJob>);
+
+    expect(checkInUseCase.execute).toHaveBeenCalledOnce();
+    expect(checkInUseCase.execute).toHaveBeenCalledWith(expect.objectContaining({ onboardingStart: true }));
+    expect(orchestrator.orchestrate).not.toHaveBeenCalled();
+    const source = readFileSync(join(__dirname, 'conversation.processor.ts'), 'utf8');
+    expect(source).not.toMatch(/agent-service|AGENT_RUNTIME|maf_|AgentRuntime/i);
+  });
+
+  it('derives a deterministic start message id from the job key and skips a start after the person left active participation', async () => {
+    const checkInUseCase = { execute: vi.fn(async (_input: { onboardingStartMessageId?: string }) => ({ outboundMessageId: 'o', responseText: 't', probeQuestionId: null })) };
+    const participation = vi.fn(async () => 'active');
+    const repo = { shouldSkipInboundMessage: vi.fn(), isUserRuntimeEligible: vi.fn(async () => true), findOnboardingParticipation: participation };
+    const { processor } = createProcessor({
+      checkInUseCase, conversationRepo: repo as never, db: { client: { select: vi.fn(() => tenantQuery()) } },
+    });
+    const job = { id: 'j', name: 'check-in', attemptsMade: 0,
+      data: { ...checkInJob, onboardingStart: true, onboardingStartKey: 'p1:3' } } as Job<CheckInJob>;
+
+    await processor.process(job);
+    await processor.process(job);
+    const ids = checkInUseCase.execute.mock.calls.map((c) => c[0].onboardingStartMessageId);
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ids[1]).toBe(ids[0]);
+
+    checkInUseCase.execute.mockClear();
+    participation.mockResolvedValue('declined');
+    await processor.process(job);
+    participation.mockResolvedValue('deferred');
+    await processor.process(job);
+    expect(checkInUseCase.execute).not.toHaveBeenCalled();
   });
 
   it('redacts orchestrator failures while recording the inbound run as failed', async () => {

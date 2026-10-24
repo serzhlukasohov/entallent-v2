@@ -26,6 +26,11 @@ export interface QuestionFinalizationContext {
   rubric: ApprovedQuestionRubric | null;
   knownIdentifiers: string[];
   sourceMessageIds: string[];
+  /**
+   * True only when a verdict receipt proves the employee saw and confirmed this exact statement
+   * (GC round 3 CAP-3). Without it the meaning never becomes a final insight.
+   */
+  shownStatementReceipt: boolean;
 }
 
 export type SafeSignalDirection = 'adverse' | 'mixed' | 'favorable';
@@ -132,6 +137,9 @@ export class FinalizeQuestionInsightUseCase {
     if (!isApprovedQuestionRubric(context.rubric)) throw new Error('approved_question_rubric_missing');
     if (!context.confirmedSemanticSummary.trim()) throw new Error('confirmed_question_meaning_missing');
     if (!context.scoringPolicyVersion.trim()) throw new Error('bound_scoring_policy_missing');
+    // Only a statement the employee saw and confirmed may be reported (GC round 3 CAP-3).
+    // Configuration faults above stay loud; a missing receipt is a stale, unreportable row.
+    if (!context.shownStatementReceipt) return 'stale';
 
     const assessment = await this.scorer.scoreConfirmedMeaning({
       semanticSummary: context.confirmedSemanticSummary,

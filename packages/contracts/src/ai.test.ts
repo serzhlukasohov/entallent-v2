@@ -13,6 +13,50 @@ import {
 } from './ai';
 
 describe('Contract: SituationClassificationSchema', () => {
+  const onboardingBase = {
+    primaryIntent: 'casual_conversation',
+    secondaryIntents: [],
+    emotionalState: [],
+    urgency: 'low',
+    confidence: 0.8,
+    requiresSafetyCheck: false,
+    surveyAllowed: true,
+    reasoningSummary: 'test',
+  };
+
+  it('keeps a valid onboardingSignal through the transform', () => {
+    const parsed = SituationClassificationSchema.parse({
+      ...onboardingBase,
+      onboardingSignal: { intent: 'later', substantive: false },
+    });
+    expect(parsed.onboardingSignal).toEqual({ intent: 'later', substantive: false });
+  });
+
+  it('keeps onboardingSignal on pulse-capture classifications rewritten by the transform', () => {
+    const parsed = SituationClassificationSchema.parse({
+      ...onboardingBase,
+      primaryIntent: 'pulse_capture_explanation',
+      onboardingSignal: { intent: 'none', substantive: false },
+    });
+    expect(parsed.onboardingSignal).toEqual({ intent: 'none', substantive: false });
+  });
+
+  it('parses a missing onboardingSignal as absent and null as null', () => {
+    expect(SituationClassificationSchema.parse(onboardingBase).onboardingSignal ?? null).toBeNull();
+    expect(SituationClassificationSchema.parse({ ...onboardingBase, onboardingSignal: null }).onboardingSignal).toBeNull();
+  });
+
+  it('parses an invalid onboardingSignal as null instead of failing the classification', () => {
+    for (const onboardingSignal of [
+      { intent: 'maybe', substantive: false },
+      { intent: 'start' },
+      'start',
+    ]) {
+      const parsed = SituationClassificationSchema.parse({ ...onboardingBase, onboardingSignal });
+      expect(parsed.onboardingSignal).toBeNull();
+    }
+  });
+
   it('accepts a valid classification', () => {
     const parsed = SituationClassificationSchema.parse({
       primaryIntent: 'support',
@@ -34,6 +78,16 @@ describe('Contract: SituationClassificationSchema', () => {
     expect(parsed).toMatchObject({
       resolvedDetails: ['The employee is barely sleeping after carrying the release.'],
     });
+  });
+
+  it('carries the cycle-status question signal and defaults it to false', () => {
+    const base = {
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [], urgency: 'low',
+      confidence: 0.8, requiresSafetyCheck: false, surveyAllowed: true, reasoningSummary: 'asks what is left',
+    };
+    expect(SituationClassificationSchema.parse({ ...base, cycleStatusQuestion: true }).cycleStatusQuestion).toBe(true);
+    expect(SituationClassificationSchema.parse(base).cycleStatusQuestion).toBe(false);
+    expect(SituationClassificationSchema.parse({ ...base, cycleStatusQuestion: null }).cycleStatusQuestion).toBe(false);
   });
 
   it('defaults dialogue-state fields for older classifier payloads', () => {
@@ -449,6 +503,16 @@ describe('Contract: GeneratedResponseSchema', () => {
     expect(result.surveyProbeQuestionId).toBe('q-team-collab');
   });
 
+  it('normalizes null confirmationSummary from model output to undefined', () => {
+    const result = GeneratedResponseSchema.parse({
+      text: 'Okay, I am here if you need me.',
+      confirmationSummary: null,
+      confidence: 0.8,
+      containsSurveyProbe: false,
+    });
+    expect(result.confirmationSummary).toBeUndefined();
+  });
+
   it('normalizes null optional survey probe id from model output', () => {
     const result = GeneratedResponseSchema.parse({
       text: 'That is a lot to carry.',
@@ -540,5 +604,124 @@ describe('ConfirmationResponseSchema', () => {
 
   it('allows confirmation as a conversation mode', () => {
     expect(ConversationModeSchema.parse('confirmation')).toBe('confirmation');
+  });
+});
+
+describe('Contract: SituationClassificationSchema offer and format signals (GC round 3 CAP-6/CAP-9)', () => {
+  const payload = (extra: Record<string, unknown> = {}) => ({
+    primaryIntent: 'coaching',
+    secondaryIntents: [],
+    emotionalState: [],
+    urgency: 'low',
+    confidence: 0.9,
+    requiresSafetyCheck: false,
+    surveyAllowed: true,
+    reasoningSummary: 'test',
+    dialogueAct: 'request',
+    latestUserSubstance: 'yes, a bit more direct please',
+    topicAnchor: null,
+    ...extra,
+  });
+
+  it('leaves the offer and format signals absent for older classifier payloads', () => {
+    const parsed = SituationClassificationSchema.parse(payload());
+
+    expect(parsed.priorAssistantOffer).toBeUndefined();
+    expect(parsed.acceptsPriorOffer).toBeUndefined();
+    expect(parsed.formatRequest).toBeUndefined();
+  });
+
+  it('keeps an explicit null format request as null', () => {
+    const parsed = SituationClassificationSchema.parse(payload({ formatRequest: null }));
+
+    expect(parsed.formatRequest).toBeNull();
+  });
+
+  it('keeps an accepted offer when the latest assistant turn contained one', () => {
+    const parsed = SituationClassificationSchema.parse(payload({
+      priorAssistantOffer: true,
+      acceptsPriorOffer: true,
+      formatRequest: 'list',
+    }));
+
+    expect(parsed.priorAssistantOffer).toBe(true);
+    expect(parsed.acceptsPriorOffer).toBe(true);
+    expect(parsed.formatRequest).toBe('list');
+  });
+
+  it('fails an acceptance closed when no prior offer was reported', () => {
+    const parsed = SituationClassificationSchema.parse(payload({
+      priorAssistantOffer: false,
+      acceptsPriorOffer: true,
+    }));
+
+    expect(parsed.acceptsPriorOffer).toBe(false);
+  });
+
+  it.each(['table', 'bullets', 42, {}])('fails an unknown format request closed to null: %j', (formatRequest) => {
+    const parsed = SituationClassificationSchema.parse(payload({ formatRequest }));
+
+    expect(parsed.formatRequest).toBeNull();
+  });
+
+  it('fails malformed offer flags closed to false', () => {
+    const parsed = SituationClassificationSchema.parse(payload({
+      priorAssistantOffer: 'yes',
+      acceptsPriorOffer: 'yes',
+    }));
+
+    expect(parsed.priorAssistantOffer).toBe(false);
+    expect(parsed.acceptsPriorOffer).toBe(false);
+  });
+});
+
+describe('Contract: GC round 3 CAP-1/CAP-2 topic steering fields', () => {
+  const evidence = {
+    questionId: 'q-1', evidenceSummary: 'Motivation is high at 9 out of 10.', polarity: 'positive',
+    strength: 0.9, completeness: 0.8, confidence: 0.9, followUpProbeNeeded: false,
+    thresholdReached: true, assessmentShouldRemainUnknown: false,
+  };
+
+  it('carries typed driver signals on survey evidence', () => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [{ ...evidence, driverCaptured: true, driverDeclined: false }],
+    });
+    expect(parsed.evidence[0]).toMatchObject({ driverCaptured: true, driverDeclined: false });
+  });
+
+  it('fails closed to no driver when the signals are missing or malformed', () => {
+    const parsed = SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: ['q-1'],
+      evidence: [evidence, { ...evidence, driverCaptured: 'yes', driverDeclined: null }],
+    });
+    expect(parsed.evidence.map((item) => [item.driverCaptured, item.driverDeclined]))
+      .toEqual([[undefined, undefined], [false, false]]);
+  });
+
+  it('carries a separate topic question on a generated reply and normalizes null', () => {
+    expect(GeneratedResponseSchema.parse({
+      text: '', replyText: 'That deadline sounds tight.', topicQuestion: 'How much say do you have over how you plan it?',
+      confidence: 0.9, containsSurveyProbe: true, surveyProbeQuestionId: 'q-1',
+    }).topicQuestion).toBe('How much say do you have over how you plan it?');
+    expect(GeneratedResponseSchema.parse({
+      text: 'ok', topicQuestion: null, confidence: 0.9, containsSurveyProbe: false,
+    }).topicQuestion).toBeUndefined();
+  });
+
+  it('carries driver declines that come without new meaning, failing closed to none', () => {
+    expect(SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: [], evidence: [], driverDeclinedQuestionIds: ['q-1'],
+    }).driverDeclinedQuestionIds).toEqual(['q-1']);
+    expect(SurveyEvidenceEvaluationSchema.parse({
+      candidateQuestionIds: [], evidence: [], driverDeclinedQuestionIds: 'q-1',
+    }).driverDeclinedQuestionIds).toEqual([]);
+  });
+
+  it('treats a null confirmation summary from model output as absent', () => {
+    expect(GeneratedResponseSchema.parse({
+      text: '', replyText: 'ok.', topicQuestion: 'What helps?', confirmationSummary: null,
+      confidence: 0.9, containsSurveyProbe: true,
+    }).confirmationSummary).toBeUndefined();
   });
 });

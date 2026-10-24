@@ -1,0 +1,3 @@
+ALTER TABLE "survey_question_confirmation_bundles" ADD COLUMN "kind" text DEFAULT 'confirmation' NOT NULL;--> statement-breakpoint
+ALTER TABLE "survey_question_working_insights" ADD COLUMN "clarification_attempts" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "survey_question_confirmation_bundles" ADD CONSTRAINT "survey_question_confirmation_bundles_kind_check" CHECK ("survey_question_confirmation_bundles"."kind" IN ('confirmation', 'corrected_statement'));

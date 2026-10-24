@@ -6,6 +6,8 @@ import { ProactiveSchedulerUseCase } from '@entalent/application';
 import type { Env } from '@entalent/config';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { OnboardingDispatchService } from '../conversation/onboarding-dispatch.service';
+import { OnboardingReminderSweepService } from '../onboarding/onboarding-reminder-sweep.service';
+import { OnboardingRoleReconcileService } from '../onboarding/onboarding-role-reconcile.service';
 
 export interface ProactiveScanJob {
   /** Optional tenant filter — omitted for the scheduled repeatable scan */
@@ -25,6 +27,8 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
     @InjectQueue(QUEUE_NAMES.PROACTIVE_SCAN) private readonly queue: Queue<ProactiveScanJob>,
     private readonly config: ConfigService<Env, true>,
     private readonly onboarding: OnboardingDispatchService,
+    private readonly reminderSweep: OnboardingReminderSweepService,
+    private readonly roleReconcile: OnboardingRoleReconcileService,
   ) {
     super();
   }
@@ -55,6 +59,24 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
       return;
     }
     const onboarding = await this.onboarding.dispatchPending(job.data.tenantId);
+    // Recovery for lost reminder jobs must never block the proactive scan.
+    try {
+      const sweep = await this.reminderSweep.sweep(job.data.tenantId);
+      if (sweep.found > 0) {
+        this.logger.log(`Onboarding reminder sweep found=${sweep.found} enqueued=${sweep.enqueued} failed=${sweep.failed}`);
+      }
+    } catch (error) {
+      this.logger.error(`Onboarding reminder sweep failed: ${(error as Error).message}`);
+    }
+    // Backstop for lost role-change events; same isolation from the scan.
+    try {
+      const reconcile = await this.roleReconcile.sweep(job.data.tenantId);
+      if (reconcile.found > 0) {
+        this.logger.log(`Onboarding role reconcile found=${reconcile.found} reconciled=${reconcile.reconciled} failed=${reconcile.failed}`);
+      }
+    } catch (error) {
+      this.logger.error(`Onboarding role reconcile failed: ${(error as Error).message}`);
+    }
     const result = await this.scheduler.scan({ tenantId: job.data.tenantId });
     this.logger.log(
       `Proactive scan job=${job.id} — onboardingQueued=${onboarding.queued} onboardingFailed=${onboarding.failed} candidates=${result.candidatesFound} enqueued=${result.enqueued} skippedQuietHours=${result.skippedQuietHours}`,

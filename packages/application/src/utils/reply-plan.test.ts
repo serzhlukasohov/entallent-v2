@@ -315,3 +315,175 @@ describe('buildReplyPlan', () => {
     });
   });
 });
+
+describe('buildReplyPlan offers and format requests (GC round 3 CAP-6/CAP-9)', () => {
+  it('turns an accepted offer into a delivery request even when the act is an acknowledgement', () => {
+    const plan = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'acknowledgement',
+        latestUserSubstance: null,
+        topicAnchor: 'feedback for the senior colleague',
+        priorAssistantOffer: true,
+        acceptsPriorOffer: true,
+      }),
+      memoryItems: memory([
+        { category: 'commitment', content: 'will talk to the senior colleague on Monday', importance: 0.9 },
+      ]),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(plan.responseMove).toBe('answer_request');
+    expect(plan.requiredGrounding).toEqual([
+      { source: 'prior_offer', category: 'offer', content: 'the item offered in the previous assistant turn', requirement: 'deliver_now' },
+    ]);
+    expect(plan.forbiddenMoves).toContain('offer_again');
+    expect(plan.forbiddenMoves).toContain('new_offer');
+    expect(plan.questionPolicy).toEqual({ maxQuestions: 0, reason: 'offer_delivery' });
+    expect(plan.memoryAnchors).toEqual([]);
+    expect(plan.mayInferFromBrevity).toBe(false);
+  });
+
+  it('forbids a new offer while the previous offer is still unanswered', () => {
+    const plan = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'new_substance',
+        latestUserSubstance: 'the retro went fine in the end',
+        priorAssistantOffer: true,
+        acceptsPriorOffer: false,
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(plan.responseMove).toBe('address_new_substance');
+    expect(plan.forbiddenMoves).toContain('new_offer');
+    expect(plan.forbiddenMoves).not.toContain('offer_again');
+    expect(plan.requiredGrounding).toEqual([]);
+  });
+
+  it('forbids offering instead of delivering when the employee asked for something', () => {
+    const plan = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'request',
+        latestUserSubstance: 'give me an outline with timings for the 1:1',
+      }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(plan.responseMove).toBe('answer_request');
+    expect(plan.forbiddenMoves).toContain('new_offer');
+    expect(plan.forbiddenMoves).not.toContain('offer_again');
+  });
+
+  it('carries an explicit format request into the plan', () => {
+    const plan = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'request',
+        latestUserSubstance: 'give me an outline with timings, a list with time slots please',
+        formatRequest: 'outline',
+      }),
+      includeFollowUpQuestion: false,
+    });
+
+    expect(plan.formatRequest).toBe('outline');
+    expect(plan.questionPolicy).toEqual({ maxQuestions: 0, reason: 'format_request' });
+  });
+
+  it('leaves ordinary turns free of offer limits and format requests', () => {
+    const plan = buildReplyPlan({
+      classification: base({ dialogueAct: 'new_substance', latestUserSubstance: 'new fact' }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(plan.formatRequest).toBeNull();
+    expect(plan.forbiddenMoves).not.toContain('new_offer');
+    expect(plan.forbiddenMoves).not.toContain('offer_again');
+  });
+
+  it('keeps safety support in charge even when an offer was accepted', () => {
+    const plan = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'acknowledgement',
+        latestUserSubstance: null,
+        topicAnchor: 'immediate danger',
+        priorAssistantOffer: true,
+        acceptsPriorOffer: true,
+      }),
+      includeFollowUpQuestion: false,
+      sensitiveMode: true,
+    });
+
+    expect(plan.responseMove).toBe('support_emotion');
+    expect(plan.requiredGrounding).toEqual([]);
+  });
+
+  it('drops an explicit format request where the typed move cannot honour it', () => {
+    const sensitive = buildReplyPlan({
+      classification: base({ dialogueAct: 'request', latestUserSubstance: 'just give me the steps', formatRequest: 'steps' }),
+      includeFollowUpQuestion: false,
+      sensitiveMode: true,
+    });
+    const emotional = buildReplyPlan({
+      classification: base({ dialogueAct: 'emotional_disclosure', latestUserSubstance: 'I am drained', formatRequest: 'list' }),
+      includeFollowUpQuestion: true,
+    });
+    const acknowledgement = buildReplyPlan({
+      classification: base({ dialogueAct: 'acknowledgement', latestUserSubstance: null, topicAnchor: 'the retro', formatRequest: 'list' }),
+      includeFollowUpQuestion: true,
+    });
+    const closing = buildReplyPlan({
+      classification: base({ dialogueAct: 'closing', latestUserSubstance: null, formatRequest: 'outline' }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(sensitive.formatRequest).toBeNull();
+    expect(emotional.formatRequest).toBeNull();
+    expect(acknowledgement.formatRequest).toBeNull();
+    expect(closing.formatRequest).toBeNull();
+  });
+
+  it('keeps a format request on substantive turns', () => {
+    const plan = buildReplyPlan({
+      classification: base({ dialogueAct: 'continuation', latestUserSubstance: 'and the plan for the 1:1?', formatRequest: 'outline' }),
+      includeFollowUpQuestion: true,
+    });
+
+    expect(plan.formatRequest).toBe('outline');
+  });
+
+  it.each(['emotional_disclosure', 'closing', 'correction'] as const)(
+    'lets the %s act win over an accepted offer',
+    (dialogueAct) => {
+      const plan = buildReplyPlan({
+        classification: base({
+          dialogueAct,
+          latestUserSubstance: 'yes but honestly this is keeping me up at night',
+          priorAssistantOffer: true,
+          acceptsPriorOffer: true,
+        }),
+        includeFollowUpQuestion: true,
+      });
+
+      expect(plan.responseMove).not.toBe('answer_request');
+      expect(plan.requiredGrounding).toEqual([]);
+      expect(plan.forbiddenMoves).not.toContain('offer_again');
+      expect(plan.questionPolicy.reason).not.toBe('offer_delivery');
+    },
+  );
+
+  it('leaves offer limits to the safety contract in sensitive mode', () => {
+    const plan = buildReplyPlan({
+      classification: base({
+        dialogueAct: 'request',
+        latestUserSubstance: 'give me the phrases',
+        priorAssistantOffer: true,
+        acceptsPriorOffer: true,
+      }),
+      includeFollowUpQuestion: false,
+      sensitiveMode: true,
+    });
+
+    expect(plan.forbiddenMoves).not.toContain('new_offer');
+    expect(plan.forbiddenMoves).not.toContain('offer_again');
+    expect(plan.requiredGrounding).toEqual([]);
+  });
+});

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BundleReplyInvalidError, composeBundleReplyText, isBundleShownIn, validateBundleReply,
-  validateQuestionBundleComposition,
+  BundleCompositionInvalidError, BundleReplyInvalidError, composeBundleReplyText, isBundleCompositionInvalidError,
+  isBundleShownIn, validateBundleReply, validateQuestionBundleComposition,
 } from './question-bundle-composition';
 
 function reasonOf(run: () => unknown): string | undefined {
@@ -190,5 +190,58 @@ describe('composeBundleReplyText and isBundleShownIn', () => {
       { statements: statements.map((item) => item.statement) })).toBe(false);
     expect(isBundleShownIn(`${replyText}\n\n${bundleText}`, bundleText,
       { statements: statements.map((item) => item.statement) })).toBe(true);
+  });
+});
+
+describe('BundleCompositionInvalidError', () => {
+  const compositionReasonOf = (value: unknown, requiredIds: readonly string[] = ids): string | undefined => {
+    try {
+      validateQuestionBundleComposition(value, requiredIds);
+      return undefined;
+    } catch (error) {
+      return error instanceof BundleCompositionInvalidError ? error.reason : `not_composition_error:${String(error)}`;
+    }
+  };
+
+  it('keeps the stable message and name so existing matching and worker failure codes still work', () => {
+    const error = new BundleCompositionInvalidError('question_count');
+    expect(error.message).toBe('v2_confirmation_composition_invalid');
+    expect(error.name).toBe('BundleCompositionInvalidError');
+    expect(isBundleCompositionInvalidError(error)).toBe(true);
+    expect(isBundleCompositionInvalidError(new Error('v2_confirmation_composition_invalid'))).toBe(true);
+    expect(isBundleCompositionInvalidError(new Error('fetch failed'))).toBe(false);
+  });
+
+  it('names the failed rule for every composition check', () => {
+    expect(compositionReasonOf(null)).toBe('draft_unparseable');
+    expect(compositionReasonOf([valid])).toBe('draft_unparseable');
+    expect(compositionReasonOf({ ...valid, text: '  ' })).toBe('text_missing');
+    expect(compositionReasonOf({ ...valid, text: `${valid.text.slice(0, -13)}\nIs that fair?` })).toBe('text_list_markers');
+    expect(compositionReasonOf({ ...valid, text: `1) ${valid.text}` })).toBe('text_list_markers');
+    expect(compositionReasonOf({ ...valid, text: valid.text.replace('I hear that', 'From the survey,') })).toBe('questionnaire_label');
+    expect(compositionReasonOf({ ...valid, text: valid.text.replace('Is that fair?', 'Is that fair? Really?') })).toBe('question_count');
+    expect(compositionReasonOf({ ...valid, text: valid.text.replace('?', '.') })).toBe('question_count');
+    expect(compositionReasonOf({ text: valid.text, statements: 'none' })).toBe('statements_missing');
+    expect(compositionReasonOf(valid, [])).toBe('question_ids_invalid');
+    expect(compositionReasonOf(valid, [ids[0]!, ids[0]!, ids[2]!])).toBe('question_ids_invalid');
+    expect(compositionReasonOf({ ...valid, statements: statements.slice(0, 2) })).toBe('statement_count');
+    expect(compositionReasonOf({ ...valid, statements: [null, statements[1], statements[2]] })).toBe('statement_malformed');
+    expect(compositionReasonOf({ ...valid, statements: [{ surveyQuestionId: 1, statement: statements[0]!.statement }, statements[1], statements[2]] }))
+      .toBe('statement_malformed');
+    expect(compositionReasonOf({ ...valid, statements: [{ surveyQuestionId: ids[0], statement: 'Why not?' }, statements[1], statements[2]] }))
+      .toBe('statement_question');
+    expect(compositionReasonOf({ ...valid, statements: [{ surveyQuestionId: ids[0], statement: 'Nothing like this.' }, statements[1], statements[2]] }))
+      .toBe('statement_not_in_text');
+    expect(compositionReasonOf({ ...valid, statements: [{ ...statements[0]!, surveyQuestionId: ids[1] }, statements[1], statements[2]] }))
+      .toBe('question_mapping_invalid');
+    const overlapping = {
+      text: 'I hear that You can choose your methods. You can set priorities. Is that fair?',
+      statements: [
+        { surveyQuestionId: ids[0], statement: 'You can choose your methods.' },
+        { surveyQuestionId: ids[1], statement: 'choose your methods.' },
+        { surveyQuestionId: ids[2], statement: 'You can set priorities.' },
+      ],
+    };
+    expect(compositionReasonOf(overlapping)).toBe('statements_overlap');
   });
 });

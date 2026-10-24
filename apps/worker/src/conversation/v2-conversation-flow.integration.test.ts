@@ -17,7 +17,8 @@ import {
 import {
   ConversationOrchestrator, ExpireQuestionInsightsAtCutoffUseCase, FEATURE_FLAGS,
   FinalizeQuestionInsightUseCase, RecoverConfirmedQuestionInsightsUseCase, SelectQuestionInsightInputsUseCase,
-  SurveyEvidenceExtractionUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY, type SurveyEvidencePayload,
+  SurveyEvidenceExtractionUseCase, LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY, PulseBacklogService,
+  type SurveyEvidencePayload,
 } from '@entalent/application';
 import { ConversationProcessor, type ConversationJob } from './conversation.processor';
 import { ConversationRepository } from './repositories/conversation.repository';
@@ -26,6 +27,7 @@ import { QuestionInsightRepository } from '../survey/repositories/question-insig
 import { SurveyEvidenceProcessor } from '../survey/survey-evidence.processor';
 import { QuestionCutoffProcessor } from '../survey/question-cutoff.processor';
 import { SurveyRepository } from '../survey/repositories/survey.repository';
+import { PulseBacklogRepository } from '../survey/repositories/pulse-backlog.repository';
 import { DatabaseService } from '../database/database.service';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -90,8 +92,9 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     { verdictKind: 'partial', questionGroup: 'autonomy', clarificationBeforeOutboundError: true },
     { verdictKind: 'agree', questionGroup: 'autonomy', questionWithBundle: true },
     { verdictKind: 'agree', questionGroup: 'autonomy', bundleReplyInvalid: true },
+    { verdictKind: 'partial', questionGroup: 'autonomy', correctedRejectedTwice: true },
   ] as const)(
-    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies approvedPolicy=$approvedPolicy insufficientEvidence=$insufficientEvidence afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError questionWithBundle=$questionWithBundle bundleReplyInvalid=$bundleReplyInvalid',
+    'captures $questionGroup questions, resolves $verdictKind, and cleans up analytical copies approvedPolicy=$approvedPolicy insufficientEvidence=$insufficientEvidence afterCutoff=$afterCutoff missedEnqueue=$missedEnqueue lateApiReceipt=$lateApiReceipt lostMessageJob=$lostMessageJob receiptRetryUnavailable=$receiptRetryUnavailable deliveryEnqueuedThenError=$deliveryEnqueuedThenError concurrentThird=$concurrentThird afterVerdictBeforeOutboundError=$afterVerdictBeforeOutboundError clarificationBeforeOutboundError=$clarificationBeforeOutboundError questionWithBundle=$questionWithBundle bundleReplyInvalid=$bundleReplyInvalid correctedRejectedTwice=$correctedRejectedTwice',
     async (scenario) => {
     const { verdictKind, questionGroup } = scenario;
     const approvedPolicy = 'approvedPolicy' in scenario && scenario.approvedPolicy === true;
@@ -113,6 +116,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     // GC round 3 CAP-4: the employee's own message is answered before the bundle statements.
     const questionWithBundle = 'questionWithBundle' in scenario && scenario.questionWithBundle === true;
     const bundleReplyInvalid = 'bundleReplyInvalid' in scenario && scenario.bundleReplyInvalid === true;
+    const correctedRejectedTwice = 'correctedRejectedTwice' in scenario && scenario.correctedRejectedTwice === true;
     if (!client || !redisUrl) return;
     const db = client.db;
     const [tenant] = await db.insert(tenants).values({ name: `V2 queue fixture ${randomUUID()}` }).returning();
@@ -249,6 +253,10 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     const bundleText = `I hear that ${statements.join(' ')} Is that fair?`;
     const bundleAnswer = 'Open tomorrow with the retro notes; the checklist can wait until after standup.';
     const clarificationText = 'What would you change about your priorities?';
+    // GC round 3 CAP-3: the corrected meaning is shown back as a one-statement bundle.
+    const stillWrong = 'No, that is still not it.';
+    const correctedSummary = 'Urgent work can override your planned priorities.';
+    const correctedBundleText = `So the fair version is: ${correctedSummary} Is that right?`;
     const ai = {
       // Wave 1 runs risk assessment on every turn; an unassessed risk blocks the survey.
       detectRisk: vi.fn(async () => ({
@@ -264,13 +272,21 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
         latestUserSubstance: turns.at(-1)?.content ?? '', topicAnchor: null,
       })),
       // Like the live model (measured valid 15/15), map statements to the ids actually requested.
-      composeQuestionBundle: vi.fn(async (_turns: unknown, requested: Array<{ surveyQuestionId: string }>) => ({
-        text: bundleText,
-        statements: requested.map((question, index) => ({
-          surveyQuestionId: question.surveyQuestionId, statement: statements[index]!,
-        })),
-      })),
-      interpretQuestionBundleResponse: vi.fn(async () => verdictKind === 'partial'
+      composeQuestionBundle: vi.fn(async (_turns: unknown,
+        requested: Array<{ surveyQuestionId: string; workingSummary: string }>) =>
+        requested.length === 1 && requested[0]!.workingSummary === correctedSummary
+          ? { text: correctedBundleText,
+            statements: [{ surveyQuestionId: requested[0]!.surveyQuestionId, statement: correctedSummary }] }
+          : {
+            text: bundleText,
+            statements: requested.map((question, index) => ({
+              surveyQuestionId: question.surveyQuestionId, statement: statements[index]!,
+            })),
+          }),
+      interpretQuestionBundleResponse: vi.fn(async (turns: Array<{ content: string }>, shown: { components: unknown[] }) =>
+        shown.components.length === 1
+          ? turns.at(-1)?.content === stillWrong ? { kind: 'reject' as const } : { kind: 'agree' as const }
+        : verdictKind === 'partial'
         || verdictKind === 'partial_unrelated' || verdictKind === 'decline'
         ? { kind: 'partial' as const,
           acceptedQuestionIds: [groupQuestions[0]!.id, groupQuestions[2]!.id],
@@ -282,8 +298,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       interpretQuestionClarificationResponse: vi.fn(async (turns: Array<{ content: string }>) =>
         turns.at(-1)?.content === 'What is the weather like?'
           ? { kind: 'unrelated' as const }
-          : { kind: 'clarified' as const,
-            correctedSummary: 'Urgent work can override your planned priorities.' }),
+          : { kind: 'clarified' as const, correctedSummary }),
       evaluateSurveyEvidence: vi.fn(async (turns: Array<{ content: string }>) => ({
         candidateQuestionIds: groupQuestions.map((question) => question.id),
         voluntaryReopenQuestionIds: turns.at(-1)?.content === 'I changed my mind; let us discuss priorities.'
@@ -295,7 +310,8 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
             questionId: question.id, evidenceSummary: statements[index],
             polarity: 'positive' as const, strength: 0.9, completeness: 1,
             confidence: 0.9, followUpProbeNeeded: false, thresholdReached: true,
-            assessmentShouldRemainUnknown: false,
+            // GC round 3 CAP-2: the synthetic statements say what drives each status.
+            assessmentShouldRemainUnknown: false, driverCaptured: true,
           })) : [],
       })),
       // Under the two-part contract the live model answers the latest message, then copies the
@@ -395,7 +411,7 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
     );
     const messageProcessor = new MessageSendProcessor(
       {} as never, repo, { activateDeliveredConfirmation: async () => undefined } as never,
-      questionRepo,
+      {} as never, {} as never, questionRepo,
     );
     const scoreConfirmedMeaning = vi.fn(async ({ questionId }: { questionId: string }) => ({
         outcome: insufficientEvidence && questionId === groupQuestions[1]!.id
@@ -792,6 +808,12 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       } else {
         expect(ai.interpretQuestionBundleResponse).toHaveBeenCalledOnce();
       }
+      if (verdictKind === 'agree' && !afterCutoff && !concurrentThird && !afterVerdictBeforeOutboundError) {
+        // GC round 3 CAP-3: the closing verdict is answered with completion and progress.
+        expect(ai.generateResponse.mock.calls.at(-1)![2]).toMatchObject({
+          topicConfirmed: { questionGroup, topicsClosed: 1, topicsTotal: 4 },
+        });
+      }
       const afterVerdict = await db.select().from(surveyQuestionWorkingInsights)
         .where(eq(surveyQuestionWorkingInsights.surveyWindowId, window!.id));
       expect(afterVerdict).toHaveLength(3);
@@ -955,6 +977,98 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
           }
           return;
         }
+        // GC round 3 CAP-3: the corrected meaning was shown back and waits for the employee's
+        // verdict; nothing became final from the correction reply alone.
+        const [correctedPrompt] = await db.select().from(messages)
+          .where(eq(messages.id, sentJobs[3]!.data.messageId));
+        expect(correctedPrompt!.text).toBe(`${bundleAnswer}\n\n${correctedBundleText}`);
+        expect(correctedPrompt!.metadata).toMatchObject({
+          v2CorrectedStatement: true, v2BundleReply: 'answer_then_bundle',
+        });
+        const [awaitingCorrection] = await db.select().from(surveyQuestionWorkingInsights)
+          .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, groupQuestions[1]!.id));
+        expect(awaitingCorrection).toMatchObject({
+          status: 'pending_confirmation', workingSummary: correctedSummary, confirmedSemanticSummary: null,
+        });
+        expect(awaitingCorrection!.sourceMessageIds).toContain(fourthInbound!.id);
+        const [correctedBundle] = await db.select().from(surveyQuestionConfirmationBundles)
+          .where(eq(surveyQuestionConfirmationBundles.id, awaitingCorrection!.confirmationBundleId!));
+        expect(correctedBundle).toMatchObject({
+          status: 'awaiting_confirmation', displayedText: correctedBundleText, promptMessageId: correctedPrompt!.id,
+        });
+        expect(JSON.stringify(correctedBundle?.components)).toContain(correctedSummary);
+        expect(await db.select().from(surveyQuestionInsights)
+          .where(eq(surveyQuestionInsights.surveyWindowId, window!.id))).toHaveLength(2);
+        if (correctedRejectedTwice) {
+          // GC round 3 S4b: a reject on the shown correction asks once more instead of wiping it;
+          // a second reject closes the question for this cycle as not collected.
+          const sendInbound = async (text: string, after: string, traceId: string) => {
+            await sentJobs.at(-1)!.waitUntilFinished(messageEvents, 10_000);
+            const [previous] = await db.select().from(messages).where(eq(messages.id, after));
+            const [row] = await db.insert(messages).values({
+              tenantId, userId, conversationId, direction: 'inbound', senderType: 'user', text,
+              occurredAt: new Date(previous!.sentAt!.getTime() + 1_000),
+            }).returning();
+            await admit(row!.id);
+            const job = await conversationQueue.add('process', jobData(row!.id, traceId));
+            await job.waitUntilFinished(conversationEvents, 10_000);
+            await sentJobs.at(-1)!.waitUntilFinished(messageEvents, 10_000);
+            await evidenceJobs.at(-1)!.waitUntilFinished(evidenceEvents, 10_000);
+            const [reply] = await db.select().from(messages).where(eq(messages.id, sentJobs.at(-1)!.data.messageId));
+            return reply!;
+          };
+          const workingRow = async () => (await db.select().from(surveyQuestionWorkingInsights)
+            .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, groupQuestions[1]!.id)))[0]!;
+
+          const secondClarification = await sendInbound(stillWrong, correctedPrompt!.id, 'v2-corrected-reject-1');
+          expect(sentJobs).toHaveLength(5);
+          expect(secondClarification.text).toBe(`${bundleAnswer}\n\n${clarificationText}`);
+          expect(ai.composeQuestionClarification).toHaveBeenCalledTimes(2);
+          expect(await workingRow()).toMatchObject({
+            status: 'pending_clarification', workingSummary: correctedSummary, clarificationAttempts: 2,
+          });
+
+          const shownAgain = await sendInbound('Urgent work sometimes overrides the priorities I planned.',
+            secondClarification.id, 'v2-clarified-again');
+          expect(shownAgain.text).toBe(`${bundleAnswer}\n\n${correctedBundleText}`);
+          expect(await workingRow()).toMatchObject({ status: 'pending_confirmation', confirmedSemanticSummary: null });
+
+          await sendInbound(stillWrong, shownAgain.id, 'v2-corrected-reject-2');
+          expect(sentJobs).toHaveLength(7);
+          expect(ai.composeQuestionClarification).toHaveBeenCalledTimes(2);
+          expect(ai.generateResponse.mock.calls.at(-1)![2]).toMatchObject({
+            questionNotCollected: { questionGroup },
+            topicConfirmed: { questionGroup, topicsClosed: 1, topicsTotal: 4 },
+          });
+          const closed = await workingRow();
+          expect(closed).toMatchObject({
+            status: 'declined', workingSummary: null, confirmedSemanticSummary: null, sourceMessageIds: [],
+          });
+          expect(closed.purgedAt).not.toBeNull();
+          const [closedBacklog] = await db.select().from(pulseBacklog)
+            .where(eq(pulseBacklog.surveyQuestionId, groupQuestions[1]!.id));
+          expect(closedBacklog).toMatchObject({ status: 'done', resultedInCoverage: false });
+          expect(await db.select().from(surveyQuestionInsights)
+            .where(eq(surveyQuestionInsights.surveyWindowId, window!.id))).toHaveLength(2);
+          expect(scoreConfirmedMeaning).toHaveBeenCalledTimes(2);
+          return;
+        }
+        const [fifthInbound] = await db.insert(messages).values({
+          tenantId, userId, conversationId, direction: 'inbound', senderType: 'user',
+          text: 'Yes, that is right.',
+          occurredAt: new Date(correctedPrompt!.sentAt!.getTime() + 1_000),
+        }).returning();
+        await admit(fifthInbound!.id);
+        const fifthJob = await conversationQueue.add('process', jobData(fifthInbound!.id, 'v2-corrected-agree'));
+        await fifthJob.waitUntilFinished(conversationEvents, 10_000);
+        expect(sentJobs).toHaveLength(5);
+        await sentJobs[4]!.waitUntilFinished(messageEvents, 10_000);
+        expect(ai.interpretQuestionBundleResponse).toHaveBeenCalledTimes(2);
+        expect(ai.generateResponse.mock.calls.at(-1)![2]).toMatchObject({
+          topicConfirmed: { questionGroup, topicsClosed: 1, topicsTotal: 4 },
+        });
+        expect(evidenceJobs).toHaveLength(5);
+        await evidenceJobs[4]!.waitUntilFinished(evidenceEvents, 10_000);
       }
       const finalRows = await db.select().from(surveyQuestionInsights)
         .where(eq(surveyQuestionInsights.surveyWindowId, window!.id));
@@ -1154,4 +1268,178 @@ describe.runIf(enabled)('V2 conversation through BullMQ and migrated PostgreSQL'
       await queue.close();
     }
   }, 20_000);
+
+  // GC round 3 CAP-1, CAP-2 (T1, T2): inside an open V2 cycle the bot raises the topic itself, and
+  // a status without its driver keeps the question open until the driver arrives.
+  it('raises a required topic question for the driver of a captured status, then closes it once the driver arrives', async () => {
+    if (!client || !redisUrl) return;
+    const db = client.db;
+    const [tenant] = await db.insert(tenants).values({ name: `V2 topic steering ${randomUUID()}` }).returning();
+    const tenantId = tenant!.id;
+    tenantIds.push(tenantId);
+    const [user] = await db.insert(users).values({ tenantId, preferredName: 'Sam', timezone: 'UTC', locale: 'en' })
+      .returning();
+    const userId = user!.id;
+    const [definition] = await db.insert(surveyDefinitions).values({
+      tenantId, name: 'Synthetic V2 topic steering', version: `fixture-${randomUUID()}`,
+    }).returning();
+    const questions = await db.insert(surveyQuestions).values(
+      Object.entries(LEGACY_V2_QUESTION_GROUP_BY_STABLE_KEY).map(([stableKey, questionGroup], index) => ({
+        surveyDefinitionId: definition!.id, stableKey, title: stableKey, canonicalMeaning: `Synthetic ${stableKey}`,
+        dimension: questionGroup, questionGroup, version: 'v2', displayOrder: index,
+        probeStrategies: [`Ask about ${stableKey}`],
+      })),
+    ).returning();
+    const rubric = { version: 'synthetic-queue-v1', instructions: 'Synthetic test only.', anchors: [
+      { score: 0, description: 'Low' }, { score: 100, description: 'High' },
+    ] };
+    const [policy] = await db.insert(surveyScoringPolicies).values({
+      tenantId, version: 'synthetic-queue-v1',
+      rubrics: Object.fromEntries(questions.map((question) => [question.stableKey, rubric])),
+      approvedAt: new Date(),
+    }).returning();
+    const now = Date.now();
+    const [window] = await db.insert(surveyWindows).values({
+      tenantId, userId, surveyDefinitionId: definition!.id,
+      periodStart: new Date(now - 86_400_000), periodEnd: new Date(now + 86_400_000),
+    }).returning();
+    await db.insert(surveyWindowScoringPolicies).values({ surveyWindowId: window!.id, tenantId, scoringPolicyId: policy!.id });
+    await db.insert(pulseBacklog).values(questions.map((question, index) => ({
+      surveyWindowId: window!.id, tenantId, userId, surveyQuestionId: question.id, position: index + 1,
+    })));
+    const autonomy = questions.filter((question) => question.questionGroup === 'autonomy')
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+    const statusQuestion = autonomy[0]!;
+    const externalConversationId = `topic-${randomUUID()}`;
+    const [conversation] = await db.insert(conversations).values({
+      tenantId, userId, channelType: 'dev', externalConversationId,
+    }).returning();
+    const conversationId = conversation!.id;
+    const at = (minutes: number) => new Date(now + minutes * 60_000);
+    const say = async (direction: 'inbound' | 'outbound', text: string, minutes: number,
+      metadata?: Record<string, unknown>) => (await db.insert(messages).values({
+      tenantId, userId, conversationId, direction, senderType: direction === 'inbound' ? 'user' : 'agent',
+      text, metadata, occurredAt: at(minutes), ...(direction === 'outbound' ? { sentAt: at(minutes) } : {}),
+    }).returning())[0]!;
+    await say('outbound', 'Your reflections can be used in aggregated reporting.', -10,
+      { reportingDisclosureVersion: 'reporting-disclosure-v1' });
+    await say('inbound', 'Release week is busy.', -9);
+    await say('outbound', 'What keeps you going this week?', -8,
+      { containsSurveyProbe: true, surveyProbeQuestionId: statusQuestion.id });
+    const status = await say('inbound', 'Motivation is high, 9 out of 10.', -7);
+    await say('outbound', 'Good to hear.', -6);
+    await say('inbound', 'Lunch was fine.', -5);
+    await say('outbound', 'Glad you got a break.', -4);
+    const current = await say('inbound', 'Back to the release checklist now.', -3);
+
+    const driverQuestion = 'What is it about the release work that keeps it that high for you?';
+    const evidenceFor = (questionId: string, extra: Record<string, unknown>) => ({
+      candidateQuestionIds: [questionId], voluntaryReopenQuestionIds: [],
+      evidence: [{ questionId, evidenceSummary: 'Synthetic meaning.', polarity: 'positive' as const,
+        strength: 0.9, confidence: 0.9, followUpProbeNeeded: false, assessmentShouldRemainUnknown: false, ...extra }],
+    });
+    const ai = {
+      detectRisk: vi.fn(async () => ({
+        severity: 'none', confidence: 0.9, reasoningSummary: 'synthetic', riskType: null, evidence: [],
+        immediateResponseRequired: false, escalationRecommended: false,
+        surveyMustBeBlocked: false, proactiveMessagesMustBePaused: false,
+      })),
+      classifySituation: vi.fn(async (turns: Array<{ content: string }>) => ({
+        primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
+        urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
+        reasoningSummary: 'synthetic', reminderRequest: null, dialogueAct: 'new_substance',
+        latestUserSubstance: turns.at(-1)?.content ?? '', topicAnchor: null,
+      })),
+      generateResponse: vi.fn(async (_turns: unknown, _strategy: unknown, context: { topicQuestion?: unknown }) =>
+        context.topicQuestion
+          ? { text: '', replyText: 'Checklists before a release are a good anchor.', topicQuestion: driverQuestion,
+            confidence: 0.9, containsSurveyProbe: true, surveyProbeQuestionId: statusQuestion.id }
+          : { text: 'Noted.', confidence: 0.9, containsSurveyProbe: false }),
+      // The status names no cause; the later message names it but alone is not a full meaning.
+      evaluateSurveyEvidence: vi.fn(async (turns: Array<{ content: string }>) =>
+        turns.at(-1)?.content === status.text
+          ? evidenceFor(statusQuestion.id, { completeness: 1, thresholdReached: true, driverCaptured: false })
+          : evidenceFor(statusQuestion.id, { completeness: 0.2, thresholdReached: false, driverCaptured: true })),
+    };
+    const repo = new ConversationRepository(transactionDb!);
+    const questionRepo = new QuestionInsightRepository(transactionDb!, { findCurrentHierarchyIdentifiers: async () => [] } as never);
+    const surveyEvidenceRepo = new SurveyRepository(transactionDb!, {} as never, { findTeamByMemberId: async () => null } as never);
+    const backlog = new PulseBacklogService(new PulseBacklogRepository(transactionDb!), surveyEvidenceRepo, questionRepo);
+    const capture = new SurveyEvidenceExtractionUseCase(ai as never, repo, surveyEvidenceRepo, backlog, questionRepo);
+    await capture.execute({ conversationId, userId, tenantId, inboundMessageId: status.id });
+    const workingFor = async () => (await db.select().from(surveyQuestionWorkingInsights)
+      .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, statusQuestion.id)))[0];
+    expect(await workingFor()).toMatchObject({ status: 'collecting', readyForConfirmation: false,
+      meaningSufficient: true, driverResolved: false });
+
+    const redis = new URL(redisUrl);
+    const connection = { host: redis.hostname, port: Number(redis.port) || 6379, db: 15, maxRetriesPerRequest: null };
+    const conversationQueue = new Queue(`v2-topic-${randomUUID()}`, { connection });
+    const conversationEvents = new QueueEvents(conversationQueue.name, { connection });
+    const sent: string[] = [];
+    const outbox = {
+      enqueueMessageSend: async (payload: { messageId: string }) => { sent.push(payload.messageId); },
+      enqueueMemoryExtraction: async () => undefined, enqueueStyleAnalysis: async () => undefined,
+      enqueueSurveyEvidence: async () => undefined, enqueueProfileHydration: async () => undefined,
+      enqueueFollowUpExecution: async () => undefined,
+    };
+    const orchestrator = new ConversationOrchestrator(
+      repo, ai as never, outbox as never, undefined,
+      { findAwaitingConfirmationGroups: async () => [], findPendingConfirmationGroups: async () => [] } as never,
+      undefined, undefined, { isEnabled: async (flag: string) => flag === FEATURE_FLAGS.CONVERSATIONAL_SURVEY },
+      undefined, backlog, undefined, undefined, questionRepo,
+      { run: (callback) => transactionDb!.withTransaction(callback) },
+    );
+    const processor = new ConversationProcessor(
+      orchestrator, {} as never, { record: async () => undefined } as never,
+      transactionDb!, repo, surveyEvidenceRepo, conversationQueue,
+    );
+    let worker: Worker | undefined;
+    try {
+      await conversationEvents.waitUntilReady();
+      worker = new Worker(conversationQueue.name, (job) => processor.process(job), { connection });
+      await db.insert(conversationJobAdmissions).values({
+        messageId: current.id, tenantId, userId, conversationId,
+        externalWorkspaceId: 'synthetic-dev-workspace', externalConversationId,
+        eventId: randomUUID(), requestId: randomUUID(), traceId: randomUUID(), queuedAt: new Date(),
+      });
+      const job = await conversationQueue.add('process', {
+        requestId: randomUUID(), eventId: randomUUID(), messageId: current.id, conversationId,
+        userId, tenantId, externalWorkspaceId: 'synthetic-dev-workspace', externalConversationId,
+        traceId: 'v2-topic-steering',
+      } satisfies ConversationJob);
+      await job.waitUntilFinished(conversationEvents, 10_000);
+
+      expect(ai.generateResponse).toHaveBeenCalledOnce();
+      expect(ai.generateResponse.mock.calls[0]![2]).toMatchObject({
+        topicQuestion: { questionId: statusQuestion.id, questionGroup: 'autonomy', focus: 'driver' },
+      });
+      expect(sent).toHaveLength(1);
+      const [reply] = await db.select().from(messages).where(eq(messages.id, sent[0]!));
+      expect(reply!.text).toBe(`Checklists before a release are a good anchor. ${driverQuestion}`);
+      expect(reply!.metadata).toMatchObject({
+        containsSurveyProbe: true, surveyProbeQuestionId: statusQuestion.id,
+        topicQuestion: { questionGroup: 'autonomy', focus: 'driver', policyVersion: 'topic-question-v1' },
+      });
+      // The rolling cap reads topic questions beyond the loaded window: the seeded one and this one.
+      expect(await repo.countTopicQuestionsSince({ tenantId, userId, conversationId, since: at(-60) })).toBe(2);
+      // The driver is asked at most once.
+      expect((await workingFor())!.driverRequestedAt).toBeInstanceOf(Date);
+    } finally {
+      await worker?.close();
+      await conversationEvents.close();
+      await conversationQueue.obliterate({ force: true });
+      await conversationQueue.close();
+    }
+
+    // The driver arrives; with the earlier status the question is ready and leaves topic selection.
+    const driver = await say('inbound', 'Mostly because I own the design of the new release flow.', 1);
+    await capture.execute({ conversationId, userId, tenantId, inboundMessageId: driver.id });
+    expect(await workingFor()).toMatchObject({ status: 'collecting', readyForConfirmation: true, driverResolved: true });
+    const next = await backlog.getNextProbeQuestion(userId, tenantId);
+    expect(next).toMatchObject({ question: { id: autonomy[1]!.id }, focus: 'open' });
+    expect(ai.evaluateSurveyEvidence).toHaveBeenCalledTimes(2);
+    const [statusBacklog] = await db.select().from(pulseBacklog).where(eq(pulseBacklog.surveyQuestionId, statusQuestion.id));
+    expect(statusBacklog!.status).toBe('done');
+  }, 30_000);
 });

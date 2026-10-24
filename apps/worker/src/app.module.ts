@@ -13,6 +13,7 @@ import { SafetyModule } from './safety/safety.module';
 import { ProactiveSchedulerModule } from './proactive/proactive-scheduler.module';
 import { StyleModule } from './style/style.module';
 import { ProfileModule } from './profile/profile.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { ProfileModule } from './profile/profile.module';
     ProactiveSchedulerModule,
     StyleModule,
     ProfileModule,
+    OnboardingModule,
   ],
 })
 export class AppModule {}

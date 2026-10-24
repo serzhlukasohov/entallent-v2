@@ -7,13 +7,14 @@ import {
   type ConversationMode,
   type GeneratedResponse,
 } from '@entalent/contracts';
-import type { AiProviderPort, ConversationTurn, ResponseContext } from '../ports/ai-provider.port';
+import type { AiProviderPort, ConversationTurn, ResponseContext, QuestionBundleComposition } from '../ports/ai-provider.port';
 import type { ConversationDispatchKind, ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { ConversationUnitOfWorkPort } from '../ports/conversation-unit-of-work.port';
 import { ProviderContentFilterError } from '../ports/provider-error';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type {
+  AppliedQuestionVerdict,
   QuestionConfirmationPort,
   QuestionBundleVerdict,
   QuestionClarificationVerdict,
@@ -32,6 +33,7 @@ import type {
 } from '../types/records';
 import { BASE_STYLE, STYLE_CONFIDENCE_FLOOR, STYLE_OFF_BASE_MARGIN } from '../utils/style-adaptation';
 import { buildReplyPlan } from '../utils/reply-plan';
+import { predictCycleProgress, type CycleProgress } from '../utils/cycle-progress';
 import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
 import type { FeatureFlagPort } from '../ports/feature-flag.port';
@@ -43,11 +45,27 @@ import type {
 } from '../types/records';
 import { computeEngagementIndex, computeOpenEndedQuestionScore, computeGroupIndex } from '../utils/group-scoring';
 import {
-  composeBundleReplyText, isBundleReplyInvalidError, validateBundleReply, validateQuestionBundleComposition,
-  type BundleReplyInvalidReason,
+  BundleCompositionInvalidError, composeBundleReplyText, isBundleCompositionInvalidError, isBundleReplyInvalidError,
+  validateBundleReply, validateQuestionBundleComposition,
+  type BundleCompositionInvalidReason, type BundleReplyInvalidReason,
 } from '../utils/question-bundle-composition';
 import { maxReplyChars } from '../utils/reply-length';
-import { validateQuestionBundleVerdict } from '../utils/question-bundle-verdict';
+import {
+  canAskTopicQuestion,
+  isTopicCadenceSatisfied,
+  readTopicCadence,
+  type TopicQuestionDecision,
+} from '../utils/topic-question-policy';
+import {
+  composeTopicQuestionReplyText,
+  isTopicQuestionReplyInvalidError,
+  validateTopicQuestionReply,
+  type TopicQuestionReplyInvalidReason,
+} from '../utils/topic-question-reply';
+import type { ProbeFocus } from '../services/pulse-backlog.service';
+import {
+  MAX_QUESTION_CLARIFICATIONS, resolveCorrectedStatementVerdict, validateQuestionBundleVerdict,
+} from '../utils/question-bundle-verdict';
 import { validateQuestionClarificationPrompt, validateQuestionClarificationVerdict } from '../utils/question-clarification';
 import { conversationOutboundMessageId } from '../utils/conversation-outbound-id';
 import { contentFilterExplanation, processingFailureExplanation } from '../utils/content-filter-recovery';
@@ -72,6 +90,10 @@ import type {
   ProcessMessageRequest,
   ProcessMessageResult,
 } from '../ports/agent-runtime.port';
+import type { OnboardingApplyResult, OnboardingTurnPort } from '../ports/onboarding.port';
+import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
+import { interpretOnboardingSignal, type SignalOutcome } from '../onboarding/onboarding-signal';
+import type { OnboardingState } from '../onboarding/onboarding-state';
 
 export type OrchestrateInput = ProcessMessageRequest;
 /** The active runtime result. Unlike the archived ProcessMessageResult, risk may be unassessed. */
@@ -84,24 +106,46 @@ export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
   bundleReply?: BundleReplyOutcome;
   /** Why the fixed text went alone (diagnostics only). */
   bundleReplyFallbackReason?: BundleReplyFallbackReason;
+  /** Why a ready V2 bundle was skipped this turn: its composition stayed invalid (diagnostics only). */
+  bundleCompositionFallbackReason?: BundleCompositionFallbackReason;
 };
 
 /** `answer_then_bundle`: the employee's message was answered before the fixed text; otherwise the fixed text went alone. */
 export type BundleReplyOutcome = 'answer_then_bundle' | 'bundle_without_reply';
 export type BundleReplyFallbackReason = BundleReplyInvalidReason | 'output_filtered';
+/** `unknown` covers a legacy untyped `v2_confirmation_composition_invalid` error. */
+export type BundleCompositionFallbackReason = BundleCompositionInvalidReason | 'unknown';
+
+export interface OrchestratorLogger {
+  warn(message: string, context?: Record<string, unknown>): void;
+}
+
+const SILENT_LOGGER: OrchestratorLogger = { warn: () => undefined };
 
 const TZ_REFRESH_DAYS = 30;
+// Same opener strategy as the proactive check-in path, reused for a text "let's start" (Q25).
+const ONBOARDING_OPENER_STRATEGY: ReplyStrategy = {
+  mode: 'proactive_follow_up',
+  tone: 'warm',
+  includeFollowUpQuestion: true,
+  maxResponseLength: 'short',
+  forbiddenPatterns: ['checking in', 'just wanted to check', 'reminder'],
+};
 const CONVERSATION_DECISION_MEASUREMENT_VERSION = 'ts-conversation-decision-v1';
 
 type PreparedBundlePhase = {
   confirmedGroup: string | false;
   awaitingPresent: boolean;
+  /** Cycle progress after this turn's verdict (GC round 3 CAP-3); undefined when the adapter has no snapshot. */
+  progress?: CycleProgress;
   commitLegacy?: () => Promise<LegacyGroupReportIntent | null>;
   verdictProposal?: {
     bundleId: string;
     verdict: Exclude<QuestionBundleVerdict, { kind: 'unrelated' }>;
   };
   nextClarification?: PendingQuestionClarification | null;
+  /** Topic whose disputed point this verdict closes as not collected (GC round 3 S4b). */
+  questionNotCollected?: string;
 };
 
 type LegacyGroupReportIntent = {
@@ -127,6 +171,8 @@ export class ConversationOrchestrator {
     private readonly goalRepo?: GoalRepositoryPort,
     private readonly questionConfirmationRepo?: QuestionConfirmationPort,
     private readonly unitOfWork?: ConversationUnitOfWorkPort,
+    private readonly onboardingTurn?: OnboardingTurnPort,
+    private readonly logger: OrchestratorLogger = SILENT_LOGGER,
   ) {}
 
   async resumeCommittedTurn(input: OrchestrateInput): Promise<boolean> {
@@ -319,6 +365,13 @@ export class ConversationOrchestrator {
     const userName = conversation.userDisplayName ?? 'there';
     const userTimezone = conversation.userTimezone;
     const flagCtx = { tenantId, userId };
+    // Onboarding is never allowed to break the reply: a failed read means "no onboarding context".
+    const onboarding = this.onboardingTurn
+      ? await this.onboardingTurn.contextFor(tenantId, userId).catch((error: unknown) => {
+          this.logger.warn('onboarding_context_failed', { tenantId, userId, error: errorMessage(error) });
+          return null;
+        })
+      : null;
 
     // Safety assessment is independent of classification and runs on every turn (ADR-013 D3).
     // assessRisk never rejects: a failure is `assessed: false`, which policy treats as unknown.
@@ -332,6 +385,15 @@ export class ConversationOrchestrator {
         now: currentTurnAt,
         timezone: userTimezone,
         continuitySummary: activeTopic?.summary,
+        ...(onboarding
+          ? {
+              onboarding: {
+                track: onboarding.state.track,
+                participation: onboarding.state.participation,
+                introStatus: onboarding.state.introStatus,
+              },
+            }
+          : {}),
       }),
       Promise.all([
         this.featureFlags ? this.featureFlags.isEnabled(FEATURE_FLAGS.MEMORY_EXTRACTION, flagCtx) : Promise.resolve(true),
@@ -441,23 +503,85 @@ export class ConversationOrchestrator {
     );
     const probePacingAllows = userTurnCount >= 3 && !probedRecently;
 
+    // The classifier only labels onboarding meaning; interpretOnboardingSignal + decideOnboarding decide.
+    const onboardingSignal = onboarding ? classification.onboardingSignal ?? null : null;
+    const onboardingOutcome: SignalOutcome = onboarding
+      ? interpretOnboardingSignal(onboarding.state, onboardingSignal, inboundMessage.occurredAt)
+      : { kind: 'none' };
+    // A text start opens with the backlog (or continues the user's own topic, Q25): no reactive probe.
+    const onboardingStartTurn = onboardingOutcome.kind === 'event'
+      && onboardingOutcome.event.type === 'action'
+      && onboardingOutcome.event.action === 'start';
+
     // Risk check and probe lookup are independent — run in parallel.
     // Probe is fetched speculatively when classify says it's allowed; discarded if risk blocks it.
-    const speculativeProbeAllowed =
+    const probeGatesAllow =
       reportingDisclosureReceipt !== null
       && !pauseTurn
       && surveyEnabled
-      && probePacingAllows
       && classification.surveyAllowed
       && !reportingExplanationRequested
       && !dataUseExplanationRequested
-      && !pulseCaptureExplanationRequested;
-    const [risk, speculativeProbe] = await Promise.all([
+      && !pulseCaptureExplanationRequested
+      && !onboardingStartTurn;
+    const speculativeProbeAllowed = probeGatesAllow && probePacingAllows;
+    // GC round 3 CAP-1: inside an active V2 cycle the topic policy replaces the optional probe.
+    let topicCadence = readTopicCadence(dbMessages, inboundMessage.occurredAt);
+    if (probeGatesAllow && isTopicCadenceSatisfied(topicCadence) && this.conversationRepo.countTopicQuestionsSince) {
+      // The cap holds beyond the loaded message window.
+      const durable = await this.conversationRepo.countTopicQuestionsSince({
+        tenantId, userId, conversationId, since: new Date(inboundMessage.occurredAt.getTime() - 86_400_000),
+      });
+      topicCadence = { ...topicCadence, topicQuestionsLast24h: Math.max(topicCadence.topicQuestionsLast24h, durable) };
+    }
+    const v2WindowLookupAllowed = probeGatesAllow && this.questionConfirmationRepo?.findCycleProgress !== undefined;
+    const topicLookupAllowed = v2WindowLookupAllowed && isTopicCadenceSatisfied(topicCadence);
+    // Survey lookups must not be able to skip the escalation below: their failures surface after it.
+    const [risk, probeLookup, cycleLookup] = await Promise.all([
       riskAssessment,
-      speculativeProbeAllowed ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null),
+      settle(speculativeProbeAllowed || topicLookupAllowed
+        ? this.findSurveyProbe(userId, tenantId) : Promise.resolve(null)),
+      settle(v2WindowLookupAllowed
+        ? this.questionConfirmationRepo!.findCycleProgress!({ tenantId, userId })
+        : Promise.resolve(null)),
     ]);
     // Escalate as soon as risk is known, so no later survey/confirmation failure can skip it.
     await this.raiseEscalationIfRequired(risk, { tenantId, userId, input });
+    if (!probeLookup.ok) throw probeLookup.error;
+    if (!cycleLookup.ok) throw cycleLookup.error;
+    const speculativeProbe = probeLookup.value;
+    const v2CycleSnapshot = cycleLookup.value;
+    const v2CycleProgress = v2CycleSnapshot ? predictCycleProgress(v2CycleSnapshot) : null;
+    // A V2 window whose topics are all closed leaves the legacy path (for example engagement) alone.
+    const inActiveV2Cycle = v2CycleProgress !== null && v2CycleProgress.openTopics.length > 0;
+
+    // ── Onboarding text equivalents ─────────────────────────────────────────
+    // The event is applied even on a safety turn, but a safety turn always keeps its own reply.
+    // A failed apply is treated as no state change: normal reply, no ack or opener.
+    const onboardingResult: OnboardingApplyResult | null = onboardingOutcome.kind === 'event' && this.onboardingTurn
+      ? await this.onboardingTurn.applyTurnEvent(tenantId, userId, onboardingOutcome.event).catch((error: unknown) => {
+          this.logger.warn('onboarding_apply_failed', {
+            tenantId, userId, event: onboardingOutcome.event.type, error: errorMessage(error),
+          });
+          return null;
+        })
+      : null;
+    const onboardingState: OnboardingState | null = onboardingResult?.state ?? onboarding?.state ?? null;
+    const onboardingSafetyTurn = classification.requiresSafetyCheck || isRiskTurn(risk);
+    const onboardingMayOwnReply = !onboardingSafetyTurn
+      && onboardingSignal?.substantive !== true
+      && !reportingExplanationRequested
+      && !dataUseExplanationRequested
+      && !pulseCaptureExplanationRequested;
+    const onboardingAck = onboardingMayOwnReply ? onboardingResult?.replyAck : undefined;
+    const onboardingOpens = onboardingMayOwnReply && onboardingAck === undefined && onboardingResult?.replyStart === true;
+    const onboardingClarify = onboardingOutcome.kind === 'clarify' && !onboardingSafetyTurn;
+    // A decision made inside a substantive turn is still acknowledged (Q4): the approved ack closes the reply.
+    const onboardingTrailingAck = !onboardingSafetyTurn && onboardingSignal?.substantive === true
+      ? onboardingResult?.replyAck
+      : undefined;
+    const onboardingOwnsReply = onboardingAck !== undefined || onboardingOpens;
+    const onboardingTakesTurn = onboardingOwnsReply || onboardingClarify;
 
     const appliedQuestionVerdict = await this.questionConfirmationRepo
       ?.findAppliedQuestionVerdictForInbound?.({
@@ -467,11 +591,7 @@ export class ConversationOrchestrator {
     // ── Group confirmation interpretation (Phase B) ─────────────────────────
     // Safety classification must resolve before any survey state can change.
     const v2PhaseB: PreparedBundlePhase = appliedQuestionVerdict?.kind === 'bundle'
-      ? {
-          confirmedGroup: appliedQuestionVerdict.verdictKind === 'agree'
-            ? appliedQuestionVerdict.questionGroup : false as string | false,
-          awaitingPresent: true,
-        }
+      ? await this.replayAppliedBundleVerdict(appliedQuestionVerdict, { tenantId, userId })
       : this.questionConfirmationRepo && surveyEnabled
       && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested
@@ -485,7 +605,16 @@ export class ConversationOrchestrator {
       workingInsightId: string;
       verdict: Exclude<QuestionClarificationVerdict, { kind: 'unrelated' }>;
     } | null = null;
+    let correctedStatementRequest: (PendingQuestionClarification & { correctedSummary: string }) | null = null;
+    let clarificationPhase: PreparedBundlePhase | null = null;
+    // GC round 3 S4b: a skipped clarification closes its point as not collected; the reply says so.
+    let questionNotCollected: string | undefined = v2PhaseB.questionNotCollected
+      ?? (appliedQuestionVerdict?.kind === 'clarification' && appliedQuestionVerdict.questionNotCollected
+        ? appliedQuestionVerdict.questionGroup : undefined);
+    // A bundle that still awaits its verdict (for example a corrected statement) keeps the floor:
+    // no second employee question is opened until that verdict is applied this turn.
     if (!clarificationWasPresent && this.questionConfirmationRepo && surveyEnabled
+      && (!v2PhaseB.awaitingPresent || v2PhaseB.verdictProposal !== undefined)
       && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested && !pulseCaptureExplanationRequested) {
       pendingClarification = await this.questionConfirmationRepo.findPendingQuestionClarification({
@@ -500,15 +629,52 @@ export class ConversationOrchestrator {
           await this.aiProvider.interpretQuestionClarificationResponse(turns, pendingClarification),
         );
         if (clarificationVerdict.kind !== 'unrelated') {
+          const resolvedClarification = pendingClarification;
           clarificationVerdictProposal = {
             workingInsightId: pendingClarification.workingInsightId,
             verdict: clarificationVerdict,
           };
-          pendingClarification = await this.questionConfirmationRepo
-            .previewPendingQuestionClarificationAfterVerdict?.({
-              tenantId, userId, conversationId,
-              workingInsightId: clarificationVerdictProposal.workingInsightId,
-            }) ?? null;
+          if (clarificationVerdict.kind === 'declined') questionNotCollected = resolvedClarification.questionGroup;
+          if (clarificationVerdict.kind === 'declined' && this.questionConfirmationRepo.findCycleProgress) {
+            // A declined statement can be the last open one of its topic: state completion then too.
+            const snapshot = await this.questionConfirmationRepo.findCycleProgress({ tenantId, userId });
+            if (snapshot) {
+              const progress = predictCycleProgress(snapshot, {
+                questionGroup: resolvedClarification.questionGroup,
+                componentQuestionIds: [resolvedClarification.surveyQuestionId],
+                verdict: {
+                  kind: 'partial', acceptedQuestionIds: [], disputedQuestionIds: [],
+                  declinedQuestionIds: [resolvedClarification.surveyQuestionId],
+                },
+              });
+              clarificationPhase = { confirmedGroup: progress.closedNow ?? false, awaitingPresent: true, progress };
+            }
+          }
+          if (clarificationVerdict.kind === 'clarified') {
+            // GC round 3 CAP-3: the corrected meaning is shown back in this reply and waits for
+            // the employee's verdict; any other disputed statement follows after that verdict.
+            correctedStatementRequest = {
+              ...pendingClarification,
+              correctedSummary: clarificationVerdict.correctedSummary,
+            };
+            pendingClarification = null;
+            // The corrected statement is shown only on a turn that can carry a question and only
+            // when the adapter can stage it; otherwise the row stays ready and the ordinary bundle
+            // path shows it later. Staging checks the window by wall clock while the verdict is
+            // checked by reply time, so an ended window also drops it (cutoff expires the row).
+            if (!this.questionConfirmationRepo.stageCorrectedStatementConfirmation
+              || closingTurn || pauseTurn || classification.reminderRequest || reportingExplanationRequested
+              || (this.questionConfirmationRepo.findCycleProgress
+                && !(await this.questionConfirmationRepo.findCycleProgress({ tenantId, userId })))) {
+              correctedStatementRequest = null;
+            }
+          } else {
+            pendingClarification = await this.questionConfirmationRepo
+              .previewPendingQuestionClarificationAfterVerdict?.({
+                tenantId, userId, conversationId,
+                workingInsightId: clarificationVerdictProposal.workingInsightId,
+              }) ?? null;
+          }
         }
       }
     }
@@ -524,7 +690,7 @@ export class ConversationOrchestrator {
     const phaseB: PreparedBundlePhase = v2PhaseB.awaitingPresent
       ? v2PhaseB
       : clarificationWasPresent
-        ? { confirmedGroup: false as string | false, awaitingPresent: true }
+        ? clarificationPhase ?? { confirmedGroup: false as string | false, awaitingPresent: true }
       : this.surveyRepo && surveyEnabled
       && classification.surveyAllowed && !riskBlocksSurvey(risk)
       && !dataUseExplanationRequested
@@ -556,6 +722,7 @@ export class ConversationOrchestrator {
       && !pulseCaptureExplanationRequested
       && !confirmationHandled
       && !phaseB.awaitingPresent
+      && !onboardingTakesTurn
     ) {
       const pending = await this.surveyRepo.findPendingConfirmationGroups(userId, tenantId);
       if (pending.length > 0) {
@@ -592,13 +759,66 @@ export class ConversationOrchestrator {
       }
     }
 
+    // An invalid composition (after the adapter's one repair, or on re-validation here) skips the
+    // bundle for this turn instead of failing the employee's message: the turn continues as an
+    // ordinary reply, the bundle stays ready for a later turn, and the reason is recorded.
+    const languagePolicy = resolveLanguagePolicy();
+    let v2Composition: QuestionBundleComposition | null = null;
+    /** Either composition that stayed invalid this turn; the metadata keys below name which one. */
+    let bundleCompositionFallbackReason: BundleCompositionFallbackReason | undefined;
+    let readyBundleFallbackReason: BundleCompositionFallbackReason | undefined;
+    if (v2BundleRequest) {
+      try {
+        v2Composition = validateQuestionBundleComposition(
+          await this.aiProvider.composeQuestionBundle(
+            turns,
+            v2BundleRequest.questions.map((question) => ({
+              surveyQuestionId: question.surveyQuestionId,
+              workingSummary: question.workingSummary,
+            })),
+            languagePolicy.responseLanguage,
+            // A clarified meaning that was not shown on its own turn is still a corrected statement.
+            ...(v2BundleRequest.kind === 'corrected_statement' ? ['corrected_statement' as const] : []),
+          ),
+          v2BundleRequest.questions.map((question) => question.surveyQuestionId),
+        );
+      } catch (error) {
+        if (!isBundleCompositionInvalidError(error)) throw error;
+        readyBundleFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
+        bundleCompositionFallbackReason = readyBundleFallbackReason;
+        v2BundleRequest = null;
+      }
+    }
+    // The corrected statement (GC round 3 CAP-3) degrades the same way: the clarified verdict is
+    // still applied, the row stays ready and the ordinary bundle path shows it on a later turn.
+    let correctedComposition: QuestionBundleComposition | null = null;
+    let correctedStatementFallbackReason: BundleCompositionFallbackReason | undefined;
+    if (correctedStatementRequest) {
+      try {
+        correctedComposition = validateQuestionBundleComposition(
+          await this.aiProvider.composeQuestionBundle(
+            turns,
+            [{ surveyQuestionId: correctedStatementRequest.surveyQuestionId, workingSummary: correctedStatementRequest.correctedSummary }],
+            languagePolicy.responseLanguage,
+            'corrected_statement',
+          ),
+          [correctedStatementRequest.surveyQuestionId],
+        );
+      } catch (error) {
+        if (!isBundleCompositionInvalidError(error)) throw error;
+        correctedStatementFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
+        bundleCompositionFallbackReason = correctedStatementFallbackReason;
+        correctedStatementRequest = null;
+      }
+    }
+
     const currentTurnHasTopicAnchor = !!classification.topicAnchor?.trim();
     const safetyTurn = classification.requiresSafetyCheck || isRiskTurn(risk);
     const continuity = resolveContinuity({
       classification,
       activeTopic,
       safetyTurn,
-      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null,
       now: currentTurnAt,
     });
     const continuityDecision = continuity.decision;
@@ -607,7 +827,7 @@ export class ConversationOrchestrator {
     const relevantGoal = selectRelevantGoal(boundaryApplied ? [] : activeGoals, {
       classification,
       risk,
-      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null,
+      confirmationTurn: phaseB.awaitingPresent || confirmationRequest !== undefined || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null,
     });
     const goalDecision: {
       selected: boolean;
@@ -629,9 +849,11 @@ export class ConversationOrchestrator {
         : [],
     };
 
+    // Inside a V2 window the optional probe hint is never sent; the topic policy decides below.
     const probeQuestion =
-      !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !riskBlocksSurvey(risk)
-        ? speculativeProbe
+      !inActiveV2Cycle && !confirmationHandled && !confirmationRequest && speculativeProbeAllowed && !riskBlocksSurvey(risk)
+      && !onboardingTakesTurn
+        ? speculativeProbe?.question ?? null
         : null;
 
     // Persist risk signal when a real risk is detected. Unassessed (tripwire-only) risk has no
@@ -664,7 +886,7 @@ export class ConversationOrchestrator {
       }
     }
 
-    const baseStrategy = confirmationRequest || v2BundleRequest || clarificationRequest
+    const baseStrategy = confirmationRequest || v2BundleRequest || clarificationRequest || correctedStatementRequest
       ? { mode: 'confirmation' as const, tone: 'warm' as const, includeFollowUpQuestion: false, maxResponseLength: 'medium' as const, forbiddenPatterns: [] }
       : buildReplyStrategy(classification, risk, probeQuestion?.id);
     const probeStrategy = probeQuestion && baseStrategy.mode !== 'crisis' && baseStrategy.mode !== 'sensitive'
@@ -673,7 +895,7 @@ export class ConversationOrchestrator {
     // Verbosity is structural, not a prose hint: for a confident, clearly-terse user,
     // shorten the reply and ask a follow-up only every other turn (A + C) — the coach
     // still engages, just doesn't interrogate a terse person every message.
-    const strategyWithStyle = applySessionConciseStyle(
+    const styledStrategy = applySessionConciseStyle(
       applyTerseStyle(
         confirmationHandled ? { ...baseStrategy, includeFollowUpQuestion: false } : probeStrategy,
         memoryEnabled && !boundaryApplied ? profile : null,
@@ -681,6 +903,10 @@ export class ConversationOrchestrator {
       ),
       conciseSession,
     );
+    // Unclear onboarding choice: one question, no state change (Q2, Q4).
+    const strategyWithStyle: ReplyStrategy = onboardingClarify
+      ? { ...styledStrategy, includeFollowUpQuestion: true, onboardingClarify: true }
+      : styledStrategy;
     const sameThreadDetail = classification.latestUserSubstance?.trim();
     const canRetainExplicitDetail = !sessionStart
       && continuityDecision.action !== 'replace'
@@ -700,7 +926,8 @@ export class ConversationOrchestrator {
       && !safetyTurn
       && !phaseB.awaitingPresent
       && confirmationRequest === undefined
-      && v2BundleRequest === null;
+      && v2BundleRequest === null
+      && correctedStatementRequest === null;
     const replacedResolvedThread = classification.dialogueAct !== 'acknowledgement'
       && continuityDecision.action === 'replace';
     const classifiedResolvedDetails = normalizeResolvedDetails(classification.resolvedDetails);
@@ -718,7 +945,7 @@ export class ConversationOrchestrator {
         : [],
     };
 
-    let replyPlan = confirmationRequest || v2BundleRequest || clarificationRequest
+    let replyPlan = confirmationRequest || v2BundleRequest || clarificationRequest || correctedStatementRequest
       ? undefined
       : buildReplyPlan({
           classification: replyPlanClassification,
@@ -730,27 +957,63 @@ export class ConversationOrchestrator {
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
     let strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
-    const responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
+    let responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
       ? null
       : probeQuestion;
-    const languagePolicy = resolveLanguagePolicy();
+
+    // ── GC round 3 CAP-1, CAP-2: topic steering (ADR-013 D4 policy, D8 required field) ──────────
+    let topicDecision: TopicQuestionDecision | undefined;
+    let topicQuestion: ResponseContext['topicQuestion'];
+    let topicProbeQuestion: SurveyQuestionRecord | null = null;
+    // The fallback after a broken topic rail keeps the turn's own question policy.
+    let topicFallback: { strategy: ReplyStrategy; replyPlan: ResponseContext['replyPlan'] } | undefined;
+    // An onboarding-owned or clarifying turn asks no topic question, as it carries no probe.
+    if (inActiveV2Cycle && !onboardingTakesTurn) {
+      topicDecision = canAskTopicQuestion({
+        activeV2Cycle: true,
+        disclosureDelivered: reportingDisclosureReceipt !== null,
+        surveyAllowed: surveyEnabled && classification.surveyAllowed,
+        safetyTurn: safetyTurn || riskBlocksSurvey(risk)
+          || strategyWithStyle.mode === 'crisis' || strategyWithStyle.mode === 'sensitive',
+        pauseTurn,
+        correctionTurn: classification.dialogueAct === 'correction',
+        confirmationTurn: phaseB.awaitingPresent || clarificationWasPresent || confirmationRequest !== undefined
+          || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null,
+        topicCompletedThisTurn: confirmationHandled,
+        explanationTurn: reportingExplanationRequested || dataUseExplanationRequested
+          || pulseCaptureExplanationRequested || classification.cycleStatusQuestion === true,
+        replyAllowsQuestion: replyPlan !== undefined
+          && replyPlan.questionPolicy.reason !== 'offer_delivery'
+          && replyPlan.questionPolicy.reason !== 'format_request',
+        cadence: topicCadence,
+      });
+      topicProbeQuestion = topicDecision.due ? speculativeProbe?.question ?? null : null;
+      if (topicProbeQuestion && replyPlan) {
+        topicFallback = { strategy, replyPlan };
+        // When due the question is mandatory: one question is allowed even on a terse turn.
+        replyPlan = {
+          ...replyPlan,
+          questionPolicy: { maxQuestions: 1, reason: 'topic_question' },
+          forbiddenMoves: replyPlan.forbiddenMoves.filter((move) => move !== 'survey_probe'),
+        };
+        strategy = applyReplyPlanToStrategy({ ...strategyWithStyle, includeFollowUpQuestion: true }, replyPlan);
+        if (topicProbeQuestion.responseType === 'numeric_0_10') {
+          // The numeric probe already has its own mandatory, validated path.
+          responseProbeQuestion = topicProbeQuestion;
+        } else {
+          topicQuestion = {
+            questionId: topicProbeQuestion.id,
+            questionGroup: topicProbeQuestion.questionGroup,
+            focus: speculativeProbe?.focus ?? 'open',
+            probeStrategies: topicProbeQuestion.probeStrategies,
+          };
+        }
+      }
+    }
     const clarificationText = clarificationRequest
       ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
           turns, clarificationRequest, languagePolicy.responseLanguage,
         ))
-      : null;
-    const v2Composition = v2BundleRequest
-      ? validateQuestionBundleComposition(
-          await this.aiProvider.composeQuestionBundle(
-            turns,
-            v2BundleRequest.questions.map((question) => ({
-              surveyQuestionId: question.surveyQuestionId,
-              workingSummary: question.workingSummary,
-            })),
-            languagePolicy.responseLanguage,
-          ),
-          v2BundleRequest.questions.map((question) => question.surveyQuestionId),
-        )
       : null;
     const shouldOfferReportingDisclosure =
       this.surveyRepo !== undefined
@@ -762,6 +1025,7 @@ export class ConversationOrchestrator {
       && strategy.mode !== 'crisis'
       && strategy.mode !== 'sensitive'
       && !pulseCaptureExplanationRequested
+      && !onboardingOwnsReply
       && (reportingExplanationRequested || phaseB.awaitingPresent || v2ReadyForDisclosure);
     const canAnswerReportingExplanation =
       reportingExplanationRequested
@@ -817,6 +1081,18 @@ export class ConversationOrchestrator {
           })),
         }
       : undefined;
+    // GC round 3 CAP-3: a cycle-status question is answered from typed progress, never from prose.
+    const trailingTextFollows = clarificationText !== null || correctedComposition !== null || v2Composition !== null;
+    const cycleProgress = classification.cycleStatusQuestion === true
+      && surveyEnabled && classification.surveyAllowed && !riskBlocksSurvey(risk)
+      && this.questionConfirmationRepo?.findCycleProgress
+      ? cycleProgressContext(
+          phaseB.progress ?? predictCycleProgress(
+            await this.questionConfirmationRepo.findCycleProgress({ tenantId, userId }),
+          ),
+          trailingTextFollows,
+        )
+      : undefined;
     const responseContext: ResponseContext = {
       userName,
       languagePolicy,
@@ -828,6 +1104,7 @@ export class ConversationOrchestrator {
         ? getReportingDisclosureText(languagePolicy.responseLanguage)
         : undefined,
       reminderConfirmation,
+      topicQuestion,
       surveyProbeQuestion: responseProbeQuestion
         ? {
             id: responseProbeQuestion.id,
@@ -835,9 +1112,9 @@ export class ConversationOrchestrator {
             responseType: responseProbeQuestion.responseType,
           }
         : undefined,
-      topicConfirmed: typeof confirmedGroup === 'string'
-        ? { questionGroup: confirmedGroup }
-        : undefined,
+      topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+      questionNotCollected: questionNotCollected ? { questionGroup: questionNotCollected } : undefined,
+      cycleProgress,
       confirmationRequest,
       styleAdaptation,
       localTime: describeLocalTime(conversation.userTimezone),
@@ -849,17 +1126,34 @@ export class ConversationOrchestrator {
     // the employee's own message is answered first by one structured generation.
     const trailingBundle: ResponseContext['trailingBundle'] = clarificationText && clarificationRequest
       ? { kind: 'clarification', text: clarificationText, statements: [clarificationRequest.disputedStatement] }
+      : correctedComposition
+        ? {
+            kind: 'corrected_statement',
+            text: correctedComposition.text,
+            statements: correctedComposition.statements.map((statement) => statement.statement),
+          }
       : v2Composition
         ? {
-            kind: 'confirmation_bundle',
+            kind: v2BundleRequest?.kind === 'corrected_statement' ? 'corrected_statement' : 'confirmation_bundle',
             text: v2Composition.text,
             statements: v2Composition.statements.map((statement) => statement.statement),
           }
         : undefined;
     let bundleReply: BundleReplyOutcome | undefined;
+    let topicQuestionFallbackReason: TopicQuestionReplyInvalidReason | undefined;
     let bundleReplyFallbackReason: BundleReplyFallbackReason | undefined;
+    const onboardingOpener = onboardingOpens
+      ? await this.openOnboardingConversation({
+          userId, tenantId, turns, userName, languagePolicy, surveyEnabled, memoryContext,
+          styleAdaptation, timezone: conversation.userTimezone, isSessionStart: sessionStart,
+        })
+      : null;
     let generated: GeneratedResponse;
-    if (trailingBundle) {
+    if (onboardingAck !== undefined) {
+      generated = { text: onboardingAck, confidence: 1, containsSurveyProbe: false };
+    } else if (onboardingOpener) {
+      generated = onboardingOpener.generated;
+    } else if (trailingBundle) {
       try {
         const draft = await this.aiProvider.generateResponse(turns, strategy, {
           ...responseContext, trailingBundle, surveyProbeQuestion: undefined,
@@ -898,9 +1192,14 @@ export class ConversationOrchestrator {
             confidence: 1,
             containsSurveyProbe: false,
           }
+        : responseContext.topicQuestion
+        ? await this.generateWithTopicQuestion(turns, strategy, responseContext, topicFallback!, (reason) => {
+            topicQuestionFallbackReason = reason;
+          })
         : await this.aiProvider.generateResponse(turns, strategy, responseContext);
     }
-    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure;
+    // The onboarding opener never carries the disclosure; existing mechanisms deliver it later (decision 2026-10-08).
+    let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure && onboardingOpener === null;
     let responseText = shouldAppendReportingDisclosure
       ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
       : generated.text;
@@ -984,9 +1283,9 @@ export class ConversationOrchestrator {
             ? memoryContext
             : undefined,
           reminderConfirmation,
-          topicConfirmed: typeof confirmedGroup === 'string'
-            ? { questionGroup: confirmedGroup }
-            : undefined,
+          topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+          questionNotCollected: questionNotCollected ? { questionGroup: questionNotCollected } : undefined,
+          cycleProgress,
           styleAdaptation,
           localTime: describeLocalTime(conversation.userTimezone),
           isSessionStart: sessionStart,
@@ -997,11 +1296,26 @@ export class ConversationOrchestrator {
         shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage));
       }
     }
-    const containsSurveyProbe =
-      probeQuestion !== null
-      && !pauseTurn
-      && generated.containsSurveyProbe === true;
+    if (onboardingTrailingAck) responseText = `${responseText}\n\n${onboardingTrailingAck}`;
+    const topicQuestionAsked = topicQuestion !== undefined && topicQuestionFallbackReason === undefined
+      && generated.topicQuestion !== undefined;
+    const surveyProbeSource = topicProbeQuestion ?? probeQuestion;
+    const containsSurveyProbe = onboardingOpener
+      ? onboardingOpener.probeQuestionId !== undefined
+        && generated.containsSurveyProbe === true
+        && generated.surveyProbeQuestionId === onboardingOpener.probeQuestionId
+      : topicQuestionAsked || (
+        surveyProbeSource !== null
+        && !pauseTurn
+        && topicQuestionFallbackReason === undefined
+        && generated.containsSurveyProbe === true);
+    if (topicQuestionAsked) generated = { ...generated, surveyProbeQuestionId: topicQuestion!.questionId };
 
+    // Pulse evidence only from active personal participants, read after this turn's onboarding event
+    // (a substantive first message is analysed, Q2b); management roles never (Q11).
+    const onboardingAllowsEvidence = onboardingState === null
+      || (onboardingState.track !== 'management' && onboardingState.participation === 'active');
+    const surveyEvidenceWanted = surveyEnabled && !pulseCaptureExplanationRequested && onboardingAllowsEvidence;
     let scheduledReminder: { id: string; dueAt: Date } | null = null;
     let legacyGroupReport: LegacyGroupReportIntent | null = null;
     const persistPreparedTurn = async () => {
@@ -1011,6 +1325,14 @@ export class ConversationOrchestrator {
       });
       if (committed) return committed;
       legacyGroupReport = await phaseB.commitLegacy?.() ?? null;
+      if (topicQuestionAsked && topicQuestion!.focus === 'driver' && v2CycleSnapshot
+        && this.questionConfirmationRepo?.recordDriverRequested) {
+        // GC round 3 CAP-2: the driver is asked at most once per question and window.
+        await this.questionConfirmationRepo.recordDriverRequested({
+          tenantId, userId, surveyWindowId: v2CycleSnapshot.surveyWindowId,
+          surveyQuestionId: topicQuestion!.questionId, requestedAt: new Date(),
+        });
+      }
       if (v2PhaseB.verdictProposal && this.questionConfirmationRepo) {
         const applied = await this.questionConfirmationRepo.applyQuestionBundleVerdict({
           tenantId, userId, conversationId, inboundMessageId: input.messageId,
@@ -1044,6 +1366,7 @@ export class ConversationOrchestrator {
         text: responseText,
         occurredAt: new Date(),
         traceId: input.traceId,
+        ...(onboardingAck !== undefined ? { messageType: 'onboarding_ack' } : {}),
         metadata: {
           sourceInboundMessageId: input.messageId,
           ...conversationDecisionMetadata({
@@ -1071,8 +1394,23 @@ export class ConversationOrchestrator {
             : {}),
           ...(v2Composition ? { v2ConfirmationBundle: true } : {}),
           ...(clarificationText ? { v2ClarificationPrompt: true } : {}),
+          ...(correctedComposition ? { v2CorrectedStatement: true } : {}),
           ...(bundleReply ? { v2BundleReply: bundleReply } : {}),
           ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
+          ...(readyBundleFallbackReason ? { v2BundleCompositionFallbackReason: readyBundleFallbackReason } : {}),
+          ...(correctedStatementFallbackReason ? { v2CorrectedStatementFallbackReason: correctedStatementFallbackReason } : {}),
+          ...(topicQuestionAsked
+            ? { topicQuestion: {
+                questionGroup: topicQuestion!.questionGroup,
+                focus: topicQuestion!.focus,
+                policyVersion: topicDecision!.policyVersion,
+              } }
+            : {}),
+          ...(topicDecision && !topicDecision.due ? { topicQuestionDecision: topicDecision.reason } : {}),
+          ...(topicDecision?.due && !topicProbeQuestion ? { topicQuestionDecision: 'no_open_question' } : {}),
+          ...(topicQuestionFallbackReason ? { topicQuestionFallbackReason } : {}),
+          // The cadence counts from a completion reply: the next topic opens on the next turn.
+          ...(typeof confirmedGroup === 'string' ? { topicCompleted: confirmedGroup } : {}),
           ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
             ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
             : {}),
@@ -1120,6 +1458,23 @@ export class ConversationOrchestrator {
           })),
         });
       }
+      if (correctedStatementRequest && correctedComposition && this.questionConfirmationRepo) {
+        if (!this.questionConfirmationRepo.stageCorrectedStatementConfirmation) {
+          throw new Error('v2_corrected_statement_staging_unavailable');
+        }
+        await this.questionConfirmationRepo.stageCorrectedStatementConfirmation({
+          tenantId, userId, conversationId,
+          surveyWindowId: correctedStatementRequest.surveyWindowId,
+          questionGroup: correctedStatementRequest.questionGroup,
+          workingInsightId: correctedStatementRequest.workingInsightId,
+          surveyQuestionId: correctedStatementRequest.surveyQuestionId,
+          questionVersion: correctedStatementRequest.questionVersion,
+          promptMessageId: outbound.id,
+          displayedText: correctedComposition.text,
+          statement: correctedComposition.statements[0]!.statement,
+          expectedWorkingSummary: correctedStatementRequest.correctedSummary,
+        });
+      }
       if (clarificationRequest && clarificationText && this.questionConfirmationRepo) {
         const staged = await this.questionConfirmationRepo.stageQuestionClarificationPrompt({
           tenantId, userId, conversationId,
@@ -1155,7 +1510,7 @@ export class ConversationOrchestrator {
         dispatchKinds: [
           'message_send',
           ...(memoryEnabled ? ['memory_extraction', 'style_analysis'] as const : []),
-          ...(surveyEnabled && !pulseCaptureExplanationRequested ? ['survey_evidence'] as const : []),
+          ...(surveyEvidenceWanted ? ['survey_evidence'] as const : []),
           ...(profileHydrationNeeded ? ['profile_hydration'] as const : []),
         ],
         followUpActions: scheduledReminder ? [scheduledReminder] : [],
@@ -1172,7 +1527,7 @@ export class ConversationOrchestrator {
     await this.dispatchCommittedTurn(input, conversation.channelType, outbound, [
       'message_send',
       ...(memoryEnabled ? ['memory_extraction', 'style_analysis'] as const : []),
-      ...(surveyEnabled && !pulseCaptureExplanationRequested ? ['survey_evidence'] as const : []),
+      ...(surveyEvidenceWanted ? ['survey_evidence'] as const : []),
       ...(profileHydrationNeeded ? ['profile_hydration'] as const : []),
     ], scheduledReminder ? [scheduledReminder] : [],
     legacyGroupReport ? [legacyGroupReport] : []);
@@ -1185,6 +1540,7 @@ export class ConversationOrchestrator {
       risk,
       ...(bundleReply ? { bundleReply } : {}),
       ...(bundleReplyFallbackReason ? { bundleReplyFallbackReason } : {}),
+      ...(bundleCompositionFallbackReason ? { bundleCompositionFallbackReason } : {}),
     };
   }
 
@@ -1309,11 +1665,27 @@ export class ConversationOrchestrator {
     if (!awaiting) return { confirmedGroup: false, awaitingPresent: false };
     if (!reportingDisclosureReceipt) return { confirmedGroup: false, awaitingPresent: true };
 
-    const verdict = validateQuestionBundleVerdict(
+    const interpreted = validateQuestionBundleVerdict(
       await this.aiProvider.interpretQuestionBundleResponse(turns, awaiting),
       awaiting.components.map((component) => component.surveyQuestionId),
     );
-    if (verdict.kind === 'unrelated') return { confirmedGroup: false, awaitingPresent: true };
+    if (interpreted.kind === 'unrelated') return { confirmedGroup: false, awaitingPresent: true };
+    // GC round 3 S4b: a corrected statement is never reset. A reject or a dispute asks once more
+    // while the clarification budget lasts, otherwise the point closes as not collected.
+    const correctedQuestionId = awaiting.kind === 'corrected_statement' && awaiting.components.length === 1
+      ? awaiting.components[0]!.surveyQuestionId
+      : null;
+    // An adapter that cannot say how many clarifications were asked gets no further one, so the
+    // repository's budget guard can never fail the turn.
+    const verdict = correctedQuestionId
+      ? resolveCorrectedStatementVerdict(
+          interpreted, correctedQuestionId, awaiting.clarificationAttempts ?? MAX_QUESTION_CLARIFICATIONS,
+        )
+      : interpreted;
+    // Any statement closed without an agreed wording is said plainly, however it was shown.
+    const questionNotCollected = verdict.kind === 'partial' && verdict.declinedQuestionIds.length > 0
+      ? awaiting.questionGroup
+      : undefined;
     const nextClarification = verdict.kind === 'partial' && verdict.disputedQuestionIds.length > 0
       ? await this.questionConfirmationRepo.previewPendingQuestionClarificationAfterBundleVerdict?.({
         tenantId: input.tenantId,
@@ -1324,11 +1696,47 @@ export class ConversationOrchestrator {
         disputedQuestionIds: verdict.disputedQuestionIds,
       }) ?? null
       : null;
+    // GC round 3 CAP-3: the topic is complete when no statement of its group stays open after this
+    // verdict, whatever the verdict kind; the reply states it with progress. Without a snapshot
+    // (adapter without progress) the legacy rule applies: only a plain agree closes the topic.
+    const snapshot = await this.questionConfirmationRepo.findCycleProgress?.({
+      tenantId: input.tenantId, userId: input.userId,
+    }) ?? null;
+    const progress = snapshot
+      ? predictCycleProgress(snapshot, {
+          questionGroup: awaiting.questionGroup,
+          componentQuestionIds: awaiting.components.map((component) => component.surveyQuestionId),
+          verdict,
+        })
+      : undefined;
+    const confirmedGroup = progress
+      ? (progress.closedNow ?? false)
+      : verdict.kind === 'agree' ? awaiting.questionGroup : false;
     return {
-      confirmedGroup: verdict.kind === 'agree' ? awaiting.questionGroup : false,
+      confirmedGroup,
       awaitingPresent: true,
       verdictProposal: { bundleId: awaiting.id, verdict },
       nextClarification,
+      ...(progress ? { progress } : {}),
+      ...(questionNotCollected ? { questionNotCollected } : {}),
+    };
+  }
+
+  /** A retried job after the verdict was committed: read the stored state for the completion reply. */
+  private async replayAppliedBundleVerdict(
+    applied: Extract<AppliedQuestionVerdict, { kind: 'bundle' }>,
+    scope: { tenantId: string; userId: string },
+  ): Promise<PreparedBundlePhase> {
+    const snapshot = await this.questionConfirmationRepo?.findCycleProgress?.(scope) ?? null;
+    const progress = snapshot ? predictCycleProgress(snapshot) : undefined;
+    const closed = progress
+      ? !progress.openTopics.includes(applied.questionGroup) && applied.verdictKind !== 'reject'
+      : applied.verdictKind === 'agree';
+    return {
+      confirmedGroup: closed ? applied.questionGroup : false,
+      awaitingPresent: true,
+      ...(progress ? { progress } : {}),
+      ...(applied.questionNotCollected ? { questionNotCollected: applied.questionGroup } : {}),
     };
   }
 
@@ -1577,11 +1985,106 @@ export class ConversationOrchestrator {
     });
   }
 
-  private async findSurveyProbe(userId: string, tenantId: string): Promise<SurveyQuestionRecord | null> {
+  /**
+   * Text "let's start" without the user's own topic: open with the first backlog topic through the
+   * proactive check-in probe plumbing, or the approved opener with no model call when there is none (G1, Q25).
+   */
+  private async openOnboardingConversation(input: {
+    userId: string;
+    tenantId: string;
+    turns: ConversationTurn[];
+    userName: string;
+    languagePolicy: ResponseContext['languagePolicy'];
+    surveyEnabled: boolean;
+    memoryContext: NonNullable<ResponseContext['memoryContext']>;
+    styleAdaptation: ResponseContext['styleAdaptation'];
+    timezone: string | null | undefined;
+    isSessionStart: boolean;
+  }): Promise<{ generated: GeneratedResponse; probeQuestionId?: string }> {
+    const probe = input.surveyEnabled ? await this.findSurveyProbe(input.userId, input.tenantId) : null;
+    const question = probe?.question;
+    if (!question) {
+      return { generated: { text: EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } };
+    }
+    const generated = await this.aiProvider.generateResponse(input.turns, ONBOARDING_OPENER_STRATEGY, {
+      userName: input.userName,
+      languagePolicy: input.languagePolicy,
+      memoryContext: input.memoryContext.items.length > 0 || input.memoryContext.goals.length > 0
+        ? input.memoryContext
+        : undefined,
+      styleAdaptation: input.styleAdaptation,
+      localTime: describeLocalTime(input.timezone),
+      isSessionStart: input.isSessionStart,
+      proactiveCheckIn: {
+        probeQuestion: {
+          id: question.id,
+          probeStrategies: question.probeStrategies,
+          ...(question.responseType ? { responseType: question.responseType } : {}),
+        },
+        afterUserStart: true,
+      },
+    });
+    return { generated, probeQuestionId: question.id };
+  }
+
+  private async findSurveyProbe(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ question: SurveyQuestionRecord; focus: ProbeFocus } | null> {
     if (!this.pulseBacklogService) return null;
     const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
-    return result?.question ?? null;
+    return result ? { question: result.question, focus: result.focus ?? 'open' } : null;
   }
+
+  /**
+   * GC round 3 CAP-1 (ADR-013 D8): the topic question is a required field checked by the rail here,
+   * whichever provider produced it. When it breaks its contract after the provider's one repair,
+   * the turn still answers the employee, without the topic, and the reason is recorded.
+   */
+  private async generateWithTopicQuestion(
+    turns: ConversationTurn[],
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    fallbackPolicy: { strategy: ReplyStrategy; replyPlan: ResponseContext['replyPlan'] },
+    onFallback: (reason: TopicQuestionReplyInvalidReason) => void,
+  ): Promise<GeneratedResponse> {
+    try {
+      const draft = await this.aiProvider.generateResponse(turns, strategy, context);
+      const parts = validateTopicQuestionReply(draft, { maxReplyChars: maxReplyChars(strategy, context) });
+      return { ...draft, ...parts, text: composeTopicQuestionReplyText(parts), containsSurveyProbe: true };
+    } catch (error) {
+      if (!isTopicQuestionReplyInvalidError(error)) throw error;
+      onFallback(error.reason);
+      const fallback = await this.aiProvider.generateResponse(turns, fallbackPolicy.strategy, {
+        ...context, topicQuestion: undefined, replyPlan: fallbackPolicy.replyPlan, replyBrief: fallbackPolicy.replyPlan,
+      });
+      return { ...fallback, topicQuestion: undefined, containsSurveyProbe: false, surveyProbeQuestionId: undefined };
+    }
+  }
+}
+
+function cycleProgressContext(
+  progress: CycleProgress,
+  trailingTextFollows: boolean,
+): NonNullable<ResponseContext['cycleProgress']> {
+  return {
+    inCycle: progress.inCycle,
+    topicsTotal: progress.topicsTotal,
+    topicsClosed: progress.topicsClosed,
+    openTopics: progress.openTopics,
+    // A summary or question appended to this very reply also waits for the employee.
+    awaitingReply: progress.awaitingReply || (progress.inCycle && trailingTextFollows),
+  };
+}
+
+function topicConfirmedContext(
+  confirmedGroup: string | false,
+  progress: CycleProgress | undefined,
+): ResponseContext['topicConfirmed'] {
+  if (typeof confirmedGroup !== 'string') return undefined;
+  return progress
+    ? { questionGroup: confirmedGroup, topicsClosed: progress.topicsClosed, topicsTotal: progress.topicsTotal }
+    : { questionGroup: confirmedGroup };
 }
 
 type PulseCaptureResolution =
@@ -1858,6 +2361,10 @@ function computeRiskExpiry(severity: string): Date {
   return d;
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
 function describeLocalTime(timezone: string | undefined | null): string | undefined {
   if (!timezone) return undefined;
@@ -1982,7 +2489,7 @@ function conversationDecisionMetadata(input: {
     reason: string;
   };
 }): Record<string, unknown> {
-  const groundingCount = input.replyPlan?.requiredGrounding.length ?? 0;
+  const groundingCount = input.replyPlan?.requiredGrounding.filter((item) => item.source === 'memory').length ?? 0;
   return {
     measurementVersion: CONVERSATION_DECISION_MEASUREMENT_VERSION,
     ...(input.replyPlan
@@ -2079,4 +2586,9 @@ function buildReplyStrategy(
     maxResponseLength: classification.urgency === 'high' ? 'short' : 'medium',
     forbiddenPatterns: [],
   };
+}
+
+/** Lets parallel lookups finish without their failure overtaking a safety step that must run first. */
+function settle<T>(promise: Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
+  return promise.then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
 }

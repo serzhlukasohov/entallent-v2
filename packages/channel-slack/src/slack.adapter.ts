@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'crypto';
-import { WebClient } from '@slack/web-api';
+import { WebClient, type KnownBlock } from '@slack/web-api';
 import type { ChannelAdapterPort, UpdateOutgoingMessage } from '@entalent/channel-core';
 import type { NormalizedChannelEvent, OutgoingMessage, SendMessageResult, ExternalUserProfile } from '@entalent/contracts';
 import { normalizeSlackEvent, type SlackNormalizeInput } from './slack.normalizer';
@@ -12,6 +12,46 @@ export interface SlackAdapterConfig {
 export interface SlackVerifyInput {
   headers: Record<string, string | string[] | undefined>;
   rawBody: string;
+}
+
+/** Slack section text limit. */
+const SECTION_TEXT_LIMIT = 3000;
+
+type SlackBlock = KnownBlock;
+
+function splitParagraph(paragraph: string): string[] {
+  const parts: string[] = [];
+  let rest = paragraph;
+  while (rest.length > SECTION_TEXT_LIMIT) {
+    const cut = rest.lastIndexOf('\n', SECTION_TEXT_LIMIT);
+    const at = cut > 0 ? cut : rest.lastIndexOf(' ', SECTION_TEXT_LIMIT);
+    const end = at > 0 ? at : SECTION_TEXT_LIMIT;
+    parts.push(rest.slice(0, end));
+    rest = rest.slice(end).replace(/^[\n ]/, '');
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+/** Shared by send and update; `text` stays the notification fallback. */
+export function buildBlocks(text: string, actions?: OutgoingMessage['actions']): SlackBlock[] {
+  const blocks: SlackBlock[] = text
+    .split('\n\n')
+    .filter((paragraph) => paragraph.trim().length > 0)
+    .flatMap(splitParagraph)
+    .map((paragraph) => ({ type: 'section', text: { type: 'mrkdwn', text: paragraph } }));
+  if (actions?.length) {
+    blocks.push({
+      type: 'actions',
+      elements: actions.map((a) => ({
+        type: 'button',
+        action_id: a.actionId,
+        value: a.value,
+        text: { type: 'plain_text', text: a.label },
+      })),
+    });
+  }
+  return blocks;
 }
 
 export class SlackAdapter implements ChannelAdapterPort {
@@ -64,9 +104,12 @@ export class SlackAdapter implements ChannelAdapterPort {
   async sendMessage(message: OutgoingMessage): Promise<SendMessageResult> {
     if (!this.webClient) throw new Error('SlackAdapter: botToken is required for sendMessage');
 
+    // Text-only messages keep their plain-text shape; blocks are used only when buttons are attached.
+    const blocks = message.actions?.length ? buildBlocks(message.text, message.actions) : undefined;
     const result = await this.webClient.chat.postMessage({
       channel: message.externalChannelId,
       text: message.text,
+      ...(blocks ? { blocks } : {}),
       ...(message.replyToExternalThreadId
         ? { thread_ts: message.replyToExternalThreadId }
         : {}),
@@ -108,11 +151,17 @@ export class SlackAdapter implements ChannelAdapterPort {
   async updateMessage(message: UpdateOutgoingMessage): Promise<void> {
     if (!this.webClient) throw new Error('SlackAdapter: botToken is required for updateMessage');
 
-    await this.webClient.chat.update({
-      channel: message.externalMessageId,
+    const blocks = buildBlocks(message.text, message.actions);
+    const result = await this.webClient.chat.update({
+      channel: message.externalChannelId,
       ts: message.externalMessageId,
       text: message.text,
+      // Blocks are always sent on update so previous buttons are replaced.
+      blocks,
     });
+    if (!result.ok) {
+      throw new Error(`Slack updateMessage failed: ${result.error ?? 'unknown error'}`);
+    }
   }
 
   async getUserProfile(

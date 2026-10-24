@@ -1,4 +1,5 @@
 import type { AiProviderPort, ConversationTurn, SurveyQuestionForEvaluation } from '../ports/ai-provider.port';
+import { accumulateQuestionReadiness } from '../utils/question-readiness';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
 import type { QuestionWorkingCapturePort } from '../ports/question-working-capture.port';
@@ -250,6 +251,20 @@ export class SurveyEvidenceExtractionUseCase {
         });
       }
     }
+    if (mode === 'v2' && this.questionCapture?.recordDriverDeclined) {
+      // GC round 3 CAP-2: an explicit refusal to give the driver is honoured on the first refusal.
+      for (const questionId of new Set(evaluation.driverDeclinedQuestionIds ?? [])) {
+        const question = evaluationQuestions.find((item) => item.id === questionId
+          && item.responseType === 'open_ended');
+        if (!question) continue;
+        await this.questionCapture.recordDriverDeclined({
+          tenantId: input.tenantId, userId: input.userId,
+          conversationId: input.conversationId, surveyWindowId: window.id,
+          surveyQuestionId: question.id, questionVersion: question.version,
+          sourceMessageId,
+        });
+      }
+    }
     const assessmentByQuestion = new Map(
       (await this.surveyRepo.findAssessmentsForWindow(window.id)).map((assessment) => [
         assessment.surveyQuestionId,
@@ -270,6 +285,7 @@ export class SurveyEvidenceExtractionUseCase {
 
       if (mode === 'v2' && !isNumeric) {
         if (!this.questionCapture) throw new Error('v2_question_capture_unavailable');
+        const sufficientMeaning = COMPLETED_ASSESSMENT_STATUSES.has(computeAssessmentStatus(ev, question));
         const captured = await this.questionCapture.captureMeaning({
           tenantId: input.tenantId,
           userId: input.userId,
@@ -279,10 +295,17 @@ export class SurveyEvidenceExtractionUseCase {
           questionVersion: question.version,
           sourceMessageId,
           meaning: ev.evidenceSummary,
-          sufficientMeaning: COMPLETED_ASSESSMENT_STATUSES.has(computeAssessmentStatus(ev, question)),
+          sufficientMeaning,
+          // GC round 3 CAP-2: typed by the capture model; absent means no driver (fail closed).
+          driverCaptured: ev.driverCaptured === true,
+          driverDeclined: ev.driverDeclined === true,
         });
+        // A status alone keeps the backlog entry open; a later driver closes it through the
+        // V2 coverage read in PulseBacklogService.
         if (captured === 'captured' && this.pulseBacklogService
-          && COMPLETED_ASSESSMENT_STATUSES.has(computeAssessmentStatus(ev, question))) {
+          && accumulateQuestionReadiness(null, {
+            sufficientMeaning, driverCaptured: ev.driverCaptured === true, driverDeclined: ev.driverDeclined === true,
+          }).ready) {
           await this.pulseBacklogService.markQuestionCovered(input.userId, window.id, question.id, 1);
         }
         continue;

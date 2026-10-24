@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { eq, and, desc, gte, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
-import { channelAccounts, conversationDispatchIntents, conversationJobAdmissions, conversationJobReceipts, conversationMessageSendAttempts, conversationTurnEffects, conversations, messages, orgOnboardingDeliveries, people, scheduledActions, surveyGroupStates, surveyReportingCohorts, surveyWindows, users } from '@entalent/database';
+import { channelAccounts, conversationDispatchIntents, conversationJobAdmissions, conversationJobReceipts, conversationMessageSendAttempts, conversationTurnEffects, conversations, messages, onboardingStates, orgOnboardingDeliveries, people, scheduledActions, surveyGroupStates, surveyReportingCohorts, surveyWindows, users } from '@entalent/database';
 import { isRuntimeEligibleUser } from '@entalent/application';
 import type {
   ConversationRepositoryPort,
@@ -59,13 +59,16 @@ export class ConversationRepository implements ConversationRepositoryPort {
     return row ?? null;
   }
 
-  async isUserOnboardingEligible(tenantId: string, userId: string, externalWorkspaceId: string): Promise<boolean> {
+  /** `channelType` is 'dev' only for the local dev console channel; every real delivery checks Slack. */
+  async isUserOnboardingEligible(
+    tenantId: string, userId: string, externalWorkspaceId: string, channelType: 'slack' | 'dev' = 'slack',
+  ): Promise<boolean> {
     const rows = await this.db.client.select({
       userStatus: users.status, deletedAt: users.deletedAt,
       personLifecycle: people.lifecycleStatus,
     }).from(people).innerJoin(users, and(eq(users.id, people.id), eq(users.tenantId, people.tenantId)))
       .innerJoin(channelAccounts, and(eq(channelAccounts.userId, people.id),
-        eq(channelAccounts.tenantId, people.tenantId), eq(channelAccounts.channelType, 'slack'),
+        eq(channelAccounts.tenantId, people.tenantId), eq(channelAccounts.channelType, channelType),
         eq(channelAccounts.linkStatus, 'linked'),
         eq(channelAccounts.externalWorkspaceId, externalWorkspaceId)))
       .where(and(eq(people.id, userId), eq(people.tenantId, tenantId))).limit(2);
@@ -148,6 +151,25 @@ export class ConversationRepository implements ConversationRepositoryPort {
           eq(conversations.userId, userId),
         ),
       );
+  }
+
+  /** GC round 3 CAP-1: delivered-or-staged topic questions since `since`, for the rolling cap. */
+  async countTopicQuestionsSince(input: {
+    tenantId: string; userId: string; conversationId: string; since: Date;
+  }): Promise<number> {
+    const [row] = await this.db.client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(messages)
+      .where(and(
+        eq(messages.tenantId, input.tenantId),
+        eq(messages.userId, input.userId),
+        eq(messages.conversationId, input.conversationId),
+        eq(messages.direction, 'outbound'),
+        isNull(messages.deletedAt),
+        gte(messages.occurredAt, input.since),
+        sql`${messages.metadata}->>'containsSurveyProbe' = 'true'`,
+      ));
+    return row?.count ?? 0;
   }
 
   async findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
@@ -908,6 +930,13 @@ export class ConversationRepository implements ConversationRepositoryPort {
     } : null;
   }
 
+  /** Null when the person has no onboarding_states row (never onboarded through v2). */
+  async findOnboardingParticipation(tenantId: string, userId: string): Promise<string | null> {
+    const [row] = await this.db.client.select({ participation: onboardingStates.participation })
+      .from(onboardingStates).where(and(eq(onboardingStates.tenantId, tenantId), eq(onboardingStates.personId, userId))).limit(1);
+    return row?.participation ?? null;
+  }
+
   async findOutboundMessageForDelivery(
     messageId: string,
     tenantId: string,
@@ -918,6 +947,8 @@ export class ConversationRepository implements ConversationRepositoryPort {
     sentAt: Date | null;
     externalMessageId: string | null;
     onboardingDeliveryId: string | null;
+    messageType: string;
+    metadata: unknown;
     channelType: string;
     externalConversationId: string;
   } | null> {
@@ -928,6 +959,8 @@ export class ConversationRepository implements ConversationRepositoryPort {
         sentAt: messages.sentAt,
         externalMessageId: messages.externalMessageId,
         onboardingDeliveryId: sql<string | null>`${messages.metadata}->>'onboardingDeliveryId'`,
+        messageType: messages.messageType,
+        metadata: messages.metadata,
         channelType: conversations.channelType,
         externalConversationId: conversations.externalConversationId,
       })

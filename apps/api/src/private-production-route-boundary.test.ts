@@ -71,6 +71,7 @@ describe('production API route privacy boundary', () => {
         "GET admin/v2-pilot/team-signals",
         "POST admin/queues/dead-letter/:jobId/retry",
         "POST admin/queues/dead-letter/:queueName/:jobId/retry",
+        "POST admin/users/:userId/onboarding/restart",
         "PUT admin/feature-flags/:key",
       ]
     `);

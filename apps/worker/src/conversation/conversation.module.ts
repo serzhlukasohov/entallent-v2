@@ -1,5 +1,5 @@
 import { BullModule } from '@nestjs/bullmq';
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import {
   ConversationOrchestrator,
   ProactiveCheckInUseCase,
@@ -19,6 +19,8 @@ import { ScheduledActionRepository } from '../followup/repositories/scheduled-ac
 import { GoalRepository } from '../memory/repositories/goal.repository';
 import { MemoryRepository } from '../memory/repositories/memory.repository';
 import { MemoryModule } from '../memory/memory.module';
+import { OnboardingModule } from '../onboarding/onboarding.module';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
 import { EscalationStubService } from '../safety/escalation-stub.service';
 import { RiskSignalRepository } from '../safety/repositories/risk-signal.repository';
@@ -30,6 +32,13 @@ import { SurveyModule } from '../survey/survey.module';
 import { QuestionInsightRepository } from '../survey/repositories/question-insight.repository';
 import { DatabaseService } from '../database/database.service';
 
+// Onboarding degradations are logged, never thrown into the reply path.
+const nestOrchestratorLogger = new Logger(ConversationOrchestrator.name);
+const orchestratorLogger = {
+  warn: (message: string, context?: Record<string, unknown>) =>
+    nestOrchestratorLogger.warn(context ? `${message} ${JSON.stringify(context)}` : message),
+};
+
 @Module({
   imports: [
     DatabaseModule,
@@ -38,6 +47,7 @@ import { DatabaseService } from '../database/database.service';
     StyleModule,
     SafetyModule,
     FeatureFlagModule,
+    OnboardingModule,
     BullModule.registerQueue(
       { name: QUEUE_NAMES.CONVERSATION },
       { name: QUEUE_NAMES.MESSAGE_SEND },
@@ -70,6 +80,7 @@ import { DatabaseService } from '../database/database.service';
         goalRepo: GoalRepository,
         questionInsightRepo: QuestionInsightRepository,
         db: DatabaseService,
+        onboardingTurn: OnboardingService,
       ) => new ConversationOrchestrator(
         repo,
         ai,
@@ -85,6 +96,8 @@ import { DatabaseService } from '../database/database.service';
         goalRepo,
         questionInsightRepo,
         { run: (callback) => db.withTransaction(callback) },
+        onboardingTurn,
+        orchestratorLogger,
       ),
       inject: [
         ConversationRepository,
@@ -101,6 +114,7 @@ import { DatabaseService } from '../database/database.service';
         GoalRepository,
         QuestionInsightRepository,
         DatabaseService,
+        OnboardingService,
       ],
     },
     {

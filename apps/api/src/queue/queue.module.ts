@@ -43,6 +43,7 @@ export { QUEUE_NAMES };
       { name: QUEUE_NAMES.FOLLOWUP_EXECUTION },
       { name: QUEUE_NAMES.MESSAGE_SEND },
       { name: QUEUE_NAMES.PROACTIVE_SCAN },
+      { name: QUEUE_NAMES.ONBOARDING_ACTION },
     ),
   ],
   providers: [RedisService],

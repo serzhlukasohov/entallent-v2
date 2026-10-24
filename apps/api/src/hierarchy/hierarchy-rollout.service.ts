@@ -3,7 +3,7 @@ import { and, eq, inArray, ne } from 'drizzle-orm';
 import { planUnitActivation, prepareDraftPerson, type PrimaryOrgRole, type UnitActivationGraph, type UnitActivationPlan } from '@entalent/application';
 import {
   auditLogs, channelAccounts, orgAdvisorAssignments, orgEmployeePlacements, orgHrbpScopes, orgOnboardingDeliveries, orgTeams, orgUnits,
-  people, users, workspaceConnections,
+  people, tenantWorkCalendars, users, workspaceConnections,
   type DbClient,
 } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
@@ -64,9 +64,14 @@ export class HierarchyRolloutService {
     return this.db.client.transaction(async (tx) => {
       await assertHierarchyActorAuthorized(tx, tenantId, actor);
       await this.assertWorkspace(tx, tenantId, workspaceId);
+      const calendarConfigured = await this.hasWorkCalendar(tx, tenantId);
       const units = [];
       for (const unitId of selectedIds) {
-        units.push({ unitId, plan: planUnitActivation(await this.loadGraph(tx, tenantId, unitId, workspaceId)) });
+        const plan = planUnitActivation(await this.loadGraph(tx, tenantId, unitId, workspaceId));
+        units.push({ unitId, plan: calendarConfigured ? plan : {
+          ...plan, ready: false,
+          issues: [...plan.issues, { code: 'work_calendar_not_configured', entityId: tenantId }],
+        } });
       }
       return { ready: units.every((unit) => unit.plan.ready), units };
     });
@@ -108,6 +113,7 @@ export class HierarchyRolloutService {
       return await withSerializableRetry(() => this.db.client.transaction(async (tx) => {
         await assertHierarchyActorAuthorized(tx, tenantId, actor);
         await this.assertWorkspace(tx, tenantId, workspaceId);
+        if (!await this.hasWorkCalendar(tx, tenantId)) throw new HierarchyRolloutError('work_calendar_not_configured');
         for (const employee of legacyEmployees) {
           await this.adoptLegacyEmployee(tx, tenantId, workspaceId, employee, actorId(actor));
         }
@@ -237,6 +243,12 @@ export class HierarchyRolloutService {
       eq(workspaceConnections.status, 'active'),
     )).limit(1);
     if (!workspace) throw new HierarchyRolloutError('slack_workspace_not_found');
+  }
+
+  private async hasWorkCalendar(tx: Transaction, tenantId: string): Promise<boolean> {
+    const [calendar] = await tx.select({ tenantId: tenantWorkCalendars.tenantId })
+      .from(tenantWorkCalendars).where(eq(tenantWorkCalendars.tenantId, tenantId));
+    return Boolean(calendar);
   }
 
   private async loadGraph(

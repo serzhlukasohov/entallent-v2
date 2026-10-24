@@ -9,6 +9,7 @@ import {
   REPORTING_DISCLOSURE_VERSION,
   getReportingDisclosureText,
 } from '../utils/reporting-disclosure';
+import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
 
 function makeQuestion(): SurveyQuestionRecord {
   return {
@@ -155,6 +156,21 @@ describe('ProactiveCheckInUseCase', () => {
       id: 'q-1',
       probeStrategies: ['Ask about their OKRs'],
     });
+  });
+
+  // GC round 3 CAP-2: the driver of a captured status is asked inside the conversation, never as a
+  // generic proactive probe that would re-ask the status.
+  it('does not turn a driver follow-up into a generic proactive probe', async () => {
+    const ai = makeAiProvider();
+    const backlog = makePulseBacklogService(makeQuestion());
+    vi.mocked(backlog.getNextProbeQuestion).mockResolvedValue({ question: makeQuestion(), windowId: 'w-1', focus: 'driver' });
+    const useCase = new ProactiveCheckInUseCase(makeConversationRepo(), ai, makeOutbox(), undefined, backlog);
+
+    await useCase.execute(BASE_INPUT);
+
+    const context = (ai.generateResponse as ReturnType<typeof vi.fn>).mock.calls[0][2];
+    expect(context.proactiveCheckIn.probeQuestion).toBeUndefined();
+    expect(backlog.recordProbeSent).not.toHaveBeenCalled();
   });
 
   it('sends disclosure and suppresses a probe until delivery is recorded', async () => {
@@ -321,5 +337,106 @@ describe('ProactiveCheckInUseCase', () => {
     expect(backlog.getNextProbeQuestion).not.toHaveBeenCalled();
     expect(backlog.recordProbeSent).not.toHaveBeenCalled();
     expect(result.probeQuestionId).toBeNull();
+  });
+  describe('onboardingStart (button start)', () => {
+    const emptyHistory = () => makeConversationRepo({ findRecentMessages: vi.fn().mockResolvedValue([]) });
+
+    it('probes the backlog even on first contact and before disclosure delivery, marking afterUserStart', async () => {
+      const ai = makeAiProvider(true, 'q-1');
+      const backlog = makePulseBacklogService(makeQuestion());
+      const repo = makeConversationRepo({
+        findRecentMessages: vi.fn().mockResolvedValue([]),
+        findLatestDeliveredReportingDisclosure: vi.fn().mockResolvedValue(null),
+      });
+      const useCase = new ProactiveCheckInUseCase(repo, ai, makeOutbox(), undefined, backlog);
+
+      const result = await useCase.execute({ ...BASE_INPUT, onboardingStart: true });
+
+      const context = (ai.generateResponse as ReturnType<typeof vi.fn>).mock.calls[0][2];
+      expect(context.proactiveCheckIn.probeQuestion).toMatchObject({ id: 'q-1' });
+      expect(context.proactiveCheckIn.afterUserStart).toBe(true);
+      expect(backlog.recordProbeSent).toHaveBeenCalled();
+      expect(result.probeQuestionId).toBe('q-1');
+      // The onboarding opener carries no disclosure (decision 2026-10-08).
+      const saved = (repo.saveMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(saved.text).not.toContain(getReportingDisclosureText('en'));
+      expect(saved.metadata).not.toHaveProperty('reportingDisclosureVersion');
+    });
+
+    it('replies with the approved opener and makes no model call when the backlog is empty', async () => {
+      const ai = makeAiProvider();
+      const outbox = makeOutbox();
+      const repo = emptyHistory();
+      const useCase = new ProactiveCheckInUseCase(repo, ai, outbox, undefined, makePulseBacklogService(null));
+
+      const result = await useCase.execute({ ...BASE_INPUT, onboardingStart: true });
+
+      expect(ai.generateResponse).not.toHaveBeenCalled();
+      expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+      expect(result.probeQuestionId).toBeNull();
+      expect(repo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+        text: EMPTY_BACKLOG_OPENER, messageType: 'proactive_check_in',
+      }));
+      expect(outbox.enqueueMessageSend).toHaveBeenCalledWith(expect.objectContaining({ text: EMPTY_BACKLOG_OPENER }));
+    });
+
+    it('does not append the reporting disclosure to the opener even when none was delivered yet', async () => {
+      const ai = makeAiProvider();
+      const repo = makeConversationRepo({
+        findRecentMessages: vi.fn().mockResolvedValue([]),
+        findLatestDeliveredReportingDisclosure: vi.fn().mockResolvedValue(null),
+      });
+      const useCase = new ProactiveCheckInUseCase(repo, ai, makeOutbox(), undefined, makePulseBacklogService(null));
+
+      const result = await useCase.execute({ ...BASE_INPUT, onboardingStart: true });
+
+      expect(ai.generateResponse).not.toHaveBeenCalled();
+      expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+      const saved = (repo.saveMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(saved.metadata).not.toHaveProperty('reportingDisclosureVersion');
+    });
+
+    it('is retry-idempotent: an existing start message is reused with no model call or new message', async () => {
+      const ai = makeAiProvider();
+      const outbox = makeOutbox();
+      const stored = { id: 'start-1', tenantId: 't-1', conversationId: 'c-1', userId: 'u-1', direction: 'outbound',
+        text: 'stored opener', occurredAt: new Date(), createdAt: new Date() };
+      const repo = makeConversationRepo({
+        findRecentMessages: vi.fn().mockResolvedValue([]),
+        findMessageById: vi.fn().mockResolvedValueOnce(null).mockResolvedValue(stored),
+      });
+      const useCase = new ProactiveCheckInUseCase(repo, ai, outbox, undefined, makePulseBacklogService(makeQuestion()));
+      const input = { ...BASE_INPUT, onboardingStart: true, onboardingStartMessageId: 'start-1' };
+
+      await useCase.execute(input);
+      const again = await useCase.execute(input);
+
+      expect(repo.saveMessage).toHaveBeenCalledTimes(1);
+      expect(repo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'start-1' }));
+      expect(ai.generateResponse).toHaveBeenCalledTimes(1);
+      expect(again).toMatchObject({ outboundMessageId: 'start-1', responseText: 'stored opener' });
+      expect(outbox.enqueueMessageSend).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not re-enqueue an already delivered start message', async () => {
+      const outbox = makeOutbox();
+      const repo = makeConversationRepo({
+        findMessageById: vi.fn().mockResolvedValue({ id: 'start-1', tenantId: 't-1', conversationId: 'c-1', userId: 'u-1',
+          direction: 'outbound', text: 'x', occurredAt: new Date(), createdAt: new Date(), sentAt: new Date() }),
+      });
+      const useCase = new ProactiveCheckInUseCase(repo, makeAiProvider(), outbox);
+      await useCase.execute({ ...BASE_INPUT, onboardingStart: true, onboardingStartMessageId: 'start-1' });
+      expect(outbox.enqueueMessageSend).not.toHaveBeenCalled();
+    });
+
+    it('uses the opener without a model call when Pulse is disabled for the person', async () => {
+      const ai = makeAiProvider();
+      const useCase = new ProactiveCheckInUseCase(emptyHistory(), ai, makeOutbox(), undefined, makePulseBacklogService());
+
+      const result = await useCase.execute({ ...BASE_INPUT, onboardingStart: true, pulseEnabled: false });
+
+      expect(ai.generateResponse).not.toHaveBeenCalled();
+      expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+    });
   });
 });

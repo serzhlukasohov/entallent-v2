@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   auditLogs, channelAccounts, orgAdvisorAssignments, orgEmployeePlacements, orgHrbpScopes, orgOnboardingDeliveries, orgTeams, orgUnits,
-  people, users, workspaceConnections,
+  people, tenantWorkCalendars, users, workspaceConnections,
 } from '@entalent/database';
 import { HierarchyRolloutError, HierarchyRolloutService } from './hierarchy-rollout.service';
 
@@ -10,12 +10,13 @@ const unitId = 'unit-1';
 const workspaceId = 'T-1';
 const actor = { type: 'internal_operator' as const, operatorId: 'operator-1' };
 
-function setup(linkedIds: string[], withAdvisors = false) {
+function setup(linkedIds: string[], withAdvisors = false, withCalendar = true) {
   const updates: Array<{ table: unknown; values: unknown }> = [];
   const audit: unknown[] = [];
   const onboarding: unknown[] = [];
   const rowsFor = (table: unknown, fields?: Record<string, unknown>): unknown[] => {
     if (table === workspaceConnections) return [{ id: 'workspace-1' }];
+    if (table === tenantWorkCalendars) return withCalendar ? [{ tenantId }] : [];
     if (table === orgUnits) return [{ id: unitId, tenantId, lifecycleStatus: 'draft', managerPersonId: 'manager-1' }];
     if (table === orgTeams) return [];
     if (table === orgEmployeePlacements) return [
@@ -85,6 +86,7 @@ function setupBatch(linkedIds: string[]) {
   let unitReads = 0;
   const rowsFor = (table: unknown, fields?: Record<string, unknown>): unknown[] => {
     if (table === workspaceConnections) return [{ id: 'workspace-1' }];
+    if (table === tenantWorkCalendars) return [{ tenantId }];
     if (table === orgUnits) {
       selectedUnit = `unit-${++unitReads}`;
       return [{ id: selectedUnit, tenantId, lifecycleStatus: 'draft', managerPersonId: `manager-${unitReads}` }];
@@ -125,6 +127,30 @@ function setupBatch(linkedIds: string[]) {
 }
 
 describe('HierarchyRolloutService', () => {
+  it('rejects activation and audits when the company work calendar is not configured', async () => {
+    const { service, updates, audit } = setup(['manager-1', 'employee-ready'], false, false);
+    await expect(service.activateUnit(tenantId, unitId, workspaceId, actor)).rejects.toMatchObject({
+      name: 'HierarchyRolloutError', code: 'work_calendar_not_configured',
+    });
+    expect(updates).toEqual([]);
+    expect(audit).toContainEqual(expect.objectContaining({
+      action: 'org.unit.rollout.rejected', reason: 'work_calendar_not_configured' }));
+  });
+
+  it('previews not ready with a work_calendar_not_configured issue when no calendar exists', async () => {
+    const { service } = setup(['manager-1', 'employee-ready'], false, false);
+    const preview = await service.previewUnits(tenantId, [unitId], workspaceId, actor);
+    expect(preview.ready).toBe(false);
+    expect(preview.units[0]!.plan.ready).toBe(false);
+    expect(preview.units[0]!.plan.issues).toContainEqual({ code: 'work_calendar_not_configured', entityId: tenantId });
+  });
+
+  it('previews ready when the calendar exists', async () => {
+    const { service } = setup(['manager-1', 'employee-ready']);
+    const preview = await service.previewUnits(tenantId, [unitId], workspaceId, actor);
+    expect(preview.units[0]!.plan.issues.map((issue) => issue.code)).not.toContain('work_calendar_not_configured');
+  });
+
   it('activates only linked ready Persons and their placement in one transaction', async () => {
     const { service, updates, audit, onboarding } = setup(['manager-1', 'employee-ready']);
     await expect(service.activateUnit(tenantId, unitId, workspaceId, actor)).resolves.toMatchObject({

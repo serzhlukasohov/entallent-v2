@@ -64,6 +64,23 @@ export const PulseCaptureScopeSchema = z.discriminatedUnion('type', [
 ]);
 export type PulseCaptureScope = z.infer<typeof PulseCaptureScopeSchema>;
 
+/**
+ * Onboarding meaning of the latest employee message, read by the classifier only when the
+ * person has an onboarding state. TypeScript decides what (if anything) changes.
+ */
+export const OnboardingSignalIntentSchema = z.enum([
+  'start', 'later', 'decline', 'acknowledge', 'stop_participation', 'end_today_only', 'ambiguous', 'none',
+]);
+export type OnboardingSignalIntent = z.infer<typeof OnboardingSignalIntentSchema>;
+
+export const OnboardingSignalSchema = z.object({
+  intent: OnboardingSignalIntentSchema,
+  substantive: z.boolean(),
+});
+export type OnboardingSignal = z.infer<typeof OnboardingSignalSchema>;
+export const FormatRequestSchema = z.enum(['list', 'outline', 'steps']);
+export type FormatRequest = z.infer<typeof FormatRequestSchema>;
+
 export const SituationClassificationSchema = z.object({
   primaryIntent: SituationIntentSchema,
   secondaryIntents: z.array(z.string()),
@@ -108,13 +125,38 @@ export const SituationClassificationSchema = z.object({
       .catch({ type: 'unresolved' })
       .optional(),
   ),
+  /** Onboarding meaning of the latest message; invalid model output fails closed to null. */
+  onboardingSignal: OnboardingSignalSchema.nullish().catch(null),
+  /**
+   * The employee asks what is left in the pulse cycle or whether they answered everything
+   * (GC round 3 CAP-3). The reply is then grounded on typed cycle progress.
+   */
+  cycleStatusQuestion: z.preprocess(
+    (value) => value === null || value === undefined ? false : value,
+    z.boolean().catch(false).optional(),
+  ),
+  /**
+   * GC round 3 CAP-6: the latest mentor turn contained an offer to do or produce something.
+   * Read by the classifier from the transcript each turn; malformed output fails closed.
+   */
+  priorAssistantOffer: z.boolean().optional().catch(false),
+  /** The latest employee message accepts that offer. Only meaningful with priorAssistantOffer. */
+  acceptsPriorOffer: z.boolean().optional().catch(false),
+  /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; unknown values fail closed. */
+  formatRequest: FormatRequestSchema.nullable().optional().catch(null),
 }).transform((classification) => {
+  const acceptsPriorOffer = classification.acceptsPriorOffer === undefined
+    ? undefined
+    : classification.priorAssistantOffer === true && classification.acceptsPriorOffer;
   const hasPulseCaptureIntent = classification.primaryIntent === 'pulse_capture_explanation'
     || classification.secondaryIntents.includes('pulse_capture_explanation');
-  if (!hasPulseCaptureIntent || classification.pulseCaptureScope !== undefined) {
+  const pulseCaptureScope = hasPulseCaptureIntent && classification.pulseCaptureScope === undefined
+    ? { type: 'unresolved' as const }
+    : classification.pulseCaptureScope;
+  if (acceptsPriorOffer === classification.acceptsPriorOffer && pulseCaptureScope === classification.pulseCaptureScope) {
     return classification;
   }
-  return { ...classification, pulseCaptureScope: { type: 'unresolved' as const } };
+  return { ...classification, acceptsPriorOffer, pulseCaptureScope };
 });
 export type SituationClassification = z.infer<typeof SituationClassificationSchema>;
 
@@ -303,6 +345,11 @@ export type RiskAssessment = AssessedRisk | UnassessedRisk;
 export const SurveyEvidenceEvaluationSchema = z.object({
   candidateQuestionIds: z.array(z.string()),
   voluntaryReopenQuestionIds: z.array(z.string()).optional(),
+  /**
+   * GC round 3 CAP-2: questions whose driver the employee explicitly declined to give in the latest
+   * message when that refusal carries no new meaning of its own. Malformed output fails closed to [].
+   */
+  driverDeclinedQuestionIds: z.array(z.string()).optional().catch([]),
   evidence: z.array(
     z.object({
       questionId: z.string(),
@@ -315,6 +362,13 @@ export const SurveyEvidenceEvaluationSchema = z.object({
       followUpProbeNeeded: z.boolean(),
       thresholdReached: z.boolean(),
       assessmentShouldRemainUnknown: z.boolean(),
+      /**
+       * GC round 3 CAP-2: the employee said what drives or explains the status (a cause in their
+       * own words). A missing or malformed value fails closed to false: the question stays open.
+       */
+      driverCaptured: z.boolean().optional().catch(false),
+      /** The employee explicitly declined to say what drives it; honoured on the first refusal. */
+      driverDeclined: z.boolean().optional().catch(false),
     }),
   ),
 });
@@ -367,6 +421,8 @@ export const ReplyStrategySchema = z.object({
   surveyProbeQuestionId: z.string().optional(),
   maxResponseLength: z.enum(['short', 'medium', 'long']),
   forbiddenPatterns: z.array(z.string()),
+  /** The turn may be an onboarding choice but is unclear: ask one question, change nothing. */
+  onboardingClarify: z.boolean().optional(),
 });
 export type ReplyStrategy = z.infer<typeof ReplyStrategySchema>;
 
@@ -374,11 +430,13 @@ const optionalNullableText = z.preprocess((value) => value === null ? undefined 
 
 export const GeneratedResponseSchema = z.object({
   text: z.string(),
-  confirmationSummary: z.string().optional(),
+  confirmationSummary: optionalNullableText,
   /** Two-part reply on a V2 bundle or clarification turn (GC round 3 CAP-4): the answer to the latest message. */
   replyText: optionalNullableText,
   /** The composed bundle or clarification text the model must return byte-for-byte. */
   bundleText: optionalNullableText,
+  /** GC round 3 CAP-1: the one topic question of the turn, required when a topic question is due. */
+  topicQuestion: optionalNullableText,
   confidence: z.number().min(0).max(1),
   containsSurveyProbe: z.boolean(),
   surveyProbeQuestionId: z.preprocess((value) => value === null ? undefined : value, z.string().optional()),

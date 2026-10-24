@@ -35,7 +35,10 @@ function setup(lastTeamEmployee = false, extraUnitEmployee = false) {
     } }) }),
   }));
   const insert = vi.fn().mockImplementation((table: unknown) => ({
-    values: async (value: unknown) => { writes.push({ table, value }); },
+    values: (value: unknown) => {
+      writes.push({ table, value });
+      return Object.assign(Promise.resolve(undefined), { returning: async () => [{ id: `audit-${writes.length}` }] });
+    },
   }));
   const db = {
     select: () => ({ from: (table: unknown) => ({ where: () => ({
@@ -45,7 +48,8 @@ function setup(lastTeamEmployee = false, extraUnitEmployee = false) {
     update, insert,
     transaction: vi.fn(async (run: (tx: unknown) => Promise<unknown>) => run(db)),
   };
-  return { service: new HierarchyMutationService({ client: db } as never), writes, update, db };
+  const publisher = { publish: vi.fn().mockResolvedValue(undefined) };
+  return { service: new HierarchyMutationService({ client: db } as never, publisher as never), writes, update, db, publisher };
 }
 
 describe('HierarchyMutationService.moveEmployee', () => {
@@ -165,5 +169,73 @@ describe('HierarchyMutationService.promoteManager', () => {
     expect(update).not.toHaveBeenCalled();
     expect(writes.find((w) => w.table === auditLogs)?.value)
       .toMatchObject({ action: 'org.manager.promote.rejected' });
+  });
+});
+
+describe('HierarchyMutationService onboarding events', () => {
+  const auditId = (writes: Array<{ table: unknown; value: unknown }>) =>
+    `audit-${writes.findIndex((w) => w.table === auditLogs) + 1}`;
+
+  it('publishes role changes for a promoted Manager and a previous Manager who becomes an Employee', async () => {
+    const { service, writes, publisher } = setup();
+    await service.promoteManager(tenantId, 'unit-b', 'employee-c', 'become_employee', actor);
+    const id = auditId(writes);
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(publisher.publish.mock.calls[0][0]).toBe(tenantId);
+    expect(publisher.publish.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      { personId: 'employee-c', auditLogId: id, event: { type: 'role_changed', from: 'employee', to: 'manager' } },
+      { personId: 'manager-b', auditLogId: id, event: { type: 'role_changed', from: 'manager', to: 'employee' } },
+    ]));
+    expect(publisher.publish.mock.calls[0][1]).toHaveLength(2);
+  });
+
+  it('publishes deactivated for a previous Manager who is deactivated', async () => {
+    const { service, writes, publisher } = setup(false, true);
+    await service.promoteManager(tenantId, 'unit-b', 'employee-c', 'deactivate', actor);
+    const id = auditId(writes);
+    expect(publisher.publish.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      { personId: 'employee-c', auditLogId: id, event: { type: 'role_changed', from: 'employee', to: 'manager' } },
+      { personId: 'manager-b', auditLogId: id, event: { type: 'deactivated' } },
+    ]));
+    expect(publisher.publish.mock.calls[0][1]).toHaveLength(2);
+  });
+
+  it('publishes role changes for a promoted Team Lead and a previous Lead who becomes an Employee', async () => {
+    const { service, writes, publisher } = setup();
+    await service.promoteTeamLead(tenantId, 'team-a', 'employee-a', 'become_employee', actor);
+    const id = auditId(writes);
+    expect(publisher.publish.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      { personId: 'employee-a', auditLogId: id, event: { type: 'role_changed', from: 'employee', to: 'team_lead' } },
+      { personId: 'lead-a', auditLogId: id, event: { type: 'role_changed', from: 'team_lead', to: 'employee' } },
+    ]));
+    expect(publisher.publish.mock.calls[0][1]).toHaveLength(2);
+  });
+
+  it('publishes deactivated for a previous Lead who is deactivated', async () => {
+    const { service, writes, publisher } = setup();
+    await service.promoteTeamLead(tenantId, 'team-a', 'employee-a', 'deactivate', actor);
+    const id = auditId(writes);
+    expect(publisher.publish.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      { personId: 'lead-a', auditLogId: id, event: { type: 'deactivated' } },
+    ]));
+  });
+
+  it('publishes nothing when the transaction is rejected', async () => {
+    const { service, publisher } = setup(true);
+    await expect(service.promoteTeamLead(tenantId, 'team-a', 'employee-a', 'deactivate', actor)).rejects.toThrow();
+    expect(publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it('publishes nothing for a plain employee move', async () => {
+    const { service, publisher } = setup();
+    await service.moveEmployee(tenantId, 'employee-a', 'unit-b', null, actor);
+    expect(publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it('does not fail the mutation when publishing throws', async () => {
+    const { service, publisher } = setup();
+    publisher.publish.mockRejectedValue(new Error('redis down'));
+    await expect(service.promoteTeamLead(tenantId, 'team-a', 'employee-a', 'become_employee', actor))
+      .resolves.toMatchObject({ teamId: 'team-a' });
   });
 });

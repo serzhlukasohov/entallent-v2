@@ -70,9 +70,57 @@
       "manualReviewRequired": false
     },
     {
+      "id": "offer-delivered",
+      "name": "CAP-6 accepted offer is delivered",
+      "file": "src/scenarios/offer-delivered.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "format-request-outline",
+      "name": "CAP-9 outline with time slots",
+      "file": "src/scenarios/format-request-outline.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
       "id": "answer-then-bundle",
       "name": "CAP-4 answer before the confirmation bundle",
       "file": "src/scenarios/answer-then-bundle.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "reasked-question",
+      "name": "CAP-8 answered question is not re-asked",
+      "file": "src/scenarios/reasked-question.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "changed-advice",
+      "name": "CAP-10 changed advice is named",
+      "file": "src/scenarios/changed-advice.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "sentiment-amplification",
+      "name": "CAP-8 sentiment is not amplified",
+      "file": "src/scenarios/sentiment-amplification.sim.test.ts",
+      "hardPasses": 5,
+      "judgePasses": 4,
+      "manualReviewRequired": false
+    },
+    {
+      "id": "topic-steering",
+      "name": "CAP-1/CAP-2 topic steering in an open pulse cycle",
+      "file": "src/scenarios/topic-steering.sim.test.ts",
       "hardPasses": 5,
       "judgePasses": 4,
       "manualReviewRequired": false

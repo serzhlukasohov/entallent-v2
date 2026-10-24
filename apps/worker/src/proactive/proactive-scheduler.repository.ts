@@ -22,7 +22,8 @@ interface CandidateRow {
 /**
  * Finds users due for a proactive check-in. All gating that can be expressed in
  * SQL happens here — silence since last message, cadence since last proactive
- * contact, and absence of an active high/critical risk signal. The per-user
+ * contact, absence of an active high/critical risk signal, and onboarding participation
+ * (no onboarding_states row, or participation 'active'). The per-user
  * quiet-hours guard (which needs timezone math) is applied by the use case.
  */
 @Injectable()
@@ -61,10 +62,16 @@ export class ProactiveSchedulerRepository implements ProactiveSchedulerRepositor
         ORDER BY created_at DESC
         LIMIT 1
       ) c ON true
+      LEFT JOIN people p ON p.id = u.id AND p.tenant_id = u.tenant_id
       LEFT JOIN workspace_connections wc
         ON wc.tenant_id = u.tenant_id AND wc.channel_type = c.channel_type AND wc.status = 'active'
       WHERE u.status = 'active'
         AND u.proactive_messaging_enabled = true
+        AND (p.id IS NULL OR p.pulse_participant = true)
+        AND NOT EXISTS (
+          SELECT 1 FROM onboarding_states os
+          WHERE os.tenant_id = u.tenant_id AND os.person_id = u.id AND os.participation <> 'active'
+        )
         ${tenantFilter}
         AND NOT EXISTS (
           SELECT 1 FROM messages m

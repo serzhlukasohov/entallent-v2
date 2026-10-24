@@ -1085,3 +1085,380 @@ describe('buildRespondSystemPrompt trailing bundle (GC round 3 CAP-4)', () => {
     expect(prompt).not.toContain('"replyText"');
   });
 });
+
+describe('buildRespondSystemPrompt answered-detail contract (GC round 3 CAP-8, T9)', () => {
+  const normal = (includeFollowUpQuestion: boolean): ReplyStrategy => ({
+    mode: 'normal', tone: 'warm', includeFollowUpQuestion, maxResponseLength: 'short', forbiddenPatterns: [],
+  });
+  type ReplyPlan = NonNullable<ResponseContext['replyPlan']>;
+  const plan = (maxQuestions: 0 | 1): ReplyPlan => ({
+    dialogueAct: 'new_substance',
+    latestUserSubstance: 'release blocked on the only security reviewer being out; nobody else may sign off',
+    topicAnchor: null,
+    memoryAnchors: [],
+    responseMove: 'address_new_substance',
+    mayInferFromBrevity: true,
+    questionPolicy: maxQuestions === 1
+      ? { maxQuestions: 1, reason: 'new_substance_allows_question' }
+      : { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+    requiredGrounding: [],
+    forbiddenMoves: ['unsupported_interpretation', 'survey_probe'],
+  });
+
+  it('treats details stated in the latest message as answered on a first-turn question', () => {
+    const p = buildRespondSystemPrompt(normal(true), context({ userName: 'T', replyPlan: plan(1) }));
+    expect(p).toContain('Answered-detail contract (hard contract)');
+    expect(p).toMatch(/stated explicitly in the transcript, including in their latest message, is answered/);
+    expect(p).toMatch(/do not ask whether an alternative, exception, or backup exists when they said there is none/i);
+    expect(p).toMatch(/If the only question left would do that, ask none/);
+    expect(p).toMatch(/Never rephrase an answered question, including a detail the employee stated in their latest message/);
+  });
+
+  it('omits the contract when the turn allows no question', () => {
+    const p = buildRespondSystemPrompt(normal(false), context({ userName: 'T', replyPlan: plan(0) }));
+    expect(p).not.toContain('Answered-detail contract (hard contract)');
+  });
+
+  it('omits the contract in safety mode', () => {
+    const sensitive: ReplyStrategy = { ...normal(true), mode: 'sensitive' };
+    const p = buildRespondSystemPrompt(sensitive, context({ userName: 'T', replyPlan: plan(1) }));
+    expect(p).not.toContain('Answered-detail contract (hard contract)');
+  });
+});
+
+describe('buildRespondSystemPrompt topic completion and cycle status (GC round 3 CAP-3)', () => {
+  it('states completion with progress when a topic closes', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 },
+    }));
+    expect(prompt).toMatch(/complete/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toMatch(/3 (topics? )?(still )?(remain|left)/i);
+    expect(prompt).not.toMatch(/last topic/i);
+  });
+
+  it('says the cycle is complete after the last topic', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'belonging', topicsClosed: 4, topicsTotal: 4 },
+    }));
+    expect(prompt).toMatch(/last topic/i);
+    expect(prompt).toContain('4 of 4');
+  });
+
+  it('keeps the legacy acknowledgement when no progress is known', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', topicConfirmed: { questionGroup: 'autonomy' },
+    }));
+    expect(prompt).toContain('"autonomy" topic');
+    expect(prompt).not.toMatch(/\d+ of \d+ topics/);
+  });
+
+  it('grounds a cycle-status answer on typed progress only', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      cycleProgress: { inCycle: true, topicsTotal: 4, topicsClosed: 1, openTopics: ['growth', 'purpose', 'belonging'], awaitingReply: true },
+    }));
+    expect(prompt).toMatch(/Cycle status/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toContain('growth');
+    expect(prompt).toMatch(/waiting for (their|the employee's) reply/i);
+    expect(prompt).toMatch(/never list, quote, or repeat the evidence/i);
+  });
+
+  it('says nothing is pending outside a cycle', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      cycleProgress: { inCycle: false, topicsTotal: 0, topicsClosed: 0, openTopics: [], awaitingReply: false },
+    }));
+    expect(prompt).toMatch(/nothing (is )?pending/i);
+    expect(prompt).not.toContain('0 of 0');
+  });
+
+  it('describes the corrected-statement variant as the corrected version of a disputed statement', () => {
+    const ctx = context({
+      userName: 'Test',
+      trailingBundle: { kind: 'corrected_statement', text: 'So the fair version is: you set your own priorities. Right?' },
+    });
+    const prompt = buildRespondSystemPrompt(strategy, ctx);
+    expect(prompt).toMatch(/corrected version/i);
+    expect(prompt).toMatch(/disputed/i);
+    expect(prompt).toContain('"bundleText"');
+  });
+});
+
+describe('buildRespondSystemPrompt question not collected (GC round 3 S4b)', () => {
+  it('asks for one plain sentence that the point is left out for this cycle, in the model\'s own words', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test', questionNotCollected: { questionGroup: 'autonomy' },
+    }));
+    expect(prompt).toMatch(/not collected \(hard contract\)/i);
+    expect(prompt).toMatch(/one plain sentence/i);
+    expect(prompt).toMatch(/own words/i);
+    expect(prompt).toMatch(/this cycle/i);
+    expect(prompt).toContain('how much say you have over your own work');
+    expect(prompt).not.toContain('"autonomy"');
+    expect(prompt).toMatch(/do not ask about (that|this) point again/i);
+    expect(prompt).toMatch(/never (repeat|restate|quote) the (disputed|earlier) wording/i);
+  });
+
+  it('keeps the not-collected sentence separate from completion and a fixed text, and claims nothing about stored data', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({
+      userName: 'Test',
+      questionNotCollected: { questionGroup: 'autonomy' },
+      topicConfirmed: { questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 4 },
+      trailingBundle: { kind: 'clarification', text: 'What would you change about the other point?' },
+    }));
+    expect(prompt).toMatch(/not collected \(hard contract\)/i);
+    expect(prompt).toContain('1 of 4');
+    expect(prompt).toMatch(/in addition to any completion/i);
+    expect(prompt).toMatch(/fixed text .*(another|a different|other) point/i);
+    expect(prompt).not.toMatch(/nothing about it is noted/i);
+  });
+
+  it('adds nothing when no point was left uncollected', () => {
+    const prompt = buildRespondSystemPrompt(strategy, context({ userName: 'Test' }));
+    expect(prompt).not.toMatch(/not collected \(hard contract\)/i);
+  });
+});
+
+describe('buildRespondSystemPrompt accepted offers and format requests (GC round 3 CAP-6/CAP-9)', () => {
+  const normal: ReplyStrategy = { ...strategy, mode: 'normal', includeFollowUpQuestion: true };
+  const acceptancePlan: NonNullable<ResponseContext['replyPlan']> = {
+    dialogueAct: 'acknowledgement',
+    responseMove: 'answer_request',
+    latestUserSubstance: null,
+    topicAnchor: 'feedback for the senior colleague',
+    memoryAnchors: [],
+    requiredGrounding: [
+      { source: 'prior_offer', category: 'offer', content: 'the item offered in the previous assistant turn', requirement: 'deliver_now' },
+    ],
+    resolvedDetails: [],
+    questionPolicy: { maxQuestions: 0, reason: 'offer_delivery' },
+    mayInferFromBrevity: false,
+    forbiddenMoves: ['unsupported_interpretation', 'offer_again', 'new_offer'],
+    formatRequest: null,
+  };
+
+  it('renders an offer-delivery contract instead of the acknowledgement pause', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: acceptancePlan }));
+
+    expect(prompt).toContain('Offer-delivery contract (hard contract)');
+    // Leading position: the contract opens the system prompt, ahead of the persona.
+    expect(prompt.indexOf('Offer-delivery contract')).toBeLessThan(prompt.indexOf('You are speaking directly with the employee'));
+    expect(prompt).toMatch(/accepted the offer[^.]*previous (?:reply|turn)/i);
+    expect(prompt).toMatch(/deliver[^.]*now/i);
+    expect(prompt).toMatch(/do not restate/i);
+    expect(prompt).toMatch(/do not offer (?:it )?again/i);
+    expect(prompt).toMatch(/one version[^.]*adjusted the way the employee asked/i);
+    // A final self-check sits right before the JSON instruction, where the closing sentence is written.
+    expect(prompt).toMatch(/Final check[^]*delete[^]*"If you want"[^]*\n\nReturn JSON:/i);
+    expect(prompt).toMatch(/no conditional variants?[^.]*"if you want it firmer/i);
+    expect(prompt).not.toContain('Acknowledgement contract');
+    expect(prompt).not.toContain('typed pause act controls this turn');
+    expect(prompt).toContain('ask zero questions this turn');
+  });
+
+  it('keeps the accepted offer out of the pause gating in the user prompt too', () => {
+    const userPrompt = buildRespondUserPrompt(
+      [
+        { role: 'assistant', content: 'If you want, I can give you exact phrases you can say out loud.', timestamp: new Date() },
+        { role: 'user', content: 'Yes, a bit more direct please', timestamp: new Date() },
+      ],
+      context({ userName: 'Sam', replyPlan: acceptancePlan }),
+      normal,
+    );
+
+    expect(userPrompt).toContain('Yes, a bit more direct please');
+    expect(userPrompt).not.toContain('UNTRUSTED TOPIC ANCHOR');
+  });
+
+  it('forbids a new offer when the plan says so and explains what to do instead', () => {
+    const requestPlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'give me the exact phrases',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: requestPlan }));
+
+    expect(prompt).toContain('Offer limit (hard contract)');
+    expect(prompt).toMatch(/do not end with an offer/i);
+    expect(prompt).toMatch(/"if you want, I can"/i);
+    expect(prompt).not.toContain('Offer-delivery contract');
+  });
+
+  it('lifts the no-list style rule only for an explicit format request', () => {
+    const outlinePlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'give me an outline with timings, a list with time slots please',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 0, reason: 'format_request' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+      formatRequest: 'outline',
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: outlinePlan }));
+
+    expect(prompt).toContain('Format contract (hard contract)');
+    expect(prompt.indexOf('Format contract')).toBeLessThan(prompt.indexOf('You are speaking directly with the employee'));
+    expect(prompt).toMatch(/Reason: format_request\. Deliver the items/);
+    expect(prompt).toMatch(/asked for an outline/i);
+    expect(prompt).toMatch(/one item per line/i);
+    expect(prompt).toMatch(/plain "-" or numbered/i);
+    expect(prompt).toMatch(/no headers/i);
+    expect(prompt).not.toContain("You don't structure your replies with headers or bullet points");
+  });
+
+  it('keeps the prose rule on turns without a format request', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: acceptancePlan }));
+
+    expect(prompt).toContain("You don't structure your replies with headers or bullet points");
+    expect(prompt).not.toContain('Format contract');
+  });
+
+  it('keeps memory and goal hints out of an offer-delivery turn', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({
+      userName: 'Sam',
+      replyPlan: acceptancePlan,
+      memoryContext: {
+        items: [{ id: 'm-1', category: 'project_context', content: 'payments migration', importance: 1 }],
+        goals: [{ id: 'g-1', title: 'get promoted by spring' } as never],
+      },
+    }));
+
+    expect(prompt).not.toContain('Things you already know');
+    expect(prompt).not.toContain('payments migration');
+    expect(prompt).not.toContain('One prequalified active goal');
+  });
+
+  it('explains the zero-question policy on an offer-delivery turn as delivering, not pausing', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: acceptancePlan }));
+
+    expect(prompt).toMatch(/Reason: offer_delivery\. Deliver the item/);
+    expect(prompt).not.toContain('A plain statement or acknowledgement is enough');
+  });
+
+  it('lets a capability decline state what the coach can do instead without a deferred offer', () => {
+    const requestPlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'find me a link',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: requestPlan }));
+
+    expect(prompt).toMatch(/Offer limit \(hard contract\):[^]*decline[^]*state what you can do instead/i);
+    expect(prompt).not.toContain('a previous offer may still be open');
+  });
+
+  it('describes an outline request without asserting time slots the employee did not ask for', () => {
+    const outlinePlan: NonNullable<ResponseContext['replyPlan']> = {
+      ...acceptancePlan,
+      dialogueAct: 'request',
+      latestUserSubstance: 'give me an agenda for the 1:1',
+      requiredGrounding: [],
+      questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' },
+      forbiddenMoves: ['unsupported_interpretation', 'new_offer'],
+      formatRequest: 'outline',
+    };
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam', replyPlan: outlinePlan }));
+
+    expect(prompt).toMatch(/asked for an outline \(an agenda or plan\)/i);
+    expect(prompt).toMatch(/time slot[^.]*only when the employee asked for timings/i);
+    expect(prompt).not.toMatch(/asked for an outline with time slots/i);
+  });
+});
+describe('buildRespondSystemPrompt onboarding clarification', () => {
+  const normal: ReplyStrategy = { mode: 'normal', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] };
+
+  it('asks one short question separating a pause from stopping invitations when onboardingClarify is set', () => {
+    const prompt = buildRespondSystemPrompt({ ...normal, onboardingClarify: true }, context({ userName: 'Sam' }));
+    expect(prompt).toContain('Onboarding clarification');
+    expect(prompt).toMatch(/exactly one short question/i);
+    expect(prompt).toContain('pause just for today or for now');
+    expect(prompt).toContain('stop the invitations');
+    expect(prompt).toContain('start now');
+  });
+
+  it('adds nothing about onboarding otherwise', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Sam' }));
+    expect(prompt).not.toContain('Onboarding clarification');
+  });
+});
+
+describe('buildRespondSystemPrompt onboarding start opener', () => {
+  const opener: ReplyStrategy = { mode: 'proactive_follow_up', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] };
+  const probeQuestion = { id: 'q-7', probeStrategies: ['how clear priorities feel'] };
+
+  it('tells the model the employee just agreed to start, without a re-introduction, keeping the probe plumbing', () => {
+    const prompt = buildRespondSystemPrompt(opener, context({
+      userName: 'Sam',
+      proactiveCheckIn: { probeQuestion, afterUserStart: true },
+    }));
+    expect(prompt).toContain('just agreed to start the conversation');
+    expect(prompt).toContain('Do not introduce yourself again');
+    expect(prompt).toContain('how clear priorities feel');
+    expect(prompt).toContain('"surveyProbeQuestionId": "q-7"');
+    expect(prompt).not.toContain('has not messaged you');
+  });
+
+  it('keeps the agent-first check-in wording for ordinary proactive check-ins', () => {
+    const prompt = buildRespondSystemPrompt(opener, context({ userName: 'Sam', proactiveCheckIn: { probeQuestion } }));
+    expect(prompt).toContain('has not messaged you');
+    expect(prompt).not.toContain('just agreed to start the conversation');
+  });
+});
+
+
+// GC round 3 CAP-1, CAP-2 (ADR-013 D8): a due topic question is a required field, not a hint.
+describe('buildRespondSystemPrompt topic question contract', () => {
+  const normal: ReplyStrategy = { ...strategy, mode: 'normal', includeFollowUpQuestion: true };
+  const topicQuestion = {
+    questionId: 'q-autonomy-1', questionGroup: 'autonomy', focus: 'open' as const,
+    probeStrategies: ['How much freedom they have to choose their methods'],
+  };
+
+  it('requires one separate topic question on the topic meaning, never the optional hint', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Test', topicQuestion }));
+    expect(prompt).toMatch(/topic question \(hard contract\)/i);
+    expect(prompt).toContain('autonomy, how much say you have over your own work');
+    expect(prompt).toContain('How much freedom they have to choose their methods');
+    expect(prompt).toContain('"topicQuestion": string');
+    expect(prompt).toContain('"replyText": string');
+    expect(prompt).toContain('"surveyProbeQuestionId": "q-autonomy-1"');
+    expect(prompt).not.toMatch(/you may skip this entirely/i);
+    expect(prompt).not.toMatch(/Optional — a topic worth exploring/);
+    expect(prompt).toMatch(/Do not preview, announce, or paraphrase the topic question in "replyText"/);
+    // The one question is written first, so the answer part is composed knowing it exists.
+    expect(prompt.indexOf('"topicQuestion": string')).toBeLessThan(prompt.indexOf('"replyText": string'));
+    expect(prompt.indexOf('1. "topicQuestion"')).toBeGreaterThan(-1);
+  });
+
+  it('asks for the driver when the employee gave a status without one', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({
+      userName: 'Test', topicQuestion: { ...topicQuestion, focus: 'driver' },
+    }));
+    expect(prompt).toMatch(/what drives/i);
+    expect(prompt).toMatch(/already gave a status/i);
+  });
+
+  it('scopes any no-question rule to the reply part', () => {
+    const prompt = buildRespondSystemPrompt({ ...normal, includeFollowUpQuestion: false }, context({
+      userName: 'Test', topicQuestion,
+    }));
+    expect(prompt).toMatch(/applies to "replyText" only/);
+  });
+
+  it('keeps the optional hint outside a topic turn', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({
+      userName: 'Test',
+      surveyProbeQuestion: { id: 'q-1', probeStrategies: ['ask about autonomy'] },
+    }));
+    expect(prompt).not.toMatch(/topic question \(hard contract\)/i);
+    expect(prompt).not.toContain('"topicQuestion"');
+  });
+});

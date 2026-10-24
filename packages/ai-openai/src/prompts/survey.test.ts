@@ -31,3 +31,20 @@ describe('survey evidence numeric ratings', () => {
     expect(buildSurveySystemPrompt()).not.toContain('Earlier turns are context only');
   });
 });
+
+// GC round 3 CAP-2 (T2): a status alone does not close a question; the capture types the driver.
+describe('buildSurveySystemPrompt driver signals', () => {
+  it('defines the typed driver and decline signals and returns them per evidence item', () => {
+    const prompt = buildSurveySystemPrompt();
+    expect(prompt).toMatch(/driverCaptured: true only when/);
+    expect(prompt).toMatch(/A rating or status alone .* is not a driver/);
+    expect(prompt).toMatch(/driverDeclined: true only when/);
+    expect(prompt).toContain('"driverCaptured": false');
+    expect(prompt).toContain('"driverDeclined": false');
+    expect(prompt).toContain('"driverDeclinedQuestionIds": []');
+    expect(prompt).toMatch(/driverDeclinedQuestionIds: list question IDs/);
+    // Only the latest message can supply a driver; an earlier reason is already captured.
+    expect(prompt).not.toMatch(/Earlier turns may supply the driver/);
+    expect(prompt).toMatch(/the latest employee message states or explicitly reaffirms/);
+  });
+});

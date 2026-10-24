@@ -12,6 +12,8 @@ export const QUEUE_NAMES = {
   V2_REPORT: 'v2-report',
   STYLE_ANALYSIS: 'style-analysis',
   PROFILE_HYDRATION: 'profile-hydration',
+  ONBOARDING_ACTION: 'onboarding-action',
+  ONBOARDING_REMINDER: 'onboarding-reminder',
 } as const;
 
 export type QueueNameKey = keyof typeof QUEUE_NAMES;

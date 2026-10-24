@@ -56,6 +56,18 @@ describe('dedicated Company setup UI', () => {
     expect(script.body).toContain('renderHierarchy(snapshot)');
     expect(script.body).toContain('pending assignment');
     expect(html.body).toContain('First-contact delivery');
+    expect(html.body).toContain('id="work-calendar"');
+    expect(script.body).toContain('not configured by enTalent');
+    expect(script.body).not.toContain('calendar-form');
     expect(script.body).toContain('Sending · verify before retry');
+  });
+  it('renders the aggregate onboarding summary without any per-person decision', () => {
+    const controller = new CompanySetupUiController();
+    const html = response(); const script = response();
+    controller.ui(html.reply as never); controller.script(script.reply as never);
+    expect(html.body).toContain('onboarding-summary');
+    expect(script.body).toContain('Hidden for groups under 5 people');
+    expect(script.body).toContain('in progress');
+    expect(script.body).not.toMatch(/participation|declined|deferred/i);
   });
 });
