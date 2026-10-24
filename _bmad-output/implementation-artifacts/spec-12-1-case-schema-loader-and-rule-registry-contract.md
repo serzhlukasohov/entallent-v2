@@ -2,7 +2,8 @@
 title: 'Story 12.1: Case Schema, Loader and Rule Registry Contract'
 type: 'feature'
 created: '2026-10-24'
-status: 'ready-for-dev'
+status: 'done'
+baseline_commit: 'c7fe50d4dc5520186e0f51f9ef079b63deed01eb'
 route: 'dispatch'
 review_loop_iteration: 0
 context:
@@ -66,11 +67,11 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `packages/conversation-sim/package.json`, `pnpm-lock.yaml` -- add zod devDependency; run `pnpm install --offline`, then `--frozen-lockfile`; lockfile diff limited to the importer entry.
-- [ ] `src/suite/schema.ts` -- enums `Level`, `Layer`, `CriterionStatus`, `TestKind` (`atomic|journey|observation`), `SourceKind` (`conversation|observation`), `FixtureName` (`clock, seededHistory, confirmationState, pulseCycle, pendingBotQuestion, freshPersona, disclosureDelivered, proactiveUsers`), `StateQueryName` (`questionProgress, stagedBundleCount, surveyEvidenceCount, outboundCount`) with per-query value schemas (`{ answered, total }` ints for `questionProgress`, non-negative ints for the counts). Also `ObservationField` (`reply.text`, `reply.messages`, `reply.messages[].metadata.<key>`, `turn.(mode|intent|outcome|bundleReply|replyPlan)`, `state.<query>`, `window.outbound`, `steps.gapMs`, `events`) with `fieldObserved` (exact or prefix match). Shapes: `FixtureRef { name, params?: Record<string, unknown> }` (each fixture validates its own params in its story); `RuleCheck { type: 'rule', rule: kebab, params? }`; `MeaningCheck`; `SeedTurn { role, text, atOffsetMs: int ≥ 0, metadata? }` with offsets non-increasing; `ScriptedStep { step: int ≥ 1, classification?, risk?, memoryProposal?: Record<string, unknown>, response?: { text, bundleText? } }`; `SourceCriterion`, `SourceCase`, `Criterion` (manifest id, `evaluatedAt`, `checks` min 1, `levels?`, `stateQuery? { name, at, kind: change|invariant }`, `independentOfCheckpoints?`, `judgeGuidance?`), `Step`, `SuiteTest`, `ReplyMessage`, `TurnTrace`, `StepObservation` (with the `reply.text` join invariant), `RunEvent`, `StateSnapshot` (partial object of the per-query schemas), `PreconditionResult`, `ExecutionError`, `CaseRun { testId, …, events }` and `CriterionResult { testId, criterionId, sourceCase, level, layer, status, advisory, method: observed|substituted|n/a, reason?, evidence?, meaningSkipped? }`. Add `parseEvaluatedAt`.
-- [ ] `src/suite/rules/registry.ts`, `reply-selection.ts`, `too-many-questions.ts`, `repeated-question.ts`, `reflective-opener.ts` -- `RuleEntry { requires, run, fixtures: { pass: CaseRun, fail: CaseRun } }` and `RULES`, `RuleName`, `RULE_NAMES`, `RuleNameSchema`. Wrapper semantics: NOT_OBSERVABLE when a required field is undeclared or the criterion is `state`/`observation-window`; a null reply at `reply:<n>` is FAIL `no-reply (turn n)`; `conversation` scope checks every reply. Evidence reads `turn <n> — <detail>`.
-- [ ] `src/suite/loader.ts`, `cases/p-v1/index.ts` (`tests: unknown[] = []`), `cases/p-v1/sources.ts` (`sources: unknown[] = []`) -- `SuiteLoadError`, `validateSuite(suiteId, { sources, tests }, rules = RULES)`, `SUITES` explicit map, `loadSuite`; all matrix rows.
-- [ ] `src/suite/__fixtures__/suite.ts`, `schema.test.ts`, `loader.test.ts`, `rules/registry.test.ts` -- one test per matrix row; deep-frozen input; drift guard that every `*.case.ts` in `cases/p-v1` is listed in `index.ts`; every rule FAILs on its `fail` fixture and PASSes on `pass`; `CaseRun` round trip; `fieldObserved` and `parseEvaluatedAt` cases.
+- [x] `packages/conversation-sim/package.json`, `pnpm-lock.yaml` -- add zod devDependency; run `pnpm install --offline`, then `--frozen-lockfile`; lockfile diff limited to the importer entry.
+- [x] `src/suite/schema.ts` -- enums `Level`, `Layer`, `CriterionStatus`, `TestKind` (`atomic|journey|observation`), `SourceKind` (`conversation|observation`), `FixtureName` (`clock, seededHistory, confirmationState, pulseCycle, pendingBotQuestion, freshPersona, disclosureDelivered, proactiveUsers`), `StateQueryName` (`questionProgress, stagedBundleCount, surveyEvidenceCount, outboundCount`) with per-query value schemas (`{ answered, total }` ints for `questionProgress`, non-negative ints for the counts). Also `ObservationField` (`reply.text`, `reply.messages`, `reply.messages[].metadata.<key>`, `turn.(mode|intent|outcome|bundleReply|replyPlan)`, `state.<query>`, `window.outbound`, `steps.gapMs`, `events`) with `fieldObserved` (exact or prefix match). Shapes: `FixtureRef { name, params?: Record<string, unknown> }` (each fixture validates its own params in its story); `RuleCheck { type: 'rule', rule: kebab, params? }`; `MeaningCheck`; `SeedTurn { role, text, atOffsetMs: int ≥ 0, metadata? }` with offsets non-increasing; `ScriptedStep { step: int ≥ 1, classification?, risk?, memoryProposal?: Record<string, unknown>, response?: { text, bundleText? } }`; `SourceCriterion`, `SourceCase`, `Criterion` (manifest id, `evaluatedAt`, `checks` min 1, `levels?`, `stateQuery? { name, at, kind: change|invariant }`, `independentOfCheckpoints?`, `judgeGuidance?`), `Step`, `SuiteTest`, `ReplyMessage`, `TurnTrace`, `StepObservation` (with the `reply.text` join invariant), `RunEvent`, `StateSnapshot` (partial object of the per-query schemas), `PreconditionResult`, `ExecutionError`, `CaseRun { testId, …, events }` and `CriterionResult { testId, criterionId, sourceCase, level, layer, status, advisory, method: observed|substituted|n/a, reason?, evidence?, meaningSkipped? }`. Add `parseEvaluatedAt`.
+- [x] `src/suite/rules/registry.ts`, `reply-selection.ts`, `too-many-questions.ts`, `repeated-question.ts`, `reflective-opener.ts` -- `RuleEntry { requires, run, fixtures: { pass: CaseRun, fail: CaseRun } }` and `RULES`, `RuleName`, `RULE_NAMES`, `RuleNameSchema`. Wrapper semantics: NOT_OBSERVABLE when a required field is undeclared or the criterion is `state`/`observation-window`; a null reply at `reply:<n>` is FAIL `no-reply (turn n)`; `conversation` scope checks every reply. Evidence reads `turn <n> — <detail>`.
+- [x] `src/suite/loader.ts`, `cases/p-v1/index.ts` (`tests: unknown[] = []`), `cases/p-v1/sources.ts` (`sources: unknown[] = []`) -- `SuiteLoadError`, `validateSuite(suiteId, { sources, tests }, rules = RULES)`, `SUITES` explicit map, `loadSuite`; all matrix rows.
+- [x] `src/suite/__fixtures__/suite.ts`, `schema.test.ts`, `loader.test.ts`, `rules/registry.test.ts` -- one test per matrix row; deep-frozen input; drift guard that every `*.case.ts` in `cases/p-v1` is listed in `index.ts`; every rule FAILs on its `fail` fixture and PASSes on `pass`; `CaseRun` round trip; `fieldObserved` and `parseEvaluatedAt` cases.
 
 **Acceptance Criteria:**
 - Given the offline package test command, when it runs, then `src/suite/**/*.test.ts` executes, every matrix row has a passing test, and the existing `gate`/`harness` tests stay green.
@@ -81,6 +82,32 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+Iteration 0 (Blind Hunter BH, Edge Case Hunter EC, Verification Gap VG).
+
+| # | Finding | Verdict | Evidence | Route |
+|---|---------|---------|----------|-------|
+| 1 | BH: rule NOT_OBSERVABLE has no CriterionStatus mapping | false | Architecture AD-6/AD-17 fix the mapping (`NOT_RUN unobservable:<field>@<level>`); it is `evaluate`'s job in 12.2 | reject |
+| 2 | BH, EC: reply.text rule accepted on a `state`/`observation-window` criterion | low | Real (shared fixture X-01.C2 does it), but the run reports NOT_RUN, never a vacuous PASS; a guard needs a new registry property | reject |
+| 3 | BH, EC: `RuleCheck.params` never validated | low | Real but no 12.1 rule takes params and no case data exists; fix adds a `RuleEntry` field | defer (12.3, deferred-work) |
+| 4 | BH, EC: `conversation` scope with no replies returns PASS | medium | `selectReplies` returns empty `replies`, `outcomeFrom([])` is PASS; vacuous pass AD-6 forbids | patch |
+| 5 | BH, EC: atomic `repeated-question` cannot see seeded coach turns | medium | `CaseRun` has no seed; rule compares the one reply with itself. Cross-story interface (evaluate/rule context) | defer (12.2/12.3, deferred-work) |
+| 6 | BH, EC: observation source coverage checked per case, not per criterion | medium | `checkCoverage` only checks that an observation test exists; an omitted testable criterion is never scored | patch |
+| 7 | EC: observation source with only NOT TESTABLE criteria is unloadable | low | Real edge, no P-suite case has it; fix is a new guard | reject |
+| 8 | BH: `stateEffect` is dead data | false | Consumed by 12.2 `evaluate` to synthesize `effect-count` (AD-11) | reject |
+| 9 | BH: no `clock` fixture added for observation tests | low | Architecture adds `clock` only on `advanceClock`; observation tests declare `clock` explicitly | reject |
+| 10 | BH, EC: L0 `scripted: []` passes; observation scripted steps unbounded | low | Real; 12.7 executor fails loudly on a missing scripted output; observation skip is deliberate for P-06 | reject |
+| 11 | BH, EC: CaseRun lacks cross-field bounds (stoppedAtStep, afterStep keys, window order, seq) | low | Real; executor output (12.7), fix adds several guards | reject |
+| 12 | EC: CriterionResult criterionId prefix not tied to sourceCase | low | Produced by 12.2 evaluate from loaded data; fix adds a guard | reject |
+| 13 | BH: drift guard matches comments, only p-v1 | low | Real but only p-v1 exists; a stale comment is unlikely | reject |
+| 14 | BH: bookkeeping (base 3af7d0e vs baseline, receipt path, status mismatch) | false | Base is the PR's requested harness base; receipt is reported in the hand-off; sprint status syncs in step 5 | reject |
+| 15 | BH: suite coupled to harness via new exports | false | Spec Code Map mandates the three exports (wrap, never copy) | reject |
+| 16 | BH: zod range / devDependency | false | Spec and epic context mandate `zod ^3.25.76` devDependency | reject |
+| 17 | BH: `SuiteLoadError.testId` holds a source id for manifest errors | low | Documented on the field; fix adds public surface | reject |
+| 18 | EC: `independentOfCheckpoints` / `judgeGuidance` accepted where meaningless | low | Real; harmless flags, fix adds guards | reject |
+| 19 | EC: test `requirement` not checked against source | low | Architecture does not require the subset; fix adds a guard | reject |
+| 20 | VG: repeated-question turn alignment over silent steps untested | medium | Pre-verified gap | patch |
+| 21 | VG: scripted range/duplicate, duplicate level, observationWindow/observation-window on journey, duplicate source criterion untested | medium | Pre-verified gap | patch |
 
 ## Design Notes
 

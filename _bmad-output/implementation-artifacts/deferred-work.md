@@ -274,3 +274,10 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
   summary: Topic selection issues one idempotent `markDone` update per settled V2 question on every lookup; batch it or read backlog statuses first.
   evidence: S5 Blind Hunter finding 10; correct but adds writes on the conversation path (lookups now run only when the cadence and cap allow).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-1-case-schema-loader-and-rule-registry-contract.md`
+  summary: The wrapped `repeated-question` rule cannot fail in an atomic test, because `CaseRun` carries no seed history and the single reply is only compared with itself; a coach re-asking a seeded coach question is never flagged.
+  evidence: Blind Hunter and Edge Case Hunter (Story 12.1 review, 2026-10-24); confirmed in `rules/repeated-question.ts` and `CaseRunSchema`. Decide in 12.2/12.3 whether `evaluate` passes the test's seed to rules (as the judge transcript already does for atomic tests) or `CaseRun` records it. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-1-case-schema-loader-and-rule-registry-contract.md`
+  summary: `RuleCheck.params` is free-form and never validated against the rule; give `RuleEntry` an optional params schema when the first parameterized rule (`effect-count`, `state-equals`) lands in 12.3, so a mistyped param fails at load instead of being ignored.
+  evidence: Blind Hunter and Edge Case Hunter (Story 12.1 review); no 12.1 rule takes params and no case data exists before 12.4, so there is no live harm yet.
