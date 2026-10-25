@@ -9,6 +9,7 @@
     "sim:watch": "vitest",
     "suite:run": "node --import tsx src/suite/cli.ts run",
     "suite:baseline:accept": "node --import tsx src/suite/cli.ts baseline:accept",
+    "suite:diff": "node --import tsx src/suite/cli.ts diff",
     "test": "vitest run src/gate src/harness src/suite src/scenarios/simulation-repositories.sim.test.ts src/scenarios/fidelity-fixtures.sim.test.ts --exclude src/scenarios/burnout.sim.test.ts --exclude src/scenarios/memory-recall.sim.test.ts --exclude src/scenarios/terse-user.sim.test.ts --exclude src/scenarios/annna-intent-fidelity.sim.test.ts --exclude src/scenarios/pulse-capture-exact-message.sim.test.ts --exclude src/scenarios/resolved-detail-question-planning.sim.test.ts --exclude src/scenarios/identity-purpose.sim.test.ts --exclude src/scenarios/capability-link-request.sim.test.ts --exclude src/scenarios/answer-then-bundle.sim.test.ts --exclude src/scenarios/offer-delivered.sim.test.ts --exclude src/scenarios/format-request-outline.sim.test.ts --exclude src/scenarios/reasked-question.sim.test.ts --exclude src/scenarios/changed-advice.sim.test.ts --exclude src/scenarios/sentiment-amplification.sim.test.ts --exclude src/scenarios/topic-steering.sim.test.ts --exclude src/scenarios/onboarding-classifier-live.sim.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\""

@@ -652,6 +652,9 @@ export const CriterionSampleSchema = z
   .strict();
 export type CriterionSample = z.infer<typeof CriterionSampleSchema>;
 
+export const CheckKindSchema = z.enum(['rule', 'meaning']);
+export type CheckKind = z.infer<typeof CheckKindSchema>;
+
 export const ScoredCriterionSchema = z
   .object({
     testId: z.string().min(1),
@@ -666,6 +669,8 @@ export const ScoredCriterionSchema = z
     n: z.number().int().min(1),
     /** Passes needed for PASS: n/n for rule-decided, ceil(0.8n) for meaning-decided criteria. */
     minPasses: nonNegativeInt,
+    /** `meaning` when a meaning check decided it (as for `minPasses`), else `rule`; `null` for manifest NOT TESTABLE rows. */
+    checkKind: CheckKindSchema.nullable(),
     advisory: z.boolean(),
     method: MethodSchema,
     reason: z.string().optional(),
@@ -736,6 +741,98 @@ export type JudgeError = z.infer<typeof JudgeErrorSchema>;
 export const UsageSchema = z.record(z.number().nonnegative());
 export type Usage = z.infer<typeof UsageSchema>;
 
+/** Provenance of an accepted baseline (AD-11); shared by `Baseline` and `SuiteDiff`. */
+export const AcceptedFromSchema = z
+  .object({ runId: z.string().min(1), gitSha: z.string().min(1), ciRunUrl: z.string().url().optional() })
+  .strict();
+export type AcceptedFrom = z.infer<typeof AcceptedFromSchema>;
+
+// ---------------------------------------------------------------------------
+// Baseline diff (AD-13)
+// ---------------------------------------------------------------------------
+
+/** In print order: `lost-coverage` first, `unchanged` last. */
+export const DiffCategorySchema = z.enum([
+  'lost-coverage',
+  'regressed',
+  'fixed',
+  'gained-coverage',
+  'new',
+  'retired',
+  'inconclusive',
+  'unchanged',
+]);
+export type DiffCategory = z.infer<typeof DiffCategorySchema>;
+
+export const DiffEntrySchema = z
+  .object({
+    key: z.string().min(1),
+    testId: z.string().min(1),
+    criterionId: z.string().regex(CRITERION_ID),
+    layer: LayerSchema,
+    testKind: TestKindSchema.nullable(),
+    checkKind: CheckKindSchema.nullable(),
+    category: DiffCategorySchema,
+    gating: z.boolean(),
+    /** `null` for `new`. */
+    baseline: z.object({ status: CriterionStatusSchema, passCount: nonNegativeInt, n: z.number().int().min(1) }).strict().nullable(),
+    /** `null` when the key is missing from the run's in-scope results. */
+    current: z
+      .object({ status: CriterionStatusSchema, passCount: nonNegativeInt, n: z.number().int().min(1), minPasses: nonNegativeInt })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+export type DiffEntry = z.infer<typeof DiffEntrySchema>;
+
+export const DiffSectionSchema = z
+  .object({
+    entries: z.array(DiffEntrySchema),
+    counts: z.record(DiffCategorySchema, nonNegativeInt),
+  })
+  .strict();
+export type DiffSection = z.infer<typeof DiffSectionSchema>;
+
+export const DiffOutcomeSchema = z.enum([
+  'clean',
+  'no-baseline',
+  'failed',
+  'baseline-invalid',
+  'judge-infrastructure',
+  'budget-exceeded',
+]);
+export type DiffOutcome = z.infer<typeof DiffOutcomeSchema>;
+
+export const DiffBaselineSourceSchema = z
+  .object({
+    /** `path`: `--baseline`; `merge-base`: `git show <merge-base>:<path>`; `default`: working-tree `baselines/<suite>/<level>.json`. */
+    kind: z.enum(['path', 'merge-base', 'default']),
+    /** The merge-base commit for `merge-base`, else `null`. */
+    ref: z.string().nullable(),
+    path: z.string().min(1),
+    missing: z.boolean(),
+  })
+  .strict();
+export type DiffBaselineSource = z.infer<typeof DiffBaselineSourceSchema>;
+
+/** `suite:diff` result, stored as `SuiteRunReport.diff` (a later diff replaces it). */
+export const SuiteDiffSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    baseline: DiffBaselineSourceSchema,
+    acceptedFrom: AcceptedFromSchema.nullable(),
+    /** The baseline's `provisional` flag; `false` without a baseline. */
+    provisional: z.boolean(),
+    outcome: DiffOutcomeSchema,
+    exitCode: z.number().int().min(0).max(4),
+    reasons: z.array(z.string()),
+    /** Atomic, observation and manifest NOT TESTABLE pairs. */
+    tests: DiffSectionSchema,
+    journeys: DiffSectionSchema,
+  })
+  .strict();
+export type SuiteDiff = z.infer<typeof SuiteDiffSchema>;
+
 export const SuiteRunReportSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -760,6 +857,8 @@ export const SuiteRunReportSchema = z
     usage: UsageSchema,
     /** Present when `--case` narrowed the run; such runs are never accepted as baselines. */
     selection: z.object({ case: z.string().min(1) }).strict().optional(),
+    /** Written by `suite:diff` (AD-13); absent until a diff ran. */
+    diff: SuiteDiffSchema.optional(),
   })
   .strict();
 export type SuiteRunReport = z.infer<typeof SuiteRunReportSchema>;
@@ -828,7 +927,15 @@ export const JudgeFingerprintSchema = z
 export type JudgeFingerprint = z.infer<typeof JudgeFingerprintSchema>;
 
 export const BaselineResultSchema = z
-  .object({ status: CriterionStatusSchema, passCount: nonNegativeInt, n: positiveInt })
+  .object({
+    status: CriterionStatusSchema,
+    passCount: nonNegativeInt,
+    n: positiveInt,
+    /** Layer and kinds let the diff judge a criterion that vanished from the run (AD-13). */
+    layer: LayerSchema,
+    testKind: TestKindSchema.nullable(),
+    checkKind: CheckKindSchema.nullable(),
+  })
   .strict();
 export type BaselineResult = z.infer<typeof BaselineResultSchema>;
 
@@ -841,9 +948,7 @@ export const BaselineSchema = z
     /** Both `null` at L0 (no judge). */
     judge: z.object({ fingerprint: JudgeFingerprintSchema.nullable(), agreement: z.unknown().nullable() }).strict(),
     coach: z.object({ model: z.string().nullable() }).strict(),
-    acceptedFrom: z
-      .object({ runId: z.string().min(1), gitSha: z.string().min(1), ciRunUrl: z.string().url().optional() })
-      .strict(),
+    acceptedFrom: AcceptedFromSchema,
     acceptedAt: IsoTimestampSchema,
     /** True when the run was INCOMPLETE or its verdict provisional (`--allow-incomplete`). */
     provisional: z.boolean(),

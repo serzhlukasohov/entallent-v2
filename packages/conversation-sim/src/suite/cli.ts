@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { parseArgs as parseNodeArgs } from 'node:util';
 import {
+  baselinePath,
   baselineRefusals,
   buildBaseline,
   currentJudgeFingerprint,
@@ -10,19 +11,29 @@ import {
   writeBaseline,
 } from './baseline';
 import { loadSuiteConfig } from './config';
+import { diffRun, diffSummaryLines, parseBaselineJson } from './diff';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import type { SuiteExecutor } from './executors/types';
 import { loadSuite } from './loader';
 import { writeSuiteReport } from './report';
 import type { RuleRegistry } from './rules/registry';
 import { runSuite } from './runner';
-import { LevelSchema, type Level, type LoadedSuite, type SuiteRunReport } from './schema';
+import {
+  LevelSchema,
+  type Baseline,
+  type DiffBaselineSource,
+  type Level,
+  type LoadedSuite,
+  type SuiteRunReport,
+} from './schema';
 
 /**
- * `suite:run` and `suite:baseline:accept` (architecture AD-11, AD-14). Exit 0 when a report
- * (or baseline) was written, whatever the verdict; 1 on usage, config, load or refusal
- * errors. Gating exit codes belong to `suite:diff` (12.9). This CLI never loads `.env` and
- * never prints environment values.
+ * `suite:run`, `suite:baseline:accept` and `suite:diff` (architecture AD-11, AD-13, AD-14).
+ * `run` and `baseline:accept` exit 0 when a report (or baseline) was written, whatever the
+ * verdict, and 1 on usage, config, load or refusal errors. `diff` exits 0 clean, 1 gating
+ * entry, 2 baseline-invalid, 3 judge infrastructure, 4 budget exceeded; usage errors and an
+ * unreadable run report are 1 and write nothing. This CLI never loads `.env` and never
+ * prints environment values.
  */
 
 export interface GitState {
@@ -43,6 +54,17 @@ export interface CliDeps {
   loadSuite: (suiteId: string) => LoadedSuite;
   createExecutor: (level: Level) => SuiteExecutor;
   rules?: RuleRegistry;
+  /** Reads a package-relative file at the merge-base with origin/main; defaults to `git` in `packageDir`. */
+  mergeBase?: (packageRelativePath: string) => MergeBaseFile;
+}
+
+export interface MergeBaseFile {
+  /** The merge-base commit sha. */
+  ref: string;
+  /** The repo-relative path read with `git show <ref>:<path>`. */
+  path: string;
+  /** `null` when the file does not exist at the merge-base. */
+  text: string | null;
 }
 
 const PACKAGE_DIR = resolve(__dirname, '..', '..');
@@ -53,13 +75,19 @@ export const HELP = `Usage:
       Only L0 runs today (L1 lands in Epic 13, L2 in Epic 14).
   suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
       Writes baselines/<suiteId>/<level>.json from a run report.
+  suite:diff --run <runId> [--baseline <path> | --merge-base]
+      Diffs a run against a baseline (default: working-tree baselines/<suite>/<level>.json;
+      --merge-base: the file at git merge-base HEAD origin/main) and writes it into the report.
 
-Exit codes: 0 report or baseline written; 1 usage, config, load or refusal error.`;
+Exit codes (run, baseline:accept): 0 report or baseline written; 1 usage, config, load or refusal error.
+Exit codes (diff): 0 clean or no baseline; 1 gating regression or lost coverage (also usage errors
+  and an unreadable run report); 2 baseline invalid; 3 judge infrastructure; 4 budget exceeded.`;
 
 export type ParsedCommand =
   | { command: 'help' }
   | { command: 'run'; suite: string; level: Level; runs: number; case?: string }
-  | { command: 'baseline:accept'; run: string; allowIncomplete: boolean; allowDirty: boolean; ciRunUrl?: string };
+  | { command: 'baseline:accept'; run: string; allowIncomplete: boolean; allowDirty: boolean; ciRunUrl?: string }
+  | { command: 'diff'; run: string; baseline?: string; mergeBase: boolean };
 
 export class CliUsageError extends Error {
   constructor(message: string) {
@@ -126,11 +154,38 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
         ...(ciRunUrl !== undefined ? { ciRunUrl } : {}),
       };
     }
+    if (command === 'diff') {
+      const { values } = parseNodeArgs({
+        args: tail,
+        strict: true,
+        allowPositionals: false,
+        options: {
+          run: { type: 'string' },
+          baseline: { type: 'string' },
+          'merge-base': { type: 'boolean' },
+          help: { type: 'boolean', short: 'h' },
+        },
+      });
+      if (values.help) return { command: 'help' };
+      if (!values.run) throw new CliUsageError('[suite] diff: --run <runId> is required');
+      if (values.baseline !== undefined && values['merge-base']) {
+        throw new CliUsageError('[suite] diff: pass either --baseline <path> or --merge-base, not both');
+      }
+      if (values.baseline !== undefined && values.baseline.trim() === '') {
+        throw new CliUsageError('[suite] diff: --baseline must not be empty');
+      }
+      return {
+        command: 'diff',
+        run: values.run,
+        ...(values.baseline !== undefined ? { baseline: values.baseline } : {}),
+        mergeBase: values['merge-base'] === true,
+      };
+    }
   } catch (error) {
     if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(`[suite] ${command}: ${(error as Error).message}`);
   }
-  throw new CliUsageError(`[suite] unknown command ${command}; expected run or baseline:accept`);
+  throw new CliUsageError(`[suite] unknown command ${command}; expected run, baseline:accept or diff`);
 }
 
 /** Model credentials removed before an L0 run; returns the removed key names (never values). */
@@ -178,6 +233,7 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps(
       return 0;
     }
     if (parsed.command === 'run') return await runCommand(parsed, deps);
+    if (parsed.command === 'diff') return diffCommand(parsed, deps);
     return acceptCommand(parsed, deps);
   } catch (error) {
     deps.error(error instanceof Error ? error.message : String(error));
@@ -262,6 +318,81 @@ function acceptCommand(parsed: Extract<ParsedCommand, { command: 'baseline:accep
     `[suite] baseline ${baseline.suiteId} ${baseline.level}${baseline.provisional ? ' (provisional)' : ''} from run ${report.runId}: ${relative(deps.packageDir, path)}`,
   );
   return 0;
+}
+
+function diffCommand(parsed: Extract<ParsedCommand, { command: 'diff' }>, deps: CliDeps): number {
+  const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
+  let report: SuiteRunReport;
+  try {
+    report = readRunReport(deps.packageDir, parsed.run);
+  } catch (error) {
+    throw new Error((error as Error).message.replace(/^\[suite\] /, '[suite] diff: '));
+  }
+  const relativeBaseline = relative(deps.packageDir, baselinePath(deps.packageDir, report.suiteId, report.level));
+
+  let source: DiffBaselineSource;
+  let baseline: Baseline | null = null;
+  const loadErrors: string[] = [];
+  const load = (text: string, origin: string) => {
+    const parsedBaseline = parseBaselineJson(text, origin);
+    if (parsedBaseline.ok) baseline = parsedBaseline.baseline;
+    else loadErrors.push(parsedBaseline.reason);
+  };
+
+  if (parsed.mergeBase) {
+    try {
+      const file = (deps.mergeBase ?? ((path: string) => readMergeBaseFile(deps.packageDir, path)))(relativeBaseline);
+      source = { kind: 'merge-base', ref: file.ref, path: file.path, missing: file.text === null };
+      if (file.text !== null) load(file.text, `${file.ref}:${file.path}`);
+    } catch (error) {
+      source = { kind: 'merge-base', ref: null, path: relativeBaseline, missing: true };
+      loadErrors.push((error as Error).message.replace(/^\[suite\] /, ''));
+    }
+  } else if (parsed.baseline !== undefined) {
+    const path = resolve(deps.packageDir, parsed.baseline);
+    const shown = relative(deps.packageDir, path) || path;
+    const exists = existsSync(path);
+    source = { kind: 'path', ref: null, path: shown, missing: !exists };
+    if (!exists) loadErrors.push(`baseline file ${shown} not found`);
+    else load(readFileSync(path, 'utf8'), shown);
+  } else {
+    const path = join(deps.packageDir, relativeBaseline);
+    const exists = existsSync(path);
+    source = { kind: 'default', ref: null, path: relativeBaseline, missing: !exists };
+    if (exists) load(readFileSync(path, 'utf8'), relativeBaseline);
+  }
+
+  const diff = diffRun(report, baseline, config, source, loadErrors);
+  const paths = writeSuiteReport({ ...report, diff }, deps.packageDir);
+  for (const line of diffSummaryLines(diff, report.runId)) deps.log(line);
+  deps.log(`[suite] report: ${relative(deps.packageDir, paths.json)}`);
+  deps.log(`[suite] report: ${relative(deps.packageDir, paths.markdown)}`);
+  return diff.exitCode;
+}
+
+/**
+ * The file at `git merge-base HEAD origin/main`, never the working tree (AD-13). Throws
+ * when git cannot resolve the prefix or the merge-base; `text` is null when the file does
+ * not exist at that commit.
+ */
+export function readMergeBaseFile(packageDir: string, packageRelativePath: string): MergeBaseFile {
+  const git = (args: string[]) => spawnSync('git', args, { cwd: packageDir, encoding: 'utf8' });
+  const prefix = git(['rev-parse', '--show-prefix']);
+  if (prefix.status !== 0) throw new Error(`[suite] git rev-parse --show-prefix failed (${firstLine(prefix.stderr)})`);
+  const base = git(['merge-base', 'HEAD', 'origin/main']);
+  if (base.status !== 0) throw new Error(`[suite] git merge-base HEAD origin/main failed (${firstLine(base.stderr)})`);
+  const ref = base.stdout.trim();
+  const path = `${prefix.stdout.trim()}${packageRelativePath.split('\\').join('/')}`;
+  const listed = git(['ls-tree', '--full-tree', '--name-only', ref, '--', path]);
+  if (listed.status !== 0) throw new Error(`[suite] git ls-tree ${ref} -- ${path} failed (${firstLine(listed.stderr)})`);
+  if (listed.stdout.trim() === '') return { ref, path, text: null };
+  const show = git(['show', `${ref}:${path}`]);
+  if (show.status !== 0) throw new Error(`[suite] git show ${ref}:${path} failed (${firstLine(show.stderr)})`);
+  return { ref, path, text: show.stdout };
+}
+
+function firstLine(text: string | null | undefined): string {
+  return (text ?? '').trim().split('\n')[0] || 'no output';
 }
 
 /** Layer table and verdict for the console. */

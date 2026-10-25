@@ -152,9 +152,9 @@ describe('buildBaseline', () => {
       provisional: false,
     });
     expect(baseline.results).toEqual({
-      'X-01.A1/X-01.C1': { status: 'PASS', passCount: 1, n: 1 },
-      'X-01/X-01.C3': { status: 'NOT_TESTABLE', passCount: 0, n: 1 },
-      'X-02/X-02.C1': { status: 'PASS', passCount: 1, n: 1 },
+      'X-01.A1/X-01.C1': { status: 'PASS', passCount: 1, n: 1, layer: 'P', testKind: 'atomic', checkKind: 'rule' },
+      'X-01/X-01.C3': { status: 'NOT_TESTABLE', passCount: 0, n: 1, layer: 'C', testKind: null, checkKind: null },
+      'X-02/X-02.C1': { status: 'PASS', passCount: 1, n: 1, layer: 'P', testKind: 'observation', checkKind: 'rule' },
     });
     expect(Object.keys(baseline.results)).toEqual([...Object.keys(baseline.results)].sort());
   });
@@ -163,7 +163,14 @@ describe('buildBaseline', () => {
     const baseline = buildBaseline(await incompleteReport(), { acceptedAt: '2026-10-25T11:00:00.000Z' });
     expect(baseline.provisional).toBe(true);
     expect(baseline.acceptedFrom.ciRunUrl).toBeUndefined();
-    expect(baseline.results['X-02/X-02.C1']).toEqual({ status: 'NOT_RUN', passCount: 0, n: 1 });
+    expect(baseline.results['X-02/X-02.C1']).toEqual({
+      status: 'NOT_RUN',
+      passCount: 0,
+      n: 1,
+      layer: 'P',
+      testKind: 'observation',
+      checkKind: 'rule',
+    });
   });
 
   it('is byte-identical apart from acceptedAt', async () => {

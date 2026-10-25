@@ -207,4 +207,3 @@ deferred:
 **Verification:** `pnpm --filter @entalent/conversation-sim test` 38 files / 600 tests offline; package typecheck and lint clean; root `pnpm typecheck` exit 0; `node --import tsx` load of the L0 executor exit 0; `suite:run --suite smoke-v1|p-v1 --level L0` exit 0 with INCOMPLETE reports; `pnpm harness:check -- --base 3af7d0ed02bbe34e7178f4be8755f56f373162c5` passed (receipt `runs/harness/receipt-1792947495569-be0bc2eb.json`).
 
 **Residual risks:** the hook fallback depends on an undocumented Vitest global for two spawned fixture configs; budgets are validated but not enforced (no cost at L0); no real suite cases exist yet, so the runner is proven on synthetic suites only.
-

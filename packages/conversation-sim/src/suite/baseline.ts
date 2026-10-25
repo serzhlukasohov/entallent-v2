@@ -74,7 +74,14 @@ export function buildBaseline(report: SuiteRunReport, options: { acceptedAt: str
   for (const key of Object.keys(report.results).sort()) {
     const result = report.results[key]!;
     if (!result.inScope) continue;
-    results[key] = { status: result.status, passCount: result.passCount, n: result.n };
+    results[key] = {
+      status: result.status,
+      passCount: result.passCount,
+      n: result.n,
+      layer: result.layer,
+      testKind: result.testKind,
+      checkKind: result.checkKind,
+    };
   }
   const baseline = {
     schemaVersion: 1 as const,

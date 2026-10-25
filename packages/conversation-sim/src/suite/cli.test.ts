@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -80,6 +81,9 @@ describe('parseArgs', () => {
       allowDirty: false,
       ciRunUrl: 'https://x/y',
     });
+    expect(parseArgs(['diff', '--run', 'r1'])).toEqual({ command: 'diff', run: 'r1', mergeBase: false });
+    expect(parseArgs(['diff', '--run', 'r1', '--baseline', 'b.json'])).toEqual({ command: 'diff', run: 'r1', baseline: 'b.json', mergeBase: false });
+    expect(parseArgs(['diff', '--run', 'r1', '--merge-base'])).toEqual({ command: 'diff', run: 'r1', mergeBase: true });
     expect(parseArgs([])).toEqual({ command: 'help' });
     expect(parseArgs(['run', '--help'])).toEqual({ command: 'help' });
   });
@@ -95,6 +99,9 @@ describe('parseArgs', () => {
     [['run', '--suite', 'p-v1', '--level', 'L0', '--case', ''], /--case must not be empty/],
     [['baseline:accept', '--run', 'r1', '--ci-run-url', ''], /--ci-run-url must be a URL/],
     [['baseline:accept', '--run', 'r1', '--ci-run-url', 'not a url'], /--ci-run-url must be a URL/],
+    [['diff'], /\[suite\] diff: --run <runId> is required/],
+    [['diff', '--run', 'r1', '--baseline', 'b.json', '--merge-base'], /either --baseline <path> or --merge-base, not both/],
+    [['diff', '--run', 'r1', '--baseline', ''], /--baseline must not be empty/],
     [['deploy'], /unknown command deploy/],
   ])('rejects %j', (argv, message) => {
     expect(() => parseArgs(argv)).toThrow(message);
@@ -344,5 +351,214 @@ describe('suite:baseline:accept', () => {
     expect(await main(['baseline:accept', '--run', '../../etc'], unsafe.deps)).toBe(1);
     expect(unsafe.err).toEqual(['[suite] unsafe run id ../../etc']);
     expect(existsSync(join(dir, 'baselines'))).toBe(false);
+  });
+});
+
+describe('suite:diff', () => {
+  const reportPath = (runId: string) => join(dir, 'runs', 'suites', runId, 'report.json');
+  const readReport = (runId: string) => SuiteRunReportSchema.parse(JSON.parse(readFileSync(reportPath(runId), 'utf8')));
+
+  async function acceptedRun(h: Harness): Promise<string> {
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0'], h.deps)).toBe(0);
+    const runId = runDirs()[0]!;
+    expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(0);
+    return runId;
+  }
+
+  /** Rewrites one result of a run report on disk. */
+  function setStatus(runId: string, key: string, status: 'PASS' | 'FAIL' | 'ERROR', passCount: number): void {
+    const report = JSON.parse(readFileSync(reportPath(runId), 'utf8'));
+    report.results[key] = { ...report.results[key], status, passCount };
+    writeFileSync(reportPath(runId), JSON.stringify(report));
+  }
+
+  it('writes the diff into report.json and report.md and prints lost-coverage first', async () => {
+    const h = harness();
+    const runId = await acceptedRun(h);
+    setStatus(runId, 'X-01.A1/X-01.C1', 'ERROR', 0);
+    setStatus(runId, 'X-02/X-02.C1', 'FAIL', 0);
+    h.out.length = 0;
+
+    expect(await main(['diff', '--run', runId], h.deps)).toBe(1);
+    expect(h.err).toEqual([]);
+    const report = readReport(runId);
+    expect(report.diff).toMatchObject({
+      outcome: 'failed',
+      exitCode: 1,
+      baseline: { kind: 'default', ref: null, path: join('baselines', 'x-suite', 'L0.json'), missing: false },
+      acceptedFrom: { runId },
+    });
+    expect(report.diff!.tests.counts).toMatchObject({ 'lost-coverage': 1, regressed: 1 });
+    expect(readFileSync(join(dir, 'runs', 'suites', runId, 'report.md'), 'utf8')).toContain('## Diff');
+
+    const categoryLines = h.out.filter((line) => /^\[suite\] diff (tests|journeys) [a-z-]+ /.test(line));
+    expect(categoryLines[0]).toMatch(/^\[suite\] diff tests lost-coverage X-01\.A1\/X-01\.C1 /);
+    expect(categoryLines[1]).toMatch(/^\[suite\] diff tests regressed X-02\/X-02\.C1 /);
+    expect(h.out).toContain('[suite] diff outcome: failed (exit 1)');
+
+    // A second diff replaces the first.
+    expect(await main(['diff', '--run', runId, '--baseline', join('baselines', 'x-suite', 'L0.json')], h.deps)).toBe(1);
+    expect(readReport(runId).diff!.baseline.kind).toBe('path');
+  });
+
+  it('exits 0 with every pair new when the default baseline is absent', async () => {
+    const h = harness();
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0'], h.deps)).toBe(0);
+    const runId = runDirs()[0]!;
+    expect(await main(['diff', '--run', runId], h.deps)).toBe(0);
+    expect(h.out).toContain(`[suite] diff: no baseline at ${join('baselines', 'x-suite', 'L0.json')}; every pair is new`);
+    const diff = readReport(runId).diff!;
+    expect(diff).toMatchObject({ outcome: 'no-baseline', exitCode: 0, baseline: { missing: true } });
+    expect(diff.tests.entries.every((entry) => entry.category === 'new')).toBe(true);
+  });
+
+  it('exits 2 for an explicit --baseline that is missing or invalid, and when provenance differs', async () => {
+    const h = harness();
+    const runId = await acceptedRun(h);
+    expect(await main(['diff', '--run', runId, '--baseline', 'nope.json'], h.deps)).toBe(2);
+    expect(h.out).toContain('[suite] diff: baseline-invalid: baseline file nope.json not found');
+    expect(readReport(runId).diff).toMatchObject({ outcome: 'baseline-invalid', baseline: { kind: 'path', missing: true } });
+
+    writeFileSync(join(dir, 'broken.json'), '{ nope');
+    expect(await main(['diff', '--run', runId, '--baseline', 'broken.json'], h.deps)).toBe(2);
+    expect(readReport(runId).diff!.reasons[0]).toMatch(/^baseline broken.json is not valid JSON/);
+
+    const path = join(dir, 'baselines', 'x-suite', 'L0.json');
+    const baseline = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ ...baseline, coach: { model: 'gpt-4o' } }));
+    expect(await main(['diff', '--run', runId], h.deps)).toBe(2);
+    const diff = readReport(runId).diff!;
+    expect(diff).toMatchObject({ outcome: 'baseline-invalid', exitCode: 2, tests: { entries: [] } });
+    expect(diff.reasons).toEqual(["baseline coach model gpt-4o differs from the run's null"]);
+  });
+
+  it('exits 3 on judge errors and 4 on budget-exceeded', async () => {
+    const h = harness();
+    const runId = await acceptedRun(h);
+    const report = JSON.parse(readFileSync(reportPath(runId), 'utf8'));
+    writeFileSync(reportPath(runId), JSON.stringify({ ...report, judgeErrors: [{ key: 'X-01.A1/X-01.C1', reason: 'judge-timeout' }] }));
+    expect(await main(['diff', '--run', runId], h.deps)).toBe(3);
+    const key = 'X-01.A1/X-01.C1';
+    writeFileSync(
+      reportPath(runId),
+      JSON.stringify({ ...report, results: { ...report.results, [key]: { ...report.results[key], status: 'ERROR', passCount: 0, reason: 'budget-exceeded' } } }),
+    );
+    expect(await main(['diff', '--run', runId], h.deps)).toBe(4);
+    expect(h.out).toContain('[suite] diff outcome: budget-exceeded (exit 4)');
+  });
+
+  it('exits 1 and writes nothing on usage errors and an unknown or invalid run', async () => {
+    const h = harness();
+    expect(await main(['diff'], h.deps)).toBe(1);
+    expect(h.err[0]).toBe('[suite] diff: --run <runId> is required');
+    expect(await main(['diff', '--run', 'r1', '--baseline', 'b.json', '--merge-base'], h.deps)).toBe(1);
+    expect(await main(['diff', '--run', 'nope'], h.deps)).toBe(1);
+    expect(h.err).toContain('[suite] diff: run nope not found under runs/suites/');
+    mkdirSync(join(dir, 'runs', 'suites', 'broken'), { recursive: true });
+    writeFileSync(join(dir, 'runs', 'suites', 'broken', 'report.json'), '{"schemaVersion": 2}');
+    expect(await main(['diff', '--run', 'broken'], h.deps)).toBe(1);
+    expect(h.err.at(-1)).toMatch(/^\[suite\] diff: run broken: report.json is invalid/);
+    expect(existsSync(join(dir, 'runs', 'suites', 'broken', 'report.md'))).toBe(false);
+    expect(runDirs()).toEqual(['broken']);
+  });
+
+  it('exits 2 when git cannot resolve the merge-base', async () => {
+    const h = harness();
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0'], h.deps)).toBe(0);
+    const runId = runDirs()[0]!;
+    h.deps.mergeBase = () => {
+      throw new Error('[suite] git merge-base HEAD origin/main failed (no merge base)');
+    };
+    expect(await main(['diff', '--run', runId, '--merge-base'], h.deps)).toBe(2);
+    expect(readReport(runId).diff).toMatchObject({
+      outcome: 'baseline-invalid',
+      reasons: ['git merge-base HEAD origin/main failed (no merge base)'],
+      baseline: { kind: 'merge-base', ref: null },
+    });
+  });
+});
+
+describe('suite:diff --merge-base in a real git repo', () => {
+  let root: string;
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], {
+      cwd: root,
+      encoding: 'utf8',
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+    });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'suite-git-'));
+    rmSync(dir, { recursive: true, force: true });
+    dir = join(root, 'packages', 'conversation-sim');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify(RUNNER_CONFIG));
+    writeFileSync(join(root, '.gitignore'), 'runs/\n');
+    git('init', '-q', '-b', 'main');
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('reads baseline A from the merge-base, not working-tree baseline B', async () => {
+    const h = harness();
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0'], h.deps)).toBe(0);
+    const runId = runDirs()[0]!;
+    const path = join(dir, 'baselines', 'x-suite', 'L0.json');
+
+    // No baseline at the merge-base yet: every pair is new, exit 0.
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    expect(await main(['diff', '--run', runId, '--merge-base'], h.deps)).toBe(0);
+    expect(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8')).toContain('"outcome": "no-baseline"');
+
+    // Baseline A (accepted from the run itself) at origin/main.
+    expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(0);
+    git('add', '.');
+    git('commit', '-q', '-m', 'baseline A');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const mergeBase = git('rev-parse', 'HEAD');
+
+    // Baseline C committed on HEAD after the merge-base, so merge-base != HEAD.
+    const committed = JSON.parse(readFileSync(path, 'utf8'));
+    committed.results['X-02/X-02.C1'] = { ...committed.results['X-02/X-02.C1'], status: 'FAIL', passCount: 0 };
+    writeFileSync(path, JSON.stringify(committed));
+    git('commit', '-q', '-am', 'baseline C');
+    expect(git('rev-parse', 'HEAD')).not.toBe(mergeBase);
+
+    // Working-tree baseline B: X-01.A1/X-01.C1 was FAIL, which would make the run `fixed`.
+    const baseline = JSON.parse(readFileSync(path, 'utf8'));
+    baseline.results['X-01.A1/X-01.C1'] = { ...baseline.results['X-01.A1/X-01.C1'], status: 'FAIL', passCount: 0 };
+    writeFileSync(path, JSON.stringify(baseline));
+
+    expect(await main(['diff', '--run', runId], h.deps)).toBe(0);
+    const fromTree = SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8'))).diff!;
+    // B builds on C, so both changed keys are `fixed` against the working tree.
+    expect(fromTree.tests.counts.fixed).toBe(2);
+
+    expect(await main(['diff', '--run', runId, '--merge-base'], h.deps)).toBe(0);
+    const diff = SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8'))).diff!;
+    expect(diff.baseline).toEqual({
+      kind: 'merge-base',
+      ref: mergeBase,
+      path: 'packages/conversation-sim/baselines/x-suite/L0.json',
+      missing: false,
+    });
+    expect(diff.tests.counts.fixed).toBe(0);
+    expect(diff.tests.entries.every((entry) => entry.category === 'unchanged')).toBe(true);
+  });
+
+  it('exits 2 when the real git merge-base fails (no origin/main)', async () => {
+    const h = harness();
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0'], h.deps)).toBe(0);
+    const runId = runDirs()[0]!;
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    expect(await main(['diff', '--run', runId, '--merge-base'], h.deps)).toBe(2);
+    const diff = SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8'))).diff!;
+    expect(diff.outcome).toBe('baseline-invalid');
+    expect(diff.reasons.some((reason) => reason.includes('git merge-base HEAD origin/main failed'))).toBe(true);
   });
 });

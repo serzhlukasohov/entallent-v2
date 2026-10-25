@@ -126,6 +126,7 @@ describe('score: rows', () => {
       testId: 'X-01',
       criterionId: 'X-01.C3',
       testKind: null,
+      checkKind: null,
       layer: 'C',
       inScope: true,
       n: 3,
@@ -140,7 +141,7 @@ describe('score: rows', () => {
       samples.map((status) => result({ testId: 'X-01.A1', criterionId: 'X-01.C1', status, evidence: status === 'FAIL' ? 'turn 1 — x' : undefined })),
       3,
     );
-    expect(scored.results[0]).toMatchObject({ status: 'FAIL', passCount: 2, n: 3, minPasses: 3, evidence: 'turn 1 — x' });
+    expect(scored.results[0]).toMatchObject({ status: 'FAIL', passCount: 2, n: 3, minPasses: 3, checkKind: 'rule', evidence: 'turn 1 — x' });
     expect(scored.results[0]!.samples).toHaveLength(3);
   });
 
@@ -164,7 +165,7 @@ describe('score: rows', () => {
       samples.map((status) => result({ testId: 'X-01.A1', criterionId: 'X-01.C2', layer: 'S', status })),
       5,
     );
-    expect(scored.results[0]).toMatchObject({ status: 'PASS', passCount: 4, minPasses: 4 });
+    expect(scored.results[0]).toMatchObject({ status: 'PASS', passCount: 4, minPasses: 4, checkKind: 'meaning' });
     expect(minPasses(5, true)).toBe(4);
     expect(minPasses(5, false)).toBe(5);
   });
@@ -176,7 +177,7 @@ describe('score: rows', () => {
       ),
       2,
     );
-    expect(scored.results[0]).toMatchObject({ status: 'FAIL', minPasses: 2 });
+    expect(scored.results[0]).toMatchObject({ status: 'FAIL', minPasses: 2, checkKind: 'rule' });
   });
 
   it('lets an undecided sample decide the aggregated status by precedence', () => {

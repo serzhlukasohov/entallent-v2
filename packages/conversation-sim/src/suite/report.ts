@@ -2,7 +2,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { testCriterionKey } from './score';
 import {
+  DiffCategorySchema,
   SuiteRunReportSchema,
+  type DiffSection,
+  type SuiteDiff,
   type Coverage,
   type CoverageRow,
   type JudgeError,
@@ -175,6 +178,7 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   pushList(lines, report.judgeErrors.map((error) => `${error.key}: ${error.reason}`));
   lines.push('## Usage', '');
   pushList(lines, Object.entries(report.usage).map(([name, value]) => `${name}: ${value}`));
+  if (report.diff) pushDiff(lines, report.diff);
 
   return `${lines.join('\n').trimEnd()}\n`;
 }
@@ -190,6 +194,43 @@ export function writeSuiteReport(report: SuiteRunReport, baseDir: string): { jso
   writeFileSync(json, `${JSON.stringify(parsed, null, 2)}\n`);
   writeFileSync(markdown, renderSuiteReportMarkdown(parsed));
   return { json, markdown };
+}
+
+/** Diff section (AD-13): `lost-coverage` first, journeys separate, `unchanged` as counts only. */
+function pushDiff(lines: string[], diff: SuiteDiff): void {
+  const source = diff.baseline.ref ? `${diff.baseline.path} at ${diff.baseline.ref}` : diff.baseline.path;
+  lines.push('## Diff', '');
+  lines.push(`- Outcome: **${diff.outcome}** (exit ${diff.exitCode})`);
+  lines.push(`- Baseline: ${diff.baseline.kind} ${source}${diff.baseline.missing ? ' (missing)' : ''}`);
+  if (diff.acceptedFrom) {
+    lines.push(`- Accepted from: run ${diff.acceptedFrom.runId} (${diff.acceptedFrom.gitSha})${diff.provisional ? ', provisional' : ''}`);
+  }
+  for (const reason of diff.reasons) lines.push(`- Reason: ${cell(reason)}`);
+  lines.push('');
+  const sections: Array<[string, DiffSection]> = [
+    ['Tests', diff.tests],
+    ['Journeys', diff.journeys],
+  ];
+  for (const [title, section] of sections) {
+    lines.push(`### ${title}`, '');
+    lines.push(DiffCategorySchema.options.map((category) => `${category} ${section.counts[category] ?? 0}`).join(' · '), '');
+    const shown = section.entries.filter((entry) => entry.category !== 'unchanged');
+    if (shown.length === 0) {
+      lines.push('No changes.', '');
+      continue;
+    }
+    lines.push('| Category | Key | Layer | Check | Baseline | Current | Gating |', '| --- | --- | --- | --- | --- | --- | --- |');
+    for (const entry of shown) {
+      const before = entry.baseline ? `${entry.baseline.status} ${entry.baseline.passCount}/${entry.baseline.n}` : '—';
+      const after = entry.current
+        ? `${entry.current.status} ${entry.current.passCount}/${entry.current.n} (min ${entry.current.minPasses})`
+        : 'missing';
+      lines.push(
+        `| ${entry.category} | ${entry.key} | ${entry.layer} | ${entry.checkKind ?? 'n/a'} | ${before} | ${after} | ${entry.gating ? 'yes' : 'no'} |`,
+      );
+    }
+    lines.push('');
+  }
 }
 
 function pushResultTable(lines: string[], results: ReadonlyArray<[string, ScoredCriterion]>): void {
