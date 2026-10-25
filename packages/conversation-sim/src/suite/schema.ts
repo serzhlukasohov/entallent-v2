@@ -935,6 +935,125 @@ export const JudgeFingerprintSchema = z
   .strict();
 export type JudgeFingerprint = z.infer<typeof JudgeFingerprintSchema>;
 
+// ---------------------------------------------------------------------------
+// Calibration labels, QA exports and the agreement file (AD-8, Story 13.2)
+// ---------------------------------------------------------------------------
+
+export const LabelStatusSchema = z.enum(['PASS', 'FAIL']);
+export type LabelStatus = z.infer<typeof LabelStatusSchema>;
+
+export const LabelTurnSchema = z.object({ role: z.enum(['user', 'coach']), text: z.string() }).strict();
+export type LabelTurn = z.infer<typeof LabelTurnSchema>;
+
+/**
+ * A non-null `evaluatedReplyIndex` is the last turn and that turn is `coach`; a null one
+ * (a `conversation` criterion) needs at least one `coach` turn.
+ */
+export const LabelTranscriptSchema = z
+  .object({
+    turns: z.array(LabelTurnSchema).min(1),
+    evaluatedReplyIndex: nonNegativeInt.nullable(),
+  })
+  .strict()
+  .superRefine((transcript, ctx) => {
+    const index = transcript.evaluatedReplyIndex;
+    if (index === null) {
+      if (!transcript.turns.some((turn) => turn.role === 'coach')) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['turns'], message: 'a conversation label needs at least one coach turn' });
+      }
+      return;
+    }
+    if (index !== transcript.turns.length - 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['evaluatedReplyIndex'], message: 'evaluatedReplyIndex must be the last turn' });
+    } else if (transcript.turns[index]?.role !== 'coach') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['evaluatedReplyIndex'], message: 'the evaluated turn must be a coach turn' });
+    }
+  });
+export type LabelTranscript = z.infer<typeof LabelTranscriptSchema>;
+
+export const LabelSchema = z
+  .object({
+    criterionId: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
+    status: LabelStatusSchema,
+    transcript: LabelTranscriptSchema,
+    /** Provenance only; never read for judging. */
+    source: z.object({ kind: z.enum(['qa-session', 'suite-run']), ref: z.string().min(1) }).strict(),
+    labeler: z.string().min(1),
+    labeledAt: IsoTimestampSchema,
+  })
+  .strict();
+export type Label = z.infer<typeof LabelSchema>;
+
+/** `calibration/<suiteId>/labels.json`; an absent file means zero labels. */
+export const LabelsFileSchema = z.object({ schemaVersion: z.literal(1), labels: z.array(LabelSchema) }).strict();
+export type LabelsFile = z.infer<typeof LabelsFileSchema>;
+
+/**
+ * QA session export (assumed format until QA confirms theirs). `replyIndex` indexes
+ * `dialogue` and must name a `coach` turn; `null` means the whole conversation.
+ */
+export const QaSessionExportSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    sessions: z.array(
+      z
+        .object({
+          ref: z.string().min(1),
+          labeler: z.string().min(1),
+          labeledAt: IsoTimestampSchema,
+          dialogue: z.array(LabelTurnSchema).min(1),
+          statuses: z
+            .array(
+              z
+                .object({
+                  criterionId: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
+                  status: LabelStatusSchema,
+                  replyIndex: nonNegativeInt.nullable(),
+                })
+                .strict(),
+            )
+            .min(1),
+        })
+        .strict()
+        .superRefine((session, ctx) => {
+          session.statuses.forEach((status, index) => {
+            if (status.replyIndex === null) return;
+            const turn = session.dialogue[status.replyIndex];
+            if (turn === undefined) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['statuses', index, 'replyIndex'], message: 'replyIndex is outside the dialogue' });
+            } else if (turn.role !== 'coach') {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['statuses', index, 'replyIndex'], message: 'replyIndex must name a coach turn' });
+            }
+          });
+        }),
+    ),
+  })
+  .strict();
+export type QaSessionExport = z.infer<typeof QaSessionExportSchema>;
+
+const AgreementRateSchema = z.number().min(0).max(1).nullable();
+const KappaSchema = z.number().nullable();
+
+export const AgreementStatsSchema = z
+  .object({ n: nonNegativeInt, overall: AgreementRateSchema, kappa: KappaSchema })
+  .strict();
+export type AgreementStats = z.infer<typeof AgreementStatsSchema>;
+
+/** The calibration agreement file, written only by `suite:calibrate` through `judge/calibrate.ts` (AD-8). */
+export const AgreementFileSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    fingerprint: JudgeFingerprintSchema,
+    labelsSha256: Sha256Schema,
+    n: nonNegativeInt,
+    overall: AgreementRateSchema,
+    kappa: KappaSchema,
+    perLayer: z.object({ P: AgreementStatsSchema, D: AgreementStatsSchema, C: AgreementStatsSchema, S: AgreementStatsSchema }).strict(),
+    computedAt: IsoTimestampSchema,
+  })
+  .strict();
+export type AgreementFile = z.infer<typeof AgreementFileSchema>;
+
 export const BaselineResultSchema = z
   .object({
     status: CriterionStatusSchema,

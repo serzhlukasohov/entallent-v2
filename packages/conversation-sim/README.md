@@ -251,7 +251,8 @@ pnpm suite:run --suite smoke-v1 --level L0 [--runs N] [--case <id>]
 pnpm suite:diff --run <runId> [--baseline <path> | --merge-base]
 pnpm suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
 pnpm suite:ci --level L0 [--summary <path>]
-pnpm suite:calibrate                     # lands in Epic 13; exits 1
+pnpm suite:calibrate --suite <id> [--import <qa-export.json>]
+pnpm suite:calibrate:live --suite <id> --live-judge   # human-run only: calls the pinned judge model
 pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --head <rev> --labels '<json-array>'
 ```
 
@@ -270,6 +271,28 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
   directory you ran `pnpm` from). The summary has the layer table, verdict, diff outcome,
   baseline source, category counts and every changed entry, and no evidence, reason or
   transcript text. With no suite that has tests it passes with nothing to check.
+- `suite:calibrate` manages judge calibration (AD-8). `--import` converts a QA session
+  export (`{ schemaVersion: 1, sessions: [{ ref, labeler, labeledAt, dialogue, statuses:
+  [{ criterionId, status, replyIndex }] }] }`; an assumed format until QA confirms theirs)
+  into labels and appends them to `calibration/<suite>/labels.json`: one label per status,
+  the transcript cut after `replyIndex` (whole dialogue when `null`), `source.ref` kept as
+  provenance only. Labels are deduplicated on criterion id plus transcript hash (the first
+  label wins; a skipped duplicate is warned about, naming a differing status). Existing
+  labels are never rewritten or re-statused. Any invalid entry (schema, a `replyIndex` that
+  is not a coach turn, an unknown, NOT TESTABLE or not meaning-judged criterion, or a scope
+  mismatch) rejects the whole import. The default entry wires no judge: with `--import` it
+  imports and skips calibration, and without it it exits 1 with the `suite:calibrate:live`
+  hint. A calibration run judges every label with the same input building and evidence rules
+  as `suite:run`, prints the per-layer table (`n`, agreement, Cohen's kappa over
+  PASS/FAIL/ERROR), one line per disagreement and judge usage, warns below
+  `judge.minLabels`, and writes `calibration/<suite>/agreement.json` (fingerprint, labels
+  hash, overall and per-layer agreement). A judge ERROR counts as a disagreement and exits
+  3. A criterion judged in several tests with different guidance, fixture context or scope
+  is refused before any judge call; fix the suite. No labels or agreement file are committed
+  yet (pending QA labels).
+- `suite:calibrate:live` is the only path to the live judge. It refuses (exit 1, no model
+  built) without `--live-judge`; no test, script or CI step runs it with the flag. It reads
+  `OPENAI_API_KEY` or `AZURE_OPENAI_*` from the shell environment and never loads `.env`.
 - `suite:baseline:guard` fails when `git diff <base>...<head>` touches
   `packages/conversation-sim/baselines/` and the labels lack `baseline-change`.
 
@@ -280,7 +303,7 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
 | `run`, `baseline:accept` | report or baseline written (whatever the verdict) | usage, config, load or refusal error | | | |
 | `diff` | clean, or no baseline | gating regression or lost coverage; usage error; unreadable run | baseline invalid (provenance differs, unreadable, git cannot resolve the merge-base) | judge infrastructure | budget exceeded |
 | `ci` | every suite clean, without baseline, or skipped | a suite's diff exited 1, or a suite failed to load or run | any suite exited 2 | any 3 (no 2) | any 4 (no 2 or 3) |
-| `calibrate` | | always (Epic 13) | | | |
+| `calibrate` | import done or agreement file written | usage, config, unknown suite, load, invalid labels or export, unresolvable label, no judge without `--import` | | any label judged ERROR (file still written) | |
 | `baseline:guard` | no baseline changed, or labeled | baseline changed without the label; missing flags, bad labels or git failure (fails closed) | | | |
 
 `ci` attempts every suite and exits with the first code present by precedence 2 > 3 > 4 > 1.

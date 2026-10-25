@@ -19,7 +19,13 @@ import {
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import type { SuiteExecutor } from './executors/types';
 import { loadSuite, validateSuite } from './loader';
-import { BaselineSchema, SuiteRunReportSchema, type LoadedSuite } from './schema';
+import { fakeJudge } from './judge/__fixtures__/calibration';
+import { labelsSha256 } from './judge/calibrate';
+import type { JudgeInput } from './judge/criterion-judge';
+import { computeJudgeFingerprint } from './judge/fingerprint';
+import { buildJudgeInput } from './judge/judge-input';
+import { syntheticRun } from './rules/synthetic-run';
+import { AgreementFileSchema, BaselineSchema, LabelsFileSchema, SuiteRunReportSchema, type LoadedSuite } from './schema';
 
 const SECRET = 'sk-test-not-a-real-key-123';
 
@@ -96,8 +102,8 @@ describe('parseArgs', () => {
     expect(parseArgs(['diff', '--run', 'r1', '--merge-base'])).toEqual({ command: 'diff', run: 'r1', mergeBase: true });
     expect(parseArgs(['ci', '--level', 'L0'])).toEqual({ command: 'ci', level: 'L0' });
     expect(parseArgs(['ci', '--', '--level', 'L0', '--summary', 's.md'])).toEqual({ command: 'ci', level: 'L0', summary: 's.md' });
-    expect(parseArgs(['calibrate'])).toEqual({ command: 'calibrate' });
-    expect(parseArgs(['calibrate', '--suite', 'p-v1'])).toEqual({ command: 'calibrate' });
+    expect(parseArgs(['calibrate', '--suite', 'p-v1'])).toEqual({ command: 'calibrate', suite: 'p-v1' });
+    expect(parseArgs(['calibrate', '--', '--suite', 'p-v1', '--import', 'qa.json'])).toEqual({ command: 'calibrate', suite: 'p-v1', import: 'qa.json' });
     expect(parseArgs([])).toEqual({ command: 'help' });
     expect(parseArgs(['run', '--help'])).toEqual({ command: 'help' });
   });
@@ -120,6 +126,9 @@ describe('parseArgs', () => {
     [['ci', '--level', 'L7'], /--level must be L0, L1 or L2/],
     [['ci', '--level', 'L0', '--summary', ''], /--summary must not be empty/],
     [['ci', '--level', 'L0', '--suite', 'p-v1'], /Unknown option/],
+    [['calibrate'], /\[suite\] calibrate: --suite <id> is required/],
+    [['calibrate', '--suite', 'p-v1', '--import', ''], /--import must not be empty/],
+    [['calibrate', '--suite', 'p-v1', '--live-judge'], /Unknown option/],
     [['deploy'], /unknown command deploy; expected run, baseline:accept, diff, ci or calibrate/],
   ])('rejects %j', (argv, message) => {
     expect(() => parseArgs(argv)).toThrow(message);
@@ -582,11 +591,250 @@ describe('suite:diff --merge-base in a real git repo', () => {
 });
 
 describe('suite:calibrate', () => {
-  it('exits 1 with the Epic 13 message', async () => {
+  const labelsFile = () => join(dir, 'calibration', 'x-suite', 'labels.json');
+  const agreementFile = () => join(dir, 'calibration', 'x-suite', 'agreement.json');
+  const exportFile = () => join(dir, 'qa', 'export.json');
+  // X-01.C1 is meaning-judged only in X-01.J at reply:2: user, coach, user, coach.
+  const DIALOGUE = [
+    { role: 'user', text: 'Hi.' },
+    { role: 'coach', text: 'Hello. What is on your plate?' },
+    { role: 'user', text: 'Two releases this week.' },
+    { role: 'coach', text: 'Got it. Which deadline is first?' },
+    { role: 'user', text: 'The API one.' },
+    { role: 'coach', text: 'Good. What would make it easier?' },
+  ] as const;
+
+  function writeExport(statuses: Array<{ criterionId: string; status: 'PASS' | 'FAIL'; replyIndex: number | null }>, ref = 'qa-session-1'): void {
+    mkdirSync(join(dir, 'qa'), { recursive: true });
+    writeFileSync(
+      exportFile(),
+      JSON.stringify({
+        schemaVersion: 1,
+        sessions: [{ ref, labeler: 'qa-anna', labeledAt: '2026-10-20T09:00:00.000Z', dialogue: DIALOGUE, statuses }],
+      }),
+    );
+  }
+
+  function labelsOnDisk() {
+    return LabelsFileSchema.parse(JSON.parse(readFileSync(labelsFile(), 'utf8')));
+  }
+
+  /** A harness whose calibration judge is a fake (no model) answering by `decide`. */
+  function judged(decide: (input: JudgeInput) => 'PASS' | 'FAIL' | 'reject', suite?: () => LoadedSuite) {
+    const h = harness({ env: { INIT_CWD: dir } });
+    const fake = fakeJudge(decide);
+    const configs: unknown[] = [];
+    h.deps.createCalibrationJudge = (judge) => {
+      configs.push(judge);
+      return fake.judge;
+    };
+    if (suite) h.deps.loadSuite = () => suite();
+    return { h, fake, configs };
+  }
+
+  const twoStatuses = [
+    { criterionId: 'X-01.C1', status: 'PASS' as const, replyIndex: 3 },
+    { criterionId: 'X-01.C1', status: 'FAIL' as const, replyIndex: 5 },
+  ];
+
+  it('imports a new export: labels file created with truncated transcripts and qa-session provenance', async () => {
+    writeExport(twoStatuses);
+    const h = harness({ env: { INIT_CWD: dir } });
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    const { labels } = labelsOnDisk();
+    expect(labels).toHaveLength(2);
+    expect(labels[0]).toEqual({
+      criterionId: 'X-01.C1',
+      status: 'PASS',
+      transcript: { turns: DIALOGUE.slice(0, 4), evaluatedReplyIndex: 3 },
+      source: { kind: 'qa-session', ref: 'qa-session-1' },
+      labeler: 'qa-anna',
+      labeledAt: '2026-10-20T09:00:00.000Z',
+    });
+    expect(labels[1]!.transcript.turns).toHaveLength(6);
+    expect(h.out).toContain('[suite] import: 2 label(s) added, 0 duplicate(s) skipped; calibration/x-suite/labels.json has 2 label(s)');
+    expect(h.out.some((line) => line.includes('calibration skipped') && line.includes('suite:calibrate:live'))).toBe(true);
+    expect(existsSync(agreementFile())).toBe(false);
+  });
+
+  it('leaves the file unchanged on a repeated import, with one skip warning per label', async () => {
+    writeExport(twoStatuses);
+    const h = harness({ env: { INIT_CWD: dir } });
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    const before = readFileSync(labelsFile(), 'utf8');
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    expect(readFileSync(labelsFile(), 'utf8')).toBe(before);
+    expect(h.out.filter((line) => line.startsWith('[suite] warning: skipped duplicate label'))).toHaveLength(2);
+  });
+
+  it('keeps the existing label on a conflicting duplicate and names both statuses', async () => {
+    writeExport([twoStatuses[0]!]);
+    const h = harness({ env: { INIT_CWD: dir } });
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    writeExport([{ ...twoStatuses[0]!, status: 'FAIL' }], 'qa-session-2');
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', exportFile()], h.deps)).toBe(0);
+    const { labels } = labelsOnDisk();
+    expect(labels.map((entry) => [entry.status, entry.source.ref])).toEqual([['PASS', 'qa-session-1']]);
+    expect(h.out).toContainEqual(expect.stringMatching(/from session qa-session-2 .*the export says FAIL, the kept label says PASS/));
+  });
+
+  it.each([
+    ['replyIndex on a user turn', { criterionId: 'X-01.C1', status: 'PASS' as const, replyIndex: 2 }, /session qa-session-1, X-01\.C1: .*coach turn/],
+    ['an unknown criterion', { criterionId: 'X-09.C1', status: 'PASS' as const, replyIndex: 3 }, /session qa-session-1, X-09\.C1: unknown-criterion/],
+  ])('rejects a bad export (%s) and writes nothing', async (_name, bad, message) => {
+    writeExport([twoStatuses[0]!, bad]);
+    const h = harness({ env: { INIT_CWD: dir } });
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(1);
+    expect(h.err.join('\n')).toMatch(message);
+    expect(h.err).toContain('[suite] import: rejected; nothing was written');
+    expect(existsSync(join(dir, 'calibration'))).toBe(false);
+  });
+
+  it('exits 1 on an unreadable export', async () => {
+    const h = harness({ env: { INIT_CWD: dir } });
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'missing.json'], h.deps)).toBe(1);
+    expect(h.err[0]).toMatch(/\[suite\] import: cannot read missing\.json as JSON/);
+  });
+
+  it('calibrates with agreement 1 when the judge matches every label; the judge got buildJudgeInput inputs', async () => {
+    writeExport([twoStatuses[0]!]);
+    const { h, fake, configs } = judged(() => 'PASS');
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    expect(configs).toEqual([RUNNER_CONFIG.judge]);
+
+    const suite = fakeSuite();
+    const journey = suite.tests.find((test) => test.id === 'X-01.J')!;
+    const run = syntheticRun('X-01.J', ['Hello. What is on your plate?', 'Got it. Which deadline is first?']);
+    run.steps[0]!.userText = 'Hi.';
+    run.steps[1]!.userText = 'Two releases this week.';
+    const c1 = journey.criteria.find((criterion) => criterion.id === 'X-01.C1')!;
+    expect(fake.inputs).toEqual([buildJudgeInput(journey, run, c1).input]);
+
+    const agreement = AgreementFileSchema.parse(JSON.parse(readFileSync(agreementFile(), 'utf8')));
+    expect(agreement.overall).toBe(1);
+    expect(agreement.perLayer.P).toEqual({ n: 1, overall: 1, kappa: null });
+    expect(agreement.fingerprint).toEqual(computeJudgeFingerprint(RUNNER_CONFIG.judge, suite));
+    expect(agreement.labelsSha256).toBe(labelsSha256(labelsOnDisk().labels));
+    expect(agreement.computedAt).toBe('2026-10-25T10:00:00.000Z');
+    expect(h.out).toContain('[suite] agreement: calibration/x-suite/agreement.json');
+    expect(h.out.filter((line) => line.startsWith('[suite] disagreement:'))).toEqual([]);
+  });
+
+  it('prints a disagreement line when the judge FAILs a PASS label', async () => {
+    writeExport(twoStatuses);
+    const { h } = judged(() => 'FAIL');
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    const agreement = AgreementFileSchema.parse(JSON.parse(readFileSync(agreementFile(), 'utf8')));
+    expect(agreement.overall).toBe(0.5);
+    expect(h.out.filter((line) => line.startsWith('[suite] disagreement:'))).toEqual([
+      '[suite] disagreement: X-01.C1 label PASS judge FAIL ref qa-session-1 labeledAt 2026-10-20T09:00:00.000Z: judged FAIL',
+    ]);
+    expect(h.out).toContain('[suite] judge usage: 2 calls, 20 input tokens, 10 output tokens, 30 total tokens');
+  });
+
+  it('counts a rejecting judge as a disagreement, still writes the file and exits 3', async () => {
+    writeExport(twoStatuses);
+    const h = harness({ env: { INIT_CWD: dir } });
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    let call = 0;
+    const { h: judgedHarness } = judged(() => (call++ === 0 ? 'reject' : 'FAIL'));
+    expect(await main(['calibrate', '--suite', 'x-suite'], judgedHarness.deps)).toBe(3);
+    const agreement = AgreementFileSchema.parse(JSON.parse(readFileSync(agreementFile(), 'utf8')));
+    expect(agreement.n).toBe(2);
+    expect(agreement.overall).toBe(0.5);
+    expect(judgedHarness.out).toContainEqual(expect.stringMatching(/^\[suite\] disagreement: X-01\.C1 label PASS judge ERROR .*: judge-transport: /));
+    expect(judgedHarness.err).toContain('[suite] calibrate: 1 label(s) judged ERROR (counted as disagreements)');
+  });
+
+  it('warns below minLabels and still writes the file', async () => {
+    writeExport([...twoStatuses, { criterionId: 'X-01.C1', status: 'PASS', replyIndex: 1 }]);
+    const { h } = judged((input) => (input.transcript.evaluatedReplyIndex === 5 ? 'FAIL' : 'PASS'));
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    expect(h.out).toContain('[suite] warning: 3 labels is below minLabels 40');
+    expect(AgreementFileSchema.parse(JSON.parse(readFileSync(agreementFile(), 'utf8')))).toMatchObject({ n: 3, overall: 1 });
+  });
+
+  it('writes n 0 with null agreement and a warning when there is no labels file', async () => {
+    const { h, fake } = judged(() => 'PASS');
+    expect(await main(['calibrate', '--suite', 'x-suite'], h.deps)).toBe(0);
+    const agreement = AgreementFileSchema.parse(JSON.parse(readFileSync(agreementFile(), 'utf8')));
+    expect(agreement).toMatchObject({ n: 0, overall: null, kappa: null });
+    expect(Object.values(agreement.perLayer)).toEqual(Array(4).fill({ n: 0, overall: null, kappa: null }));
+    expect(h.out).toContain('[suite] warning: 0 labels is below minLabels 40');
+    expect(fake.inputs).toEqual([]);
+    expect(existsSync(labelsFile())).toBe(false);
+  });
+
+  it('refuses an ambiguous label context before any judge call', async () => {
+    const ambiguous = () => {
+      const modules = validModules();
+      const atomic = modules.tests[0] as { criteria: Array<Record<string, unknown>> };
+      atomic.criteria[0] = { ...atomic.criteria[0], checks: [{ type: 'rule', rule: 'events-only' }, { type: 'meaning' }], judgeGuidance: 'Atomic guidance.' };
+      return validateSuite('x-suite', modules, TEST_RULES);
+    };
+    mkdirSync(join(dir, 'calibration', 'x-suite'), { recursive: true });
+    writeFileSync(
+      labelsFile(),
+      JSON.stringify({
+        schemaVersion: 1,
+        labels: [
+          {
+            criterionId: 'X-01.C1',
+            status: 'PASS',
+            transcript: { turns: DIALOGUE.slice(0, 4), evaluatedReplyIndex: 3 },
+            source: { kind: 'suite-run', ref: 'run-1' },
+            labeler: 'qa-anna',
+            labeledAt: '2026-10-20T09:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    const { h, fake } = judged(() => 'PASS', ambiguous);
+    expect(await main(['calibrate', '--suite', 'x-suite'], h.deps)).toBe(1);
+    expect(h.err.join('\n')).toMatch(/X-01\.C1 \(run-1\): ambiguous-context: X-01\.C1 is judged with a different judgeGuidance/);
+    expect(fake.inputs).toEqual([]);
+    expect(existsSync(agreementFile())).toBe(false);
+  });
+
+  it('exits 1 on an invalid labels file', async () => {
+    mkdirSync(join(dir, 'calibration', 'x-suite'), { recursive: true });
+    writeFileSync(labelsFile(), JSON.stringify({ schemaVersion: 1, labels: [{ criterionId: 'X-01.C1', status: 'MAYBE' }] }));
+    const { h } = judged(() => 'PASS');
+    expect(await main(['calibrate', '--suite', 'x-suite'], h.deps)).toBe(1);
+    expect(h.err[0]).toMatch(/x-suite labels are invalid at labels\.0/);
+  });
+
+  it('without a judge, exits 1 with the suite:calibrate:live hint and writes nothing', async () => {
     const h = harness();
-    expect(await main(['calibrate'], h.deps)).toBe(1);
-    expect(h.err).toEqual(['[suite] calibrate lands in Epic 13']);
+    expect(await main(['calibrate', '--suite', 'x-suite'], h.deps)).toBe(1);
+    expect(h.err.some((line) => line.includes('pnpm suite:calibrate:live --suite x-suite --live-judge'))).toBe(true);
+    expect(existsSync(join(dir, 'calibration'))).toBe(false);
     expect(runDirs()).toEqual([]);
+  });
+
+  it('builds the judge before importing, so a failing factory exits 1 with nothing written', async () => {
+    writeExport(twoStatuses);
+    const h = harness({ env: { INIT_CWD: dir } });
+    h.deps.createCalibrationJudge = () => {
+      throw new Error('[suite] live judge: OPENAI_API_KEY is required');
+    };
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(1);
+    expect(h.err).toContain('[suite] live judge: OPENAI_API_KEY is required');
+    expect(existsSync(join(dir, 'calibration'))).toBe(false);
+  });
+
+  it('exits 1 on an unknown suite', async () => {
+    const { h } = judged(() => 'PASS');
+    expect(await main(['calibrate', '--suite', 'nope'], h.deps)).toBe(1);
+    expect(h.err[0]).toMatch(/unknown suite nope/);
+  });
+
+  it('never prints environment values', async () => {
+    writeExport(twoStatuses);
+    const h = harness({ env: { INIT_CWD: dir, OPENAI_API_KEY: SECRET } });
+    h.deps.createCalibrationJudge = () => fakeJudge(() => 'PASS').judge;
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    expect([...h.out, ...h.err].join('\n')).not.toContain(SECRET);
   });
 });
 

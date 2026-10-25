@@ -1,12 +1,5 @@
-import {
-  addJudgeUsage,
-  emptyJudgeUsage,
-  evidenceMatches,
-  type CriterionJudge,
-  type JudgeInput,
-  type JudgeUsage,
-  type MeaningOutcome,
-} from './judge/criterion-judge';
+import { emptyJudgeUsage, type CriterionJudge } from './judge/criterion-judge';
+import { decideMeaning } from './judge/decide-meaning';
 import { buildJudgeInput } from './judge/judge-input';
 import { RULES, type RuleContext, type RuleOutcome, type RuleRegistry } from './rules/registry';
 import { missingField } from './rules/reply-selection';
@@ -115,8 +108,6 @@ function rulePhase(
   return test.criteria.map((criterion) => evaluateCriterion(test, run, criterion, withJudge, trust, rules, context, checkpoint));
 }
 
-const INVALID_EVIDENCE = 'PASS evidence is missing or is not a verbatim fragment of the evaluated reply';
-
 async function meaningPhase(
   test: LoadedTest,
   run: CaseRun,
@@ -130,40 +121,17 @@ async function meaningPhase(
     return { ...meaning, status: 'FAIL', evidence: 'no-reply', judgeUsage: emptyJudgeUsage() };
   }
 
-  let outcome = await callJudge(judge, input, false);
-  let usage = outcome.usage;
-  if (outcome.status === 'PASS' && !evidenceMatches(outcome.evidence, replyTexts)) {
-    outcome = await callJudge(judge, input, true);
-    usage = addJudgeUsage(usage, outcome.usage);
-    if (outcome.status === 'PASS' && !evidenceMatches(outcome.evidence, replyTexts)) {
-      outcome = { status: 'ERROR', reason: 'judge-invalid-output', message: INVALID_EVIDENCE, usage };
-    }
+  const decision = await decideMeaning(judge, input, replyTexts);
+  if (decision.status === 'ERROR') {
+    return { ...meaning, status: 'ERROR', reason: decision.reason, evidence: decision.message, judgeUsage: decision.usage };
   }
-
-  if (outcome.status === 'ERROR') {
-    return { ...meaning, status: 'ERROR', reason: outcome.reason, evidence: outcome.message, judgeUsage: usage };
-  }
-  // PASS evidence was verified above; FAIL evidence is kept only when it is a verbatim
-  // fragment, so an invented quote is never recorded as what the coach said.
-  const verified = outcome.status === 'PASS' || evidenceMatches(outcome.evidence, replyTexts);
   return {
     ...meaning,
-    status: outcome.status,
-    reason: outcome.reason,
-    ...(verified && outcome.evidence !== null ? { evidence: outcome.evidence } : {}),
-    judgeUsage: usage,
+    status: decision.status,
+    reason: decision.reason,
+    ...(decision.evidence !== null ? { evidence: decision.evidence } : {}),
+    judgeUsage: decision.usage,
   };
-}
-
-/** A rejecting `CriterionJudge` is a transport failure of that criterion only. */
-async function callJudge(judge: CriterionJudge, input: JudgeInput, reask: boolean): Promise<MeaningOutcome> {
-  try {
-    return await judge(input, reask ? { reask: true } : undefined);
-  } catch (error) {
-    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-    const usage: JudgeUsage = emptyJudgeUsage();
-    return { status: 'ERROR', reason: 'judge-transport', message, usage };
-  }
 }
 
 const EFFECT_COUNT = 'effect-count';

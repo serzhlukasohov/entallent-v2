@@ -28,6 +28,7 @@
     "suite:diff": "pnpm --filter @entalent/conversation-sim suite:diff",
     "suite:baseline:accept": "pnpm --filter @entalent/conversation-sim suite:baseline:accept",
     "suite:calibrate": "pnpm --filter @entalent/conversation-sim suite:calibrate",
+    "suite:calibrate:live": "pnpm --filter @entalent/conversation-sim suite:calibrate:live",
     "suite:ci": "pnpm --filter @entalent/conversation-sim suite:ci",
     "harness:check": "node --import tsx scripts/agent-harness.ts check",
     "harness:preflight": "dotenv -e .env -- node --import tsx scripts/agent-harness.ts preflight",

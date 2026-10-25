@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -11,7 +11,8 @@ import { describe, expect, it } from 'vitest';
  * The executor, runner and CLI also never import `vitest` at runtime (Story 12.8), so
  * they load in plain Node/tsx. Model egress is a human boundary (Story 13.1): they never
  * reach the live judge adapter `suite/judge/live-judge-model.ts` or value-import any
- * `@ai-sdk/*` provider package.
+ * `@ai-sdk/*` provider package. Nor do they reach the live calibration entry
+ * `suite/judge/calibrate-live.ts` (Story 13.2), which refuses without `--live-judge`.
  */
 const SRC = resolve(__dirname, '..', '..');
 const PACKAGE_DIR = resolve(SRC, '..');
@@ -114,6 +115,9 @@ function forbiddenImports(entry: string, read: ReadSource = readFromDisk, root =
       if (targetPath === join('suite', 'judge', 'live-judge-model.ts')) {
         violations.push({ file: at, specifier: statement.specifier, reason: 'value import of live-judge-model' });
       }
+      if (targetPath === join('suite', 'judge', 'calibrate-live.ts')) {
+        violations.push({ file: at, specifier: statement.specifier, reason: 'value import of calibrate-live' });
+      }
       queue.push(target);
     }
   }
@@ -132,6 +136,7 @@ describe('L0 executor import graph', () => {
     ['executor', EXECUTOR, join('harness', 'report.ts')],
     ['runner', RUNNER, join('suite', 'judge', 'criterion-judge.ts')],
     ['cli', CLI, join('harness', 'report.ts')],
+    ['cli (calibration)', CLI, join('suite', 'judge', 'calibrate.ts')],
   ])('the %s reaches no forbidden module and no vitest', (_name, entry, reached) => {
     const { visited, violations } = forbiddenImports(entry);
     expect(visited).toContain(reached);
@@ -164,6 +169,33 @@ describe('L0 executor import graph', () => {
     expect(result.stderr).toBe('');
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('suite:run --suite <id> --level L0');
+  });
+
+  it('flags an import of the live calibration entry', () => {
+    const files: Record<string, string> = {
+      [CLI]: "const live = import('./judge/calibrate-live');\n",
+      [join(SRC, 'suite', 'judge', 'calibrate-live.ts')]: 'export const calibrateLive = 1;\n',
+    };
+    const { violations } = forbiddenImports(CLI, (file) => files[file] ?? null);
+    expect(violations.map((violation) => violation.reason)).toEqual(['value import of calibrate-live']);
+  });
+
+  it('refuses the live calibration entry without --live-judge in plain Node', () => {
+    const listing = () => {
+      const root = join(PACKAGE_DIR, 'calibration');
+      return existsSync(root) ? readdirSync(root, { recursive: true }).map(String).sort() : null;
+    };
+    const before = listing();
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/suite/judge/calibrate-live.ts', 'calibrate', '--suite', 'smoke-v1'], {
+      cwd: PACKAGE_DIR,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('[suite] calibrate:live refuses without --live-judge');
+    expect(listing()).toEqual(before);
   });
 
   it('runs the real CLI wiring on smoke-v1 in plain Node and writes the report under the package', () => {

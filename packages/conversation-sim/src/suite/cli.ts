@@ -13,6 +13,16 @@ import {
 import { loadSuiteConfig } from './config';
 import { diffRun, diffSummaryLines, parseBaselineJson } from './diff';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
+import {
+  calibrate,
+  calibrationLines,
+  importQaExport,
+  labelsPath,
+  readLabelsFile,
+  writeAgreementFile,
+  writeLabelsFile,
+} from './judge/calibrate';
+import type { CriterionJudge } from './judge/criterion-judge';
 import type { SuiteExecutor } from './executors/types';
 import { loadSuite } from './loader';
 import { renderCiSummary, writeSuiteReport } from './report';
@@ -24,19 +34,24 @@ import {
   type DiffBaselineSource,
   type Level,
   type LoadedSuite,
+  type SuiteConfig,
   type SuiteRunReport,
 } from './schema';
 
 /**
- * `suite:run`, `suite:baseline:accept`, `suite:diff`, `suite:ci` and the `suite:calibrate`
- * stub (architecture AD-11, AD-13, AD-14, AD-15).
+ * `suite:run`, `suite:baseline:accept`, `suite:diff`, `suite:ci` and `suite:calibrate`
+ * (architecture AD-8, AD-11, AD-13, AD-14, AD-15).
  * `run` and `baseline:accept` exit 0 when a report (or baseline) was written, whatever the
  * verdict, and 1 on usage, config, load or refusal errors. `diff` exits 0 clean, 1 gating
  * entry, 2 baseline-invalid, 3 judge infrastructure, 4 budget exceeded; usage errors and an
  * unreadable run report are 1 and write nothing. `ci` runs and merge-base-diffs every
  * registered suite that has tests and exits with the first code present by precedence
  * 2 > 3 > 4 > 1 over all suites (a load or run failure counts as 1), else 0. `calibrate`
- * exits 1 until Epic 13. This CLI never loads `.env` and never prints environment values.
+ * exits 0 when the import or agreement file was written, 1 on usage, config, load, label
+ * or export errors (and without a judge unless `--import` is given), 3 when any label was
+ * judged ERROR (the file is still written). This entry wires no judge: the live judge is
+ * reachable only through `judge/calibrate-live.ts`. This CLI never loads `.env` and never
+ * prints environment values.
  */
 
 export interface GitState {
@@ -59,6 +74,8 @@ export interface CliDeps {
   rules?: RuleRegistry;
   /** Reads a package-relative file at the merge-base with origin/main; defaults to `git` in `packageDir`. */
   mergeBase?: (packageRelativePath: string) => MergeBaseFile;
+  /** The judge `suite:calibrate` judges labels with; absent in the default entry (no model egress). */
+  createCalibrationJudge?: (judge: SuiteConfig['judge']) => CriterionJudge;
 }
 
 export interface MergeBaseFile {
@@ -85,15 +102,21 @@ export const HELP = `Usage:
       For every suite in suite.config.json that has tests: suite:run (n=1) then
       suite:diff --merge-base. Suites without tests are skipped. --summary appends a
       Markdown step summary (no evidence or transcript text) to <path>.
-  suite:calibrate
-      Lands in Epic 13; exits 1.
+  suite:calibrate --suite <id> [--import <qa-export.json>]
+      --import appends the QA export's labels to calibration/<id>/labels.json (deduplicated on
+      criterion and transcript hash; any invalid entry rejects the whole import). Without a
+      wired judge, calibration itself is skipped; this entry wires none, so a calibration run
+      is suite:calibrate:live --suite <id> --live-judge (calls the pinned judge model; human-run).
+      With a judge it judges every label and writes the agreement file under calibration/<id>/.
 
 Exit codes (run, baseline:accept): 0 report or baseline written; 1 usage, config, load or refusal error.
 Exit codes (diff): 0 clean or no baseline; 1 gating regression or lost coverage (also usage errors
   and an unreadable run report); 2 baseline invalid; 3 judge infrastructure; 4 budget exceeded.
 Exit code (ci): the first present over all suites by precedence 2 > 3 > 4 > 1 (a load or run
   failure counts as 1); 0 when every suite is clean, has no baseline, or is skipped.
-Exit code (calibrate): 1.`;
+Exit codes (calibrate): 0 import done or agreement file written; 1 usage, config, unknown suite,
+  load, invalid labels or export, unresolvable label, or no judge without --import; 3 any judge ERROR
+  (the agreement file is still written).`;
 
 export type ParsedCommand =
   | { command: 'help' }
@@ -101,7 +124,7 @@ export type ParsedCommand =
   | { command: 'baseline:accept'; run: string; allowIncomplete: boolean; allowDirty: boolean; ciRunUrl?: string }
   | { command: 'diff'; run: string; baseline?: string; mergeBase: boolean }
   | { command: 'ci'; level: Level; summary?: string }
-  | { command: 'calibrate' };
+  | { command: 'calibrate'; suite: string; import?: string };
 
 export class CliUsageError extends Error {
   constructor(message: string) {
@@ -213,7 +236,22 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       if (values.summary !== undefined && values.summary.trim() === '') throw new CliUsageError('[suite] ci: --summary must not be empty');
       return { command: 'ci', level: level.data, ...(values.summary !== undefined ? { summary: values.summary } : {}) };
     }
-    if (command === 'calibrate') return { command: 'calibrate' };
+    if (command === 'calibrate') {
+      const { values } = parseNodeArgs({
+        args: tail,
+        strict: true,
+        allowPositionals: false,
+        options: {
+          suite: { type: 'string' },
+          import: { type: 'string' },
+          help: { type: 'boolean', short: 'h' },
+        },
+      });
+      if (values.help) return { command: 'help' };
+      if (!values.suite) throw new CliUsageError('[suite] calibrate: --suite <id> is required');
+      if (values.import !== undefined && values.import.trim() === '') throw new CliUsageError('[suite] calibrate: --import must not be empty');
+      return { command: 'calibrate', suite: values.suite, ...(values.import !== undefined ? { import: values.import } : {}) };
+    }
   } catch (error) {
     if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(`[suite] ${command}: ${(error as Error).message}`);
@@ -268,10 +306,7 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps(
     if (parsed.command === 'run') return await runCommand(parsed, deps);
     if (parsed.command === 'diff') return diffCommand(parsed, deps);
     if (parsed.command === 'ci') return await ciCommand(parsed, deps);
-    if (parsed.command === 'calibrate') {
-      deps.error('[suite] calibrate lands in Epic 13');
-      return 1;
-    }
+    if (parsed.command === 'calibrate') return await calibrateCommand(parsed, deps);
     return acceptCommand(parsed, deps);
   } catch (error) {
     deps.error(error instanceof Error ? error.message : String(error));
@@ -448,6 +483,64 @@ function ciSummaryMarkdown(level: Level, outcomes: readonly CiSuiteOutcome[], re
   lines.push('');
   const body = reports.map((report) => renderCiSummary(report)).join('\n');
   return `${lines.join('\n')}${body ? `\n${body}` : ''}\n`;
+}
+
+const liveHint = (suiteId: string) => `pnpm suite:calibrate:live --suite ${suiteId} --live-judge`;
+
+/** `suite:calibrate` (AD-8): optional QA-export import, then calibration when a judge is wired. */
+async function calibrateCommand(parsed: Extract<ParsedCommand, { command: 'calibrate' }>, deps: CliDeps): Promise<number> {
+  const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
+  if (!config.suites.includes(parsed.suite)) {
+    throw new Error(`[suite] unknown suite ${parsed.suite}; known suites: ${config.suites.join(', ')}`);
+  }
+  if (!deps.createCalibrationJudge && parsed.import === undefined) {
+    deps.error(`[suite] calibrate: this entry wires no judge, so nothing was calibrated or written.`);
+    deps.error(`[suite] calibrate: to judge the labels with the pinned model (human-run, model egress), run ${liveHint(parsed.suite)}`);
+    return 1;
+  }
+  // Built before any import, so a failing factory (e.g. missing credentials) writes nothing.
+  const judge = deps.createCalibrationJudge ? deps.createCalibrationJudge(config.judge) : null;
+  const suite = deps.loadSuite(parsed.suite);
+  const shownLabels = relative(deps.packageDir, labelsPath(deps.packageDir, suite.id));
+
+  if (parsed.import !== undefined) {
+    const path = resolve(deps.env.INIT_CWD ?? process.cwd(), parsed.import);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+      throw new Error(`[suite] import: cannot read ${parsed.import} as JSON (${errorMessage(error)})`);
+    }
+    const existing = readLabelsFile(deps.packageDir, suite.id);
+    const imported = importQaExport(suite, existing, raw);
+    if (!imported.ok) {
+      for (const line of imported.errors) deps.error(line);
+      deps.error(`[suite] import: rejected; nothing was written`);
+      return 1;
+    }
+    for (const line of imported.warnings) deps.log(line);
+    if (imported.added.length > 0) writeLabelsFile(deps.packageDir, suite.id, imported.file);
+    deps.log(
+      `[suite] import: ${imported.added.length} label(s) added, ${imported.warnings.length} duplicate(s) skipped; ${shownLabels} has ${imported.file.labels.length} label(s)`,
+    );
+    if (!judge) {
+      deps.log(`[suite] calibrate: calibration skipped (no judge wired); run ${liveHint(parsed.suite)} to calibrate`);
+      return 0;
+    }
+  }
+
+  const labels = readLabelsFile(deps.packageDir, suite.id);
+  deps.log(`[suite] calibrate ${suite.id}: ${labels.labels.length} label(s), judge ${config.judge.provider}/${config.judge.model}`);
+  if (!judge) throw new Error('[suite] calibrate: no judge wired');
+  const result = await calibrate({ suite, labels, judge, judgeConfig: config.judge, now: deps.now });
+  const written = writeAgreementFile(deps.packageDir, suite.id, result.agreement);
+  for (const line of calibrationLines(result, config.judge.minLabels)) deps.log(line);
+  deps.log(`[suite] agreement: ${relative(deps.packageDir, written)}`);
+  if (result.judgeErrors > 0) {
+    deps.error(`[suite] calibrate: ${result.judgeErrors} label(s) judged ERROR (counted as disagreements)`);
+    return 3;
+  }
+  return 0;
 }
 
 function errorMessage(error: unknown): string {
