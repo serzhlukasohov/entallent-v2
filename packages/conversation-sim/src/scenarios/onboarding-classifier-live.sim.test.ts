@@ -4,7 +4,7 @@ import {
   type ClassifyContext, type ConversationTurn, type OnboardingState, type SignalOutcome,
 } from '@entalent/application';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createLiveProvider } from '../harness/coach-harness';
+import { createLiveProvider } from '../harness/live-provider';
 
 /**
  * Live classifier check for the onboarding signal: the real provider and prompt, with onboarding

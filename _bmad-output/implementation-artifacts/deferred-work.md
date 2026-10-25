@@ -314,3 +314,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3-suite-rule-implementations.md`
   summary: Resolved in 12.3b — rules with a params schema now parse raw params themselves in `run`, so defaults apply and synthesized `effect-count` params are validated; `evaluate` and `loader` unchanged.
   evidence: Story 12.3b (2026-10-25), `suite/rules/*.ts`.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-7-l0-deterministic-executor-and-fixtures.md`
+  summary: Real P-suite cases do not yet run offline in the PR gate; the L0 executor is proven on synthetic tests only.
+  evidence: Story 12.7 review (Intent Alignment). Needs 12.4 cases, the 12.8 runner and the 12.10 CI job. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-7-l0-deterministic-executor-and-fixtures.md`
+  summary: `harness/report.ts` imports `vitest` at module load, so `CoachHarness` cannot load under tsx; `suite:run` (12.8) must make it lazy first.
+  evidence: Story 12.7 implementer probe; `docs/agent-failures.md` 2026-10-25 entry. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-7-l0-deterministic-executor-and-fixtures.md`
+  summary: The in-memory question-confirmation fake has no contract test against the PostgreSQL repository; `disclosureDelivered` copies an unexported disclosure version literal.
+  evidence: Story 12.7 review (Blind Hunter). Settle when P-07/P-09/P-10 L0 cases exist. Severity medium (unverified).

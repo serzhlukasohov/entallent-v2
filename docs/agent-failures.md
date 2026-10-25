@@ -3256,3 +3256,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: When step-02 rewrites a draft's non-frozen sections, diff the old and new Tasks/AC text and carry over every param, field and form the old text named (or log the removal in the Spec Change Log).
 - Regression check: `git diff <baseline> -- <spec_file>` reviewed for removed task lines before marking a re-planned draft `ready-for-dev`.
 - Status: open
+
+## 2026-10-25: Conversation-sim harness cannot load outside Vitest
+
+- Symptom: Loading `CoachHarness` under tsx (the planned `suite:run` CLI, Story 12.8) crashes with "Vitest cannot be imported in a CommonJS module", because `harness/report.ts` imports `onTestFailed` from `vitest` at module load. Found while building the L0 executor (Story 12.7).
+- Expected: The L0 executor and everything it imports load in a plain Node/tsx process.
+- Root cause layer: architecture
+- Harness fix: Make the vitest import in `harness/report.ts` lazy (or move the failure-report hook to a test-only module) in Story 12.8, and extend `suite/executors/import-graph.test.ts` to forbid runtime `vitest` imports reachable from the executor.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec tsx -e "import('./src/suite/executors/l0-deterministic-executor.ts')"` exits 0.
+- Status: open

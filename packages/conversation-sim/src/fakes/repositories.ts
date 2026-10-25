@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { systemClock } from '@entalent/application';
 import type {
   ClockPort,
@@ -21,12 +20,26 @@ import type {
   UserGoalRecord,
 } from '@entalent/application';
 
-let sequence = 0;
-const nextId = (prefix: string): string => `${prefix}-${++sequence}`;
+/** Per-instance id sequence, so two harnesses never share or shift each other's ids. */
+class IdSequence {
+  private value = 0;
+
+  next(prefix: string): string {
+    return `${prefix}-${++this.value}`;
+  }
+}
+
+/** Columns the production `messages` table stores but `MessageRecord` does not carry. */
+export interface MessageSideFields {
+  traceId?: string;
+  messageType?: string;
+}
 
 export class InMemoryConversationRepository implements ConversationRepositoryPort {
   readonly messages: MessageRecord[] = [];
   private readonly deliveredAt = new Map<string, Date>();
+  private readonly sideFields = new Map<string, MessageSideFields>();
+  private readonly ids = new IdSequence();
 
   constructor(
     private readonly conversation: ConversationRecord,
@@ -101,7 +114,7 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
   async saveMessage(params: SaveMessageParams): Promise<MessageRecord> {
     const now = this.clock.now();
     const record: MessageRecord = {
-      id: randomUUID(),
+      id: this.ids.next('msg'),
       conversationId: params.conversationId,
       tenantId: params.tenantId,
       userId: params.userId,
@@ -114,7 +127,21 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
       metadata: params.metadata,
     };
     this.messages.push(record);
+    this.sideFields.set(record.id, {
+      ...(params.traceId !== undefined ? { traceId: params.traceId } : {}),
+      ...(params.messageType !== undefined ? { messageType: params.messageType } : {}),
+    });
     return record;
+  }
+
+  /** `traceId` and `messageType` the message was saved with (empty when it had none). */
+  sideFieldsOf(messageId: string): MessageSideFields {
+    return { ...(this.sideFields.get(messageId) ?? {}) };
+  }
+
+  /** When the message was marked delivered, or null. */
+  deliveredAtOf(messageId: string): Date | null {
+    return this.deliveredAt.get(messageId) ?? null;
   }
 
   async updateMessageDelivery(
@@ -140,6 +167,7 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
 }
 
 export class InMemoryMemoryRepository implements MemoryRepositoryPort {
+  private readonly ids = new IdSequence();
   readonly items: MemoryItemRecord[] = [];
 
   constructor(private readonly clock: ClockPort = systemClock) {}
@@ -182,7 +210,7 @@ export class InMemoryMemoryRepository implements MemoryRepositoryPort {
     const now = this.clock.now();
     const record: MemoryItemRecord = {
       ...params,
-      id: nextId('mem'),
+      id: this.ids.next('mem'),
       status: 'active',
       sourceType: 'conversation',
       validFrom: now,
@@ -208,6 +236,7 @@ export class InMemoryMemoryRepository implements MemoryRepositoryPort {
 }
 
 export class InMemoryGoalRepository implements GoalRepositoryPort {
+  private readonly ids = new IdSequence();
   readonly goals: UserGoalRecord[] = [];
 
   constructor(private readonly clock: ClockPort = systemClock) {}
@@ -226,7 +255,7 @@ export class InMemoryGoalRepository implements GoalRepositoryPort {
     const now = this.clock.now();
     const record: UserGoalRecord = {
       ...params,
-      id: nextId('goal'),
+      id: this.ids.next('goal'),
       status: 'active',
       priority: 'medium',
       createdAt: now,
@@ -250,6 +279,7 @@ export class InMemoryGoalRepository implements GoalRepositoryPort {
 }
 
 export class InMemoryScheduledActionRepository implements ScheduledActionRepositoryPort {
+  private readonly ids = new IdSequence();
   readonly actions: ScheduledActionRecord[] = [];
 
   constructor(private readonly clock: ClockPort = systemClock) {}
@@ -258,7 +288,7 @@ export class InMemoryScheduledActionRepository implements ScheduledActionReposit
     const now = this.clock.now();
     const record: ScheduledActionRecord = {
       ...params,
-      id: nextId('act'),
+      id: this.ids.next('act'),
       status: 'pending',
       attemptCount: 0,
       maxAttempts: 3,

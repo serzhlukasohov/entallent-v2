@@ -3,9 +3,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { ScenarioResult } from '@langwatch/scenario';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InMemoryMemoryRepository, InMemoryScheduledActionRepository } from '../fakes/repositories';
+import { InlineOutbox } from '../fakes/inline-outbox';
+import {
+  InMemoryConversationRepository,
+  InMemoryGoalRepository,
+  InMemoryMemoryRepository,
+  InMemoryScheduledActionRepository,
+  InMemoryStyleProfileRepository,
+} from '../fakes/repositories';
 import { ScriptedAiProvider } from '../fakes/scripted-ai';
-import { CoachHarness, RecordingAiProvider } from './coach-harness';
+import { CoachHarness, RecordingAiProvider, createSimConversation } from './coach-harness';
 import { reportRun, type ScenarioRunReport } from './report';
 
 const PROVIDER_ERROR = 'provider exploded during generation';
@@ -238,5 +245,82 @@ describe('RecordingAiProvider', () => {
     await provider.composeQuestionBundle(turns, questions, 'en', 'corrected_statement');
 
     expect(compose).toHaveBeenCalledWith(turns, questions, 'en', 'corrected_statement');
+  });
+});
+
+describe('CoachHarness with injected ports', () => {
+  it('uses the injected repositories and outbox and reports each turn with its traceId', async () => {
+    const NOW = new Date('2026-01-05T12:00:00.000Z');
+    const clock = { now: () => new Date(NOW.getTime()) };
+    const ai = new ScriptedAiProvider();
+    const conversationRepo = new InMemoryConversationRepository(createSimConversation({ timezone: 'UTC', clock }), clock);
+    const memoryRepo = new InMemoryMemoryRepository(clock);
+    const goalRepo = new InMemoryGoalRepository(clock);
+    const styleRepo = new InMemoryStyleProfileRepository();
+    const outbox = new InlineOutbox(ai, conversationRepo, memoryRepo, goalRepo, styleRepo, { clock });
+    const enqueued = vi.spyOn(outbox, 'enqueueMessageSend');
+    const harness = new CoachHarness({ aiProvider: ai, clock, conversationRepo, memoryRepo, goalRepo, styleRepo, outbox });
+
+    const turn = await harness.sendTurn('hello there');
+
+    expect(harness.conversationRepo).toBe(conversationRepo);
+    expect(harness.outbox).toBe(outbox);
+    expect(enqueued).toHaveBeenCalledTimes(1);
+    expect(turn.traceId).toBe(`sim-turn-1-${NOW.getTime()}`);
+    const [inbound, outbound] = conversationRepo.messages;
+    expect(turn.inboundMessageId).toBe(inbound?.id);
+    expect(turn.result.outboundMessageId).toBe(outbound?.id);
+    expect(conversationRepo.sideFieldsOf(outbound!.id)).toEqual({ traceId: turn.traceId });
+    expect(conversationRepo.deliveredAtOf(outbound!.id)).toEqual(NOW);
+    expect(await harness.send('and again')).toBe(harness.replies[1]);
+  });
+
+  it('never reuses a traceId after a throwing turn under a fixed clock', async () => {
+    const NOW = new Date('2026-01-05T12:00:00.000Z');
+    const clock = { now: () => new Date(NOW.getTime()) };
+    const harness = new CoachHarness({
+      aiProvider: new ScriptedAiProvider({
+        responses: [
+          (_input, callIndex) => {
+            if (callIndex === 0) throw new TypeError(PROVIDER_ERROR);
+            return { text: 'Second try.', confidence: 0.9, containsSurveyProbe: false };
+          },
+        ],
+      }),
+      clock,
+      fallbackReport: false,
+    });
+
+    await expect(harness.send('first')).rejects.toThrow(PROVIDER_ERROR);
+    const turn = await harness.sendTurn('second');
+
+    expect(turn.traceId).toBe(`sim-turn-2-${NOW.getTime()}`);
+    expect(harness.failures[0]?.turn).toBe(1);
+    const outbound = harness.transcript.filter((message) => message.direction === 'outbound');
+    expect(outbound.map((message) => harness.conversationRepo.sideFieldsOf(message.id).traceId)).toEqual([turn.traceId]);
+  });
+
+  it('numbers ids per repository instance', async () => {
+    const first = new InMemoryMemoryRepository();
+    const second = new InMemoryMemoryRepository();
+    const item = {
+      tenantId: 't', userId: 'u', category: 'preference' as const, content: 'x', confidence: 1, importance: 1,
+      sensitivity: 'normal' as const, sourceMessageIds: [],
+    };
+    expect((await first.save(item)).id).toBe('mem-1');
+    expect((await second.save(item)).id).toBe('mem-1');
+    expect((await first.save(item)).id).toBe('mem-2');
+  });
+
+  it('stores messageType and traceId as side fields without changing MessageRecord', async () => {
+    const repo = new InMemoryConversationRepository(createSimConversation());
+    const saved = await repo.saveMessage({
+      conversationId: 'sim-conversation', tenantId: 'sim-tenant', userId: 'sim-user', direction: 'outbound',
+      text: 'Check-in.', traceId: 'trace-1', messageType: 'proactive_check_in',
+    });
+    expect(saved).not.toHaveProperty('traceId');
+    expect(saved).not.toHaveProperty('messageType');
+    expect(repo.sideFieldsOf(saved.id)).toEqual({ traceId: 'trace-1', messageType: 'proactive_check_in' });
+    expect(repo.sideFieldsOf('unknown')).toEqual({});
   });
 });

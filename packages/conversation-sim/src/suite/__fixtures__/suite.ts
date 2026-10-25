@@ -123,7 +123,16 @@ export function observationTest(): Record<string, unknown> {
     kind: 'observation',
     levels: ['L0'],
     runProfile: 'isolated',
-    setup: [{ name: 'proactiveUsers', params: { count: 1 } }],
+    setup: [
+      {
+        name: 'proactiveUsers',
+        params: {
+          timezone: 'UTC',
+          quietHours: { enabled: true, startHour: 22, endHour: 8 },
+          scan: { minSilenceDays: 3, minCheckInGapDays: 2, quietHoursEnabled: true },
+        },
+      },
+    ],
     scripted: [],
     preconditions: [],
     steps: [],
