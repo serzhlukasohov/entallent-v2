@@ -17,6 +17,14 @@ function makeCandidate(overrides: Partial<CheckInCandidate> = {}): CheckInCandid
     timezone: 'UTC',
     quietHours: { enabled: false },
     preferredName: 'Alex',
+    // Eligible by default: never heard from and never contacted, so existing fixtures enqueue as before.
+    cadence: {
+      lastInboundAt: null,
+      lastProactiveContactAt: null,
+      recentProactiveCount: 0,
+      hasUnansweredProactive: false,
+      inQaCadenceCohort: false,
+    },
     ...overrides,
   };
 }
@@ -196,5 +204,86 @@ describe('ProactiveSchedulerUseCase with an injected clock', () => {
     expect(queue.enqueueCheckIn).toHaveBeenCalledWith(
       expect.objectContaining({ traceId: `checkin-u-9-${Date.parse('2026-01-05T12:00:00Z')}` }),
     );
+  });
+});
+
+describe('ProactiveSchedulerUseCase cadence policy', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const nowIso = '2026-01-05T12:00:00.000Z';
+  const now = Date.parse(nowIso);
+  const fixedClock = { now: () => new Date(nowIso) };
+  const facts = (overrides: Partial<CheckInCandidate['cadence']> = {}): CheckInCandidate['cadence'] => ({
+    lastInboundAt: null,
+    lastProactiveContactAt: null,
+    recentProactiveCount: 0,
+    hasUnansweredProactive: false,
+    inQaCadenceCohort: false,
+    ...overrides,
+  });
+
+  it('skips a candidate the policy rejects without consulting quiet hours', async () => {
+    const repo = makeRepo([
+      // In default quiet hours at 23:30 and inside the 3-day silence window: cadence wins.
+      makeCandidate({
+        userId: 'chatty',
+        quietHours: { enabled: true },
+        cadence: facts({ lastInboundAt: new Date(Date.parse('2026-01-05T23:00:00Z')) }),
+      }),
+    ]);
+    const queue = makeQueue();
+    const useCase = new ProactiveSchedulerUseCase(repo, queue, undefined, { now: () => new Date('2026-01-05T23:30:00Z') });
+
+    const result = await useCase.scan();
+
+    expect(queue.enqueueCheckIn).not.toHaveBeenCalled();
+    expect(result).toEqual({ candidatesFound: 1, enqueued: 0, skippedQuietHours: 0, skippedCadence: 1 });
+  });
+
+  it('enqueues only the candidates the policy accepts', async () => {
+    const repo = makeRepo([
+      makeCandidate({ userId: 'due' }),
+      makeCandidate({ userId: 'recent', cadence: facts({ lastProactiveContactAt: new Date(now - DAY) }) }),
+      makeCandidate({ userId: 'capped', cadence: facts({ inQaCadenceCohort: true, recentProactiveCount: 3 }) }),
+    ]);
+    const queue = makeQueue();
+    const useCase = new ProactiveSchedulerUseCase(repo, queue, undefined, fixedClock);
+
+    const result = await useCase.scan();
+
+    expect(queue.enqueueCheckIn).toHaveBeenCalledTimes(1);
+    expect(queue.enqueueCheckIn).toHaveBeenCalledWith(expect.objectContaining({ userId: 'due' }));
+    expect(result).toEqual({ candidatesFound: 3, enqueued: 1, skippedQuietHours: 0, skippedCadence: 2 });
+  });
+
+  it('evaluates the policy at clock.now(), not the system time', async () => {
+    const atBoundary = makeCandidate({ userId: 'boundary', cadence: facts({ lastInboundAt: new Date(now - 3 * DAY) }) });
+    const inside = makeCandidate({ userId: 'inside', cadence: facts({ lastInboundAt: new Date(now - 3 * DAY + 1) }) });
+    const queue = makeQueue();
+    const useCase = new ProactiveSchedulerUseCase(makeRepo([atBoundary, inside]), queue, undefined, fixedClock);
+
+    const result = await useCase.scan();
+
+    expect(queue.enqueueCheckIn).toHaveBeenCalledTimes(1);
+    expect(queue.enqueueCheckIn).toHaveBeenCalledWith(expect.objectContaining({ userId: 'boundary' }));
+    expect(result.skippedCadence).toBe(1);
+  });
+
+  it('applies configured day thresholds and QA cadence overrides', async () => {
+    const repo = makeRepo([
+      makeCandidate({ userId: 'five-days', cadence: facts({ lastInboundAt: new Date(now - 5 * DAY) }) }),
+      makeCandidate({ userId: 'qa', cadence: facts({ inQaCadenceCohort: true, recentProactiveCount: 1 }) }),
+    ]);
+    const queue = makeQueue();
+    const useCase = new ProactiveSchedulerUseCase(
+      repo,
+      queue,
+      { minSilenceDays: 7, qaCadence: { silenceHours: 2, gapHours: 4, maxPerDay: 1 } },
+      fixedClock,
+    );
+
+    const result = await useCase.scan();
+
+    expect(queue.enqueueCheckIn).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ candidatesFound: 2, enqueued: 0, skippedCadence: 2 });
   });
 });

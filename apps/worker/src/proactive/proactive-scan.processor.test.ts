@@ -18,7 +18,7 @@ describe('ProactiveScanProcessor', () => {
   });
 
   it('keeps the recurring scan behavior', async () => {
-    const scan = vi.fn().mockResolvedValue({ candidatesFound: 0, enqueued: 0, skippedQuietHours: 0 });
+    const scan = vi.fn().mockResolvedValue({ candidatesFound: 0, enqueued: 0, skippedQuietHours: 0, skippedCadence: 0 });
     const dispatchPending = vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 });
     const processor = new ProactiveScanProcessor(
       { scan } as never, {} as never, {} as never, { dispatchPending } as never, { sweep: vi.fn().mockResolvedValue({ found: 0, enqueued: 0, failed: 0 }) } as never,
@@ -44,7 +44,7 @@ describe('ProactiveScanProcessor', () => {
 
   it('runs the reminder recovery sweep after dispatch and before the scan', async () => {
     const order: string[] = [];
-    const scan = vi.fn(async () => { order.push('scan'); return { candidatesFound: 0, enqueued: 0, skippedQuietHours: 0 }; });
+    const scan = vi.fn(async () => { order.push('scan'); return { candidatesFound: 0, enqueued: 0, skippedQuietHours: 0, skippedCadence: 0 }; });
     const dispatchPending = vi.fn(async () => { order.push('dispatch'); return { found: 0, queued: 0, failed: 0 }; });
     const sweep = vi.fn(async () => { order.push('sweep'); return { found: 1, enqueued: 1, failed: 0 }; });
     const reconcile = vi.fn(async () => { order.push('reconcile'); return { found: 1, reconciled: 1, failed: 0 }; });
@@ -56,7 +56,7 @@ describe('ProactiveScanProcessor', () => {
   });
 
   it('a sweep failure never blocks the scan', async () => {
-    const scan = vi.fn().mockResolvedValue({ candidatesFound: 0, enqueued: 0, skippedQuietHours: 0 });
+    const scan = vi.fn().mockResolvedValue({ candidatesFound: 0, enqueued: 0, skippedQuietHours: 0, skippedCadence: 0 });
     const processor = new ProactiveScanProcessor(
       { scan } as never, {} as never, {} as never,
       { dispatchPending: vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 }) } as never,
@@ -66,7 +66,7 @@ describe('ProactiveScanProcessor', () => {
   });
 
   it('a role reconcile failure never blocks the scan', async () => {
-    const scan = vi.fn().mockResolvedValue({ candidatesFound: 0, enqueued: 0, skippedQuietHours: 0 });
+    const scan = vi.fn().mockResolvedValue({ candidatesFound: 0, enqueued: 0, skippedQuietHours: 0, skippedCadence: 0 });
     const processor = new ProactiveScanProcessor(
       { scan } as never, {} as never, {} as never,
       { dispatchPending: vi.fn().mockResolvedValue({ found: 0, queued: 0, failed: 0 }) } as never,

@@ -1,5 +1,5 @@
 ---
-status: blocked
+status: superseded
 ---
 
 # BMad Build Auto Result
@@ -27,3 +27,7 @@ Blocking condition: intent gap — Story 12.6 (Cadence Policy Extracted from Wor
 ## Impact
 
 Story 12.7 drives P-06 through the cadence policy (epic-12 context, dependency notes), so its P-06 path waits on this decision.
+
+## Resolution
+
+2026-10-25: the user chose option (a) and QA cohort membership as a per-user fact with intervals in config; implemented in `spec-12-6-cadence-policy-extracted-from-worker-sql.md`.

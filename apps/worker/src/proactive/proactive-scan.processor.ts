@@ -79,7 +79,7 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
     }
     const result = await this.scheduler.scan({ tenantId: job.data.tenantId });
     this.logger.log(
-      `Proactive scan job=${job.id} — onboardingQueued=${onboarding.queued} onboardingFailed=${onboarding.failed} candidates=${result.candidatesFound} enqueued=${result.enqueued} skippedQuietHours=${result.skippedQuietHours}`,
+      `Proactive scan job=${job.id} — onboardingQueued=${onboarding.queued} onboardingFailed=${onboarding.failed} candidates=${result.candidatesFound} enqueued=${result.enqueued} skippedQuietHours=${result.skippedQuietHours} skippedCadence=${result.skippedCadence}`,
     );
   }
 }

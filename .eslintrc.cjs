@@ -29,6 +29,7 @@ module.exports = {
         'packages/application/src/use-cases/follow-up-execution.use-case.ts',
         'packages/application/src/use-cases/proactive-scheduler.use-case.ts',
         'packages/application/src/utils/quiet-hours.ts',
+        'packages/application/src/policies/check-in-cadence.ts',
       ],
       rules: {
         'no-restricted-syntax': [
