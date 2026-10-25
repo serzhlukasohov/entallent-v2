@@ -425,6 +425,50 @@ describe('validateSuite: rules', () => {
     expectLoadError(set(), { code: 'invalid-rule-params', path: ['criteria', 1, 'checks', 0, 'params'] }, rules);
   });
 
+  it('rejects a state-equals expected that does not match the query value schema', () => {
+    const set = (expected: unknown) => (m: { tests: Rec[] }) =>
+      (journey(m).criteria[1].checks = [
+        { type: 'rule', rule: 'state-equals', params: { query: 'questionProgress', at: 'after', expected } },
+      ]);
+    expect(() => load(set({ answered: 1, total: 3 }))).not.toThrow();
+    const error = expectLoadError(set(1), {
+      code: 'invalid-rule-params',
+      testId: 'X-01.J',
+      path: ['criteria', 1, 'checks', 0, 'params', 'expected'],
+    });
+    expect(error.message).toMatch(/state-equals/);
+  });
+
+  it('rejects proactive-working-hours with an unknown time zone', () => {
+    const set = (timezone: string) => (m: { tests: Rec[] }) =>
+      (journey(m).criteria[1].checks = [{ type: 'rule', rule: 'proactive-working-hours', params: { timezone } }]);
+    expect(() => load(set('Europe/Kyiv'))).not.toThrow();
+    expectLoadError(set('Mars/Olympus'), {
+      code: 'invalid-rule-params',
+      testId: 'X-01.J',
+      path: ['criteria', 1, 'checks', 0, 'params', 'timezone'],
+    });
+  });
+
+  it('rejects state-not-greater-than on the non-count query questionProgress and before with delta or repliesWithMetadata', () => {
+    const set = (params: Record<string, unknown>) => (m: { tests: Rec[] }) =>
+      (journey(m).criteria[1].checks = [{ type: 'rule', rule: 'state-not-greater-than', params }]);
+    expect(() => load(set({ query: 'stagedBundleCount', at: 'after', max: { repliesWithMetadata: 'k' }, delta: true }))).not.toThrow();
+    expectLoadError(set({ query: 'questionProgress', at: 'after', max: 1 }), {
+      code: 'invalid-rule-params',
+      testId: 'X-01.J',
+      path: ['criteria', 1, 'checks', 0, 'params', 'query'],
+    });
+    expectLoadError(set({ query: 'stagedBundleCount', at: 'before', max: 1, delta: true }), {
+      code: 'invalid-rule-params',
+      path: ['criteria', 1, 'checks', 0, 'params', 'delta'],
+    });
+    expectLoadError(set({ query: 'stagedBundleCount', at: 'before', max: { repliesWithMetadata: 'k' } }), {
+      code: 'invalid-rule-params',
+      path: ['criteria', 1, 'checks', 0, 'params', 'max'],
+    });
+  });
+
   it('uses the default registry when none is passed', () => {
     const modules = deepFreeze(structuredClone(validModules()));
     expect(() => validateSuite('x-suite', modules)).toThrow(/unknown-rule.*events-only/);

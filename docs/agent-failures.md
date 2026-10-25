@@ -3247,3 +3247,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Run DB-backed checks on a fresh local database (`create database <name>` + `pnpm --filter @entalent/database db:migrate` with an overridden `DATABASE_URL`); recreating the shared `entalent` DB needs user approval because it holds local dev data.
 - Regression check: compare `select max(created_at) from drizzle.__drizzle_migrations` with the journal `when` values; any unapplied entry older than the watermark means the DB must be rebuilt.
 - Status: open
+
+## 2026-10-25: bmad-build-auto planning rewrite dropped a requirement from a draft spec
+
+- Symptom: Planning Story 12.3b from a draft spec, the orchestrator rewrote the non-frozen Tasks section and silently dropped `max: { repliesWithMetadata: key }`, the only form that expresses P-09. The implementation followed the rewritten spec; three review layers caught it and the story needed a bad_spec loop (revert, amend, re-implement).
+- Expected: Re-planning a draft keeps every requirement the draft already stated unless the change is logged.
+- Root cause layer: workflow
+- Harness fix: When step-02 rewrites a draft's non-frozen sections, diff the old and new Tasks/AC text and carry over every param, field and form the old text named (or log the removal in the Spec Change Log).
+- Regression check: `git diff <baseline> -- <spec_file>` reviewed for removed task lines before marking a re-planned draft `ready-for-dev`.
+- Status: open

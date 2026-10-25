@@ -1,4 +1,5 @@
-import { REPLY_MESSAGE_SEPARATOR, type CaseRun, type ObservationField } from '../schema';
+import { REPLY_MESSAGE_SEPARATOR, type CaseRun, type ObservationField, type ReplyMessage } from '../schema';
+import { PROACTIVE_MESSAGE_TYPE } from './proactive';
 
 const BASE_TIME = Date.UTC(2026, 0, 5, 10, 0, 0);
 
@@ -40,4 +41,27 @@ export function syntheticRun(
     errors: [],
     events: [],
   };
+}
+
+/** A proactive (or, with `messageType: null`, unmarked) outbound message for fixtures and tests. */
+export function outbound(id: string, occurredAt: string, messageType: string | null = PROACTIVE_MESSAGE_TYPE): ReplyMessage {
+  return { id, text: `Check-in ${id}.`, occurredAt, metadata: messageType === null ? {} : { messageType } };
+}
+
+/** An observation run over a 7-day window starting Monday 2026-01-05 00:00 UTC. */
+export function windowRun(testId: string, messages: ReplyMessage[]): CaseRun {
+  return {
+    ...syntheticRun(testId, [], ['window.outbound']),
+    window: { from: '2026-01-05T00:00:00.000Z', to: '2026-01-12T00:00:00.000Z', outbound: messages },
+  };
+}
+
+/** A one-step run with the given state snapshots, for state-rule fixtures. */
+export function stateFixtureRun(
+  testId: string,
+  state: CaseRun['state'],
+  observed: CaseRun['observed'],
+  replies: ReadonlyArray<string | null> = ['Noted.'],
+): CaseRun {
+  return { ...syntheticRun(testId, replies, observed), state };
 }

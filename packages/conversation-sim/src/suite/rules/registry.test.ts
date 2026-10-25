@@ -1,40 +1,89 @@
 import { hasReflectiveOpener } from '@entalent/ai-openai';
 import { describe, expect, it } from 'vitest';
 import { CaseRunSchema } from '../schema';
-import { RULES, RULE_NAMES, RuleNameSchema } from './registry';
+import { RULES, RULE_NAMES, RuleNameSchema, type RuleName } from './registry';
 import { syntheticRun } from './synthetic-run';
 
 const lastReply = (steps: number): string => `reply:${steps}`;
 
+/** Story 12.3b rules: observation-window, clock, event and state rules that take params. */
+const PARAM_RULES = [
+  'proactive-initiated',
+  'proactive-spacing',
+  'proactive-working-hours',
+  'clock-leak',
+  'effect-count',
+  'state-equals',
+  'state-not-greater-than',
+] as const satisfies readonly RuleName[];
+const REPLY_RULES = RULE_NAMES.filter((name) => !(PARAM_RULES as readonly string[]).includes(name));
+
 describe('rule registry', () => {
-  it('names the three wrapped legacy rules and the eight reply/turn rules', () => {
+  it('names the 3 wrapped legacy rules, the 8 reply/turn rules and the 7 param rules', () => {
     expect([...RULE_NAMES].sort()).toEqual([
       'answer-then-bundle',
       'bundle-staged',
       'cause-question-present',
+      'clock-leak',
+      'effect-count',
       'no-greeting-restart',
       'no-internal-terms',
       'no-two-replies-without-cause-question',
+      'proactive-initiated',
+      'proactive-spacing',
+      'proactive-working-hours',
       'reflective-opener',
       'repeated-question',
       'reply-present',
       'single-question',
+      'state-equals',
+      'state-not-greater-than',
       'too-many-questions',
     ]);
+    expect(RULE_NAMES).toHaveLength(18);
     expect(RuleNameSchema.safeParse('single-question').success).toBe(true);
-    expect(RuleNameSchema.safeParse('effect-count').success).toBe(false);
+    expect(RuleNameSchema.safeParse('effect-count').success).toBe(true);
   });
 
-  it('gives every rule its requires and its pass and fail fixtures', () => {
+  it('gives every rule its pass and fail fixtures, and every reply/turn rule its requires', () => {
     for (const name of RULE_NAMES) {
       const entry = RULES[name];
-      expect(entry.requires.length, name).toBeGreaterThan(0);
+      if (REPLY_RULES.includes(name)) expect(entry.requires.length, name).toBeGreaterThan(0);
       expect(entry.fixtures.pass.testId, name).toMatch(/-pass$/);
       expect(entry.fixtures.fail.testId, name).toMatch(/-fail$/);
     }
   });
 
-  describe.each(RULE_NAMES.map((name) => [name, RULES[name]] as const))('%s', (name, entry) => {
+  describe.each(PARAM_RULES.map((name) => [name, RULES[name]] as const))('%s (param rule)', (_name, entry) => {
+    const at = { id: 'X-01.C1', evaluatedAt: 'observation-window' };
+
+    it('ships schema-valid pass and fail fixtures', () => {
+      expect(CaseRunSchema.safeParse(entry.fixtures.pass).success).toBe(true);
+      expect(CaseRunSchema.safeParse(entry.fixtures.fail).success).toBe(true);
+    });
+
+    it('has a params schema that accepts its fixture params', () => {
+      expect(entry.params).toBeDefined();
+      expect(entry.params!.safeParse(entry.fixtures.params).success).toBe(true);
+    });
+
+    it('FAILs on its fail fixture and PASSes on its pass fixture', () => {
+      const { pass, fail, params } = entry.fixtures;
+      const failed = entry.run(fail, at, params);
+      expect(failed.status).toBe('FAIL');
+      expect(failed.evidence).toBeTruthy();
+      expect(entry.run(pass, at, params)).toEqual({ status: 'PASS' });
+    });
+
+    it('is NOT_OBSERVABLE on its fail fixture when nothing is declared observed', () => {
+      const { fail, params } = entry.fixtures;
+      const outcome = entry.run({ ...fail, observed: [] }, at, params);
+      expect(outcome.status).toBe('NOT_OBSERVABLE');
+      expect(outcome.evidence).toMatch(/^unobservable:/);
+    });
+  });
+
+  describe.each(REPLY_RULES.map((name) => [name, RULES[name]] as const))('%s', (name, entry) => {
     it('ships schema-valid pass and fail fixtures', () => {
       expect(CaseRunSchema.safeParse(entry.fixtures.pass).success).toBe(true);
       expect(CaseRunSchema.safeParse(entry.fixtures.fail).success).toBe(true);

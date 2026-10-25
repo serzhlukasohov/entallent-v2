@@ -134,6 +134,9 @@ const KEBAB = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const EVALUATED_AT = /^(?:reply:[1-9]\d*|after-step:[1-9]\d*|conversation|observation-window|state)$/;
 const STATE_AT = /^(?:before|after|after-step:[1-9]\d*)$/;
 
+/** A state snapshot name: `before`, `after` or `after-step:<n>`. */
+export const StateAtSchema = z.string().regex(STATE_AT, 'expected before, after or after-step:<n>');
+
 export type EvaluatedAt =
   | { kind: 'reply'; step: number }
   | { kind: 'after-step'; step: number }
@@ -290,7 +293,7 @@ export type SourceCase = z.infer<typeof SourceCaseSchema>;
 export const StateQuerySchema = z
   .object({
     name: StateQueryNameSchema,
-    at: z.string().regex(STATE_AT, 'expected before, after or after-step:<n>'),
+    at: StateAtSchema,
     kind: z.enum(['change', 'invariant']),
   })
   .strict();
@@ -564,9 +567,14 @@ export const CaseRunSchema = z
     stoppedAtStep: z.number().int().min(1).optional(),
     errors: z.array(ExecutionErrorSchema),
     events: z.array(RunEventSchema),
+    /** The executor clock's range (12.7); `clock-leak` checks every message timestamp against it. */
+    clock: z.object({ from: IsoTimestampSchema, to: IsoTimestampSchema }).strict().optional(),
   })
   .strict()
   .superRefine((run, ctx) => {
+    if (run.clock && Date.parse(run.clock.from) > Date.parse(run.clock.to)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['clock', 'to'], message: 'clock.to must not precede clock.from' });
+    }
     run.steps.forEach((step, position) => {
       if (step.index !== position + 1) {
         ctx.addIssue({

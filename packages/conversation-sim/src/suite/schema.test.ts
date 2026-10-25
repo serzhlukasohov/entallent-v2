@@ -88,6 +88,18 @@ describe('CaseRun', () => {
     expect(result.error?.issues[0]?.path).toEqual(['steps', 1, 'index']);
   });
 
+  it('accepts an optional clock range and rejects an inverted one', () => {
+    const run = richRun();
+    expect(CaseRunSchema.safeParse(run).success).toBe(true);
+    const clock = { from: '2026-01-05T10:00:00.000Z', to: '2026-01-05T12:00:00+02:00' };
+    expect(CaseRunSchema.parse({ ...run, clock }).clock).toEqual(clock);
+    const inverted = CaseRunSchema.safeParse({ ...run, clock: { from: '2026-01-05T10:00:01Z', to: '2026-01-05T10:00:00Z' } });
+    expect(inverted.success).toBe(false);
+    expect(inverted.error?.issues[0]?.path).toEqual(['clock', 'to']);
+    expect(CaseRunSchema.safeParse({ ...run, clock: { from: '2026-01-05T10:00:00Z' } }).success).toBe(false);
+    expect(CaseRunSchema.safeParse({ ...run, clock: { ...clock, extra: 1 } }).success).toBe(false);
+  });
+
   it('enforces the reply.text join invariant', () => {
     const step = richRun().steps[0]!;
     const broken = { ...step, reply: { ...step.reply!, text: 'First reply. Second part.' } };

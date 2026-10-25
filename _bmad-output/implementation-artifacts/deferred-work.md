@@ -296,3 +296,21 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-5-clockport-in-the-application-layer.md`
   summary: `MemoryExtractionUseCase` still computes memory `expiresAt` from the wall clock (`memory-extraction.use-case.ts` `computeExpiry`), while the sim's `InMemoryMemoryRepository.findActiveByUser` now filters by the injected clock; under a harness clock that is advanced across simulated days, extracted memories expire on real time, not simulated time.
   evidence: Blind Hunter (Story 12.5 review, 2026-10-25); confirmed by reading `computeExpiry` (zero-arg `new Date()`). Behavior with the default system clock is unchanged; the gap matters once 12.7 runs multi-day journeys. Thread `ClockPort` into `MemoryExtractionUseCase` (and the inline outbox) in 12.3b or 12.7. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
+  summary: `__fixtures__/evaluation.ts` still overrides `effect-count` with the 12.2 stand-in, so most `evaluate` pairing paths run against the stand-in, not the real rule (only `effect-count.test.ts` uses the real `RULES`).
+  evidence: Story 12.3b review, 2026-10-25 (all four layers). Swap the stand-in once 12.4 cases and the 12.7 executor exist. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
+  summary: State rule params duplicate the criterion's `stateQuery` and the loader does not cross-check them; `alreadySatisfied` then marks a criterion INVALID when the rule reads a different snapshot, when `state-equals` reads `before` on a `change` criterion, and always for `state-not-greater-than` on a `change` criterion.
+  evidence: Edge Case Hunter and Verification Gap (Story 12.3b review); `evaluate.ts:216-233`. 12.4 authors: put upper bounds on `invariant` criteria and keep params `query`/`at` equal to `stateQuery`; a loader cross-check is the durable fix. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
+  summary: The 12.7 executor contract (copy the message column into `metadata.messageType` for `window.outbound`, `steps[].reply.messages` and `unsolicited`; emit only in-window messages in `window.outbound`) is asserted only rule-side; `initiations()` does not filter by `window.from`/`to`.
+  evidence: Intent Alignment, Blind Hunter and Edge Case Hunter (Story 12.3b review). Settle in 12.7 with an executor test. Severity medium (unverified).
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
+  summary: `evaluate.ruleChecks` synthesizes `effect-count` with `step: 0` for observation tests, which counts only seed and fixture events.
+  evidence: Blind Hunter (Story 12.3b review); pre-existing 12.2 synthesis at `evaluate.ts:94`. Settle when the first observation test pairs a state effect (12.4). Severity medium (unverified).
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
+  summary: The P-09 bound `max: { repliesWithMetadata }` counts only `steps[].reply.messages`, not `unsolicited`; a summary sent unsolicited would raise the count without raising the bound.
+  evidence: Blind Hunter (Story 12.3b review, loop 2). Settle in 12.4 by checking whether survey summaries can arrive unsolicited. Severity medium (unverified).
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3-suite-rule-implementations.md`
+  summary: Resolved in 12.3b — rules with a params schema now parse raw params themselves in `run`, so defaults apply and synthesized `effect-count` params are validated; `evaluate` and `loader` unchanged.
+  evidence: Story 12.3b (2026-10-25), `suite/rules/*.ts`.
