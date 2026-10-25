@@ -1,4 +1,4 @@
-import type { ZodError } from 'zod';
+import type { ZodError, ZodType } from 'zod';
 import { tests as pV1Tests } from './cases/p-v1';
 import { sources as pV1Sources } from './cases/p-v1/sources';
 import { RULES, type RuleRegistry } from './rules/registry';
@@ -28,7 +28,8 @@ export type SuiteLoadErrorCode =
   | 'unknown-criterion'
   | 'not-testable-criterion'
   | 'uncovered-criterion'
-  | 'unknown-rule';
+  | 'unknown-rule'
+  | 'invalid-rule-params';
 
 export type SuiteLoadPath = ReadonlyArray<string | number>;
 
@@ -196,27 +197,53 @@ function joinCriteria(suiteId: string, test: SuiteTest, source: SourceCase): Loa
   });
 }
 
+/** Every referenced rule exists and its `params` match the rule's schema (none allowed without one). */
 function checkRules(suiteId: string, test: SuiteTest, rules: RuleRegistry): void {
   const references: Array<{ check: RuleCheck; path: Array<string | number> }> = [];
-  test.preconditions.forEach((check, index) => references.push({ check, path: ['preconditions', index, 'rule'] }));
+  test.preconditions.forEach((check, index) => references.push({ check, path: ['preconditions', index] }));
   test.steps.forEach((step, stepIndex) =>
     step.checkpoint?.checks.forEach((check, index) =>
-      references.push({ check, path: ['steps', stepIndex, 'checkpoint', 'checks', index, 'rule'] }),
+      references.push({ check, path: ['steps', stepIndex, 'checkpoint', 'checks', index] }),
     ),
   );
   test.criteria.forEach((criterion, criterionIndex) =>
     criterion.checks.forEach((check, index) => {
-      if (check.type === 'rule') references.push({ check, path: ['criteria', criterionIndex, 'checks', index, 'rule'] });
+      if (check.type === 'rule') references.push({ check, path: ['criteria', criterionIndex, 'checks', index] });
     }),
   );
   for (const { check, path } of references) {
     if (!hasRule(rules, check.rule)) {
       throw new SuiteLoadError('unknown-rule', suiteId, `rule ${check.rule} is not in the registry`, {
         testId: test.id,
-        path,
+        path: [...path, 'rule'],
       });
     }
+    checkRuleParams(suiteId, test, check, rules[check.rule]!.params, [...path, 'params']);
   }
+}
+
+function checkRuleParams(
+  suiteId: string,
+  test: SuiteTest,
+  check: RuleCheck,
+  schema: ZodType | undefined,
+  path: Array<string | number>,
+): void {
+  if (!schema) {
+    if (check.params === undefined) return;
+    const first = Object.keys(check.params)[0];
+    throw new SuiteLoadError('invalid-rule-params', suiteId, `rule ${check.rule} takes no params`, {
+      testId: test.id,
+      path: first === undefined ? path : [...path, first],
+    });
+  }
+  const parsed = schema.safeParse(check.params);
+  if (parsed.success) return;
+  const issue = parsed.error.issues[0];
+  throw new SuiteLoadError('invalid-rule-params', suiteId, `rule ${check.rule}: ${issue?.message ?? 'invalid params'}`, {
+    testId: test.id,
+    path: [...path, ...(issue?.path ?? [])],
+  });
 }
 
 /** L0 decides only rules over orchestrator-produced inputs, never reply text the test scripted. */

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
   TEST_RULES,
   atomicTest,
@@ -390,6 +391,38 @@ describe('validateSuite: rules', () => {
       code: 'unknown-rule',
       path: ['steps', 0, 'checkpoint', 'checks', 0, 'rule'],
     });
+  });
+
+  it('rejects params on a rule without a params schema, naming the test id and path', () => {
+    const error = expectLoadError(
+      (m) => (journey(m).criteria[1].checks = [{ type: 'rule', rule: 'single-question', params: { max: 2 } }]),
+      { code: 'invalid-rule-params', testId: 'X-01.J', path: ['criteria', 1, 'checks', 0, 'params', 'max'] },
+    );
+    expect(error.message).toMatch(/single-question takes no params/);
+    expectLoadError((m) => (journey(m).preconditions = [{ type: 'rule', rule: 'reply-present', params: {} }]), {
+      code: 'invalid-rule-params',
+      path: ['preconditions', 0, 'params'],
+    });
+    expectLoadError(
+      (m) => (journey(m).steps[0].checkpoint.checks = [{ type: 'rule', rule: 'too-many-questions', params: { x: 1 } }]),
+      { code: 'invalid-rule-params', path: ['steps', 0, 'checkpoint', 'checks', 0, 'params', 'x'] },
+    );
+  });
+
+  it('validates params against the rule schema and reports the Zod path', () => {
+    const rules: RuleRegistry = {
+      ...TEST_RULES,
+      'with-params': { ...TEST_RULES['events-only']!, params: z.object({ step: z.number().int() }).strict() },
+    };
+    const set = (params?: Record<string, unknown>) => (m: { tests: Rec[] }) =>
+      (journey(m).criteria[1].checks = [{ type: 'rule', rule: 'with-params', ...(params ? { params } : {}) }]);
+    expect(() => load(set({ step: 1 }), rules)).not.toThrow();
+    expectLoadError(set({ step: 'one' }), {
+      code: 'invalid-rule-params',
+      testId: 'X-01.J',
+      path: ['criteria', 1, 'checks', 0, 'params', 'step'],
+    }, rules);
+    expectLoadError(set(), { code: 'invalid-rule-params', path: ['criteria', 1, 'checks', 0, 'params'] }, rules);
   });
 
   it('uses the default registry when none is passed', () => {

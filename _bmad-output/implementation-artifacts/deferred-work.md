@@ -290,3 +290,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-2-evaluation-scoring-and-report-core.md`
   summary: The synthesized `effect-count` carries `step` = the criterion's evaluated step, so a `change` criterion at `after` in a multi-step journey counts only last-step events.
   evidence: Blind Hunter and Edge Case Hunter (Story 12.2 review). Unverified, medium if real journeys stage effects before the last step; settle in 12.3b (draft) by deciding whether `effect-count` counts on the step or over steps 1..step.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-3-suite-rule-implementations.md`
+  summary: The loader validates `RuleCheck.params` with the rule schema but discards the parsed value, so `evaluate` passes raw params to `run`; schema defaults, coercion and transforms never reach a rule, and synthesized `effect-count` params are never validated.
+  evidence: Blind Hunter and Edge Case Hunter (Story 12.3a review). Unverified, medium if a 12.3b rule schema uses defaults or transforms; settle in 12.3b by parsing params in `runCheck` or storing parsed params on the loaded check.

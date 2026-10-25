@@ -2,7 +2,8 @@
 title: 'Story 12.3a: Suite Rule Implementations — params validation and reply/turn rules'
 type: 'feature'
 created: '2026-10-25'
-status: 'ready-for-dev'
+status: 'done'
+baseline_commit: '53d21de8ca56a8b3abee2373460c93f6c8e58963'
 route: 'dispatch'
 review_loop_iteration: 0
 context:
@@ -58,18 +59,18 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `suite/rules/registry.ts` -- Add `params?: z.ZodType` and `RuleContext`, extend the `run` signature, and register 8 rules (11 total). Gives each rule typed params and seed access.
-- [ ] `suite/loader.ts` -- In `checkRules`, parse `check.params` with the entry's schema and throw `invalid-rule-params` with the Zod path. Closes the 12.1 deferred params item.
-- [ ] `suite/rules/terms/{internal-terms,greeting-phrases}.ts` -- Frozen data lists:
+- [x] `suite/rules/registry.ts` -- Add `params?: z.ZodType` and `RuleContext`, extend the `run` signature, and register 8 rules (11 total). Gives each rule typed params and seed access.
+- [x] `suite/loader.ts` -- In `checkRules`, parse `check.params` with the entry's schema and throw `invalid-rule-params` with the Zod path. Closes the 12.1 deferred params item.
+- [x] `suite/rules/terms/{internal-terms,greeting-phrases}.ts` -- Frozen data lists:
   - Internal terms: topic(s), index(es), pulse(s), cycle(s), matched as whole words, case-insensitive.
   - Greeting and self-introduction phrases: hi, hello, hey, good morning, "I'm your coach", "my name is".
-- [ ] `suite/rules/{single-question,no-internal-terms,no-greeting-restart,cause-question-present,no-two-replies-without-cause-question}.ts` -- Reply-text rules; each requires `reply.text`.
-- [ ] `suite/rules/reply-present.ts` -- Requires `reply.messages`, not `reply.text`, so it can decide P-01 at L0.
-- [ ] `suite/rules/bundle-staged.ts` -- Requires `reply.messages[].metadata.v2ConfirmationBundle`. PASSes when any message of the selected reply has `true`.
-- [ ] `suite/rules/answer-then-bundle.ts` -- Requires `turn.bundleReply`. PASSes when the selected step's value is `'answer_then_bundle'`.
-- [ ] `suite/rules/repeated-question.ts` -- Include seeded coach texts from `context` in the comparison transcript.
-- [ ] `suite/rules/registry.test.ts` and `suite/rules/<rule>.test.ts` -- Assert that every registry `fail` fixture FAILs and every `pass` fixture PASSes. Give each rule at least one PASS, one FAIL and one NOT_OBSERVABLE case, and cover the I/O matrix.
-- [ ] `suite/isolation.test.ts` -- Scan `packages/*/src` and `apps/*/src`, excluding `conversation-sim`, for imports of `@entalent/conversation-sim` or any `suite/` path, and assert there are none.
+- [x] `suite/rules/{single-question,no-internal-terms,no-greeting-restart,cause-question-present,no-two-replies-without-cause-question}.ts` -- Reply-text rules; each requires `reply.text`.
+- [x] `suite/rules/reply-present.ts` -- Requires `reply.messages`, not `reply.text`, so it can decide P-01 at L0.
+- [x] `suite/rules/bundle-staged.ts` -- Requires `reply.messages[].metadata.v2ConfirmationBundle`. PASSes when any message of the selected reply has `true`.
+- [x] `suite/rules/answer-then-bundle.ts` -- Requires `turn.bundleReply`. PASSes when the selected step's value is `'answer_then_bundle'`.
+- [x] `suite/rules/repeated-question.ts` -- Include seeded coach texts from `context` in the comparison transcript.
+- [x] `suite/rules/registry.test.ts` and `suite/rules/<rule>.test.ts` -- Assert that every registry `fail` fixture FAILs and every `pass` fixture PASSes. Give each rule at least one PASS, one FAIL and one NOT_OBSERVABLE case, and cover the I/O matrix.
+- [x] `suite/isolation.test.ts` -- Scan `packages/*/src` and `apps/*/src`, excluding `conversation-sim`, for imports of `@entalent/conversation-sim` or any `suite/` path, and assert there are none.
 
 **Acceptance Criteria:**
 - Given the registry, when it is loaded, then it holds the 3 wrapped rules and the 8 new rules, each with `requires`, `pass` and `fail`.
@@ -81,6 +82,28 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+Review 1 (2026-10-25; Blind Hunter, Edge Case Hunter, Verification Gap):
+
+| # | Finding | Verdict | Route | Evidence |
+|---|---------|---------|-------|----------|
+| 1 | Quoted internal terms (`'topic'`, `‘pulse’`) not matched | medium | patch | Lookbehind `(?<![\p{L}\p{N}'])` rejects a leading quote; curly quotes normalize to `'`. |
+| 2 | `no-greeting-restart` reads past the first message when it lacks end punctuation | low | patch | `firstSentence` splits only on `[.!?]\s`; joined text `Got it\n\nHello again!` is one sentence. |
+| 3 | Registry test evidence check loosened for all rules; hidden early return for `reply-present` | low | patch | `\bturn N\b` replaced `^turn N — `; the early return passes without asserting. |
+| 4 | `answer-then-bundle` / `bundle-staged` conversation scope untested with several steps | medium | patch | Verification-gap layer: all cases use one-step runs; `some` vs `every` indistinguishable. |
+| 5 | Loader validates params but rules receive raw params (defaults/transforms lost) | maybe-false (medium if true) | defer | No 12.3a rule has a params schema; first schemas arrive in 12.3b. |
+| 6 | Hyphenated compounds (`hi-fi`, `off-topic`) match | low | reject | Rare in coach replies; whole-word matching is what the spec asks for. |
+| 7 | Seed history order not enforced in `no-two-replies-without-cause-question` | false | reject | Schema enforces chronological seed order (schema.ts:205-210). |
+| 8 | Isolation test misses scripts/, `vi.mock`, package.json deps | low | reject | Intent covers product code; spec scans `packages/*/src` and `apps/*/src`. |
+| 9 | Isolation `suite/` pattern could flag a product folder named `suite` | low | reject | None exists; failure would be loud, not silent. |
+| 10 | `answer-then-bundle` ignores `bundleReply` on a silent step | low | reject | Not demonstrated reachable; orchestrator sets `bundleReply` only on replies. |
+| 11 | `no-internal-terms` false positives on common words; no `indices` | false | reject | Frozen spec list: topic(s), index(es), pulse(s), cycle(s). |
+| 12 | Greeting matched anywhere in the first sentence; phrase list incomplete | false | reject | Frozen spec: check the first sentence against the listed phrases. |
+| 13 | Only the first Zod issue reported | low | reject | Spec asks for test id and Zod path; one issue suffices. |
+| 14 | `cause-question-present` without a meaning judge passes any `?` | false | reject | Frozen spec: the meaning companion judges the cause; rule is the question gate. |
+| 15 | Term-file docstrings claim isolation the test does not check inside conversation-sim | low | reject | Docstring wording; no harm demonstrated. |
+| 16 | `hasQuestion` imported from another rule file | low | reject | Shared by design (spec: pair rule applies `cause-question-present`). |
+| 17 | Task-log row / diff bookkeeping incomplete | low | patch | Fixed in bookkeeping (row rewritten with receipt). |
 
 ## Verification
 
