@@ -44,7 +44,8 @@ import {
  * `suite:run`, `suite:baseline:accept`, `suite:diff`, `suite:ci` and `suite:calibrate`
  * (architecture AD-8, AD-11, AD-13, AD-14, AD-15).
  * `run` and `baseline:accept` exit 0 when a report (or baseline) was written, whatever the
- * verdict, and 1 on usage, config, load or refusal errors. `diff` exits 0 clean, 1 gating
+ * verdict, and 1 on usage, config, load or refusal errors; `run` exits 4 when a call budget
+ * was exceeded (the report and case runs are still written). `diff` exits 0 clean, 1 gating
  * entry, 2 baseline-invalid, 3 judge infrastructure, 4 budget exceeded; usage errors and an
  * unreadable run report are 1 and write nothing. `ci` runs and merge-base-diffs every
  * registered suite that has tests and exits with the first code present by precedence
@@ -78,12 +79,18 @@ export interface CliDeps {
   /** Reads a package-relative file at the merge-base with origin/main; defaults to `git` in `packageDir`. */
   mergeBase?: (packageRelativePath: string) => MergeBaseFile;
   /** The judge `suite:calibrate` judges labels with; absent in the default entry (no model egress). */
-  createCalibrationJudge?: (judge: SuiteConfig['judge']) => CriterionJudge;
+  createCalibrationJudge?: (judge: SuiteConfig['judge'], options: JudgeCallOptions) => CriterionJudge;
   /**
    * The judge an L1/L2 `suite:run` calls, built with the model actually called; absent in
    * the default entry (no model egress). `suite/run-live.ts` wires the live pinned judge.
    */
-  createRunJudge?: (judge: SuiteConfig['judge']) => CriterionJudge;
+  createRunJudge?: (judge: SuiteConfig['judge'], options: JudgeCallOptions) => CriterionJudge;
+}
+
+/** Per-call judge settings from `suite.config.json` that are not part of the fingerprint. */
+export interface JudgeCallOptions {
+  /** `budgets.judgeCallTimeoutMs`. */
+  callTimeoutMs: number;
 }
 
 export interface MergeBaseFile {
@@ -108,8 +115,14 @@ export const HELP = `Usage:
       the conversations). Refuses without --live-model. At L1/L2 SIM_JUDGE_MODEL must be unset
       or equal the pinned judge model; with --allow-unpinned-judge a different model is called
       and the run is untrusted (unpinned-judge). Meaning checks count only when the judge is calibrated.
+      Budgets (suite.config.json budgets): at most maxCoachCallsPerRun coach and maxJudgeCallsPerRun
+      judge calls per invocation (all --runs samples and retries together); once one is spent the
+      remaining cases are ERROR budget-exceeded, the run is provisional and the command exits 4.
+      Each coach call times out after coachCallTimeoutMs, each judge call after judgeCallTimeoutMs.
   suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
-      Writes baselines/<suiteId>/<level>.json from a run report.
+      Writes baselines/<suiteId>/<level>.json from a run report. An L1/L2 run from an untrusted
+      judge is accepted with its meaning results marked advisory; they diff as inconclusive until
+      re-accepted from a trusted run.
   suite:diff --run <runId> [--baseline <path> | --merge-base]
       Diffs a run against a baseline (default: working-tree baselines/<suite>/<level>.json;
       --merge-base: the file at git merge-base HEAD origin/main) and writes it into the report.
@@ -124,7 +137,8 @@ export const HELP = `Usage:
       is suite:calibrate:live --suite <id> --live-judge (calls the pinned judge model; human-run).
       With a judge it judges every label and writes the agreement file under calibration/<id>/.
 
-Exit codes (run, baseline:accept): 0 report or baseline written; 1 usage, config, load or refusal error.
+Exit codes (run, baseline:accept): 0 report or baseline written; 1 usage, config, load or refusal error;
+  4 (run) a call budget was exceeded (the report is still written).
 Exit codes (diff): 0 clean or no baseline; 1 gating regression or lost coverage (also usage errors
   and an unreadable run report); 2 baseline invalid; 3 judge infrastructure; 4 budget exceeded.
 Exit code (ci): the first present over all suites by precedence 2 > 3 > 4 > 1 (a load or run
@@ -339,8 +353,8 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps(
 }
 
 async function runCommand(parsed: Extract<ParsedCommand, { command: 'run' }>, deps: CliDeps): Promise<number> {
-  await performRun(parsed, deps);
-  return 0;
+  const report = await performRun(parsed, deps);
+  return (report.budget?.exceeded.length ?? 0) > 0 ? 4 : 0;
 }
 
 interface RunOverrides {
@@ -350,12 +364,12 @@ interface RunOverrides {
   runId?: (shortSha: string | null) => string;
 }
 
-/** The `suite:run` path; returns the written report's run id. */
+/** The `suite:run` path; returns the written report. */
 async function performRun(
   parsed: Extract<ParsedCommand, { command: 'run' }>,
   deps: CliDeps,
   overrides: RunOverrides = {},
-): Promise<string> {
+): Promise<SuiteRunReport> {
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
   if (!config.suites.includes(parsed.suite)) {
     throw new Error(`[suite] unknown suite ${parsed.suite}; known suites: ${config.suites.join(', ')}`);
@@ -382,7 +396,7 @@ async function performRun(
     const labels = readLabelsFile(deps.packageDir, suite.id);
     const agreement = readAgreementFile(deps.packageDir, suite.id);
     judging = {
-      judge: deps.createRunJudge({ ...config.judge, model: calledModel.model }),
+      judge: deps.createRunJudge({ ...config.judge, model: calledModel.model }, { callTimeoutMs: config.budgets.judgeCallTimeoutMs }),
       model: calledModel.model,
       unpinned: calledModel.unpinned,
       agreement,
@@ -416,7 +430,7 @@ async function performRun(
   deps.log(`[suite] report: ${relative(deps.packageDir, paths.json)}`);
   deps.log(`[suite] report: ${relative(deps.packageDir, paths.markdown)}`);
   deps.log(`[suite] case runs: ${relative(deps.packageDir, caseRunsPath)}`);
-  return report.runId;
+  return report;
 }
 
 /**
@@ -494,7 +508,7 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
     }
     let runId: string | undefined;
     try {
-      runId = await performRun({ command: 'run', suite: suiteId, level: parsed.level, runs: 1 }, deps, { suite, runId: uniqueRunId });
+      runId = (await performRun({ command: 'run', suite: suiteId, level: parsed.level, runs: 1 }, deps, { suite, runId: uniqueRunId })).runId;
       const exitCode = diffCommand({ command: 'diff', run: runId, mergeBase: true }, deps);
       // A failed re-read only drops this suite's summary section; the diff exit code stands.
       try {
@@ -560,7 +574,9 @@ async function calibrateCommand(parsed: Extract<ParsedCommand, { command: 'calib
     return 1;
   }
   // Built before any import, so a failing factory (e.g. missing credentials) writes nothing.
-  const judge = deps.createCalibrationJudge ? deps.createCalibrationJudge(config.judge) : null;
+  const judge = deps.createCalibrationJudge
+    ? deps.createCalibrationJudge(config.judge, { callTimeoutMs: config.budgets.judgeCallTimeoutMs })
+    : null;
   const suite = deps.loadSuite(parsed.suite);
   const shownLabels = relative(deps.packageDir, labelsPath(deps.packageDir, suite.id));
 
@@ -640,6 +656,12 @@ function acceptCommand(parsed: Extract<ParsedCommand, { command: 'baseline:accep
   deps.log(
     `[suite] baseline ${baseline.suiteId} ${baseline.level}${baseline.provisional ? ' (provisional)' : ''} from run ${report.runId}: ${relative(deps.packageDir, path)}`,
   );
+  const advisory = Object.values(baseline.results).filter((entry) => entry.advisory === true).length;
+  if (advisory > 0) {
+    deps.log(
+      `[suite] baseline: ${advisory} meaning result(s) are advisory (${report.judgeTrust.reason}); they diff as inconclusive until re-accepted from a trusted run`,
+    );
+  }
   return 0;
 }
 
@@ -735,6 +757,12 @@ export function summaryLines(report: SuiteRunReport): string[] {
     `[suite] verdict: ${report.verdict}${report.provisional ? ' (provisional)' : ''} · ${report.complete ? 'COMPLETE' : 'INCOMPLETE'}`,
   );
   if (report.provisionalReason) lines.push(`[suite] provisional: ${report.provisionalReason}`);
+  const budget = report.budget;
+  if (budget !== undefined && budget.exceeded.length > 0) {
+    lines.push(
+      `[suite] budget exceeded: ${budget.exceeded.join(', ')} (coach ${budget.coachCalls}/${budget.maxCoachCalls}, judge ${budget.judgeCalls}/${budget.maxJudgeCalls})`,
+    );
+  }
   const trust = report.judgeTrust;
   lines.push(`[suite] meaning checks: ${trust.trusted ? 'trusted' : 'advisory (uncalibrated)'} (${trust.reason})`);
   const qa = report.qaReview?.length ?? 0;

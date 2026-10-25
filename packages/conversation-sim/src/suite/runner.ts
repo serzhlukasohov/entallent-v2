@@ -1,14 +1,15 @@
 import { isTransportFailureMessage } from '../gate/failure-kind';
 import { evaluate } from './evaluate';
-import type { SuiteExecutor } from './executors/types';
+import type { CallBudget, ExecutorOptions, SuiteExecutor } from './executors/types';
 import { SuiteExecutionError } from './executors/types';
-import type { CriterionJudge } from './judge/criterion-judge';
+import { emptyJudgeUsage, type CriterionJudge } from './judge/criterion-judge';
 import { decideJudgeTrust, type JudgeTrustInputs } from './judge/trust';
 import { buildSuiteReport, collectJudgeErrors, collectQaReview, judgeUsageTotals } from './report';
 import { RULES, type RuleRegistry } from './rules/registry';
 import {
   CaseRunSchema,
   type AgreementFile,
+  type BudgetKind,
   type CaseRun,
   type CriterionResult,
   type ExecutionError,
@@ -16,19 +17,138 @@ import {
   type Level,
   type LoadedSuite,
   type LoadedTest,
+  type ModelUsageRow,
   type QaReviewEntry,
+  type RunBudgetReport,
   type SuiteConfig,
   type SuiteRunReport,
 } from './schema';
 import { score, testCriterionKey } from './score';
 
 /**
- * Suite runner (architecture AD-3, AD-8, AD-18): load -> executor per test per sample (with
- * the infrastructure retry) -> `JudgeTrust` -> `evaluate` -> `score` -> report. Pure apart
- * from the executor; writes no files (the CLI does).
+ * Suite runner (architecture AD-3, AD-8, AD-15, AD-18): load -> executor per test per sample
+ * (with the infrastructure retry) -> `JudgeTrust` -> `evaluate` -> `score` -> report. One
+ * `RunBudget` bounds coach and judge calls; once one is spent, remaining cases are ERROR
+ * `budget-exceeded` without executing and the run is provisional. Pure apart from the
+ * executor; writes no files (the CLI does).
  */
 
 export type FailureKind = 'none' | 'product' | 'infrastructure';
+
+const BUDGET_KINDS: readonly BudgetKind[] = ['coach', 'judge'];
+
+/**
+ * The call budget of one `runSuite` invocation (AD-15): absolute over every sample and
+ * retry, never scaled by `--runs`. Coach calls are reserved through `forExecutor` before
+ * each call (so the count is authoritative and includes discarded retry attempts); judge
+ * calls are counted by `guardJudge` from each outcome's usage (one invocation may overshoot
+ * by its single transport retry).
+ */
+export class RunBudget {
+  readonly maxCoachCalls: number;
+  readonly maxJudgeCalls: number;
+  private readonly coach = new Map<string, number>();
+  private readonly judge = { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  private readonly exceededKinds = new Set<BudgetKind>();
+
+  constructor(budgets: Pick<SuiteConfig['budgets'], 'maxCoachCallsPerRun' | 'maxJudgeCallsPerRun'>) {
+    this.maxCoachCalls = budgets.maxCoachCallsPerRun;
+    this.maxJudgeCalls = budgets.maxJudgeCallsPerRun;
+  }
+
+  get coachCalls(): number {
+    let total = 0;
+    for (const calls of this.coach.values()) total += calls;
+    return total;
+  }
+
+  get judgeCalls(): number {
+    return this.judge.calls;
+  }
+
+  /** Reserves one coach call for `model`; false (and `coach` exceeded) once the budget is spent. */
+  tryCoachCall(model: string): boolean {
+    if (this.coachCalls >= this.maxCoachCalls) {
+      this.exceededKinds.add('coach');
+      return false;
+    }
+    this.coach.set(model, (this.coach.get(model) ?? 0) + 1);
+    return true;
+  }
+
+  /** The hook an executor asks before every coach model call. */
+  forExecutor(model: string): CallBudget {
+    return { tryCoachCall: () => this.tryCoachCall(model) };
+  }
+
+  /** Budgets already spent, in `coach`, `judge` order. */
+  spent(): BudgetKind[] {
+    return BUDGET_KINDS.filter((kind) => (kind === 'coach' ? this.coachCalls >= this.maxCoachCalls : this.judge.calls >= this.maxJudgeCalls));
+  }
+
+  markExceeded(kind: BudgetKind): void {
+    this.exceededKinds.add(kind);
+  }
+
+  max(kind: BudgetKind): number {
+    return kind === 'coach' ? this.maxCoachCalls : this.maxJudgeCalls;
+  }
+
+  /** Every budget a call or case was refused for, in `coach`, `judge` order. */
+  exceeded(): BudgetKind[] {
+    return BUDGET_KINDS.filter((kind) => this.exceededKinds.has(kind));
+  }
+
+  /**
+   * Refuses (ERROR `budget-exceeded`, no call) once the judge budget is spent; otherwise
+   * calls `judge` and counts its calls and tokens. A rejecting judge counts one call.
+   */
+  guardJudge(judge: CriterionJudge): CriterionJudge {
+    return async (input, options) => {
+      if (this.judge.calls >= this.maxJudgeCalls) {
+        this.exceededKinds.add('judge');
+        return { status: 'ERROR', reason: 'budget-exceeded', message: `judge call budget ${this.maxJudgeCalls} spent`, usage: emptyJudgeUsage() };
+      }
+      let outcome: Awaited<ReturnType<CriterionJudge>>;
+      try {
+        outcome = await judge(input, options);
+      } catch (error) {
+        this.judge.calls += 1;
+        throw error;
+      }
+      this.judge.calls += outcome.usage.calls;
+      this.judge.inputTokens += outcome.usage.inputTokens;
+      this.judge.outputTokens += outcome.usage.outputTokens;
+      this.judge.totalTokens += outcome.usage.totalTokens;
+      return outcome;
+    };
+  }
+
+  report(): RunBudgetReport {
+    return {
+      maxCoachCalls: this.maxCoachCalls,
+      maxJudgeCalls: this.maxJudgeCalls,
+      coachCalls: this.coachCalls,
+      judgeCalls: this.judge.calls,
+      exceeded: this.exceeded(),
+    };
+  }
+
+  /** One coach row per coach model label (tokens not observable), one judge row when a judge is configured. */
+  modelUsage(models: { coach: string | null; judge: string | null }): ModelUsageRow[] {
+    const labels = [...new Set([...(models.coach !== null ? [models.coach] : []), ...this.coach.keys()])];
+    const rows: ModelUsageRow[] = labels.map((model) => ({
+      role: 'coach',
+      model,
+      calls: this.coach.get(model) ?? 0,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+    }));
+    if (models.judge !== null) rows.push({ role: 'judge', model: models.judge, ...this.judge });
+    return rows;
+  }
+}
 
 /**
  * Computed once per run (AD-8). L0 has no judge; L1/L2 need the trust inputs and delegate
@@ -138,6 +258,27 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
           labelsSha256: judging.labelsSha256,
           unpinned: judging.unpinned,
         });
+  const budget = new RunBudget(config.budgets);
+  const coachLabel = executor.coachModel ?? 'unknown';
+  const judge = judging === undefined ? null : budget.guardJudge(judging.judge);
+  /** One case attempt, or a synthetic `budget-exceeded` run (never executed, never retried) once a budget is spent. */
+  const attemptCase = async (test: LoadedTest, attempt: number): Promise<{ run: CaseRun; executed: boolean }> => {
+    const spent = budget.spent();
+    if (spent.length > 0) {
+      for (const kind of spent) budget.markExceeded(kind);
+      const first = spent[0]!;
+      const message = `${first} call budget ${budget.max(first)} spent`;
+      return { run: syntheticRun(test, level, attempt, [{ kind: 'product', step: 0, reason: 'budget-exceeded', message }]), executed: false };
+    }
+    const options: ExecutorOptions = {
+      attempt,
+      interMessageGapMs: config.interMessageGapMs,
+      suiteId: suite.id,
+      budget: budget.forExecutor(coachLabel),
+      coachCallTimeoutMs: config.budgets.coachCallTimeoutMs,
+    };
+    return { run: await execute(executor, test, level, options), executed: true };
+  };
   const results: CriterionResult[] = [];
   const qaReview: QaReviewEntry[] = [];
   const caseRuns: CaseRunRecord[] = [];
@@ -154,21 +295,25 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
         log(`[suite] ${level} sample ${sample}/${n} ${test.id}: skipped (level not declared)`);
       } else {
         let attempt = 1;
-        caseAttempts += 1;
-        run = await execute(executor, test, level, attempt, config.interMessageGapMs, suite.id);
+        let outcome = await attemptCase(test, attempt);
+        if (outcome.executed) caseAttempts += 1;
+        run = outcome.run;
         let retriesLeft = config.retries.infrastructure;
         while (retriesLeft > 0 && caseRunFailureKind(run) === 'infrastructure') {
           log(`[suite] ${level} sample ${sample}/${n} ${test.id} attempt ${attempt}: infrastructure (${reasons(run)}), retrying`);
           retriesLeft -= 1;
           attempt += 1;
-          caseAttempts += 1;
-          infrastructureRetries += 1;
-          run = await execute(executor, test, level, attempt, config.interMessageGapMs, suite.id);
+          outcome = await attemptCase(test, attempt);
+          if (outcome.executed) {
+            caseAttempts += 1;
+            infrastructureRetries += 1;
+          }
+          run = outcome.run;
         }
         caseRuns.push({ sample, run });
       }
 
-      const evaluated = judging === undefined ? evaluate(test, run, null, trust, rules) : await evaluate(test, run, judging.judge, trust, rules);
+      const evaluated = judge === null ? evaluate(test, run, null, trust, rules) : await evaluate(test, run, judge, trust, rules);
       assertOneResultPerCriterion(test, evaluated);
       results.push(...evaluated);
       qaReview.push(...collectQaReview(test, run, sample, evaluated));
@@ -179,12 +324,18 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
   assertComplete(selected, results, n);
   const scored = score({ suite: scoredSuite, level, n, results });
   const empty = suite.tests.length === 0;
+  const exceeded = budget.exceeded();
+  const extraReasons = [
+    ...(empty ? [`suite ${suite.id} has no tests`] : []),
+    ...(exceeded.length > 0 ? [`budget exceeded: ${exceeded.join(', ')}`] : []),
+  ];
+  const models = { coach: executor.coachModel ?? null, judge: judging?.model ?? null };
   const report = buildSuiteReport(
-    empty
+    extraReasons.length > 0
       ? {
           ...scored,
           provisional: true,
-          provisionalReason: [scored.provisionalReason, `suite ${suite.id} has no tests`].filter(Boolean).join('; '),
+          provisionalReason: [scored.provisionalReason, ...extraReasons].filter(Boolean).join('; '),
         }
       : scored,
     {
@@ -193,11 +344,13 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
       level,
       n,
       git: input.git,
-      models: { coach: executor.coachModel ?? null, judge: judging?.model ?? null },
+      models,
       judgeTrust: trust,
       judgeErrors: collectJudgeErrors(results),
       qaReview,
-      usage: { coachModelCalls: 0, ...judgeUsageTotals(results), caseAttempts, infrastructureRetries },
+      usage: { coachModelCalls: budget.coachCalls, ...judgeUsageTotals(results), caseAttempts, infrastructureRetries },
+      budget: budget.report(),
+      modelUsage: budget.modelUsage(models),
       ...(input.caseFilter !== undefined ? { selection: { case: input.caseFilter } } : {}),
     },
   );
@@ -217,17 +370,11 @@ function selectTests(suite: LoadedSuite, caseFilter: string | undefined): Loaded
 }
 
 /** One executor attempt; a rejection becomes a synthesized run with an `executor-error`. */
-async function execute(
-  executor: SuiteExecutor,
-  test: LoadedTest,
-  level: Level,
-  attempt: number,
-  interMessageGapMs: number,
-  suiteId: string,
-): Promise<CaseRun> {
+async function execute(executor: SuiteExecutor, test: LoadedTest, level: Level, options: ExecutorOptions): Promise<CaseRun> {
+  const { attempt } = options;
   let raw: unknown;
   try {
-    raw = await executor.run(test, { attempt, interMessageGapMs, suiteId });
+    raw = await executor.run(test, options);
   } catch (error) {
     if (error instanceof SuiteExecutionError) {
       return syntheticRun(test, level, attempt, [{ kind: error.kind, step: error.step, reason: error.reason, message: error.message }]);

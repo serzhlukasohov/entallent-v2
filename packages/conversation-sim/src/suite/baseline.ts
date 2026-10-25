@@ -93,6 +93,7 @@ export function buildBaseline(report: SuiteRunReport, options: { acceptedAt: str
       layer: result.layer,
       testKind: result.testKind,
       checkKind: result.checkKind,
+      advisory: result.advisory,
     };
   }
   const baseline = {

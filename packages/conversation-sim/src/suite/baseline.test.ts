@@ -183,9 +183,9 @@ describe('buildBaseline', () => {
       provisional: false,
     });
     expect(baseline.results).toEqual({
-      'X-01.A1/X-01.C1': { status: 'PASS', passCount: 1, n: 1, layer: 'P', testKind: 'atomic', checkKind: 'rule' },
-      'X-01/X-01.C3': { status: 'NOT_TESTABLE', passCount: 0, n: 1, layer: 'C', testKind: null, checkKind: null },
-      'X-02/X-02.C1': { status: 'PASS', passCount: 1, n: 1, layer: 'P', testKind: 'observation', checkKind: 'rule' },
+      'X-01.A1/X-01.C1': { status: 'PASS', passCount: 1, n: 1, layer: 'P', testKind: 'atomic', checkKind: 'rule', advisory: false },
+      'X-01/X-01.C3': { status: 'NOT_TESTABLE', passCount: 0, n: 1, layer: 'C', testKind: null, checkKind: null, advisory: false },
+      'X-02/X-02.C1': { status: 'PASS', passCount: 1, n: 1, layer: 'P', testKind: 'observation', checkKind: 'rule', advisory: false },
     });
     expect(Object.keys(baseline.results)).toEqual([...Object.keys(baseline.results)].sort());
   });
@@ -201,7 +201,25 @@ describe('buildBaseline', () => {
       layer: 'P',
       testKind: 'observation',
       checkKind: 'rule',
+      advisory: false,
     });
+  });
+
+  it('writes advisory per entry from the run result', async () => {
+    const report = await completeReport();
+    const key = 'X-01.A1/X-01.C1';
+    const advisory = { ...report, results: { ...report.results, [key]: { ...report.results[key]!, advisory: true } } };
+    const baseline = buildBaseline(advisory, { acceptedAt: '2026-10-25T11:00:00.000Z' });
+    expect(baseline.results[key]!.advisory).toBe(true);
+    expect(baseline.results['X-02/X-02.C1']!.advisory).toBe(false);
+  });
+
+  it('parses a pre-13.5 baseline whose entries carry no advisory flag', async () => {
+    const baseline = buildBaseline(await completeReport(), { acceptedAt: '2026-10-25T11:00:00.000Z' });
+    const old = JSON.parse(serializeBaseline(baseline)) as { results: Record<string, Record<string, unknown>> };
+    for (const entry of Object.values(old.results)) delete entry.advisory;
+    const parsed = BaselineSchema.parse(old);
+    expect(parsed.results['X-01.A1/X-01.C1']).not.toHaveProperty('advisory');
   });
 
   it('is byte-identical apart from acceptedAt', async () => {

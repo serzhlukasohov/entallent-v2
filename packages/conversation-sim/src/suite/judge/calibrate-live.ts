@@ -44,7 +44,8 @@ export async function calibrateLive(argv: readonly string[], overrides: Partial<
   const cliDeps = deps.cliDeps();
   return deps.run(stripped, {
     ...cliDeps,
-    createCalibrationJudge: (judge) => createCriterionJudge({ model: deps.createModel(judge, cliDeps.env), decoding: judge.decoding }),
+    createCalibrationJudge: (judge, { callTimeoutMs }) =>
+      createCriterionJudge({ model: deps.createModel(judge, cliDeps.env), decoding: judge.decoding, timeoutMs: callTimeoutMs }),
   });
 }
 

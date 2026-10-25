@@ -8,7 +8,7 @@ import {
   normalizeWhitespace,
   type JudgeInput,
 } from './criterion-judge';
-import { mockJudgeModel, promptOf, verdict } from './__fixtures__/mock-model';
+import { mockJudgeModel, promptOf, stallingJudgeModel, verdict } from './__fixtures__/mock-model';
 import { JUDGE_PROMPT_SHA256, JUDGE_PROMPT_TEMPLATE, renderJudgePrompt } from './prompt';
 
 const DECODING = { temperature: 0, reasoningEffort: null, maxOutputTokens: 1024 };
@@ -72,6 +72,19 @@ describe('judgeCriterion', () => {
     const outcome = await judgeCriterion(INPUT, { model, decoding: DECODING });
     expect(outcome).toMatchObject({ status: 'FAIL', usage: { calls: 2, inputTokens: 100, outputTokens: 20, totalTokens: 120 } });
     expect(model.doGenerateCalls).toHaveLength(2);
+  });
+
+  it('times out a stalled call through generateText, retries it once and is then ERROR judge-transport', async () => {
+    const stalled = stallingJudgeModel();
+    const outcome = await judgeCriterion(INPUT, { model: stalled.model, decoding: DECODING, timeoutMs: 20 });
+    expect(outcome).toMatchObject({ status: 'ERROR', reason: 'judge-transport', usage: { calls: 2, inputTokens: 0, outputTokens: 0, totalTokens: 0 } });
+    expect(stalled.calls()).toBe(2);
+  });
+
+  it('passes no abort signal without a timeout', async () => {
+    const model = mockJudgeModel([verdict('FAIL', 'No question.', null)]);
+    await judgeCriterion(INPUT, { model, decoding: DECODING });
+    expect(model.doGenerateCalls[0]!.abortSignal).toBeUndefined();
   });
 
   it('is ERROR judge-transport after the retry also fails', async () => {

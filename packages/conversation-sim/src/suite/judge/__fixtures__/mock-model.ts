@@ -34,6 +34,25 @@ export function mockJudgeModel(steps: readonly MockStep[]): MockLanguageModelV3 
   });
 }
 
+/**
+ * A model whose every call waits for the abort signal and then rejects with its reason
+ * (a stalled request); without a signal it never settles. `calls()` counts doGenerate calls.
+ */
+export function stallingJudgeModel(): { model: MockLanguageModelV3; calls: () => number } {
+  let calls = 0;
+  const model = new MockLanguageModelV3({
+    provider: 'mock',
+    modelId: 'mock-stalled-judge',
+    doGenerate: ({ abortSignal }) => {
+      calls += 1;
+      return new Promise((_resolve, reject) => {
+        abortSignal?.addEventListener('abort', () => reject(abortSignal.reason ?? new Error('aborted')), { once: true });
+      });
+    },
+  });
+  return { model, calls: () => calls };
+}
+
 export function verdict(status: 'PASS' | 'FAIL' | null, reason: string | null, evidence: string | null): string {
   return JSON.stringify({ status, reason, evidence });
 }

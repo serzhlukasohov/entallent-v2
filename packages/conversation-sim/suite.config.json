@@ -6,7 +6,7 @@
   "baseline": { "minSamples": { "L0": 1, "L1": 5, "L2": 3 } },
   "diff": { "minSamples": { "L1": 3, "L2": 3 } },
   "retries": { "infrastructure": 1 },
-  "budgets": { "maxCoachCallsPerRun": 600, "maxJudgeCallsPerRun": 150 },
+  "budgets": { "maxCoachCallsPerRun": 600, "maxJudgeCallsPerRun": 150, "coachCallTimeoutMs": 120000, "judgeCallTimeoutMs": 60000 },
   "judge": {
     "provider": "openai",
     "model": "gpt-4o",

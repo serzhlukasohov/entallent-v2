@@ -44,7 +44,7 @@ import {
   type FixtureRegistry,
 } from './shared';
 import { afterStepsNamed } from './state-queries-l0';
-import { SuiteExecutionError, type ExecutorOptions, type SuiteExecutor } from './types';
+import { SuiteExecutionError, type CallBudget, type ExecutorOptions, type SuiteExecutor } from './types';
 
 type ScenarioModule = typeof import('@langwatch/scenario');
 type ScenarioRun = ScenarioModule['run'];
@@ -177,7 +177,9 @@ export class L1OrchestratorExecutor implements SuiteExecutor {
     const harnessOptions = harnessOptionsOf(parsing.parsed);
     const start = harnessOptions.clockStart ?? options.clockStart ?? DEFAULT_L0_CLOCK_START;
 
-    const world = createL1World(start, this.createAiProvider(), this.coachModel, harnessOptions.timezone);
+    // Budget and timeout guard inside the recording proxy, so refused and timed-out calls are error events.
+    const guard = guardCoachProvider(this.createAiProvider(), options);
+    const world = createL1World(start, guard.provider, this.coachModel, harnessOptions.timezone);
     const sources: L1StateSources = world.state;
     const group = pulseCycleGroupOf(test);
     const snapshot = (): StateSnapshot => readL1Snapshot(sources, { group });
@@ -192,6 +194,8 @@ export class L1OrchestratorExecutor implements SuiteExecutor {
     try {
       // Fixtures and seed (stepIndex 0).
       const applied = await applyFixtures(parsing.parsed, l1FixtureContext(world, test, start));
+      const fixtureGuard = guard.endCase(0);
+      if (fixtureGuard) return finish({ errors: [fixtureGuard] });
       if ('error' in applied) return finish({ errors: [applied.error] });
       const preconditions = await verifyFixtures(applied.instances);
 
@@ -210,9 +214,11 @@ export class L1OrchestratorExecutor implements SuiteExecutor {
             errors: [{ kind: 'infrastructure', step: 0, reason: 'proactive-users-missing', message: 'no proactiveUsers user to observe' }],
           });
         }
+        let window: Awaited<ReturnType<typeof driveObservationWindow>> | null = null;
+        let windowError: unknown = null;
         try {
           // P-06 at L1: check-in generation runs on the injected coach provider over the fixture clock.
-          const window = await driveObservationWindow({
+          window = await driveObservationWindow({
             window: test.observationWindow,
             clock: world.clock,
             sink: world.sink,
@@ -225,18 +231,24 @@ export class L1OrchestratorExecutor implements SuiteExecutor {
               conversationState: world.state.conversationRepo,
             },
           });
+        } catch (error) {
+          windowError = error;
+        }
+        // A refused or timed-out coach call ends the case even when the scan swallowed it.
+        const guarded = guard.endCase(0);
+        if (guarded) run.errors.push(guarded);
+        else if (windowError !== null) run.errors.push(executionError(windowError, 0));
+        else if (window !== null) {
           run.window = {
             from: window.from.toISOString(),
             to: window.to.toISOString(),
             outbound: window.outbound.map((message) => replyMessage(message, world.state.conversationRepo)),
           };
-        } catch (error) {
-          run.errors.push(executionError(error, 0));
         }
         return finish({ state: { before, after: snapshot(), afterStep: {} } });
       }
 
-      const afterStep = await this.driveConversation(test, options, world, start, run, before, snapshot, finish);
+      const afterStep = await this.driveConversation(test, options, world, start, run, before, snapshot, finish, guard);
       return finish({ state: { before, after: snapshot(), afterStep } });
     } catch (error) {
       if (!(error instanceof SuiteExecutionError)) throw error;
@@ -259,6 +271,7 @@ export class L1OrchestratorExecutor implements SuiteExecutor {
     before: StateSnapshot,
     snapshot: () => StateSnapshot,
     finish: (extra?: Partial<CaseRun>) => CaseRun,
+    guard: CoachProviderGuard,
   ): Promise<Record<string, StateSnapshot>> {
     const { AgentRole, agent: agentStep, run: scenarioRun, succeed, user } = await loadScenario();
     const runScenario = this.runScenario ?? scenarioRun;
@@ -316,6 +329,14 @@ export class L1OrchestratorExecutor implements SuiteExecutor {
       script.push(async (_state, executor) => {
         const current = pending!;
         try {
+          // Checked before the turn outcome: the orchestrator may have swallowed the refused or
+          // timed-out call and replied with a fallback, which is not product behavior.
+          const guarded = guard.endCase(index);
+          if (guarded) {
+            run.errors.push(guarded);
+            await executor.succeed(guarded.reason);
+            return;
+          }
           if (turnError !== null || turn === null) {
             run.errors.push(executionError(turnError ?? new Error('the coach agent was not called'), index));
             await executor.succeed('turn error');
@@ -370,6 +391,84 @@ export class L1OrchestratorExecutor implements SuiteExecutor {
     }
     return afterStep;
   }
+}
+
+/** The guarded coach provider of one attempt and the error that ends the case once a guard tripped. */
+export interface CoachProviderGuard {
+  provider: AiProviderPort;
+  /** `budget-exceeded` (product) or `coach-timeout` (infrastructure) at `step` once a call was refused or timed out; else null. */
+  endCase(step: number): ExecutionError | null;
+}
+
+/**
+ * Wraps every provider method so it first reserves a call from `options.budget` (refused:
+ * the call is not made and rejects) and races the call with `options.coachCallTimeoutMs`
+ * (the timer is cleared on settle and unreferenced; the timed-out request itself cannot be
+ * aborted through `AiProviderPort` and may finish in the background). Without either
+ * option the provider is returned unwrapped.
+ */
+export function guardCoachProvider(
+  provider: AiProviderPort,
+  options: { budget?: CallBudget; coachCallTimeoutMs?: number },
+): CoachProviderGuard {
+  const { budget, coachCallTimeoutMs: timeoutMs } = options;
+  const flags = { budgetExceeded: false, timedOut: false };
+  const endCase = (step: number): ExecutionError | null => {
+    if (flags.budgetExceeded) {
+      return { kind: 'product', step, reason: 'budget-exceeded', message: 'coach call budget spent' };
+    }
+    if (flags.timedOut) {
+      return { kind: 'infrastructure', step, reason: 'coach-timeout', message: `coach call request timed out after ${timeoutMs} ms` };
+    }
+    return null;
+  };
+  if (budget === undefined && timeoutMs === undefined) return { provider, endCase };
+
+  const guarded = new Proxy(provider, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target);
+      if (typeof value !== 'function' || typeof property === 'symbol' || property === 'constructor') return value;
+      const method = value as (...args: unknown[]) => unknown;
+      return (...args: unknown[]): unknown => {
+        // The case is already over: later calls in the same turn or window fail fast, unreserved.
+        if (flags.budgetExceeded || flags.timedOut) {
+          return Promise.reject(new Error(`[suite] coach call ${property} skipped: an earlier coach call ${flags.budgetExceeded ? 'was refused by the budget' : 'request timed out'}`));
+        }
+        if (budget !== undefined && !budget.tryCoachCall()) {
+          flags.budgetExceeded = true;
+          return Promise.reject(new Error(`[suite] coach call budget spent; ${property} was not called`));
+        }
+        const result = method.apply(target, args);
+        if (timeoutMs === undefined || !isThenable(result)) return result;
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            flags.timedOut = true;
+            reject(new Error(`[suite] coach call ${property}: request timed out after ${timeoutMs} ms`));
+          }, timeoutMs);
+          timer.unref?.();
+          Promise.resolve(result).then(
+            (settled) => {
+              clearTimeout(timer);
+              resolve(settled);
+            },
+            (error: unknown) => {
+              clearTimeout(timer);
+              reject(error);
+            },
+          );
+        });
+      };
+    },
+  });
+  return { provider: guarded, endCase };
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
 }
 
 /** The context fixtures apply against at L1; exported for fixture tests. */

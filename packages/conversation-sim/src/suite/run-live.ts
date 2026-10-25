@@ -78,7 +78,8 @@ export async function runLive(argv: readonly string[], overrides: Partial<RunLiv
         langwatch: { apiKey: cliDeps.env.LANGWATCH_API_KEY },
       });
     },
-    createRunJudge: (judge) => createCriterionJudge({ model: deps.createJudgeModel(judge, cliDeps.env), decoding: judge.decoding }),
+    createRunJudge: (judge, { callTimeoutMs }) =>
+      createCriterionJudge({ model: deps.createJudgeModel(judge, cliDeps.env), decoding: judge.decoding, timeoutMs: callTimeoutMs }),
   });
 }
 

@@ -1,4 +1,4 @@
-import type { SuiteExecutor } from '../executors/types';
+import type { ExecutorOptions, SuiteExecutor } from '../executors/types';
 import { validateSuite } from '../loader';
 import { TEST_RULES, validModules } from './suite';
 import type { AgreementFile, CaseRun, ExecutionError, Level, LoadedSuite, LoadedTest, SuiteConfig } from '../schema';
@@ -15,7 +15,7 @@ export const RUNNER_CONFIG: SuiteConfig = {
   baseline: { minSamples: { L0: 1, L1: 5, L2: 3 } },
   diff: { minSamples: { L1: 3, L2: 3 } },
   retries: { infrastructure: 1 },
-  budgets: { maxCoachCallsPerRun: 600, maxJudgeCallsPerRun: 150 },
+  budgets: { maxCoachCallsPerRun: 600, maxJudgeCallsPerRun: 150, coachCallTimeoutMs: 120_000, judgeCallTimeoutMs: 60_000 },
   judge: {
     provider: 'openai',
     model: 'gpt-4o',
@@ -255,6 +255,49 @@ export function fakeReplyExecutor(
     async run(test, options) {
       calls.push(`${test.id}#${options.attempt}`);
       return replyRun(test, options.attempt, reply(test, options.attempt), level);
+    },
+  };
+}
+
+/**
+ * A fake L1 executor that makes `callsPerCase(attempt)` coach calls per case through the
+ * runner's budget hook, like the L1 executor: a refused call ends the case with ERROR
+ * `budget-exceeded` (product) at step 1; otherwise every step replies `reply`. `calls`
+ * records `<testId>#<attempt>`, `options` every `ExecutorOptions` received.
+ */
+export function budgetedExecutor(
+  options: {
+    callsPerCase?: number | ((attempt: number) => number);
+    coachModel?: string;
+    reply?: string;
+    /** Extra errors for an attempt (for example an infrastructure error to force a retry). */
+    errors?: (test: LoadedTest, attempt: number) => ExecutionError[];
+  } = {},
+): SuiteExecutor & { calls: string[]; options: ExecutorOptions[]; coachCalls: () => number } {
+  const calls: string[] = [];
+  const received: ExecutorOptions[] = [];
+  let coachCalls = 0;
+  const perCase = options.callsPerCase ?? 3;
+  return {
+    level: 'L1',
+    coachModel: options.coachModel ?? 'fake-coach',
+    calls,
+    options: received,
+    coachCalls: () => coachCalls,
+    supports: () => true,
+    observes: () => ['events', 'reply.messages', 'reply.text'],
+    async run(test, executorOptions) {
+      calls.push(`${test.id}#${executorOptions.attempt}`);
+      received.push(executorOptions);
+      const wanted = typeof perCase === 'function' ? perCase(executorOptions.attempt) : perCase;
+      const run = replyRun(test, executorOptions.attempt, options.reply ?? 'Which release deadline comes first?');
+      for (let call = 0; call < wanted; call += 1) {
+        if (executorOptions.budget && !executorOptions.budget.tryCoachCall()) {
+          return { ...run, steps: [], errors: [{ kind: 'product', step: 1, reason: 'budget-exceeded', message: 'coach call budget spent' }] };
+        }
+        coachCalls += 1;
+      }
+      return { ...run, errors: options.errors?.(test, executorOptions.attempt) ?? [] };
     },
   };
 }

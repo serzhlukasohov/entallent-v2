@@ -20,7 +20,7 @@ describe('loadSuiteConfig', () => {
     expect(config.baseline.minSamples).toEqual({ L0: 1, L1: 5, L2: 3 });
     expect(config.diff.minSamples).toEqual({ L1: 3, L2: 3 });
     expect(config.retries).toEqual({ infrastructure: 1 });
-    expect(config.budgets).toEqual({ maxCoachCallsPerRun: 600, maxJudgeCallsPerRun: 150 });
+    expect(config.budgets).toEqual({ maxCoachCallsPerRun: 600, maxJudgeCallsPerRun: 150, coachCallTimeoutMs: 120_000, judgeCallTimeoutMs: 60_000 });
     expect(config.judge).toEqual({
       provider: 'openai',
       model: 'gpt-4o',
@@ -50,6 +50,9 @@ describe('loadSuiteConfig', () => {
       [{ ...valid, baseline: { minSamples: { L0: 0, L1: 5, L2: 3 } } }, /: baseline\.minSamples\.L0: /],
       [{ ...valid, judge: { ...valid.judge, provider: 'anthropic' } }, /: judge\.provider: /],
       [{ ...valid, schemaVersion: 2 }, /: schemaVersion: /],
+      [{ ...valid, budgets: { ...valid.budgets, coachCallTimeoutMs: 0 } }, /: budgets\.coachCallTimeoutMs: /],
+      [{ ...valid, budgets: { ...valid.budgets, judgeCallTimeoutMs: 1.5 } }, /: budgets\.judgeCallTimeoutMs: /],
+      [{ ...valid, budgets: { maxCoachCallsPerRun: 600, maxJudgeCallsPerRun: 150 } }, /: budgets\.coachCallTimeoutMs: /],
     ];
     for (const [config, message] of cases) expect(() => loadSuiteConfig(write(JSON.stringify(config)))).toThrow(message);
   });

@@ -105,15 +105,18 @@ export function diffRun(
   let outcome: SuiteDiff['outcome'];
   let exitCode: number;
   const budget = budgetExceededKeys(report);
+  const exceededBudgets = report.budget?.exceeded ?? [];
   const gating = entries.filter((entry) => entry.gating);
   if (report.judgeErrors.length > 0) {
     outcome = 'judge-infrastructure';
     exitCode = 3;
     reasons.push(`${report.judgeErrors.length} judge error(s): ${report.judgeErrors.map((error) => error.key).join(', ')}`);
-  } else if (budget.length > 0) {
+  } else if (budget.length > 0 || exceededBudgets.length > 0) {
+    // Same signal as `suite:run` exit 4: the run's own budget record, or budget-exceeded results.
     outcome = 'budget-exceeded';
     exitCode = 4;
-    reasons.push(`budget exceeded at ${budget.join(', ')}`);
+    if (exceededBudgets.length > 0) reasons.push(`budget exceeded: ${exceededBudgets.join(', ')}`);
+    if (budget.length > 0) reasons.push(`budget exceeded at ${budget.join(', ')}`);
   } else if (gating.length > 0) {
     outcome = 'failed';
     exitCode = 1;
@@ -222,7 +225,8 @@ function categorize(
   if (baseUndecided && runDecided) return 'gained-coverage';
   if (baseUndecided && runUndecided) return 'unchanged';
   // Both decided. L0 has no `diff.minSamples` entry (no judge), so meaning is always inconclusive there.
-  if (meaning && (run.n < minSamples || run.advisory)) return 'inconclusive';
+  // An advisory baseline side (accepted from an untrusted run) is not comparable either (AD-13).
+  if (meaning && (run.n < minSamples || run.advisory || base.advisory === true)) return 'inconclusive';
   if (base.status === 'PASS' && run.passCount < needed) return 'regressed';
   if (base.status === 'FAIL' && run.passCount >= needed) return 'fixed';
   return 'unchanged';

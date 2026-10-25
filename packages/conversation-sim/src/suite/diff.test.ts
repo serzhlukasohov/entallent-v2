@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { RUNNER_CONFIG, fakeExecutor, fakeReplyExecutor, fakeSuite, judgedSuite } from './__fixtures__/runner';
+import { RUNNER_CONFIG, agreementFor, fakeExecutor, fakeReplyExecutor, fakeSuite, judgedSuite } from './__fixtures__/runner';
 import { fakeJudge } from './judge/__fixtures__/calibration';
 import { labelsSha256 } from './judge/calibrate';
 import { result } from './__fixtures__/evaluation';
@@ -118,6 +118,7 @@ function baseline(results: Record<string, Spec>, overrides: Partial<Baseline> = 
       layer: result.layer,
       testKind: result.testKind,
       checkKind: result.checkKind,
+      ...(spec.advisory !== undefined ? { advisory: spec.advisory } : {}),
     };
   }
   return {
@@ -190,6 +191,31 @@ describe('diffRun: categories', () => {
     const diff = diffRun(run, base, RUNNER_CONFIG, SOURCE);
     expect(only(diff, A)).toMatchObject({ category: 'inconclusive', gating: false });
     expect(diff.exitCode).toBe(0);
+  });
+
+  it('makes a trusted meaning FAIL against an advisory baseline PASS inconclusive, not gating', () => {
+    const run = report({ [A]: { status: 'FAIL', passCount: 0, n: 5, checkKind: 'meaning' } }, { level: 'L1' });
+    const base = baseline({ [A]: { status: 'PASS', n: 5, checkKind: 'meaning', advisory: true } }, { level: 'L1' });
+    const diff = diffRun(run, base, RUNNER_CONFIG, SOURCE);
+    expect(only(diff, A)).toMatchObject({ category: 'inconclusive', gating: false });
+    expect(diff.exitCode).toBe(0);
+  });
+
+  it('treats a baseline entry without advisory (pre-13.5) as non-advisory', () => {
+    const run = report({ [A]: { status: 'FAIL', passCount: 0, n: 5, checkKind: 'meaning' } }, { level: 'L1' });
+    const base = baseline({ [A]: { status: 'PASS', n: 5, checkKind: 'meaning' } }, { level: 'L1' });
+    expect(base.results[A]).not.toHaveProperty('advisory');
+    const parsed = parseBaselineJson(JSON.stringify(base), 'old');
+    expect(parsed.ok).toBe(true);
+    const diff = diffRun(run, parsed.ok ? parsed.baseline : null, RUNNER_CONFIG, SOURCE);
+    expect(only(diff, A)).toMatchObject({ category: 'regressed', gating: true });
+    expect(diff.exitCode).toBe(1);
+  });
+
+  it('keeps an advisory baseline rule entry comparable', () => {
+    const run = report({ [A]: { status: 'FAIL', passCount: 0, n: 5, checkKind: 'rule' } }, { level: 'L1' });
+    const base = baseline({ [A]: { status: 'PASS', n: 5, checkKind: 'rule', advisory: true } }, { level: 'L1' });
+    expect(only(diffRun(run, base, RUNNER_CONFIG, SOURCE), A)).toMatchObject({ category: 'regressed', gating: true });
   });
 
   it('reports a journey meaning regression in the journeys section without gating', () => {
@@ -348,6 +374,20 @@ describe('diffRun: exit codes', () => {
     expect(diffRun(outOfScope, baseline({}), RUNNER_CONFIG, SOURCE).exitCode).toBe(0);
   });
 
+  it('exits 4 when the run recorded an exceeded budget, even without a budget-exceeded result', () => {
+    const run = report(
+      { [A]: { status: 'PASS' } },
+      { budget: { maxCoachCalls: 4, maxJudgeCalls: 150, coachCalls: 4, judgeCalls: 0, exceeded: ['coach'] } },
+    );
+    expect(diffRun(run, baseline({ [A]: { status: 'PASS' } }), RUNNER_CONFIG, SOURCE)).toMatchObject({
+      outcome: 'budget-exceeded',
+      exitCode: 4,
+      reasons: ['budget exceeded: coach'],
+    });
+    const clean = report({ [A]: { status: 'PASS' } }, { budget: { maxCoachCalls: 4, maxJudgeCalls: 150, coachCalls: 3, judgeCalls: 0, exceeded: [] } });
+    expect(diffRun(clean, baseline({ [A]: { status: 'PASS' } }), RUNNER_CONFIG, SOURCE).exitCode).toBe(0);
+  });
+
   it('exits 0 with every pair new when there is no baseline', () => {
     const diff = diffRun(real, null, RUNNER_CONFIG, { ...SOURCE, missing: true });
     expect(diff).toMatchObject({ outcome: 'no-baseline', exitCode: 0, acceptedFrom: null, provisional: false });
@@ -496,6 +536,34 @@ describe('diffRun: an untrusted L1 judge never regresses a meaning criterion (St
     }
     expect(diff.tests.counts.regressed ?? 0).toBe(0);
     expect(entry('Z-01.A1/Z-01.C3')).toMatchObject({ category: 'unchanged' });
+    expect(diff.exitCode).toBe(0);
+  });
+
+  it('keeps meaning entries of an untrusted baseline inconclusive against a trusted FAIL run', async () => {
+    const accepted = await l1Run('PASS', '2026-10-25T10-00-00-000Z-abc1234');
+    const baseline = buildBaseline(accepted, { acceptedAt: '2026-10-25T11:00:00.000Z' });
+    expect(baseline.results['Z-01.A1/Z-01.C1']).toMatchObject({ status: 'PASS', advisory: true });
+    expect(baseline.results['Z-01.A1/Z-01.C3']).toMatchObject({ advisory: false });
+
+    const suite = judgedSuite();
+    const { report: trusted } = await runSuite({
+      suite,
+      level: 'L1',
+      n: 5,
+      executor: fakeReplyExecutor(() => 'Which release deadline comes first?'),
+      config: RUNNER_CONFIG,
+      runId: '2026-10-25T12-00-00-000Z-abc1234',
+      git: { sha: 'abc1234def5678', dirty: false },
+      rules: TEST_RULES,
+      judging: { judge: fakeJudge(() => 'FAIL').judge, model: 'gpt-4o', unpinned: false, agreement: agreementFor(suite), labelsSha256: labelsSha256([]) },
+    });
+    expect(trusted.judgeTrust.trusted).toBe(true);
+    expect(trusted.results['Z-01.A1/Z-01.C1']).toMatchObject({ status: 'FAIL', n: 5, advisory: false });
+
+    const diff = diffRun(trusted, baseline, RUNNER_CONFIG, { ...SOURCE, path: 'baselines/x-judged/L1.json' }, []);
+    for (const key of ['Z-01.A1/Z-01.C1', 'Z-01.A1/Z-01.C2']) {
+      expect(diff.tests.entries.find((candidate) => candidate.key === key), key).toMatchObject({ category: 'inconclusive', gating: false });
+    }
     expect(diff.exitCode).toBe(0);
   });
 });

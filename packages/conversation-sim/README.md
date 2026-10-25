@@ -272,8 +272,12 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
   run below `baseline.minSamples`, an INCOMPLETE run (unless `--allow-incomplete`, recorded
   as provisional), a dirty tree (unless `--allow-dirty`), a `--case` run, a run with a
   different judge fingerprint (at L1/L2 the current one is computed from `suite.config.json`
-  and the suite's guidance), or a run whose called judge model is not the pin. No baseline
-  is committed yet.
+  and the suite's guidance), or a run whose called judge model is not the pin. Every entry
+  records `advisory` from the run: an L1/L2 run from an untrusted judge is still accepted
+  (with a `[suite] baseline: meaning results are advisory (<reason>) ...` line), and its
+  meaning entries diff as `inconclusive` until re-accepted from a trusted run, while its rule
+  and S entries gate normally. Entries without `advisory` (older baselines) count as
+  non-advisory. No baseline is committed yet.
 - `suite:ci` runs every registered suite that has tests through `suite:run` (n = 1) and
   `suite:diff --merge-base`, logs `[suite] ci: <id> skipped (no tests)` for the others, and
   appends a Markdown step summary to `--summary` (relative paths resolve against the
@@ -310,16 +314,52 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
   provider's two default tiers; recorded as `models.coach`) and the
   live pinned judge. `LANGWATCH_API_KEY`, when set, streams each test's conversation to
   LangWatch; statuses, reports and `case-runs.json` are identical without it. It reads the
-  shell environment and never loads `.env`. Budgets, coach usage counting and the first L1
-  baseline are Story 13.5.
+  shell environment and never loads `.env`. The live judge gets `budgets.judgeCallTimeoutMs`
+  per call.
 - `suite:baseline:guard` fails when `git diff <base>...<head>` touches
   `packages/conversation-sim/baselines/` and the labels lack `baseline-change`.
+
+### Budgets and usage
+
+`suite.config.json` `budgets` bounds one invocation (all `--runs` samples and retries
+together; raising `--runs` past them needs a deliberate config change):
+`maxCoachCallsPerRun` (600), `maxJudgeCallsPerRun` (150), `coachCallTimeoutMs` (120000)
+and `judgeCallTimeoutMs` (60000). The runner reserves every coach provider call through a
+budget hook the L1 executor asks before calling, and counts judge calls from each judge
+outcome (one judge invocation may overshoot by its single transport retry). Once a budget is
+spent the call is refused: the case it happens in ends as ERROR `budget-exceeded` from that
+step (even when the orchestrator swallowed the refused call and replied with a fallback),
+every remaining case is ERROR `budget-exceeded` without executing, nothing is retried, the
+run is provisional (`budget exceeded: coach|judge`), and `suite:run` exits 4 with the report
+written. A coach call that exceeds its timeout is ERROR infrastructure `coach-timeout`
+(retried once); a judge call that exceeds its timeout is a transport failure (retried once,
+then `judge-transport`). A timed-out coach request cannot be aborted through
+`AiProviderPort` and may finish in the background.
+
+`report.json` carries `budget` (`maxCoachCalls`, `maxJudgeCalls`, `coachCalls`,
+`judgeCalls`, `exceeded`) and `modelUsage` (one row per coach model label and one for the
+judge; coach tokens are `null`, not observable through the port), and
+`usage.coachModelCalls` is the reserved coach call count. `report.md` `## Usage` shows the
+per-model table and `- Budget: coach x/600, judge y/150`; the CI step summary adds one usage
+line per model that made calls (none at L0).
+
+### The first L1 baseline (human-run)
+
+Everything needed is built and tested offline; no L1 baseline is committed. Once `smoke-v1`
+has scenarios (and, for authoritative meaning entries, QA labels and a calibration):
+
+1. Optionally calibrate: `pnpm suite:calibrate:live --suite smoke-v1 --live-judge`.
+2. From a clean tree: `pnpm suite:run:live --suite smoke-v1 --level L1 --runs 5 --live-model`
+   (calls the live coach and judge; exit 4 means a budget was exceeded and the run cannot be
+   accepted as complete).
+3. `pnpm suite:baseline:accept --run <runId>`; review `baselines/smoke-v1/L1.json` and open
+   a pull request labeled `baseline-change`.
 
 ### Exit codes
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 | --- | --- | --- | --- | --- | --- |
-| `run`, `baseline:accept` | report or baseline written (whatever the verdict) | usage, config, load or refusal error | | | |
+| `run`, `baseline:accept` | report or baseline written (whatever the verdict) | usage, config, load or refusal error | | | `run`: a call budget was exceeded (report still written) |
 | `diff` | clean, or no baseline | gating regression or lost coverage; usage error; unreadable run | baseline invalid (provenance differs, unreadable, git cannot resolve the merge-base) | judge infrastructure | budget exceeded |
 | `ci` | every suite clean, without baseline, or skipped | a suite's diff exited 1, or a suite failed to load or run | any suite exited 2 | any 3 (no 2) | any 4 (no 2 or 3) |
 | `calibrate` | import done or agreement file written | usage, config, unknown suite, load, invalid labels or export, unresolvable label, no judge without `--import` | | any label judged ERROR (file still written) | |
@@ -396,7 +436,8 @@ Entries are keyed `<testId>/<criterionId>` and listed `lost-coverage` first, in 
 sections Tests (atomic and observation) and Journeys. Categories: `lost-coverage`
 (baseline PASS or FAIL, now NOT_RUN, ERROR, INVALID or missing), `regressed` (baseline
 PASS, now below `minPasses`: n/n for rules), `fixed`, `gained-coverage`, `new`, `retired`,
-`inconclusive` (meaning checks with too few samples or an untrusted judge), `unchanged`
+`inconclusive` (meaning checks with too few samples, an untrusted judge, or an advisory
+baseline entry), `unchanged`
 (counted only). An entry is **gating** when it is `regressed` or `lost-coverage` on an S or
 rule criterion (also in journeys), or `regressed` on a non-advisory meaning criterion outside
 journeys; any gating entry makes the diff exit 1. `inconclusive` and `new` never fail it. Without a baseline

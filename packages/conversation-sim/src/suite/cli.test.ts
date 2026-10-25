@@ -7,6 +7,7 @@ import { withoutLangwatchEnv } from './executors/__fixtures__/offline-scenario-e
 import {
   RUNNER_CONFIG,
   agreementFor,
+  budgetedExecutor,
   cleanRun,
   fakeExecutor,
   fakeReplyExecutor,
@@ -865,13 +866,23 @@ describe('suite:calibrate', () => {
     const h = harness({ env: { INIT_CWD: dir } });
     const fake = fakeJudge(decide);
     const configs: unknown[] = [];
-    h.deps.createCalibrationJudge = (judge) => {
+    const callOptions: unknown[] = [];
+    h.deps.createCalibrationJudge = (judge, options) => {
       configs.push(judge);
+      callOptions.push(options);
       return fake.judge;
     };
     if (suite) h.deps.loadSuite = () => suite();
-    return { h, fake, configs };
+    return { h, fake, configs, callOptions };
   }
+
+  it('builds the calibration judge with budgets.judgeCallTimeoutMs from the config', async () => {
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, budgets: { ...RUNNER_CONFIG.budgets, judgeCallTimeoutMs: 1234 } }));
+    writeExport([twoStatuses[0]!]);
+    const { h, callOptions } = judged(() => 'PASS');
+    expect(await main(['calibrate', '--suite', 'x-suite', '--import', 'qa/export.json'], h.deps)).toBe(0);
+    expect(callOptions).toEqual([{ callTimeoutMs: 1234 }]);
+  });
 
   const twoStatuses = [
     { criterionId: 'X-01.C1', status: 'PASS' as const, replyIndex: 3 },
@@ -1343,5 +1354,140 @@ describe('suite:run at L1 with an injected L1 executor (Story 13.4)', () => {
     for (const event of aiEvents) expect(event.model).toMatchObject({ name: COACH, request: expect.anything() });
     // No transcript text reaches the log.
     expect(h.out.join('\n')).not.toContain(REPLY);
+  });
+});
+
+describe('budgets, usage and the L1 baseline path (Story 13.5)', () => {
+  const COACH = 'fake-coach-model';
+  const readRun = (runId: string) => SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8')));
+  const readMarkdown = (runId: string) => readFileSync(join(dir, 'runs', 'suites', runId, 'report.md'), 'utf8');
+  const baselineFile = () => join(dir, 'baselines', 'x-judged', 'L1.json');
+
+  function writeConfig(budgets: Partial<typeof RUNNER_CONFIG.budgets> = {}) {
+    writeFileSync(
+      join(dir, 'suite.config.json'),
+      JSON.stringify({ ...RUNNER_CONFIG, suites: [...RUNNER_CONFIG.suites, 'x-judged'], budgets: { ...RUNNER_CONFIG.budgets, ...budgets } }),
+    );
+  }
+
+  function l1Harness(options: { callsPerCase?: number } = {}) {
+    const h = harness({ executor: () => budgetedExecutor({ callsPerCase: options.callsPerCase ?? 3, coachModel: COACH }) });
+    const fallback = h.deps.loadSuite;
+    h.deps.loadSuite = (id) => (id === 'x-judged' ? judgedSuite() : fallback(id));
+    const fake = fakeJudge(() => 'PASS');
+    const judgeOptions: unknown[] = [];
+    h.deps.createRunJudge = (_judge, judgeCallOptions) => {
+      judgeOptions.push(judgeCallOptions);
+      return fake.judge;
+    };
+    return { h, fake, judgeOptions };
+  }
+
+  async function run(h: Harness, argv: string[], expected: number): Promise<string> {
+    const before = new Set(runDirs());
+    expect(await main(argv, h.deps)).toBe(expected);
+    return runDirs().find((id) => !before.has(id))!;
+  }
+
+  it('exits 4 when the coach budget is exceeded, still writing the report and case runs', async () => {
+    writeConfig({ maxCoachCallsPerRun: 4 });
+    const { h } = l1Harness({ callsPerCase: 3 });
+    const runId = await run(h, ['run', '--suite', 'x-judged', '--level', 'L1', '--runs', '3'], 4);
+    expect(existsSync(join(dir, 'runs', 'suites', runId, 'case-runs.json'))).toBe(true);
+    const report = readRun(runId);
+    expect(report.provisional).toBe(true);
+    expect(report.provisionalReason).toContain('budget exceeded: coach');
+    expect(report.budget).toMatchObject({ coachCalls: 4, maxCoachCalls: 4, exceeded: ['coach'] });
+    for (const key of ['Z-01.A1/Z-01.C1', 'Z-01.A1/Z-01.C3']) {
+      expect(report.results[key]!.samples.slice(1).map((sample) => [sample.status, sample.reason]), key).toEqual([
+        ['ERROR', 'budget-exceeded'],
+        ['ERROR', 'budget-exceeded'],
+      ]);
+    }
+    expect(h.out).toContain('[suite] budget exceeded: coach (coach 4/4, judge 3/150)');
+    // The diff of that run also exits 4.
+    expect(await main(['diff', '--run', runId], h.deps)).toBe(4);
+  });
+
+  it('exits 4 when the judge budget is exceeded; the refused criterion is not a judge error', async () => {
+    writeConfig({ maxJudgeCallsPerRun: 2 });
+    const { h } = l1Harness({ callsPerCase: 1 });
+    const runId = await run(h, ['run', '--suite', 'x-judged', '--level', 'L1', '--runs', '2'], 4);
+    const report = readRun(runId);
+    expect(report.budget?.exceeded).toEqual(['judge']);
+    expect(report.judgeErrors).toEqual([]);
+    expect(report.results['Z-01.A1/Z-01.C4']!.samples[0]).toMatchObject({ status: 'ERROR', reason: 'budget-exceeded' });
+  });
+
+  it('shows coach and judge usage per model and the budget line in report.md; passes the judge call timeout', async () => {
+    writeConfig({ judgeCallTimeoutMs: 4321 });
+    const { h, judgeOptions } = l1Harness();
+    const runId = await run(h, ['run', '--suite', 'x-judged', '--level', 'L1'], 0);
+    expect(judgeOptions).toEqual([{ callTimeoutMs: 4321 }]);
+    const report = readRun(runId);
+    expect(report.usage.coachModelCalls).toBe(3);
+    expect(report.modelUsage).toEqual([
+      { role: 'coach', model: COACH, calls: 3, inputTokens: null, outputTokens: null, totalTokens: null },
+      { role: 'judge', model: 'gpt-4o', calls: 3, inputTokens: 30, outputTokens: 15, totalTokens: 45 },
+    ]);
+    const markdown = readMarkdown(runId);
+    expect(markdown).toContain(`| coach | ${COACH} | 3 | n/a | n/a | n/a |`);
+    expect(markdown).toContain('| judge | gpt-4o | 3 | 30 | 15 | 45 |');
+    expect(markdown).toContain('- Budget: coach 3/600, judge 3/150');
+    expect(h.out.some((line) => line.startsWith('[suite] budget exceeded'))).toBe(false);
+  });
+
+  it('a five-sample L1 run is accepted as L1.json with judge and coach provenance and advisory per entry; four samples are refused', async () => {
+    writeConfig();
+    const { h } = l1Harness();
+    const runId = await run(h, ['run', '--suite', 'x-judged', '--level', 'L1', '--runs', '5'], 0);
+    const report = readRun(runId);
+    for (const [key, result] of Object.entries(report.results)) {
+      expect(result.n, key).toBe(5);
+      expect(result.samples, key).toHaveLength(5);
+    }
+    expect(report.usage.coachModelCalls).toBe(15);
+
+    expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(0);
+    const baseline = BaselineSchema.parse(JSON.parse(readFileSync(baselineFile(), 'utf8')));
+    expect(baseline.level).toBe('L1');
+    expect(baseline.judge.fingerprint).toEqual(computeJudgeFingerprint(RUNNER_CONFIG.judge, judgedSuite()));
+    expect(baseline.coach).toEqual({ model: COACH });
+    expect(baseline.results['Z-01.A1/Z-01.C1']).toMatchObject({ status: 'PASS', passCount: 5, n: 5, advisory: true });
+    expect(baseline.results['Z-01.A1/Z-01.C3']).toMatchObject({ status: 'PASS', n: 5, advisory: false });
+    for (const entry of Object.values(baseline.results)) expect(typeof entry.advisory).toBe('boolean');
+    const advisoryCount = Object.values(baseline.results).filter((entry) => entry.advisory === true).length;
+    expect(advisoryCount).toBe(3);
+    expect(h.out).toContain(
+      '[suite] baseline: 3 meaning result(s) are advisory (no-agreement); they diff as inconclusive until re-accepted from a trusted run',
+    );
+
+    rmSync(baselineFile());
+    h.setNow('2026-10-25T11:00:00.000Z');
+    const four = await run(h, ['run', '--suite', 'x-judged', '--level', 'L1', '--runs', '4'], 0);
+    expect(await main(['baseline:accept', '--run', four], h.deps)).toBe(1);
+    expect(h.err).toContain('[suite]   - n 4 is below baseline.minSamples.L1 5');
+    expect(existsSync(baselineFile())).toBe(false);
+  });
+
+  it('a trusted accept logs no advisory line', async () => {
+    writeConfig();
+    writeAgreementFile(dir, 'x-judged', agreementFor(judgedSuite()));
+    const { h } = l1Harness();
+    const runId = await run(h, ['run', '--suite', 'x-judged', '--level', 'L1', '--runs', '5'], 0);
+    expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(0);
+    expect(h.out.some((line) => line.includes('are advisory'))).toBe(false);
+    const baseline = BaselineSchema.parse(JSON.parse(readFileSync(baselineFile(), 'utf8')));
+    expect(Object.values(baseline.results).every((entry) => entry.advisory === false)).toBe(true);
+  });
+
+  it('the default entry runs smoke-v1 at L0 with zero coach calls, no model rows and exit 0', async () => {
+    writeConfig();
+    const h = harness({ executor: () => new L0DeterministicExecutor() });
+    const runId = await run(h, ['run', '--suite', 'smoke-v1', '--level', 'L0'], 0);
+    const report = readRun(runId);
+    expect(report.usage.coachModelCalls).toBe(0);
+    expect(report.modelUsage).toEqual([]);
+    expect(report.budget?.exceeded).toEqual([]);
   });
 });

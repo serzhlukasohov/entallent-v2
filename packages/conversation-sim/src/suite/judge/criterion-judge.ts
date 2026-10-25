@@ -55,7 +55,8 @@ export interface JudgeInput {
 
 export type { JudgeUsage };
 
-export type JudgeErrorReason = 'judge-transport' | 'judge-invalid-output';
+/** `budget-exceeded` is set only by the runner's judge guard (no call was made); never a judge infrastructure error. */
+export type JudgeErrorReason = 'judge-transport' | 'judge-invalid-output' | 'budget-exceeded';
 
 export type MeaningOutcome =
   | { status: 'PASS' | 'FAIL'; reason: string; evidence: string | null; usage: JudgeUsage }
@@ -78,6 +79,8 @@ export type JudgeModel = Exclude<LanguageModel, string>;
 export interface CriterionJudgeDeps {
   model: JudgeModel;
   decoding: SuiteConfig['judge']['decoding'];
+  /** Per `generateText` call (`budgets.judgeCallTimeoutMs`); a timeout is a transport failure (retried once). */
+  timeoutMs?: number;
 }
 
 // Built once; inlining it in the `generateText` call overflows TypeScript's instantiation depth.
@@ -142,6 +145,7 @@ export async function judgeCriterion(
         temperature,
         maxOutputTokens,
         maxRetries: 0,
+        ...(deps.timeoutMs !== undefined ? { timeout: deps.timeoutMs } : {}),
         ...(reasoningEffort !== null
           ? { providerOptions: { openai: { reasoningEffort }, azure: { reasoningEffort } } }
           : {}),

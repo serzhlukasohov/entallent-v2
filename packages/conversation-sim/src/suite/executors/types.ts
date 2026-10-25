@@ -1,5 +1,14 @@
 import type { CaseRun, FixtureName, Level, LoadedTest, ObservationField } from '../schema';
 
+/**
+ * The runner's coach-call budget for one invocation (AD-15). `tryCoachCall()` reserves one
+ * coach model call and returns true, or returns false when the budget is spent: the call
+ * must then not be made.
+ */
+export interface CallBudget {
+  tryCoachCall(): boolean;
+}
+
 /** Options the runner passes to `SuiteExecutor.run` (architecture AD-4, AD-18). */
 export interface ExecutorOptions {
   /** 1-based; the runner increments it when it retries an infrastructure error. */
@@ -10,6 +19,10 @@ export interface ExecutorOptions {
   clockStart?: Date;
   /** The suite being run (the runner passes `suite.id`); L1 names its Scenario set after it. */
   suiteId?: string;
+  /** Asked before every coach model call (the runner passes it on every attempt; L0 ignores it). */
+  budget?: CallBudget;
+  /** Per coach model call timeout (`budgets.coachCallTimeoutMs`; L0 ignores it). */
+  coachCallTimeoutMs?: number;
 }
 
 /** One executor adapter per level behind one port; it returns observations, never statuses. */

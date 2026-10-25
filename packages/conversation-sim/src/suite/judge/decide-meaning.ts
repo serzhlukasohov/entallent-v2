@@ -15,7 +15,8 @@ import {
  * when a PASS carries no verbatim fragment of `replyTexts`, then ERROR
  * `judge-invalid-output`; a rejecting judge is ERROR `judge-transport`. FAIL evidence is
  * kept only when it is a verbatim fragment, so an invented quote is never recorded.
- * Callers handle the no-reply case (empty `replyTexts`) before calling.
+ * Callers handle the no-reply case (empty `replyTexts`) before calling. An ERROR
+ * `budget-exceeded` from the runner's judge guard (no call made) passes through unchanged.
  */
 export type MeaningDecision =
   | { status: 'PASS' | 'FAIL'; reason: string; evidence: string | null; usage: JudgeUsage }

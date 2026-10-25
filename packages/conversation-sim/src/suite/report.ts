@@ -16,7 +16,9 @@ import {
   type JudgeTrust,
   type Level,
   type LoadedTest,
+  type ModelUsageRow,
   type QaReviewEntry,
+  type RunBudgetReport,
   type ScoredCriterion,
   type SuiteRunReport,
   type SuiteScore,
@@ -37,6 +39,10 @@ export interface SuiteReportMeta {
   /** Meaning FAILs for QA review, in sample, test, criterion order (`collectQaReview`). */
   qaReview: QaReviewEntry[];
   usage: Usage;
+  /** Call budgets and what was spent (AD-15). */
+  budget?: RunBudgetReport;
+  /** Calls and tokens per model. */
+  modelUsage?: ModelUsageRow[];
   /** `--case` narrowing, recorded so a partial run is never accepted as a baseline. */
   selection?: { case: string };
 }
@@ -137,6 +143,8 @@ export function buildSuiteReport(score: SuiteScore, meta: SuiteReportMeta): Suit
     judgeErrors: meta.judgeErrors,
     qaReview: meta.qaReview,
     usage: meta.usage,
+    ...(meta.budget !== undefined ? { budget: meta.budget } : {}),
+    ...(meta.modelUsage !== undefined ? { modelUsage: meta.modelUsage } : {}),
     ...(meta.selection !== undefined ? { selection: meta.selection } : {}),
   };
   return SuiteRunReportSchema.parse(report) as SuiteRunReport;
@@ -257,6 +265,7 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   pushList(lines, report.judgeErrors.map((error) => `${error.key}: ${error.reason}`));
   pushQaReview(lines, report.qaReview ?? []);
   lines.push('## Usage', '');
+  pushModelUsage(lines, report);
   pushList(lines, Object.entries(report.usage).map(([name, value]) => `${name}: ${value}`));
   if (report.diff) pushDiff(lines, report.diff);
 
@@ -275,7 +284,10 @@ export function renderCiSummary(report: SuiteRunReport): string {
     `- Verdict: **${report.verdict}**${report.provisional ? ' (provisional)' : ''} · ${report.complete ? 'COMPLETE' : 'INCOMPLETE'}`,
   );
   lines.push(`- Samples: n = ${report.n}`);
-  lines.push(`- Meaning checks: ${report.judgeTrust.trusted ? 'trusted' : 'advisory (uncalibrated)'}`, fingerprintLine(report), '');
+  lines.push(`- Meaning checks: ${report.judgeTrust.trusted ? 'trusted' : 'advisory (uncalibrated)'}`, fingerprintLine(report));
+  // Only rows that made calls, so an L0 summary (no model calls) is unchanged.
+  for (const row of (report.modelUsage ?? []).filter((entry) => entry.calls > 0)) lines.push(usageLine(row));
+  lines.push('');
   if (report.layers) {
     lines.push('| Layer | PASS | FAIL | Pass rate |', '| --- | --- | --- | --- |');
     for (const row of report.layers.rows) lines.push(`| ${row.layer} | ${row.pass} | ${row.fail} | ${rate(row.passRate)} |`);
@@ -366,6 +378,40 @@ function pushDiff(lines: string[], diff: SuiteDiff): void {
     }
     lines.push('');
   }
+}
+
+/** `budgets: coach x/600, judge y/150` plus the exceeded budgets, or null for a pre-13.5 report. */
+export function budgetLine(report: Pick<SuiteRunReport, 'budget'>): string | null {
+  const budget = report.budget;
+  if (budget === undefined) return null;
+  const exceeded = budget.exceeded.length > 0 ? ` (exceeded: ${budget.exceeded.join(', ')})` : '';
+  return `coach ${budget.coachCalls}/${budget.maxCoachCalls}, judge ${budget.judgeCalls}/${budget.maxJudgeCalls}${exceeded}`;
+}
+
+function tokenCell(value: number | null): string {
+  return value === null ? 'n/a' : String(value);
+}
+
+function usageLine(row: ModelUsageRow): string {
+  const tokens = row.totalTokens === null ? 'tokens n/a' : `tokens ${row.inputTokens ?? 'n/a'} in / ${row.outputTokens ?? 'n/a'} out / ${row.totalTokens} total`;
+  return `- Usage: ${row.role} ${cell(row.model)}: ${row.calls} call(s), ${tokens}`;
+}
+
+/** `## Usage` head: the per-model table and the budget line. */
+function pushModelUsage(lines: string[], report: SuiteRunReport): void {
+  const rows = report.modelUsage ?? [];
+  if (rows.length === 0) lines.push('No model calls.', '');
+  else {
+    lines.push('| Role | Model | Calls | Input tokens | Output tokens | Total tokens |', '| --- | --- | --- | --- | --- | --- |');
+    for (const row of rows) {
+      lines.push(
+        `| ${row.role} | ${cell(row.model)} | ${row.calls} | ${tokenCell(row.inputTokens)} | ${tokenCell(row.outputTokens)} | ${tokenCell(row.totalTokens)} |`,
+      );
+    }
+    lines.push('');
+  }
+  const line = budgetLine(report);
+  if (line !== null) lines.push(`- Budget: ${line}`, '');
 }
 
 /** `- Judge fingerprint: ...`, the effective (configured) judge fingerprint of the run (AD-8). */

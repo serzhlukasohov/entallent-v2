@@ -5,6 +5,7 @@ import { ScriptedAiProvider } from '../fakes/scripted-ai';
 import {
   RUNNER_CONFIG,
   agreementFor,
+  budgetedExecutor,
   cleanRun,
   fakeExecutor,
   fakeReplyExecutor,
@@ -17,7 +18,7 @@ import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import { L1OrchestratorExecutor } from './executors/l1-orchestrator-executor';
 import { SuiteExecutionError } from './executors/types';
 import { loadSuite, validateSuite } from './loader';
-import { caseRunFailureKind, computeJudgeTrust, executionErrorKind, runSuite, type RunSuiteInput } from './runner';
+import { RunBudget, caseRunFailureKind, computeJudgeTrust, executionErrorKind, runSuite, type RunSuiteInput } from './runner';
 import { fakeJudge } from './judge/__fixtures__/calibration';
 import { labelsSha256 } from './judge/calibrate';
 import { computeJudgeFingerprint } from './judge/fingerprint';
@@ -459,5 +460,150 @@ describe('runSuite: L1 with the real L1 executor and a fake judge (Story 13.4)',
   it('keeps models.coach null for an executor without a coach model (L0)', async () => {
     const { report } = await runSuite(input(liveSuite(), { executor: new L0DeterministicExecutor() }));
     expect(report.models.coach).toBeNull();
+  });
+});
+
+describe('runSuite: call budgets (Story 13.5)', () => {
+  const C1 = 'Z-01.A1/Z-01.C1';
+  const C3 = 'Z-01.A1/Z-01.C3';
+  const C4 = 'Z-01.A1/Z-01.C4';
+
+  function budgets(overrides: Partial<typeof RUNNER_CONFIG.budgets>) {
+    return { ...RUNNER_CONFIG, budgets: { ...RUNNER_CONFIG.budgets, ...overrides } };
+  }
+
+  function judging(decide: Parameters<typeof fakeJudge>[0] = () => 'PASS') {
+    const fake = fakeJudge(decide);
+    return { fake, judging: { judge: fake.judge, model: 'gpt-4o', unpinned: false, agreement: null, labelsSha256: labelsSha256([]) } };
+  }
+
+  it('counts reserved coach calls and judge calls per model under budget, passing the hook and timeout on every attempt', async () => {
+    const executor = budgetedExecutor({ callsPerCase: 3, coachModel: 'coach-a' });
+    const { fake, judging: judged } = judging();
+    const { report } = await runSuite(input(judgedSuite(), { level: 'L1', n: 2, executor, judging: judged }));
+    expect(executor.coachCalls()).toBe(6);
+    expect(report.usage.coachModelCalls).toBe(6);
+    expect(report.budget).toEqual({ maxCoachCalls: 600, maxJudgeCalls: 150, coachCalls: 6, judgeCalls: 6, exceeded: [] });
+    expect(report.modelUsage).toEqual([
+      { role: 'coach', model: 'coach-a', calls: 6, inputTokens: null, outputTokens: null, totalTokens: null },
+      { role: 'judge', model: 'gpt-4o', calls: 6, inputTokens: 60, outputTokens: 30, totalTokens: 90 },
+    ]);
+    expect(fake.inputs).toHaveLength(6);
+    expect(report.provisionalReason ?? '').not.toContain('budget exceeded');
+    for (const options of executor.options) {
+      expect(options.coachCallTimeoutMs).toBe(120_000);
+      expect(typeof options.budget?.tryCoachCall).toBe('function');
+    }
+  });
+
+  it('ends the case that hits the coach budget and skips the remaining cases without executing or retrying them', async () => {
+    const executor = budgetedExecutor({ callsPerCase: 3 });
+    const { judging: judged } = judging();
+    const run = input(judgedSuite(), { level: 'L1', n: 3, executor, judging: judged, config: budgets({ maxCoachCallsPerRun: 4 }) });
+    const { report, caseRuns } = await runSuite(run);
+
+    // Sample 2 asked for call 5 and was refused; sample 3 never ran.
+    expect(executor.calls).toEqual(['Z-01.A1#1', 'Z-01.A1#1']);
+    expect(executor.coachCalls()).toBe(4);
+    expect(caseRuns.map((record) => record.run.errors.map((entry) => entry.reason))).toEqual([[], ['budget-exceeded'], ['budget-exceeded']]);
+    expect(caseRuns[2]!.run.errors[0]).toEqual({ kind: 'product', step: 0, reason: 'budget-exceeded', message: 'coach call budget 4 spent' });
+    for (const key of [C1, C3, C4]) {
+      expect(report.results[key]!.samples.map((sample) => sample.status), key).toEqual(['PASS', 'ERROR', 'ERROR']);
+      expect(report.results[key]!.samples.slice(1).every((sample) => sample.reason === 'budget-exceeded')).toBe(true);
+    }
+    expect(report.budget).toMatchObject({ coachCalls: 4, maxCoachCalls: 4, exceeded: ['coach'] });
+    expect(report.usage).toMatchObject({ coachModelCalls: 4, caseAttempts: 2, infrastructureRetries: 0 });
+    expect(report.provisional).toBe(true);
+    expect(report.provisionalReason).toMatch(/budget exceeded: coach$/);
+    expect(report.judgeErrors).toEqual([]);
+  });
+
+  it('does not retry into a spent budget: the retry attempt becomes budget-exceeded without executing', async () => {
+    const infra: ExecutionError = { kind: 'infrastructure', step: 1, reason: 'coach-timeout', message: 'request timed out' };
+    const executor = budgetedExecutor({ callsPerCase: 2, errors: (_test, attempt) => (attempt === 1 ? [infra] : []) });
+    const { judging: judged } = judging();
+    const { report, caseRuns } = await runSuite(
+      input(judgedSuite(), { level: 'L1', executor, judging: judged, config: budgets({ maxCoachCallsPerRun: 2 }) }),
+    );
+    expect(executor.calls).toEqual(['Z-01.A1#1']);
+    expect(caseRuns[0]!.run).toMatchObject({ attempt: 2, errors: [{ reason: 'budget-exceeded', message: 'coach call budget 2 spent' }] });
+    expect(report.budget?.exceeded).toEqual(['coach']);
+    expect(report.usage).toMatchObject({ caseAttempts: 1, infrastructureRetries: 0 });
+  });
+
+  it('refuses judge calls once the judge budget is spent: ERROR budget-exceeded, not a judge error, later cases skipped', async () => {
+    const executor = budgetedExecutor({ callsPerCase: 1 });
+    const { fake, judging: judged } = judging();
+    const { report, caseRuns } = await runSuite(
+      input(judgedSuite(), { level: 'L1', n: 2, executor, judging: judged, config: budgets({ maxJudgeCallsPerRun: 2 }) }),
+    );
+    expect(fake.inputs).toHaveLength(2);
+    expect(report.results[C1]!.samples[0]).toMatchObject({ status: 'PASS' });
+    expect(report.results['Z-01.A1/Z-01.C2']!.samples[0]).toMatchObject({ status: 'PASS' });
+    expect(report.results[C4]!.samples[0]).toMatchObject({ status: 'ERROR', reason: 'budget-exceeded' });
+    expect(executor.calls).toEqual(['Z-01.A1#1']);
+    expect(caseRuns[1]!.run.errors).toEqual([{ kind: 'product', step: 0, reason: 'budget-exceeded', message: 'judge call budget 2 spent' }]);
+    expect(report.judgeErrors).toEqual([]);
+    expect(report.budget).toMatchObject({ judgeCalls: 2, maxJudgeCalls: 2, exceeded: ['judge'] });
+    expect(report.provisional).toBe(true);
+    expect(report.provisionalReason).toMatch(/budget exceeded: judge$/);
+  });
+
+  it('reports zero coach calls and no judge row at L0', async () => {
+    const { report } = await runSuite(input(liveSuite(), { executor: new L0DeterministicExecutor() }));
+    expect(report.usage.coachModelCalls).toBe(0);
+    expect(report.budget).toEqual({ maxCoachCalls: 600, maxJudgeCalls: 150, coachCalls: 0, judgeCalls: 0, exceeded: [] });
+    expect(report.modelUsage).toEqual([]);
+  });
+
+  it('RunBudget: one invocation of the judge may overshoot by its transport retry; a rejecting judge counts one call', async () => {
+    const budget = new RunBudget({ maxCoachCallsPerRun: 1, maxJudgeCallsPerRun: 1 });
+    const twice = budget.guardJudge(async () => ({ status: 'FAIL', reason: 'x', evidence: null, usage: { calls: 2, inputTokens: 1, outputTokens: 1, totalTokens: 2 } }));
+    const judgeInput = { transcript: { turns: [], evaluatedReplyIndex: null }, expectedBehavior: '', passCondition: '', judgeGuidance: null, layer: 'P' as const, fixtureContext: null };
+    await expect(twice(judgeInput)).resolves.toMatchObject({ status: 'FAIL' });
+    expect(budget.judgeCalls).toBe(2);
+    await expect(twice(judgeInput)).resolves.toMatchObject({ status: 'ERROR', reason: 'budget-exceeded' });
+    expect(budget.exceeded()).toEqual(['judge']);
+
+    const other = new RunBudget({ maxCoachCallsPerRun: 1, maxJudgeCallsPerRun: 5 });
+    const rejecting = other.guardJudge(async () => {
+      throw new Error('socket hang up');
+    });
+    await expect(rejecting(judgeInput)).rejects.toThrow('socket hang up');
+    expect(other.judgeCalls).toBe(1);
+    expect(other.tryCoachCall('m')).toBe(true);
+    expect(other.tryCoachCall('m')).toBe(false);
+    expect(other.report()).toEqual({ maxCoachCalls: 1, maxJudgeCalls: 5, coachCalls: 1, judgeCalls: 1, exceeded: ['coach'] });
+  });
+});
+
+describe('runSuite: real L1 executor under budgets and timeouts (Story 13.5)', () => {
+  withoutLangwatchEnv();
+  const REPLY = { text: 'Which release deadline comes first?', confidence: 0.9, containsSurveyProbe: false };
+  const config = { ...RUNNER_CONFIG, budgets: { ...RUNNER_CONFIG.budgets, coachCallTimeoutMs: 20 } };
+
+  it('retries a coach-timeout once and reports both attempts as reserved coach calls', async () => {
+    let attempts = 0;
+    const executor = new L1OrchestratorExecutor({
+      createAiProvider: () => {
+        attempts += 1;
+        const provider = new ScriptedAiProvider({ responses: [REPLY] });
+        provider.generateResponse = () => new Promise(() => undefined);
+        return provider;
+      },
+      coachModel: 'coach-x',
+    });
+    const fake = fakeJudge(() => 'PASS');
+    const judging = { judge: fake.judge, model: 'gpt-4o', unpinned: false, agreement: null, labelsSha256: labelsSha256([]) };
+    const { report, caseRuns } = await runSuite(input(judgedSuite(), { level: 'L1', executor, judging, config }));
+
+    expect(attempts).toBe(2);
+    expect(caseRuns[0]!.run).toMatchObject({ attempt: 2, errors: [{ kind: 'infrastructure', reason: 'coach-timeout' }] });
+    expect(report.results['Z-01.A1/Z-01.C3']).toMatchObject({ status: 'ERROR', reason: 'coach-timeout' });
+    expect(report.usage).toMatchObject({ caseAttempts: 2, infrastructureRetries: 1 });
+    expect(report.usage.coachModelCalls).toBeGreaterThan(0);
+    expect(report.modelUsage?.[0]).toMatchObject({ role: 'coach', model: 'coach-x', calls: report.usage.coachModelCalls });
+    expect(report.budget?.exceeded).toEqual([]);
+    expect(fake.inputs).toHaveLength(0);
   });
 });

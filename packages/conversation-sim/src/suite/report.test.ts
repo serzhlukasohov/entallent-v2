@@ -13,6 +13,7 @@ import { mockJudgeModel } from './judge/__fixtures__/mock-model';
 import { judgedSuite, replyRun } from './__fixtures__/runner';
 import { computeJudgeFingerprint } from './judge/fingerprint';
 import {
+  budgetLine,
   buildSuiteReport,
   collectJudgeErrors,
   collectQaReview,
@@ -390,5 +391,49 @@ describe('QA review (Story 13.3)', () => {
     delete legacy.qaReview;
     expect(SuiteRunReportSchema.parse(legacy).qaReview).toBeUndefined();
     expect(renderSuiteReportMarkdown(SuiteRunReportSchema.parse(legacy))).toContain('## QA review\n\nNone.');
+  });
+});
+
+describe('usage per model and budgets (Story 13.5)', () => {
+  const l1Usage = {
+    budget: { maxCoachCalls: 600, maxJudgeCalls: 150, coachCalls: 12, judgeCalls: 9, exceeded: [] as Array<'coach' | 'judge'> },
+    modelUsage: [
+      { role: 'coach' as const, model: 'azure:gpt-4o', calls: 12, inputTokens: null, outputTokens: null, totalTokens: null },
+      { role: 'judge' as const, model: 'gpt-4o', calls: 9, inputTokens: 900, outputTokens: 120, totalTokens: 1020 },
+    ],
+  };
+
+  it('renders the per-model table and the budget line under ## Usage', () => {
+    const markdown = renderSuiteReportMarkdown({ ...l0Report(), ...l1Usage });
+    const usage = markdown.slice(markdown.indexOf('## Usage'));
+    expect(usage).toContain('| Role | Model | Calls | Input tokens | Output tokens | Total tokens |');
+    expect(usage).toContain('| coach | azure:gpt-4o | 12 | n/a | n/a | n/a |');
+    expect(usage).toContain('| judge | gpt-4o | 9 | 900 | 120 | 1020 |');
+    expect(usage).toContain('- Budget: coach 12/600, judge 9/150');
+    expect(budgetLine({ budget: { ...l1Usage.budget, exceeded: ['coach'] } })).toBe('coach 12/600, judge 9/150 (exceeded: coach)');
+  });
+
+  it('adds one CI usage line per model row with calls, and leaves the L0 summary unchanged', () => {
+    const l0 = l0Report();
+    const withEmpty = { ...l0, budget: { ...l1Usage.budget, coachCalls: 0, judgeCalls: 0 }, modelUsage: [] };
+    expect(renderCiSummary(withEmpty)).toBe(renderCiSummary(l0));
+    expect(renderCiSummary(withEmpty)).not.toContain('Usage');
+
+    const summary = renderCiSummary({ ...l0, ...l1Usage, modelUsage: [...l1Usage.modelUsage, { ...l1Usage.modelUsage[0]!, model: 'idle', calls: 0 }] });
+    expect(summary).toContain('- Usage: coach azure:gpt-4o: 12 call(s), tokens n/a');
+    expect(summary).toContain('- Usage: judge gpt-4o: 9 call(s), tokens 900 in / 120 out / 1020 total');
+    expect(summary).not.toContain('idle');
+  });
+
+  it('says no model calls for an L0 run and still parses a pre-13.5 report without budget or modelUsage', () => {
+    const l0 = { ...l0Report(), budget: { ...l1Usage.budget, coachCalls: 0, judgeCalls: 0 }, modelUsage: [] };
+    const markdown = renderSuiteReportMarkdown(l0);
+    expect(markdown).toContain('## Usage\n\nNo model calls.\n\n- Budget: coach 0/600, judge 0/150');
+
+    const legacy = l0Report();
+    expect(legacy.budget).toBeUndefined();
+    expect(SuiteRunReportSchema.parse(legacy).modelUsage).toBeUndefined();
+    expect(renderSuiteReportMarkdown(legacy)).not.toContain('- Budget:');
+    expect(budgetLine(legacy)).toBeNull();
   });
 });

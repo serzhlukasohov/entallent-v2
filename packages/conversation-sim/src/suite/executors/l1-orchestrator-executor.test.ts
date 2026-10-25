@@ -10,7 +10,7 @@ import { evaluate } from '../evaluate';
 import { caseRunFailureKind } from '../runner';
 import { CaseRunSchema, type CaseRun, type LoadedCriterion, type LoadedTest } from '../schema';
 import { DEFAULT_L0_CLOCK_START } from './l0-deterministic-executor';
-import { L1OrchestratorExecutor, type L1ExecutorOptions } from './l1-orchestrator-executor';
+import { L1OrchestratorExecutor, guardCoachProvider, type L1ExecutorOptions } from './l1-orchestrator-executor';
 import type { ExecutorOptions } from './types';
 import { LANGWATCH_ENV_KEYS, withoutLangwatchEnv } from './__fixtures__/offline-scenario-env';
 import { InMemoryQuestionConfirmationRepository } from '../../fakes/question-confirmation';
@@ -510,5 +510,145 @@ describe('L1OrchestratorExecutor', () => {
     } finally {
       delivery.mockRestore();
     }
+  });
+});
+
+describe('L1OrchestratorExecutor: call budget and coach timeout (Story 13.5)', () => {
+  withoutLangwatchEnv();
+  const REPLY = { text: 'Which deadline matters most?', confidence: 0.9, containsSurveyProbe: false };
+
+  /** Allows `allow` coach calls, then refuses; `asked` counts every reservation attempt. */
+  function budget(allow: number) {
+    let reserved = 0;
+    let asked = 0;
+    return {
+      tryCoachCall: () => {
+        asked += 1;
+        if (reserved >= allow) return false;
+        reserved += 1;
+        return true;
+      },
+      reserved: () => reserved,
+      asked: () => asked,
+    };
+  }
+
+  it('reserves one budget call per provider call and behaves as before under budget', async () => {
+    const hook = budget(100);
+    const run = await execute(atomicTest(), executor({}, { responses: [REPLY] }), { ...OPTIONS, budget: hook, coachCallTimeoutMs: 60_000 });
+    expect(run.errors).toEqual([]);
+    expect(run.steps[0]?.reply?.text).toBe(REPLY.text);
+    const ai = run.events.filter((event) => event.port === 'aiProvider');
+    expect(hook.reserved()).toBe(ai.length);
+    expect(ai.length).toBeGreaterThan(0);
+  });
+
+  it('a refused call the orchestrator swallowed (reply already saved) still ends the case as ERROR budget-exceeded', async () => {
+    const baseline = await execute(atomicTest(), executor({}, { responses: [REPLY] }));
+    const total = baseline.events.filter((event) => event.port === 'aiProvider').length;
+    // Refuse only the last call of the turn (post-reply memory extraction, swallowed by the orchestrator).
+    const hook = budget(total - 1);
+    const test = atomicTest();
+    const run = await execute(test, executor({}, { responses: [REPLY] }), { ...OPTIONS, budget: hook });
+
+    expect(run.state.after.outboundCount).toBe(baseline.state.after.outboundCount);
+    expect(run.errors).toEqual([{ kind: 'product', step: 1, reason: 'budget-exceeded', message: 'coach call budget spent' }]);
+    expect(run.steps).toEqual([]);
+    const refused = run.events.filter((event) => event.port === 'aiProvider').at(-1)!;
+    expect(refused).toMatchObject({ outcome: 'error' });
+    expect(refused.resultSummary).toContain('coach call budget spent');
+    expect(caseRunFailureKind(run)).toBe('product');
+    expect(statuses(test, run)).toEqual({ 'X-01.C1': 'ERROR budget-exceeded' });
+  });
+
+  it('a refused first call (swallowed risk detection, then a refused classification) is ERROR budget-exceeded at step 1', async () => {
+    const run = await execute(journeyTest(2), executor({}, { responses: [REPLY] }), { ...OPTIONS, budget: budget(0) });
+    expect(run.errors).toEqual([expect.objectContaining({ kind: 'product', step: 1, reason: 'budget-exceeded' })]);
+    expect(run.steps).toEqual([]);
+    expect(run.events.some((event) => event.stepIndex > 1)).toBe(false);
+  });
+
+  it('a stalled coach call times out: ERROR infrastructure coach-timeout, retried by the runner', async () => {
+    const stalled = new ScriptedAiProvider({ responses: [REPLY] });
+    vi.spyOn(stalled, 'generateResponse').mockImplementation(() => new Promise(() => undefined));
+    const l1 = new L1OrchestratorExecutor({ createAiProvider: () => stalled, coachModel: COACH });
+    const run = await execute(atomicTest(), l1, { ...OPTIONS, coachCallTimeoutMs: 20 });
+
+    expect(run.errors).toEqual([{ kind: 'infrastructure', step: 1, reason: 'coach-timeout', message: 'coach call request timed out after 20 ms' }]);
+    expect(run.steps).toEqual([]);
+    const timedOut = run.events.find((event) => event.port === 'aiProvider' && event.method === 'generateResponse')!;
+    expect(timedOut.outcome).toBe('error');
+    expect(timedOut.resultSummary).toContain('request timed out');
+    expect(caseRunFailureKind(run)).toBe('infrastructure');
+  });
+
+  it('a stalled check-in generation in the observation window is coach-timeout without a window', async () => {
+    const stalled = new ScriptedAiProvider();
+    vi.spyOn(stalled, 'generateResponse').mockImplementation(() => new Promise(() => undefined));
+    const l1 = new L1OrchestratorExecutor({ createAiProvider: () => stalled, coachModel: COACH });
+    const test: LoadedTest = {
+      id: 'P-06',
+      sourceCase: 'P-06',
+      requirement: ['CF-003'],
+      kind: 'observation',
+      levels: ['L1'],
+      runProfile: 'isolated',
+      setup: [
+        { name: 'clock' },
+        {
+          name: 'proactiveUsers',
+          params: {
+            timezone: 'UTC',
+            quietHours: { enabled: true, startHour: 22, endHour: 8 },
+            scan: { minSilenceDays: 3, minCheckInGapDays: 2, quietHoursEnabled: true },
+          },
+        },
+      ],
+      preconditions: [],
+      steps: [],
+      observationWindow: { durationMs: 2 * DAY, scanEveryMs: HOUR },
+      criteria: [criterion({ id: 'P-06.C1', evaluatedAt: 'observation-window', checks: [{ type: 'rule', rule: 'proactive-initiated' }] })],
+    };
+    const run = await execute(test, l1, { ...OPTIONS, coachCallTimeoutMs: 20 });
+    expect(run.errors).toEqual([expect.objectContaining({ kind: 'infrastructure', step: 0, reason: 'coach-timeout' })]);
+    expect(run.window).toBeUndefined();
+  });
+
+  it('after a timeout, later calls in the same turn reject at once without calling the target or reserving budget', async () => {
+    const stalled = new ScriptedAiProvider({ responses: [REPLY] });
+    const risk = vi.spyOn(stalled, 'detectRisk').mockImplementation(() => new Promise(() => undefined));
+    const classify = vi.spyOn(stalled, 'classifySituation');
+    const hook = budget(100);
+    const guard = guardCoachProvider(stalled, { budget: hook, coachCallTimeoutMs: 20 });
+    await expect(guard.provider.detectRisk([], {} as never)).rejects.toThrow('request timed out');
+    expect(hook.asked()).toBe(1);
+    const started = Date.now();
+    await expect(guard.provider.classifySituation([], {} as never)).rejects.toThrow('skipped: an earlier coach call request timed out');
+    expect(Date.now() - started).toBeLessThan(15);
+    expect(classify).not.toHaveBeenCalled();
+    expect(risk).toHaveBeenCalledTimes(1);
+    expect(hook.asked()).toBe(1);
+    expect(guard.endCase(1)).toMatchObject({ reason: 'coach-timeout' });
+  });
+
+  it('after a refused call, later calls reject at once without asking the budget again', async () => {
+    const provider = new ScriptedAiProvider({ responses: [REPLY] });
+    const classify = vi.spyOn(provider, 'classifySituation');
+    const hook = budget(0);
+    const guard = guardCoachProvider(provider, { budget: hook });
+    await expect(guard.provider.detectRisk([], {} as never)).rejects.toThrow('coach call budget spent');
+    await expect(guard.provider.classifySituation([], {} as never)).rejects.toThrow('skipped: an earlier coach call was refused by the budget');
+    expect(hook.asked()).toBe(1);
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('without a budget or timeout the provider is not wrapped', async () => {
+    const provider = new ScriptedAiProvider();
+    const guard = guardCoachProvider(provider, {});
+    expect(guard.provider).toBe(provider);
+    expect(guard.endCase(1)).toBeNull();
+    const run = await execute(atomicTest(), executor({}, { responses: [REPLY] }));
+    expect(run.errors).toEqual([]);
+    expect(run.steps).toHaveLength(1);
   });
 });

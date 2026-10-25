@@ -751,6 +751,36 @@ export type JudgeError = z.infer<typeof JudgeErrorSchema>;
 
 export const UsageSchema = z.record(z.number().nonnegative());
 
+export const BudgetKindSchema = z.enum(['coach', 'judge']);
+export type BudgetKind = z.infer<typeof BudgetKindSchema>;
+
+/** The run's call budgets and what was spent (AD-15); `exceeded` names every budget a call or case was refused for. */
+export const RunBudgetReportSchema = z
+  .object({
+    maxCoachCalls: z.number().int().min(1),
+    maxJudgeCalls: z.number().int().min(1),
+    coachCalls: z.number().int().min(0),
+    judgeCalls: z.number().int().min(0),
+    exceeded: z.array(BudgetKindSchema),
+  })
+  .strict();
+export type RunBudgetReport = z.infer<typeof RunBudgetReportSchema>;
+
+const nullableTokens = z.number().int().min(0).nullable();
+
+/** Calls and tokens per model; coach tokens are `null` (not observable through `AiProviderPort`). */
+export const ModelUsageRowSchema = z
+  .object({
+    role: BudgetKindSchema,
+    model: z.string().min(1),
+    calls: z.number().int().min(0),
+    inputTokens: nullableTokens,
+    outputTokens: nullableTokens,
+    totalTokens: nullableTokens,
+  })
+  .strict();
+export type ModelUsageRow = z.infer<typeof ModelUsageRowSchema>;
+
 /**
  * One meaning-based FAIL sample for QA review (AD-8): an in-scope FAIL decided by the judge
  * (or `no-reply`), with the evaluated reply texts and the judge reason. Rule FAILs are
@@ -888,6 +918,10 @@ export const SuiteRunReportSchema = z
     /** Every meaning FAIL for QA review; optional only so pre-13.3 reports parse (always written since). */
     qaReview: z.array(QaReviewEntrySchema).optional(),
     usage: UsageSchema,
+    /** Call budgets of the invocation; optional only so pre-13.5 reports parse. */
+    budget: RunBudgetReportSchema.optional(),
+    /** Calls and tokens per model; optional only so pre-13.5 reports parse. */
+    modelUsage: z.array(ModelUsageRowSchema).optional(),
     /** Present when `--case` narrowed the run; such runs are never accepted as baselines. */
     selection: z.object({ case: z.string().min(1) }).strict().optional(),
     /** Written by `suite:diff` (AD-13); absent until a diff ran. */
@@ -918,7 +952,18 @@ export const SuiteConfigSchema = z
     diff: z.object({ minSamples: z.object({ L1: positiveInt, L2: positiveInt }).strict() }).strict(),
     /** Re-runs of a case whose errors are all infrastructure (AD-18). */
     retries: z.object({ infrastructure: z.number().int().min(0).max(3) }).strict(),
-    budgets: z.object({ maxCoachCallsPerRun: positiveInt, maxJudgeCallsPerRun: positiveInt }).strict(),
+    /**
+     * Absolute per invocation (all `--runs` samples, retries included; AD-15). The judge
+     * timeout lives here, not under `judge`, so the fingerprint (AD-8) is unaffected.
+     */
+    budgets: z
+      .object({
+        maxCoachCallsPerRun: positiveInt,
+        maxJudgeCallsPerRun: positiveInt,
+        coachCallTimeoutMs: positiveInt,
+        judgeCallTimeoutMs: positiveInt,
+      })
+      .strict(),
     judge: z
       .object({
         provider: z.enum(['openai', 'azure_openai']),
@@ -1087,6 +1132,11 @@ export const BaselineResultSchema = z
     layer: LayerSchema,
     testKind: TestKindSchema.nullable(),
     checkKind: CheckKindSchema.nullable(),
+    /**
+     * The run result was advisory (an untrusted judge decided it); such meaning entries diff
+     * as `inconclusive` (AD-13). Absent in pre-13.5 baselines, read as `false`.
+     */
+    advisory: z.boolean().optional(),
   })
   .strict();
 export type BaselineResult = z.infer<typeof BaselineResultSchema>;
