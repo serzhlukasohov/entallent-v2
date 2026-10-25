@@ -249,7 +249,7 @@ describe('suite:run', () => {
 
   it.each([
     ['L1', L1_REFUSAL],
-    ['L2', '[suite] L2 executor lands in Epic 14'],
+    ['L2', '[suite] L2 runs drive a running local stack and call live models; run suite:run:live --suite <id> --level L2 --live-model --live-app'],
   ])('refuses %s through the default executor factory and runs nothing', async (level, message) => {
     const h = harness();
     h.deps.createExecutor = defaultDeps().createExecutor;
@@ -1568,7 +1568,7 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
   it('still refuses L2, even with a judge', async () => {
     const { h } = l1Ci();
     expect(await main(['ci', '--level', 'L2'], h.deps)).toBe(1);
-    expect(h.err).toEqual(['[suite] L2 executor lands in Epic 14']);
+    expect(h.err).toEqual(['[suite] ci --level L2 is not wired yet (Story 14.3 owns the L2 workflow)']);
   });
 
   it('skips empty suites as "no L1 tests" and passes with nothing to check, writing no run folder', async () => {

@@ -262,7 +262,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
   const coachLabel = executor.coachModel ?? 'unknown';
   const judge = judging === undefined ? null : budget.guardJudge(judging.judge);
   /** One case attempt, or a synthetic `budget-exceeded` run (never executed, never retried) once a budget is spent. */
-  const attemptCase = async (test: LoadedTest, attempt: number): Promise<{ run: CaseRun; executed: boolean }> => {
+  const attemptCase = async (test: LoadedTest, attempt: number, sample: number): Promise<{ run: CaseRun; executed: boolean }> => {
     const spent = budget.spent();
     if (spent.length > 0) {
       for (const kind of spent) budget.markExceeded(kind);
@@ -276,6 +276,8 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
       suiteId: suite.id,
       budget: budget.forExecutor(coachLabel),
       coachCallTimeoutMs: config.budgets.coachCallTimeoutMs,
+      runId: input.runId,
+      sample,
     };
     return { run: await execute(executor, test, level, options), executed: true };
   };
@@ -295,7 +297,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
         log(`[suite] ${level} sample ${sample}/${n} ${test.id}: skipped (level not declared)`);
       } else {
         let attempt = 1;
-        let outcome = await attemptCase(test, attempt);
+        let outcome = await attemptCase(test, attempt, sample);
         if (outcome.executed) caseAttempts += 1;
         run = outcome.run;
         let retriesLeft = config.retries.infrastructure;
@@ -303,7 +305,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
           log(`[suite] ${level} sample ${sample}/${n} ${test.id} attempt ${attempt}: infrastructure (${reasons(run)}), retrying`);
           retriesLeft -= 1;
           attempt += 1;
-          outcome = await attemptCase(test, attempt);
+          outcome = await attemptCase(test, attempt, sample);
           if (outcome.executed) {
             caseAttempts += 1;
             infrastructureRetries += 1;

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { ScriptedAiProvider } from '../fakes/scripted-ai';
 import { RUNNER_CONFIG } from './__fixtures__/runner';
 import type { CliDeps } from './cli';
+import type { DevApiRequest } from './executors/dev-api-client';
 import { L1OrchestratorExecutor } from './executors/l1-orchestrator-executor';
+import { L2ApplicationExecutor } from './executors/l2-application-executor';
 import { mockJudgeModel, stallingJudgeModel, verdict } from './judge/__fixtures__/mock-model';
 import { liveCoachModel, runLive } from './run-live';
 import type { LoadedTest } from './schema';
@@ -36,6 +38,14 @@ function stubs(env: Record<string, string | undefined> = { OPENAI_API_KEY: 'sk-t
   };
 }
 
+const L2_NO_APP = '[suite] run:live --level L2 refuses without --live-app: it drives a running local API, queue and worker (and their coach model)';
+const L2_CI = '[suite] run:live ci --level L2 is not wired yet (Story 14.3 owns the L2 workflow); use run --level L2';
+const L2_ENV = {
+  SUITE_L2_API_BASE: 'http://localhost:3000',
+  SUITE_L2_TENANT_ID: '00000000-0000-4000-8000-000000000001',
+  ADMIN_API_KEY: 'admin-test-fake',
+};
+
 describe('runLive', () => {
   it('refuses without --live-model, building nothing and running nothing', async () => {
     const s = stubs();
@@ -49,11 +59,15 @@ describe('runLive', () => {
 
   it.each([
     [['calibrate', '--suite', 'smoke-v1', '--live-model'], '[suite] run:live runs only the run and ci commands, got calibrate'],
-    [['run', '--suite', 'smoke-v1', '--level', 'L0', '--live-model'], '[suite] run:live runs only --level L1, got L0'],
-    [['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model'], '[suite] run:live runs only --level L1, got L2'],
+    [['run', '--suite', 'smoke-v1', '--level', 'L0', '--live-model'], '[suite] run:live runs only --level L1 or L2, got L0'],
+    [['run', '--suite', 'smoke-v1', '--level', 'L0', '--live-model', '--live-app'], '[suite] run:live runs only --level L1 or L2, got L0'],
+    [['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model'], L2_NO_APP],
+    [['run', '--suite', 'smoke-v1', '--level', 'L1', '--live-model', '--live-app'], '[suite] run:live accepts --live-app only with --level L2'],
     [['run', '--suite', 'smoke-v1', '--live-model'], '[suite] run: --level <L0|L1|L2> is required'],
-    [['ci', '--level', 'L0', '--live-model'], '[suite] run:live runs only --level L1, got L0'],
-    [['ci', '--level', 'L2', '--live-model'], '[suite] run:live runs only --level L1, got L2'],
+    [['ci', '--level', 'L0', '--live-model'], '[suite] run:live runs only --level L1 or L2, got L0'],
+    [['ci', '--level', 'L1', '--live-model', '--live-app'], '[suite] run:live accepts --live-app only with --level L2'],
+    [['ci', '--level', 'L2', '--live-model'], L2_CI],
+    [['ci', '--level', 'L2', '--live-model', '--live-app'], L2_CI],
     [['diff', '--run', 'x', '--live-model'], '[suite] run:live runs only the run and ci commands, got diff'],
     [['baseline:accept', '--run', 'x', '--live-model'], '[suite] run:live runs only the run and ci commands, got baseline:accept'],
   ])('runs only the run and ci commands at L1: %j', async (argv, message) => {
@@ -85,6 +99,7 @@ describe('runLive', () => {
     expect(executor).toBeInstanceOf(L1OrchestratorExecutor);
     expect(executor.coachModel).toBe('openai:analysis=gpt-4o-mini,generation=gpt-4o');
     expect(() => deps.createExecutor('L0')).toThrow('[suite] run:live runs only --level L1, got L0');
+    expect(() => deps.createExecutor('L2')).toThrow('[suite] run:live runs only --level L1, got L2');
     expect(s.built).toEqual({ providers: 0, models: 0 });
     expect(() => deps.createRunJudge!(RUNNER_CONFIG.judge, { callTimeoutMs: 60_000 })).toThrow('no model in tests');
     expect(s.built.models).toBe(1);
@@ -124,6 +139,7 @@ describe('runLive', () => {
     expect(executor.coachModel).toBe('openai:analysis=gpt-4o-mini,generation=gpt-4o');
     expect((executor as unknown as { langwatch: unknown }).langwatch).toEqual({ apiKey: 'lw-test-fake' });
     expect(() => deps.createExecutor('L0')).toThrow('[suite] run:live runs only --level L1, got L0');
+    expect(() => deps.createExecutor('L2')).toThrow('[suite] run:live runs only --level L1, got L2');
     expect(s.built).toEqual({ providers: 0, models: 0 });
 
     // The provider is built per test attempt, only when the executor runs a test.
@@ -193,6 +209,69 @@ describe('runLive', () => {
     });
     expect(outcome).toMatchObject({ status: 'ERROR', reason: 'judge-transport', usage: { calls: 2 } });
     expect(stalled.calls()).toBe(2);
+  });
+
+  it('with --live-model and --live-app, validates the L2 env first and wires the L2 executor over the injected transport', async () => {
+    const s = stubs(L2_ENV);
+    const requests: DevApiRequest[] = [];
+    let transports = 0;
+    const overrides = {
+      ...s.overrides,
+      createDevApiTransport: () => {
+        transports += 1;
+        return async (request: DevApiRequest) => {
+          requests.push(request);
+          return { status: 200, body: { conversationId: 'c-1', userId: 'u-1' } };
+        };
+      },
+    };
+    expect(await runLive(['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model', '--live-app', '--case', 'P-10.J'], overrides)).toBe(0);
+    expect(s.errors).toEqual([]);
+    const { argv, deps } = s.runs[0]!;
+    expect(argv).toEqual(['run', '--suite', 'smoke-v1', '--level', 'L2', '--case', 'P-10.J']);
+    expect(transports).toBe(0);
+    const executor = deps.createExecutor('L2');
+    expect(executor).toBeInstanceOf(L2ApplicationExecutor);
+    expect(executor.level).toBe('L2');
+    expect(executor.coachModel).toBeNull();
+    expect(transports).toBe(1);
+    expect(requests).toEqual([]);
+    expect(() => deps.createExecutor('L1')).toThrow('[suite] run:live runs only --level L2, got L1');
+    expect(() => deps.createRunJudge!(RUNNER_CONFIG.judge, { callTimeoutMs: 60_000 })).toThrow('no model in tests');
+    expect(s.built).toEqual({ providers: 0, models: 1 });
+  });
+
+  it.each([
+    [{ ...L2_ENV, SUITE_L2_API_BASE: 'https://api.example.com' }, 'SUITE_L2_API_BASE must target localhost'],
+    [{ ...L2_ENV, SUITE_L2_API_BASE: 'http://localhost:3000/x' }, 'SUITE_L2_API_BASE path must be empty, / or /api/v1'],
+    [{ ...L2_ENV, SUITE_L2_API_BASE: undefined }, 'SUITE_L2_API_BASE is required'],
+    [{ ...L2_ENV, SUITE_L2_TENANT_ID: 'tenant-1' }, 'SUITE_L2_TENANT_ID must be a UUID'],
+    [{ ...L2_ENV, ADMIN_API_KEY: undefined }, 'ADMIN_API_KEY is required'],
+  ])('refuses a bad L2 env before running or building anything (%#)', async (env, message) => {
+    const s = stubs(env);
+    let transports = 0;
+    const overrides = {
+      ...s.overrides,
+      createDevApiTransport: () => {
+        transports += 1;
+        throw new Error('no transport in tests');
+      },
+    };
+    expect(await runLive(['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model', '--live-app'], overrides)).toBe(1);
+    expect(s.errors).toHaveLength(1);
+    expect(s.errors[0]).toContain(message);
+    expect(s.errors[0]).not.toContain('api.example.com');
+    expect(s.errors[0]).not.toContain('tenant-1');
+    expect(s.runs).toEqual([]);
+    expect(transports).toBe(0);
+    expect(s.built).toEqual({ providers: 0, models: 0 });
+  });
+
+  it('refuses L2 without --live-model even with --live-app', async () => {
+    const s = stubs(L2_ENV);
+    expect(await runLive(['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-app'], s.overrides)).toBe(1);
+    expect(s.errors[0]).toContain('refuses without --live-model');
+    expect(s.runs).toEqual([]);
   });
 
   it('labels the live coach model from the environment', () => {

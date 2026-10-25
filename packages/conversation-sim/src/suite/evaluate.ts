@@ -166,6 +166,12 @@ export function criterionStep(test: Pick<LoadedTest, 'steps'>, criterion: Pick<L
   return test.steps.length;
 }
 
+/** `observed` for state criteria at L2, `substituted` at L1, else `n/a` (AD-10). */
+function stateMethod(criterion: Pick<LoadedCriterion, 'evaluatedAt'>, level: CaseRun['level']): 'observed' | 'substituted' | 'n/a' {
+  if (criterion.evaluatedAt !== 'state') return 'n/a';
+  return level === 'L2' ? 'observed' : level === 'L1' ? 'substituted' : 'n/a';
+}
+
 /**
  * The criterion's own rule checks plus, for a `change` state criterion with a manifest
  * `stateEffect`, the synthesized `effect-count` check (AD-10) when the run declares
@@ -228,8 +234,9 @@ function evaluateCriterion(
     layer: criterion.layer,
     testKind: test.kind,
     step,
-    // L1 answers state criteria from in-memory repositories, a substitute for the dashboard (AD-10).
-    method: criterion.evaluatedAt === 'state' && run.level === 'L1' ? ('substituted' as const) : ('n/a' as const),
+    // L1 answers state criteria from in-memory repositories, a substitute for the dashboard;
+    // L2 reads them from the running stack's dev endpoints (AD-10).
+    method: stateMethod(criterion, run.level),
   };
   const decided = (status: CriterionResult['status'], extra: Partial<CriterionResult> = {}): CriterionResult => ({
     ...base,

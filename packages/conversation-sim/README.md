@@ -242,7 +242,9 @@ registered and empty today. L0 is the offline deterministic level: no Postgres, 
 model credentials, and the CLI removes `OPENAI_API_KEY` and `AZURE_OPENAI_*` from its
 environment before running. L1 runs the real orchestrator and prompts with a live coach model
 and the pinned judge, so the default entry refuses it (exit 1, nothing written, no provider
-built) and only the gated live entry `suite:run:live` runs it; L2 lands in Epic 14.
+built) and only the gated live entry `suite:run:live` runs it. L2 drives journey tests
+through a running local stack; the default entry refuses it too and only
+`suite:run:live ... --level L2 --live-model --live-app` runs it (see [L2 executor](#l2-executor)).
 
 ### Commands
 
@@ -289,7 +291,8 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
   transcript text. With no suite that has tests it passes with nothing to check.
   `--level L1` needs an injected judge, so the default entry refuses it (exit 1, the
   `suite:run:live` hint); only `run-live.ts ci --level L1 --live-model` runs it (see
-  [L1 pull-request gate](#l1-pull-request-gate)). `--level L2` is refused.
+  [L1 pull-request gate](#l1-pull-request-gate)). `--level L2` is refused at every entry
+  (Story 14.3 owns the L2 workflow).
 - `suite:calibrate` manages judge calibration (AD-8). `--import` converts a QA session
   export (`{ schemaVersion: 1, sessions: [{ ref, labeler, labeledAt, dialogue, statuses:
   [{ criterionId, status, replyIndex }] }] }`; an assumed format until QA confirms theirs)
@@ -394,6 +397,69 @@ declared uncovered topic is still open. State queries come from the L1 table in
 `src/suite/fixtures/state-queries.ts` (`questionProgress` over the `pulseCycle` fixture's
 first uncovered topic, else the whole window; `stagedBundleCount`; `surveyEvidenceCount`;
 `outboundCount`), and L1 state criteria report `method: substituted`.
+
+### L2 executor
+
+`L2ApplicationExecutor` (`src/suite/executors/l2-application-executor.ts`) runs journey tests
+through the real local API, BullMQ queue, worker and Postgres over the development-only
+`/api/v1/dev` endpoints, using `DevApiClient` (`src/suite/executors/dev-api-client.ts`). Only
+`suite:run:live` reaches either module (`executors/import-graph.test.ts`); the default
+`suite:run` refuses `--level L2` naming the live entry, and `ci --level L2` stays refused.
+
+- **Gate:** `run-live.ts run --level L2` needs both `--live-model` (the run calls the live
+  pinned judge, and the stack's worker calls its own coach model) and `--live-app` (it drives
+  a running local stack). `--live-app` at any other level is refused.
+- **Environment** (validated before anything is built; a refusal names the variable and the
+  rule, never the value): `SUITE_L2_API_BASE` is an `http:`/`https:` URL whose host is exactly
+  `localhost`, `127.0.0.1` or `[::1]`, with path empty, `/` or `/api/v1` and no userinfo, query
+  or hash (never a remote or production host); `SUITE_L2_TENANT_ID` is a UUID; `ADMIN_API_KEY`
+  is non-empty and sent as `X-Api-Key` on every call (never logged). A non-2xx status, a
+  transport failure or timeout (30 s per request) or a response failing its schema is ERROR
+  infrastructure `dev-api:<operation>`.
+- **Isolation per attempt:** external user `suite-<runId>-<testId>` (plus `-s<sample>-a<attempt>`
+  above 1): `find-conversation`, `reset-user { deep: true }`, `find-conversation` again (the
+  deep reset deleted the conversation), and the conversation must be empty (else
+  `isolation-not-empty`, nothing sent). `CaseRun.subject` records the external user, user,
+  conversation and tenant ids. A reset that queues an onboarding intro shows up as a foreign
+  outbound (see below).
+- **Steps and attribution:** before every step after the first the executor waits
+  `interMessageGapMs` (plus `advanceClock`) for real and records it as `gapMs`, then sends
+  `simulate-message`. It polls `messages?after=<inbound id>` every 500 ms for up to 60 s:
+  outbounds under the step's `traceId` are the reply (`occurredAt` order, texts joined by a
+  blank line), others are `unsolicited`; a foreign outbound before any own one is ERROR
+  infrastructure `unsolicited-outbound`. Polling stops on the first poll after the reply
+  that adds nothing. On timeout the inbound's `jobStatus` decides: `completed` re-polls once
+  and records `reply: null` (product silence, evaluated) if still none; `failed` is ERROR
+  product `job-failed`; anything else is ERROR infrastructure `reply-timeout:<status|none>`.
+  A `400` on `after` is `messages-after-rejected`.
+- **Observed fields:** `reply.text`, `reply.messages`, `steps.gapMs` and the four
+  `state.*` queries; never `events`, `turn.*` or `window.outbound`. State queries come from
+  the `l2` column of the single table in `src/suite/fixtures/state-queries.ts`
+  (`question-confirmation` for `questionProgress` (over the `pulseCycle` group) and
+  `stagedBundleCount`, `survey-state` for `surveyEvidenceCount`, the conversation messages
+  for `outboundCount`) and report `method: observed`; there is no `effect-count` pairing.
+- **Fixtures are verify-only:** L2 never writes the database, so `freshPersona` (memory,
+  survey evidence and the question window are empty; style and goals have no dev read),
+  `pulseCycle` (an active window with an open question for every declared topic) and
+  `disclosureDelivered` (a delivered outbound with the version) only read the dev endpoints.
+  When the stack has not established the state, the precondition is unsatisfied and every
+  criterion is `INVALID precondition:<name>`. `seededHistory`, `confirmationState`, `clock`,
+  `pendingBotQuestion` and `proactiveUsers` are unsupported (`unsupported-fixture:<name>`).
+  Observation tests never declare L2 (deferred), and atomic tests never do either.
+- **Budgets:** coach calls run inside the app worker and are not observable, so L2 reserves no
+  coach budget, `models.coach` is `null` and `maxCoachCallsPerRun` does not apply. The number
+  of coach calls is not capped: each step can make several worker model calls, and the steps
+  run once per test per `--runs` sample, plus once more for every infrastructure retry (which
+  replays the journey with a fresh persona). The judge budget applies unchanged. An L2 run reports
+  the verdict `n/a (journeys only)`.
+
+To run it by hand against a local stack (not run in CI yet): start Postgres and Redis, the API
+with `NODE_ENV=test` and `ADMIN_API_KEY`, and the worker, then
+
+```sh
+SUITE_L2_API_BASE=http://localhost:3000 SUITE_L2_TENANT_ID=<uuid> \
+  pnpm suite:run:live --suite <id> --level L2 --live-model --live-app --case <test>
+```
 
 ### Statuses and verdict
 

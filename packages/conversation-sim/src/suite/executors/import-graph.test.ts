@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest';
  * Story 13.4: the L1 executor obeys the same rules (its coach provider is injected), the CLI
  * and runner never reach the L1 executor or the live run entry `suite/run-live.ts`, and
  * `run-live.ts` is the only entry that reaches `live-provider` and `live-judge-model`.
+ * Story 14.2: the CLI and runner never reach the L2 executor or its dev API client (the only
+ * code that may touch the network to a local stack); `run-live.ts` does.
  */
 const SRC = resolve(__dirname, '..', '..');
 const PACKAGE_DIR = resolve(SRC, '..');
@@ -24,6 +26,8 @@ const RUNNER = join(SRC, 'suite', 'runner.ts');
 const CLI = join(SRC, 'suite', 'cli.ts');
 const L1_EXECUTOR = join(SRC, 'suite', 'executors', 'l1-orchestrator-executor.ts');
 const RUN_LIVE = join(SRC, 'suite', 'run-live.ts');
+const L2_EXECUTOR = join(SRC, 'suite', 'executors', 'l2-application-executor.ts');
+const L2_MODULES = [join('suite', 'executors', 'l2-application-executor.ts'), join('suite', 'executors', 'dev-api-client.ts')];
 
 interface ImportStatement {
   specifier: string;
@@ -147,6 +151,8 @@ describe('L0 executor import graph', () => {
     ['cli (calibration)', CLI, join('suite', 'judge', 'calibrate.ts')],
     ['L1 executor', L1_EXECUTOR, join('suite', 'fixtures', 'pulse-cycle.ts')],
     ['L1 executor (state queries)', L1_EXECUTOR, join('suite', 'fixtures', 'state-queries.ts')],
+    ['L2 executor', L2_EXECUTOR, join('suite', 'executors', 'dev-api-client.ts')],
+    ['L2 executor (state queries)', L2_EXECUTOR, join('suite', 'fixtures', 'state-queries.ts')],
   ])('the %s reaches no forbidden module and no vitest', (_name, entry, reached) => {
     const { visited, violations } = forbiddenImports(entry);
     expect(visited).toContain(reached);
@@ -160,6 +166,54 @@ describe('L0 executor import graph', () => {
     const { visited } = forbiddenImports(entry);
     expect(visited).not.toContain(join('suite', 'executors', 'l1-orchestrator-executor.ts'));
     expect(visited).not.toContain(join('suite', 'run-live.ts'));
+  });
+
+  it.each([
+    ['runner', RUNNER],
+    ['cli', CLI],
+    ['L1 executor', L1_EXECUTOR],
+  ])('the %s never reaches the L2 executor or the dev API client', (_name, entry) => {
+    const { visited } = forbiddenImports(entry);
+    for (const module of L2_MODULES) expect(visited).not.toContain(module);
+  });
+
+  it('run-live reaches the L2 executor and the dev API client', () => {
+    const { visited } = forbiddenImports(RUN_LIVE);
+    expect(visited).toEqual(expect.arrayContaining(L2_MODULES));
+  });
+
+  it('refuses L2 through the default CLI in plain Node naming the gated live entry, writing nothing', () => {
+    const listing = () => {
+      const root = join(PACKAGE_DIR, 'runs', 'suites');
+      return existsSync(root) ? readdirSync(root).sort() : null;
+    };
+    const before = listing();
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/suite/cli.ts', 'run', '--suite', 'smoke-v1', '--level', 'L2'], {
+      cwd: PACKAGE_DIR,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('run suite:run:live --suite <id> --level L2 --live-model --live-app');
+    expect(listing()).toEqual(before);
+  });
+
+  it('refuses L2 through the live entry without --live-app in plain Node, sending nothing and writing nothing', () => {
+    const listing = () => {
+      const root = join(PACKAGE_DIR, 'runs', 'suites');
+      return existsSync(root) ? readdirSync(root).sort() : null;
+    };
+    const before = listing();
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', 'src/suite/run-live.ts', 'run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model'],
+      { cwd: PACKAGE_DIR, encoding: 'utf8', env: { PATH: process.env.PATH ?? '' }, timeout: 60_000 },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('[suite] run:live --level L2 refuses without --live-app');
+    expect(listing()).toEqual(before);
   });
 
   it('run-live is the entry that reaches live-provider and live-judge-model, and nothing else forbidden', () => {

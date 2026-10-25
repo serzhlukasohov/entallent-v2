@@ -112,7 +112,7 @@ export const HELP = `Usage:
   suite:run --suite <id> --level L0 [--runs N] [--case <id>] [--allow-unpinned-judge]
       Runs a suite and writes runs/suites/<runId>/report.{json,md} and case-runs.json.
       Only L0 runs from this entry (offline, no model credentials). L1 calls live models and
-      runs only from the gated live entry (L2 lands in Epic 14):
+      runs only from the gated live entry, and so does L2:
   suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>] [--allow-unpinned-judge]
       Runs L1 through the real orchestrator with the live coach provider and the pinned judge
       (calls OpenAI or Azure OpenAI; human-run; its only automated callers are the opt-in L1
@@ -124,6 +124,11 @@ export const HELP = `Usage:
       judge calls per invocation (all --runs samples and retries together); once one is spent the
       remaining cases are ERROR budget-exceeded, the run is provisional and the command exits 4.
       Each coach call times out after coachCallTimeoutMs, each judge call after judgeCallTimeoutMs.
+  suite:run:live --suite <id> --level L2 --live-model --live-app [--runs N] [--case <id>]
+      L2 drives journey tests through a running local API, queue, worker and Postgres over the
+      /api/v1/dev endpoints (SUITE_L2_API_BASE must be a localhost URL, SUITE_L2_TENANT_ID a
+      UUID, ADMIN_API_KEY set); the stack's worker calls its own coach model. ci --level L2 is
+      not wired yet.
   suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
       Writes baselines/<suiteId>/<level>.json from a run report. An L1/L2 run from an untrusted
       judge is accepted with its meaning results marked advisory; they diff as inconclusive until
@@ -516,7 +521,8 @@ export const CI_ADVISORY_LINE =
  */
 async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps: CliDeps): Promise<number> {
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
-  if (parsed.level === 'L2' || (parsed.level === 'L1' && !deps.createRunJudge)) throw new Error(unsupportedLevel(parsed.level));
+  if (parsed.level === 'L2') throw new Error('[suite] ci --level L2 is not wired yet (Story 14.3 owns the L2 workflow)');
+  if (parsed.level === 'L1' && !deps.createRunJudge) throw new Error(unsupportedLevel(parsed.level));
   if (!config.levels.includes(parsed.level)) {
     throw new Error(`[suite] level ${parsed.level} is not enabled in suite.config.json`);
   }
@@ -907,7 +913,9 @@ export function summaryLines(report: SuiteRunReport): string[] {
 }
 
 function unsupportedLevel(level: Level): string {
-  if (level === 'L2') return '[suite] L2 executor lands in Epic 14';
+  if (level === 'L2') {
+    return '[suite] L2 runs drive a running local stack and call live models; run suite:run:live --suite <id> --level L2 --live-model --live-app';
+  }
   return `[suite] ${level} runs call live models; run suite:run:live with --live-model (model egress and cost are a human boundary)`;
 }
 

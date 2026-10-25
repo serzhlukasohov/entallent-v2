@@ -6,7 +6,7 @@ import { createL1World } from '../executors/l1-orchestrator-executor';
 import { L0_STATE_QUERY_NAMES } from '../executors/state-queries-l0';
 import { SuiteExecutionError } from '../executors/types';
 import { StateQueryNameSchema } from '../schema';
-import { L1_STATE_QUERIES, readL1Snapshot } from './state-queries';
+import { L1_STATE_QUERIES, L2_STATE_PATHS, STATE_QUERIES, readL1Snapshot } from './state-queries';
 
 const START = new Date('2026-01-05T08:00:00.000Z');
 
@@ -30,6 +30,23 @@ describe('L1 state-query table', () => {
     expect(Object.keys(L1_STATE_QUERIES).sort()).toEqual([...StateQueryNameSchema.options].sort());
     for (const row of Object.values(L1_STATE_QUERIES)) expect(typeof row.l1).toBe('function');
     expect(L0_STATE_QUERY_NAMES).not.toContain('surveyEvidenceCount');
+  });
+
+  it('is the single table: every row also carries its L2 dev route, with no network in the table', () => {
+    expect(L1_STATE_QUERIES).toBe(STATE_QUERIES);
+    expect(Object.fromEntries(Object.entries(STATE_QUERIES).map(([name, row]) => [name, `${row.l2.method} ${row.l2.path}`]))).toEqual({
+      questionProgress: 'GET /dev/user/:userId/question-confirmation?tenantId=&group=',
+      stagedBundleCount: 'GET /dev/user/:userId/question-confirmation?tenantId=&group=',
+      surveyEvidenceCount: 'GET /dev/user/:userId/survey-state',
+      outboundCount: 'GET /dev/conversation/:conversationId/messages',
+    });
+    const confirmation = { progress: { answered: 1, total: 3 }, stagedBundleCount: 2 };
+    expect(STATE_QUERIES.questionProgress.l2.path).toBe(L2_STATE_PATHS.questionConfirmation);
+    const select = (name: keyof typeof STATE_QUERIES, body: unknown) => (STATE_QUERIES[name].l2.select as (value: unknown) => unknown)(body);
+    expect(select('questionProgress', confirmation)).toEqual({ answered: 1, total: 3 });
+    expect(select('stagedBundleCount', confirmation)).toBe(2);
+    expect(select('surveyEvidenceCount', { count: 4 })).toBe(4);
+    expect(select('outboundCount', [{ direction: 'inbound' }, { direction: 'outbound' }, { direction: 'outbound' }])).toBe(2);
   });
 
   it('reads question progress over the group or the whole window, counts, and survey evidence', async () => {

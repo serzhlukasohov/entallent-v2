@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { journeyTest, observationTest } from './__fixtures__/suite';
 import { syntheticRun } from './rules/synthetic-run';
 import {
   CaseRunSchema,
@@ -9,6 +10,7 @@ import {
   StateQueryNameSchema,
   StateSnapshotSchema,
   StepObservationSchema,
+  SuiteTestSchema,
   fieldObserved,
   parseEvaluatedAt,
   type CaseRun,
@@ -202,5 +204,17 @@ describe('seed and results', () => {
     };
     expect(CriterionResultSchema.parse(result)).toEqual(result);
     expect(CriterionResultSchema.safeParse({ ...result, status: 'SKIPPED' }).success).toBe(false);
+  });
+});
+
+describe('SuiteTestSchema: L2 levels', () => {
+  it('rejects observation tests declaring L2 (deferred) and accepts journeys at L2', () => {
+    const observation = SuiteTestSchema.safeParse({ ...observationTest(), levels: ['L0', 'L2'] });
+    expect(observation.success).toBe(false);
+    expect(observation.error?.issues).toEqual([
+      expect.objectContaining({ path: ['levels'], message: 'observation tests never declare L2 (deferred at L2)' }),
+    ]);
+    expect(SuiteTestSchema.safeParse(observationTest()).success).toBe(true);
+    expect(SuiteTestSchema.safeParse({ ...journeyTest(), levels: ['L1', 'L2'] }).success).toBe(true);
   });
 });

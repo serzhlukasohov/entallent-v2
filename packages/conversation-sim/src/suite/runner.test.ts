@@ -493,7 +493,10 @@ describe('runSuite: call budgets (Story 13.5)', () => {
     for (const options of executor.options) {
       expect(options.coachCallTimeoutMs).toBe(120_000);
       expect(typeof options.budget?.tryCoachCall).toBe('function');
+      expect(options.runId).toBe(RUN_ID);
     }
+    // L2 names its persona after the run id and the sample.
+    expect(executor.options.map((options) => options.sample)).toEqual([1, 2]);
   });
 
   it('ends the case that hits the coach budget and skips the remaining cases without executing or retrying them', async () => {

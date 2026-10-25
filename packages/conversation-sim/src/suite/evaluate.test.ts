@@ -336,6 +336,13 @@ describe('evaluate: method', () => {
     expect(l0[C1]).toMatchObject({ method: 'n/a' });
     expect(l0[C2]).toMatchObject({ status: 'PASS', method: 'n/a' });
   });
+
+  it('is observed for state criteria at L2, without the effect-count pairing (L2 declares no events)', () => {
+    const test = journey(1, [criterion({ id: C1, checks: [{ type: 'rule', rule: 'always-pass' }] }), stagedChange()]);
+    const l2 = byId(evaluate(test, runFor(test, ['a'], { level: 'L2', state: changedState, events: [] }), null, TRUSTED, EVAL_RULES));
+    expect(l2[C1]).toMatchObject({ status: 'PASS', method: 'n/a' });
+    expect(l2[C2]).toMatchObject({ status: 'PASS', method: 'observed' });
+  });
 });
 
 describe('evaluate: seed context', () => {

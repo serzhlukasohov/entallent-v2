@@ -373,6 +373,7 @@ function refineSuiteTest(test: SuiteTestShape, ctx: z.RefinementCtx): void {
     if (test.steps.length > 0) issue(['steps'], 'observation tests have no steps');
     if (test.seed) issue(['seed'], 'observation tests carry no seed');
     if (!test.observationWindow) issue(['observationWindow'], 'observation tests declare an observationWindow');
+    if (test.levels.includes('L2')) issue(['levels'], 'observation tests never declare L2 (deferred at L2)');
   }
   if (test.kind !== 'observation' && test.observationWindow) {
     issue(['observationWindow'], 'only observation tests declare an observationWindow');

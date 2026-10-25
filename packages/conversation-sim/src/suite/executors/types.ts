@@ -23,6 +23,10 @@ export interface ExecutorOptions {
   budget?: CallBudget;
   /** Per coach model call timeout (`budgets.coachCallTimeoutMs`; L0 ignores it). */
   coachCallTimeoutMs?: number;
+  /** The runner's run id; L2 names each attempt's persona after it (required there). */
+  runId?: string;
+  /** 1-based sample of the run (`--runs`); L2 names each attempt's persona after it. */
+  sample?: number;
 }
 
 /** One executor adapter per level behind one port; it returns observations, never statuses. */
