@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { withoutLangwatchEnv } from './executors/__fixtures__/offline-scenario-env';
 import {
   RUNNER_CONFIG,
   agreementFor,
@@ -28,6 +29,8 @@ import {
   type GitState,
 } from './cli';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
+import { L1OrchestratorExecutor } from './executors/l1-orchestrator-executor';
+import { ScriptedAiProvider } from '../fakes/scripted-ai';
 import type { SuiteExecutor } from './executors/types';
 import { loadSuite, validateSuite } from './loader';
 import { fakeJudge } from './judge/__fixtures__/calibration';
@@ -40,6 +43,7 @@ import { syntheticRun } from './rules/synthetic-run';
 import { AgreementFileSchema, BaselineSchema, LabelsFileSchema, SuiteRunReportSchema, type LoadedSuite } from './schema';
 
 const SECRET = 'sk-test-not-a-real-key-123';
+const L1_REFUSAL = '[suite] L1 runs call live models; run suite:run:live with --live-model (model egress and cost are a human boundary)';
 
 interface Harness {
   deps: CliDeps;
@@ -230,7 +234,7 @@ describe('suite:run', () => {
   });
 
   it.each([
-    ['L1', '[suite] L1 executor lands in Epic 13'],
+    ['L1', L1_REFUSAL],
     ['L2', '[suite] L2 executor lands in Epic 14'],
   ])('refuses %s through the default executor factory and runs nothing', async (level, message) => {
     const h = harness();
@@ -539,15 +543,15 @@ describe('suite:run at L1 with an injected executor and judge (Story 13.3)', () 
   it('refuses an L1 run when no judge is wired, writing nothing', async () => {
     const { h } = l1Harness({ judge: false });
     expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(1);
-    expect(h.err).toEqual(['[suite] L1 run needs a judge; this entry wires none (lands with the L1 executor, Story 13.4)']);
+    expect(h.err).toEqual(['[suite] L1 run needs a judge; this entry wires none (suite:run:live wires the pinned judge)']);
     expect(runDirs()).toEqual([]);
   });
 
-  it('the default entry still refuses L1 with the executor message and builds no judge', async () => {
+  it('the default entry still refuses L1 with the live-entry message and builds no judge', async () => {
     const { h, configs } = l1Harness();
     h.deps.createExecutor = defaultDeps().createExecutor;
     expect(await main(['run', '--suite', 'smoke-v1', '--level', 'L1'], h.deps)).toBe(1);
-    expect(h.err).toEqual(['[suite] L1 executor lands in Epic 13']);
+    expect(h.err).toEqual([L1_REFUSAL]);
     expect(configs).toEqual([]);
     expect(runDirs()).toEqual([]);
     expect(defaultDeps().createRunJudge).toBeUndefined();
@@ -1220,7 +1224,7 @@ describe('suite:ci', () => {
   it('refuses a non-L0 level and a bad config, running nothing', async () => {
     const h = ciHarness();
     expect(await main(['ci', '--level', 'L1'], h.deps)).toBe(1);
-    expect(h.err).toEqual(['[suite] L1 executor lands in Epic 13']);
+    expect(h.err).toEqual([L1_REFUSAL]);
     writeFileSync(join(dir, 'suite.config.json'), '{ not json');
     expect(await main(['ci', '--level', 'L0'], h.deps)).toBe(1);
     expect(h.err.at(-1)).toMatch(/^\[suite\] config: /);
@@ -1292,5 +1296,52 @@ describe('readMergeBaseFile under a detached-HEAD full clone', () => {
 
     const file = readMergeBaseFile(join(clone, 'packages', 'conversation-sim'), 'baselines/smoke-v1/L0.json');
     expect(file).toEqual({ ref: mainTip, path: 'packages/conversation-sim/baselines/smoke-v1/L0.json', text: '{"version":"B"}\n' });
+  });
+});
+
+describe('suite:run at L1 with an injected L1 executor (Story 13.4)', () => {
+  withoutLangwatchEnv();
+  const COACH = 'openai:gpt-4o-test';
+  const REPLY = 'Got it. Which deadline is first?';
+
+  it('writes an L1 report with the coach model, judged meaning criteria, substituted state criteria and AI model events', async () => {
+    let providers = 0;
+    const h = harness({
+      executor: () =>
+        new L1OrchestratorExecutor({
+          createAiProvider: () => {
+            providers += 1;
+            return new ScriptedAiProvider({ responses: [{ text: REPLY, confidence: 0.9, containsSurveyProbe: false }] });
+          },
+          coachModel: COACH,
+        }),
+    });
+    const fake = fakeJudge(() => 'PASS');
+    h.deps.createRunJudge = () => fake.judge;
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L1'], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+
+    const [runId] = runDirs();
+    const report = SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId!, 'report.json'), 'utf8')));
+    expect(report.level).toBe('L1');
+    expect(report.models).toEqual({ coach: COACH, judge: 'gpt-4o' });
+    // The atomic and the journey test declare L1; the observation test does not.
+    expect(providers).toBe(2);
+    expect(report.results['X-01.A1/X-01.C2']).toMatchObject({ method: 'substituted' });
+    expect(report.results['X-01.J/X-01.C1']).toMatchObject({ status: 'PASS', checkKind: 'meaning', method: 'n/a' });
+    expect(fake.inputs.length).toBeGreaterThan(0);
+    for (const judged of fake.inputs) {
+      expect(judged.transcript.turns[judged.transcript.evaluatedReplyIndex!]).toEqual({ role: 'coach', text: REPLY });
+    }
+
+    const caseRuns = JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId!, 'case-runs.json'), 'utf8')) as {
+      caseRuns: Array<{ run: { level: string; events: Array<{ port: string; model?: { name: string; request: unknown; response: unknown } }> } }>;
+    };
+    expect(caseRuns.caseRuns.map((entry) => entry.run.level)).toEqual(['L1', 'L1']);
+    const aiEvents = caseRuns.caseRuns.flatMap((entry) => entry.run.events.filter((event) => event.port === 'aiProvider'));
+    expect(aiEvents.length).toBeGreaterThan(0);
+    for (const event of aiEvents) expect(event.model).toMatchObject({ name: COACH, request: expect.anything() });
+    // No transcript text reaches the log.
+    expect(h.out.join('\n')).not.toContain(REPLY);
   });
 });

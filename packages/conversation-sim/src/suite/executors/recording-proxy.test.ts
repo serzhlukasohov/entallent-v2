@@ -116,4 +116,43 @@ describe('controlled clocks', () => {
     clock.advance(1000);
     expect(clock.peek().getTime()).toBe(first + 1010);
   });
+
+  it('attaches untruncated model records when given model info, and none without it', async () => {
+    const clock = new FixedClock(new Date('2026-01-05T08:00:00.000Z'));
+    const sink = createEventSink(() => clock.peek());
+    const long = 'x'.repeat(500);
+    const modelPort = record(new Port(), 'aiProvider', sink, { name: 'openai:gpt-4o' });
+    const plainPort = record(new Port(), 'conversationRepo', sink);
+
+    const arg = { at: clock.now(), text: long };
+    await modelPort.save(arg);
+    arg.text = 'mutated later';
+    await plainPort.save({ at: clock.now(), text: 'b' });
+    await expect(modelPort.fail()).rejects.toThrow('boom');
+
+    const [ok, unrecorded, failed] = sink.events;
+    expect(ok?.argsSummary.length).toBeLessThanOrEqual(160);
+    expect(ok?.model).toEqual({
+      name: 'openai:gpt-4o',
+      settings: {},
+      request: [{ at: '2026-01-05T08:00:00.000Z', text: long }],
+      response: `saved:${long}`,
+    });
+    expect(unrecorded).not.toHaveProperty('model');
+    expect(failed?.model).toEqual({ name: 'openai:gpt-4o', settings: {}, request: [], response: { error: 'Error: boom' } });
+    for (const event of sink.events) RunEventSchema.parse(event);
+  });
+
+  it('marks a non-serializable model request or response explicitly', async () => {
+    const clock = new FixedClock(new Date('2026-01-05T08:00:00.000Z'));
+    const sink = createEventSink(() => clock.peek());
+    const circular: Record<string, unknown> = { name: 'loop' };
+    circular.self = circular;
+    const port = record({ echo: async (value: unknown) => value }, 'aiProvider', sink, { name: 'm' });
+    await port.echo(circular);
+    const [event] = sink.events;
+    expect(event?.model?.request).toEqual({ unserializable: expect.any(String) });
+    expect(event?.model?.response).toEqual({ unserializable: expect.any(String) });
+    RunEventSchema.parse(event);
+  });
 });

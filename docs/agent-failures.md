@@ -3283,3 +3283,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: The workflow calls `node --import tsx src/suite/baseline-guard.ts` directly; `baseline-guard.test.ts` spawns that exact command with a multi-line labels argument.
 - Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/baseline-guard.test.ts`.
 - Status: fixed
+
+## 2026-10-25: @langwatch/scenario 0.4.15 does not behave as the L1 spine assumed outside Vitest
+
+- Symptom: Building the L1 executor (Story 13.4) hit three Scenario 0.4.15 behaviors the architecture verification note did not record: (1) a static import crashes under plain Node with tsx (`fileURLToPath(import.meta.url)` in the CommonJS build), so `suite/run-live.ts` could not even load; (2) `user(text)` with fixed content still needs a User-role adapter in `agents`, so `agents: [coachAgent]` fails every step; (3) `EventBus.drain` leaves a five-minute referenced timer after each `run()`, so a plain-Node process idles after finishing.
+- Expected: The L1 executor loads and runs in plain Node and Vitest alike, drives fixed user texts without a user simulator, and the live entry exits when the run is done.
+- Root cause layer: context
+- Harness fix: The L1 executor loads `@langwatch/scenario` with a dynamic import (resolves the ES module build), passes a passive User-role adapter that throws if asked to generate, and `run-live.ts` forces exit after an unreferenced one-second grace timer. The README L1 section records the adapter.
+- Regression check: `import-graph.test.ts` "runs one scripted atomic L1 case through the L1 executor and Scenario in plain Node (no Vitest)" (spawns `node --import tsx src/suite/executors/__fixtures__/l1-plain-node-probe.ts` with PATH only and expects exit 0 and one recorded step), plus `l1-orchestrator-executor.test.ts` (real Scenario `run()` offline, agent roles asserted).
+- Status: fixed

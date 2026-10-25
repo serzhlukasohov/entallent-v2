@@ -25,6 +25,7 @@
     "sim": "pnpm --filter @entalent/conversation-sim sim",
     "sim:gate": "pnpm --filter @entalent/conversation-sim sim:gate",
     "suite:run": "pnpm --filter @entalent/conversation-sim suite:run",
+    "suite:run:live": "pnpm --filter @entalent/conversation-sim suite:run:live",
     "suite:diff": "pnpm --filter @entalent/conversation-sim suite:diff",
     "suite:baseline:accept": "pnpm --filter @entalent/conversation-sim suite:baseline:accept",
     "suite:calibrate": "pnpm --filter @entalent/conversation-sim suite:calibrate",

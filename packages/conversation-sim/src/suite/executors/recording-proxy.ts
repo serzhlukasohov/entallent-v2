@@ -22,15 +22,30 @@ export function createEventSink(peek: () => Date): EventSink & { readonly peek: 
  * during the call, which keeps events deterministic. Methods run against the
  * unwrapped target, so the port's own internal calls are not recorded twice.
  */
-export function record<T extends object>(port: T, label: string, sink: EventSink & { readonly peek: () => Date }): T {
+export function record<T extends object>(
+  port: T,
+  label: string,
+  sink: EventSink & { readonly peek: () => Date },
+  model?: ModelInfo,
+): T {
   return new Proxy(port, {
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target);
       if (typeof value !== 'function' || typeof property === 'symbol' || property === 'constructor') return value;
       const method = value as (...args: unknown[]) => unknown;
-      return (...args: unknown[]) => invoke(sink, label, property, args, () => method.apply(target, args));
+      return (...args: unknown[]) => invoke(sink, label, property, args, () => method.apply(target, args), model);
     },
   });
+}
+
+/**
+ * The model behind a recorded port (AD-3, AD-17). With it every event of that port also
+ * carries `model: { name, settings, request, response }`: the call arguments and the
+ * result (or `{ error }`) untruncated, as plain JSON (Dates as ISO strings).
+ */
+export interface ModelInfo {
+  name: string;
+  settings?: Record<string, unknown>;
 }
 
 function invoke(
@@ -39,6 +54,7 @@ function invoke(
   method: string,
   args: unknown[],
   call: () => unknown,
+  model?: ModelInfo,
 ): unknown {
   const event: RunEvent = {
     stepIndex: sink.stepIndex,
@@ -49,36 +65,54 @@ function invoke(
     outcome: 'ok',
     resultSummary: '',
     durationMs: 0,
+    ...(model ? { model: { name: model.name, settings: { ...(model.settings ?? {}) }, request: plain(args), response: null } } : {}),
   };
   sink.events.push(event);
   const started = sink.peek().getTime();
-  const settle = (outcome: RunEvent['outcome'], summary: string): void => {
+  const settle = (outcome: RunEvent['outcome'], summary: string, response: unknown): void => {
     event.outcome = outcome;
     event.resultSummary = summary;
     event.durationMs = Math.max(0, sink.peek().getTime() - started);
+    if (event.model) event.model.response = response;
   };
+  const settleError = (error: unknown): void => settle('error', errorSummary(error), { error: errorText(error) });
 
   let result: unknown;
   try {
     result = call();
   } catch (error) {
-    settle('error', errorSummary(error));
+    settleError(error);
     throw error;
   }
   if (isPromiseLike(result)) {
     return Promise.resolve(result).then(
       (value) => {
-        settle('ok', summarize(value));
+        settle('ok', summarize(value), plain(value));
         return value;
       },
       (error: unknown) => {
-        settle('error', errorSummary(error));
+        settleError(error);
         throw error;
       },
     );
   }
-  settle('ok', summarize(result));
+  settle('ok', summarize(result), plain(result));
   return result;
+}
+
+/** A deep, JSON-only copy (Dates as ISO, `undefined` as null) so later mutation cannot change the record. */
+function plain(value: unknown): unknown {
+  if (value === undefined) return null;
+  try {
+    const text = JSON.stringify(value, function replacer(this: Record<string, unknown>, key: string, item: unknown) {
+      const raw = this[key];
+      return raw instanceof Date ? raw.toISOString() : item;
+    });
+    return text === undefined ? null : (JSON.parse(text) as unknown);
+  } catch {
+    // Circular or otherwise unserializable: an explicit marker, never a silent `[object Object]`.
+    return { unserializable: summarize(value) };
+  }
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -89,9 +123,12 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
 function errorSummary(error: unknown): string {
-  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  return truncate(text);
+  return truncate(errorText(error));
 }
 
 /** A short, deterministic rendering of call arguments or results (Dates as ISO). */

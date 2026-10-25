@@ -51,8 +51,9 @@ import {
  * 2 > 3 > 4 > 1 over all suites (a load or run failure counts as 1), else 0. `calibrate`
  * exits 0 when the import or agreement file was written, 1 on usage, config, load, label
  * or export errors (and without a judge unless `--import` is given), 3 when any label was
- * judged ERROR (the file is still written). This entry wires no judge: the live judge is
- * reachable only through `judge/calibrate-live.ts`. This CLI never loads `.env` and never
+ * judged ERROR (the file is still written). This entry wires no judge and no L1 executor:
+ * the live judge is reachable only through `judge/calibrate-live.ts` and `run-live.ts`, the
+ * live coach provider only through `run-live.ts`. This CLI never loads `.env` and never
  * prints environment values.
  */
 
@@ -80,7 +81,7 @@ export interface CliDeps {
   createCalibrationJudge?: (judge: SuiteConfig['judge']) => CriterionJudge;
   /**
    * The judge an L1/L2 `suite:run` calls, built with the model actually called; absent in
-   * the default entry (no model egress; lands with the L1 executor, Story 13.4).
+   * the default entry (no model egress). `suite/run-live.ts` wires the live pinned judge.
    */
   createRunJudge?: (judge: SuiteConfig['judge']) => CriterionJudge;
 }
@@ -99,10 +100,14 @@ const PACKAGE_DIR = resolve(__dirname, '..', '..');
 export const HELP = `Usage:
   suite:run --suite <id> --level L0 [--runs N] [--case <id>] [--allow-unpinned-judge]
       Runs a suite and writes runs/suites/<runId>/report.{json,md} and case-runs.json.
-      Only L0 runs from this entry today (the L1 executor lands in Story 13.4, L2 in Epic 14).
-      At L1/L2 SIM_JUDGE_MODEL must be unset or equal the pinned judge model; with
-      --allow-unpinned-judge a different model is called and the run is untrusted
-      (unpinned-judge). Meaning checks count only when the judge is calibrated.
+      Only L0 runs from this entry (offline, no model credentials). L1 calls live models and
+      runs only from the gated live entry (L2 lands in Epic 14):
+  suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>] [--allow-unpinned-judge]
+      Runs L1 through the real orchestrator with the live coach provider and the pinned judge
+      (calls OpenAI or Azure OpenAI; human-run, never in CI; LANGWATCH_API_KEY optionally streams
+      the conversations). Refuses without --live-model. At L1/L2 SIM_JUDGE_MODEL must be unset
+      or equal the pinned judge model; with --allow-unpinned-judge a different model is called
+      and the run is untrusted (unpinned-judge). Meaning checks count only when the judge is calibrated.
   suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
       Writes baselines/<suiteId>/<level>.json from a run report.
   suite:diff --run <runId> [--baseline <path> | --merge-base]
@@ -372,7 +377,7 @@ async function performRun(
   let judging: RunJudging | undefined;
   if (calledModel !== null) {
     if (!deps.createRunJudge) {
-      throw new Error(`[suite] ${parsed.level} run needs a judge; this entry wires none (lands with the L1 executor, Story 13.4)`);
+      throw new Error(`[suite] ${parsed.level} run needs a judge; this entry wires none (suite:run:live wires the pinned judge)`);
     }
     const labels = readLabelsFile(deps.packageDir, suite.id);
     const agreement = readAgreementFile(deps.packageDir, suite.id);
@@ -738,7 +743,8 @@ export function summaryLines(report: SuiteRunReport): string[] {
 }
 
 function unsupportedLevel(level: Level): string {
-  return level === 'L2' ? '[suite] L2 executor lands in Epic 14' : `[suite] ${level} executor lands in Epic 13`;
+  if (level === 'L2') return '[suite] L2 executor lands in Epic 14';
+  return `[suite] ${level} runs call live models; run suite:run:live with --live-model (model egress and cost are a human boundary)`;
 }
 
 function readGitState(cwd: string): GitState {

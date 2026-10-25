@@ -13,12 +13,17 @@ import { describe, expect, it } from 'vitest';
  * reach the live judge adapter `suite/judge/live-judge-model.ts` or value-import any
  * `@ai-sdk/*` provider package. Nor do they reach the live calibration entry
  * `suite/judge/calibrate-live.ts` (Story 13.2), which refuses without `--live-judge`.
+ * Story 13.4: the L1 executor obeys the same rules (its coach provider is injected), the CLI
+ * and runner never reach the L1 executor or the live run entry `suite/run-live.ts`, and
+ * `run-live.ts` is the only entry that reaches `live-provider` and `live-judge-model`.
  */
 const SRC = resolve(__dirname, '..', '..');
 const PACKAGE_DIR = resolve(SRC, '..');
 const EXECUTOR = join(SRC, 'suite', 'executors', 'l0-deterministic-executor.ts');
 const RUNNER = join(SRC, 'suite', 'runner.ts');
 const CLI = join(SRC, 'suite', 'cli.ts');
+const L1_EXECUTOR = join(SRC, 'suite', 'executors', 'l1-orchestrator-executor.ts');
+const RUN_LIVE = join(SRC, 'suite', 'run-live.ts');
 
 interface ImportStatement {
   specifier: string;
@@ -118,6 +123,9 @@ function forbiddenImports(entry: string, read: ReadSource = readFromDisk, root =
       if (targetPath === join('suite', 'judge', 'calibrate-live.ts')) {
         violations.push({ file: at, specifier: statement.specifier, reason: 'value import of calibrate-live' });
       }
+      if (targetPath === join('suite', 'run-live.ts')) {
+        violations.push({ file: at, specifier: statement.specifier, reason: 'value import of run-live' });
+      }
       queue.push(target);
     }
   }
@@ -137,10 +145,87 @@ describe('L0 executor import graph', () => {
     ['runner', RUNNER, join('suite', 'judge', 'criterion-judge.ts')],
     ['cli', CLI, join('harness', 'report.ts')],
     ['cli (calibration)', CLI, join('suite', 'judge', 'calibrate.ts')],
+    ['L1 executor', L1_EXECUTOR, join('suite', 'fixtures', 'pulse-cycle.ts')],
+    ['L1 executor (state queries)', L1_EXECUTOR, join('suite', 'fixtures', 'state-queries.ts')],
   ])('the %s reaches no forbidden module and no vitest', (_name, entry, reached) => {
     const { visited, violations } = forbiddenImports(entry);
     expect(visited).toContain(reached);
     expect(violations).toEqual([]);
+  });
+
+  it.each([
+    ['runner', RUNNER],
+    ['cli', CLI],
+  ])('the %s never reaches the L1 executor or the live run entry', (_name, entry) => {
+    const { visited } = forbiddenImports(entry);
+    expect(visited).not.toContain(join('suite', 'executors', 'l1-orchestrator-executor.ts'));
+    expect(visited).not.toContain(join('suite', 'run-live.ts'));
+  });
+
+  it('run-live is the entry that reaches live-provider and live-judge-model, and nothing else forbidden', () => {
+    const { visited, violations } = forbiddenImports(RUN_LIVE);
+    expect(visited).toEqual(expect.arrayContaining([join('suite', 'executors', 'l1-orchestrator-executor.ts'), join('suite', 'cli.ts')]));
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        { file: join('suite', 'run-live.ts'), specifier: '../harness/live-provider', reason: 'value import of live-provider' },
+        { file: join('suite', 'run-live.ts'), specifier: './judge/live-judge-model', reason: 'value import of live-judge-model' },
+      ]),
+    );
+    // Everything else is what those two adapters themselves import (the provider and the @ai-sdk packages).
+    const rest = violations.filter((violation) => violation.file !== join('suite', 'run-live.ts'));
+    expect(rest.map((violation) => `${violation.file}: ${violation.reason}`).sort()).toEqual([
+      `${join('harness', 'live-provider.ts')}: value import of OpenAiProvider`,
+      `${join('suite', 'judge', 'live-judge-model.ts')}: value import of @ai-sdk provider`,
+      `${join('suite', 'judge', 'live-judge-model.ts')}: value import of @ai-sdk provider`,
+    ]);
+    expect(violations.some((violation) => /vitest|scenarios\/config|calibrate-live/.test(violation.reason))).toBe(false);
+  });
+
+  it('refuses the live run entry without --live-model in plain Node, writing nothing', () => {
+    const listing = () => {
+      const root = join(PACKAGE_DIR, 'runs', 'suites');
+      return existsSync(root) ? readdirSync(root).sort() : null;
+    };
+    const before = listing();
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/suite/run-live.ts', 'run', '--suite', 'smoke-v1', '--level', 'L1'], {
+      cwd: PACKAGE_DIR,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('[suite] run:live refuses without --live-model');
+    expect(listing()).toEqual(before);
+  });
+
+  it('runs one scripted atomic L1 case through the L1 executor and Scenario in plain Node (no Vitest)', () => {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/suite/executors/__fixtures__/l1-plain-node-probe.ts'], {
+      cwd: PACKAGE_DIR,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const line = result.stdout.split('\n').find((entry) => entry.startsWith('{"steps"'));
+    expect(JSON.parse(line ?? '{}')).toEqual({ steps: 1, reply: true, errors: [] });
+  });
+
+  it('refuses L1 through the default CLI in plain Node with the live-entry message, writing nothing', () => {
+    const listing = () => {
+      const root = join(PACKAGE_DIR, 'runs', 'suites');
+      return existsSync(root) ? readdirSync(root).sort() : null;
+    };
+    const before = listing();
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/suite/cli.ts', 'run', '--suite', 'smoke-v1', '--level', 'L1'], {
+      cwd: PACKAGE_DIR,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('[suite] L1 runs call live models; run suite:run:live with --live-model');
+    expect(listing()).toEqual(before);
   });
 
   it('flags value imports of vitest, not type-only ones', () => {

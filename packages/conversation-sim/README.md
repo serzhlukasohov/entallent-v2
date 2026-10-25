@@ -240,8 +240,9 @@ the scenario gate above (`ScenarioRunReport`, `gate.config.json` and `run-gate.t
 untouched). Suites are registered in `suite.config.json`; `p-v1` and `smoke-v1` are
 registered and empty today. L0 is the offline deterministic level: no Postgres, Redis or
 model credentials, and the CLI removes `OPENAI_API_KEY` and `AZURE_OPENAI_*` from its
-environment before running. The default entry still refuses L1 until the L1 executor lands
-(Story 13.4); L2 lands in Epic 14.
+environment before running. L1 runs the real orchestrator and prompts with a live coach model
+and the pinned judge, so the default entry refuses it (exit 1, nothing written, no provider
+built) and only the gated live entry `suite:run:live` runs it; L2 lands in Epic 14.
 
 ### Commands
 
@@ -254,6 +255,7 @@ pnpm suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [-
 pnpm suite:ci --level L0 [--summary <path>]
 pnpm suite:calibrate --suite <id> [--import <qa-export.json>]
 pnpm suite:calibrate:live --suite <id> --live-judge   # human-run only: calls the pinned judge model
+pnpm suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>]   # human-run only: live coach and judge
 pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --head <rev> --labels '<json-array>'
 ```
 
@@ -300,6 +302,16 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
 - `suite:calibrate:live` is the only path to the live judge. It refuses (exit 1, no model
   built) without `--live-judge`; no test, script or CI step runs it with the flag. It reads
   `OPENAI_API_KEY` or `AZURE_OPENAI_*` from the shell environment and never loads `.env`.
+- `suite:run:live` is the only path to an L1 run. It refuses (exit 1, no provider or model
+  built) without `--live-model`, and runs only the `run` command at `--level L1`; no test,
+  script or CI step runs it with the flag. It wires `L1OrchestratorExecutor` with
+  `createLiveProvider` (coach model label `azure:<OPENAI_MODEL_BALANCED ?? gpt-4o>` when
+  `AZURE_OPENAI_ENDPOINT` is set, else `openai:analysis=gpt-4o-mini,generation=gpt-4o`, the
+  provider's two default tiers; recorded as `models.coach`) and the
+  live pinned judge. `LANGWATCH_API_KEY`, when set, streams each test's conversation to
+  LangWatch; statuses, reports and `case-runs.json` are identical without it. It reads the
+  shell environment and never loads `.env`. Budgets, coach usage counting and the first L1
+  baseline are Story 13.5.
 - `suite:baseline:guard` fails when `git diff <base>...<head>` touches
   `packages/conversation-sim/baselines/` and the labels lack `baseline-change`.
 
@@ -314,6 +326,27 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
 | `baseline:guard` | no baseline changed, or labeled | baseline changed without the label; missing flags, bad labels or git failure (fails closed) | | | |
 
 `ci` attempts every suite and exits with the first code present by precedence 2 > 3 > 4 > 1.
+
+### L1 executor
+
+`L1OrchestratorExecutor` (`src/suite/executors/l1-orchestrator-executor.ts`) builds a fresh
+`CoachHarness` per test and per retry attempt over in-memory conversation, memory, goal,
+style, question-confirmation and survey repositories, a `FixedClock`, and the injected coach
+provider; every port is wrapped by the recording proxy, and AI events also carry
+`model: { name, settings, request, response }` untruncated in `case-runs.json` (never in
+logs). The inline outbox runs the real `SurveyEvidenceExtractionUseCase` (v1 path: saved
+evidence rows) over the same ports. Conversation steps are driven by one Scenario `run()`
+per test (`setId: entalent-suite-<suiteId>`): per step the gap, `user(text)`, `agent()` and
+a recording step with the stop checkpoint, then `succeed()`; there is no judge agent and no
+user simulator (a passive User-role adapter only carries the scripted texts, which Scenario
+0.4.15 requires). The `CaseRun` is built from the harness, the event sink and the clock,
+never from the Scenario result. Observation tests (P-06) drive the scheduler and check-in
+generation on the coach provider over the fixture clock. It supports all eight fixtures;
+`pulseCycle` (L1 only) seeds the V2 window and the survey window and verifies that every
+declared uncovered topic is still open. State queries come from the L1 table in
+`src/suite/fixtures/state-queries.ts` (`questionProgress` over the `pulseCycle` fixture's
+first uncovered topic, else the whole window; `stagedBundleCount`; `surveyEvidenceCount`;
+`outboundCount`), and L1 state criteria report `method: substituted`.
 
 ### Statuses and verdict
 

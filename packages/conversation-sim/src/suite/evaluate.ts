@@ -228,7 +228,8 @@ function evaluateCriterion(
     layer: criterion.layer,
     testKind: test.kind,
     step,
-    method: 'n/a' as const,
+    // L1 answers state criteria from in-memory repositories, a substitute for the dashboard (AD-10).
+    method: criterion.evaluatedAt === 'state' && run.level === 'L1' ? ('substituted' as const) : ('n/a' as const),
   };
   const decided = (status: CriterionResult['status'], extra: Partial<CriterionResult> = {}): CriterionResult => ({
     ...base,

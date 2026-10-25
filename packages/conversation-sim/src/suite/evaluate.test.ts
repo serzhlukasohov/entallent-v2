@@ -320,6 +320,24 @@ describe('evaluate: effect-count pairing', () => {
   });
 });
 
+describe('evaluate: method', () => {
+  const stage = (step: number) => event(step, 'questionConfirmationRepo', 'stageBundle');
+  const changedState = { before: { stagedBundleCount: 0 }, after: { stagedBundleCount: 1 }, afterStep: {} };
+
+  it('is substituted for state criteria at L1 and n/a otherwise, with the effect-count pairing unchanged', () => {
+    const test = atomic([criterion({ id: C1, checks: [{ type: 'rule', rule: 'always-pass' }] }), stagedChange()]);
+    const l1 = byId(evaluate(test, runFor(test, ['a'], { level: 'L1', state: changedState, events: [stage(1)] }), null, TRUSTED, EVAL_RULES));
+    expect(l1[C1]).toMatchObject({ status: 'PASS', method: 'n/a' });
+    expect(l1[C2]).toMatchObject({ status: 'PASS', method: 'substituted' });
+    const unpaired = byId(evaluate(test, runFor(test, ['a'], { level: 'L1', state: changedState, events: [stage(0)] }), null, TRUSTED, EVAL_RULES));
+    expect(unpaired[C2]).toMatchObject({ status: 'FAIL', method: 'substituted', evidence: 'effect-count questionConfirmationRepo.stageBundle@1: 0' });
+
+    const l0 = byId(evaluate(test, runFor(test, ['a'], { level: 'L0', state: changedState, events: [stage(1)] }), null, TRUSTED, EVAL_RULES));
+    expect(l0[C1]).toMatchObject({ method: 'n/a' });
+    expect(l0[C2]).toMatchObject({ status: 'PASS', method: 'n/a' });
+  });
+});
+
 describe('evaluate: seed context', () => {
   it('FAILs repeated-question when the single atomic reply re-asks a seeded coach question', () => {
     const asked = 'What is taking most of your time on the project right now?';

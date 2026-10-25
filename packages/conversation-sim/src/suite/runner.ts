@@ -155,7 +155,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
       } else {
         let attempt = 1;
         caseAttempts += 1;
-        run = await execute(executor, test, level, attempt, config.interMessageGapMs);
+        run = await execute(executor, test, level, attempt, config.interMessageGapMs, suite.id);
         let retriesLeft = config.retries.infrastructure;
         while (retriesLeft > 0 && caseRunFailureKind(run) === 'infrastructure') {
           log(`[suite] ${level} sample ${sample}/${n} ${test.id} attempt ${attempt}: infrastructure (${reasons(run)}), retrying`);
@@ -163,7 +163,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
           attempt += 1;
           caseAttempts += 1;
           infrastructureRetries += 1;
-          run = await execute(executor, test, level, attempt, config.interMessageGapMs);
+          run = await execute(executor, test, level, attempt, config.interMessageGapMs, suite.id);
         }
         caseRuns.push({ sample, run });
       }
@@ -193,7 +193,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
       level,
       n,
       git: input.git,
-      models: { coach: null, judge: judging?.model ?? null },
+      models: { coach: executor.coachModel ?? null, judge: judging?.model ?? null },
       judgeTrust: trust,
       judgeErrors: collectJudgeErrors(results),
       qaReview,
@@ -223,10 +223,11 @@ async function execute(
   level: Level,
   attempt: number,
   interMessageGapMs: number,
+  suiteId: string,
 ): Promise<CaseRun> {
   let raw: unknown;
   try {
-    raw = await executor.run(test, { attempt, interMessageGapMs });
+    raw = await executor.run(test, { attempt, interMessageGapMs, suiteId });
   } catch (error) {
     if (error instanceof SuiteExecutionError) {
       return syntheticRun(test, level, attempt, [{ kind: error.kind, step: error.step, reason: error.reason, message: error.message }]);

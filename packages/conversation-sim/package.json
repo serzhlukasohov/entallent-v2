@@ -8,6 +8,7 @@
     "sim:gate": "pnpm exec tsx src/gate/run-gate.ts",
     "sim:watch": "vitest",
     "suite:run": "node --import tsx src/suite/cli.ts run",
+    "suite:run:live": "node --import tsx src/suite/run-live.ts run",
     "suite:baseline:accept": "node --import tsx src/suite/cli.ts baseline:accept",
     "suite:diff": "node --import tsx src/suite/cli.ts diff",
     "suite:ci": "node --import tsx src/suite/cli.ts ci",

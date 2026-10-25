@@ -1,4 +1,4 @@
-import type { AiProviderPort, MessageRecord, OrchestrateResult } from '@entalent/application';
+import type { AiProviderPort, OrchestrateResult } from '@entalent/application';
 import {
   CoachHarness,
   SIM_CONVERSATION_ID,
@@ -16,28 +16,29 @@ import {
 } from '../../fakes/repositories';
 import { ScriptedAiProvider } from '../../fakes/scripted-ai';
 import { L0_FIXTURES } from '../fixtures';
-import type { FixtureContext, FixtureHarnessOptions, FixtureInstance, FixtureModule } from '../fixtures/types';
-import { RULES, type RuleContext } from '../rules/registry';
-import { missingField } from '../rules/reply-selection';
-import {
-  REPLY_MESSAGE_SEPARATOR,
-  type CaseRun,
-  type ExecutionError,
-  type FixtureName,
-  type FixtureRef,
-  type LoadedTest,
-  type ObservationField,
-  type PreconditionResult,
-  type ReplyMessage,
-  type RuleCheck,
-  type StateSnapshot,
-  type StepObservation,
-  type TurnTrace,
-} from '../schema';
+import type { FixtureContext } from '../fixtures/types';
+import type { RuleContext } from '../rules/registry';
+import type { CaseRun, ExecutionError, FixtureName, LoadedTest, ObservationField, StateSnapshot } from '../schema';
 import { FixedClock } from './clock';
 import { createL0ScriptedModel, type L0ScriptedModel } from './l0-scripted';
 import { createProactiveWorld, driveObservationWindow, type ProactiveWorld } from './proactive-l0';
 import { createEventSink, record } from './recording-proxy';
+import {
+  applyFixtures,
+  atomicPriorGap,
+  clockRange,
+  executionError,
+  harnessOptionsOf,
+  observeStep,
+  parseFixtures,
+  replyMessage,
+  rulePrecondition,
+  stepGap,
+  stopCheckpoint,
+  unsupportedFixtureError,
+  verifyFixtures,
+  type FixtureRegistry,
+} from './shared';
 import { afterStepsNamed, readL0Snapshot, type L0StateSources } from './state-queries-l0';
 import { SuiteExecutionError, type ExecutorOptions, type SuiteExecutor } from './types';
 
@@ -92,10 +93,10 @@ export interface L0World {
  */
 export class L0DeterministicExecutor implements SuiteExecutor {
   readonly level = 'L0' as const;
-  private readonly fixtures: Readonly<Partial<Record<FixtureName, FixtureModule<unknown>>>>;
+  private readonly fixtures: FixtureRegistry;
 
   /** `fixtures` replaces the L0 fixture registry (tests only). */
-  constructor(options: { fixtures?: Readonly<Partial<Record<FixtureName, FixtureModule<unknown>>>> } = {}) {
+  constructor(options: { fixtures?: FixtureRegistry } = {}) {
     this.fixtures = options.fixtures ?? L0_FIXTURES;
   }
 
@@ -128,33 +129,12 @@ export class L0DeterministicExecutor implements SuiteExecutor {
     };
     const fail = (error: ExecutionError): CaseRun => ({ ...run, errors: [...run.errors, error] });
 
-    // An unsupported fixture is a build defect: nothing is sent (AD-4).
-    const unsupported = test.setup.find((ref) => !this.supports(ref.name));
-    if (unsupported) {
-      return fail({
-        kind: 'infrastructure',
-        step: 0,
-        reason: `unsupported-fixture:${unsupported.name}`,
-        message: `fixture ${unsupported.name} is not supported at L0`,
-      });
-    }
+    const unsupported = unsupportedFixtureError(test, (name) => this.supports(name), this.level);
+    if (unsupported) return fail(unsupported);
+    const parsing = parseFixtures(test, this.fixtures);
+    if ('error' in parsing) return fail(parsing.error);
 
-    const refs = fixtureRefs(test);
-    if (refs.some((ref) => !this.supports(ref.name))) {
-      return fail({ kind: 'infrastructure', step: 0, reason: 'unsupported-fixture:seededHistory', message: 'seededHistory is not supported' });
-    }
-    const parsed: Array<{ ref: FixtureRef; module: FixtureModule<unknown>; params: unknown }> = [];
-    for (const ref of refs) {
-      const module = this.fixtures[ref.name]!;
-      const result = module.params.safeParse(ref.params ?? {});
-      if (!result.success) {
-        return fail(fixtureApplyError(ref.name, `invalid params: ${result.error.issues.map((issue) => `${issue.path.join('.')} ${issue.message}`).join('; ')}`));
-      }
-      parsed.push({ ref, module, params: result.data });
-    }
-
-    const harnessOptions: FixtureHarnessOptions = {};
-    for (const { module, params } of parsed) Object.assign(harnessOptions, module.harnessOptions?.(params) ?? {});
+    const harnessOptions = harnessOptionsOf(parsing.parsed);
     const start = harnessOptions.clockStart ?? options.clockStart ?? DEFAULT_L0_CLOCK_START;
 
     const world = createL0World(test, start, harnessOptions.timezone);
@@ -163,31 +143,15 @@ export class L0DeterministicExecutor implements SuiteExecutor {
       ...run,
       ...extra,
       events: world.sink.events,
-      clock: clockRange(world, start),
+      clock: clockRange(world.state.conversationRepo, world.clock, start),
     });
 
     // Rule and state-query failures end the case as infrastructure errors at the current step.
     try {
       // Fixtures and seed (stepIndex 0).
-      const context = fixtureContext(world, test, start);
-      const instances: Array<{ name: FixtureName; instance: FixtureInstance }> = [];
-      for (const { ref, module, params } of parsed) {
-        try {
-          const instance = module.create(context, params);
-          await instance.apply();
-          instances.push({ name: ref.name, instance });
-        } catch (error) {
-          return finish({ errors: [fixtureApplyError(ref.name, describe(error))] });
-        }
-      }
-      const preconditions: PreconditionResult[] = [];
-      for (const { name, instance } of instances) {
-        try {
-          preconditions.push(await instance.verify());
-        } catch (error) {
-          preconditions.push({ source: 'fixture', name, satisfied: false, detail: `verify threw: ${describe(error)}` });
-        }
-      }
+      const applied = await applyFixtures(parsing.parsed, fixtureContext(world, test, start));
+      if ('error' in applied) return finish({ errors: [applied.error] });
+      const preconditions = await verifyFixtures(applied.instances);
 
       const before = readL0Snapshot(sources);
       const snapshotRun = finish({ preconditions, state: { before, after: before, afterStep: {} } });
@@ -232,18 +196,12 @@ export class L0DeterministicExecutor implements SuiteExecutor {
 
       const afterSteps = afterStepsNamed(test);
       const afterStep: Record<string, StateSnapshot> = {};
-      // Atomic: the gap is from the latest message before the turn (seed or fixture) to the turn.
-      const priorStamps = world.state.conversationRepo.messages.map((message) => message.occurredAt.getTime());
-      const priorGap = priorStamps.length > 0 ? Math.max(0, start.getTime() - Math.max(...priorStamps)) : 0;
+      const priorGap = atomicPriorGap(world.state.conversationRepo, start);
       const ruleContext: RuleContext = { seedHistory: test.seed?.history ?? [] };
 
       for (const [position, step] of test.steps.entries()) {
         const index = position + 1;
-        const advance = step.advanceClock ?? 0;
-        // Journeys: the suite gap before every step after the first, plus `advanceClock`.
-        // Atomic: seed and fixtures already lie before the turn, so only `advanceClock` moves the clock.
-        const realized = (test.kind === 'journey' && index > 1 ? options.interMessageGapMs : 0) + advance;
-        const gapMs = test.kind === 'atomic' ? priorGap + realized : realized;
+        const { realized, gapMs } = stepGap(test, index, options.interMessageGapMs, priorGap);
         if (realized > 0) world.clock.advance(realized);
 
         world.sink.stepIndex = index;
@@ -266,25 +224,19 @@ export class L0DeterministicExecutor implements SuiteExecutor {
         run.steps.push(observeStep(index, step.text, gapMs, turn, world.state.conversationRepo, firstNew));
         if (afterSteps.has(index)) afterStep[String(index)] = readL0Snapshot(sources);
 
-        if (test.kind === 'journey' && step.checkpoint?.onFail === 'stop') {
-          const partial = finish({ state: { before, after: readL0Snapshot(sources), afterStep } });
-          const at = { id: `${test.id}.checkpoint:${index}`, evaluatedAt: `after-step:${index}` };
-          const outcomes = step.checkpoint.checks.map((check) => ({ check, status: runRule(partial, at, check, ruleContext) }));
-          // A stop checkpoint that cannot observe its input (or names no rule) must not pass silently.
-          const unobservable = outcomes.find((outcome) => outcome.status === 'NOT_OBSERVABLE');
-          if (unobservable) {
-            run.errors.push({
-              kind: 'infrastructure',
-              step: index,
-              reason: `checkpoint-not-observable:${unobservable.check.rule}`,
-              message: `checkpoint rule ${unobservable.check.rule} could not observe its input`,
-            });
-            break;
-          }
-          if (outcomes.some((outcome) => outcome.status === 'FAIL')) {
-            run.stoppedAtStep = index;
-            break;
-          }
+        const checkpoint = stopCheckpoint(
+          test,
+          index,
+          () => finish({ state: { before, after: readL0Snapshot(sources), afterStep } }),
+          ruleContext,
+        );
+        if (checkpoint.outcome === 'error') {
+          run.errors.push(checkpoint.error);
+          break;
+        }
+        if (checkpoint.outcome === 'stop') {
+          run.stoppedAtStep = index;
+          break;
         }
       }
 
@@ -295,12 +247,6 @@ export class L0DeterministicExecutor implements SuiteExecutor {
       return finish();
     }
   }
-}
-
-/** `setup` in order, with `seededHistory` first when the test carries a seed but does not list it. */
-function fixtureRefs(test: LoadedTest): FixtureRef[] {
-  const listed = test.setup.some((ref) => ref.name === 'seededHistory');
-  return test.seed && !listed ? [{ name: 'seededHistory' }, ...test.setup] : [...test.setup];
 }
 
 /** The context fixtures apply against; exported for fixture tests. */
@@ -369,98 +315,4 @@ export function createL0World(test: LoadedTest, start: Date, timezone?: string):
     ports: { conversationRepo, questionConfirmationRepo, memoryRepo, outbox, aiProvider },
     proactive: createProactiveWorld(),
   };
-}
-
-/** Replies are the outbound messages saved under the turn's traceId; other new outbounds are unsolicited. */
-function observeStep(
-  index: number,
-  userText: string,
-  gapMs: number,
-  turn: { result: OrchestrateResult; traceId: string },
-  conversations: InMemoryConversationRepository,
-  firstNew: number,
-): StepObservation {
-  const outbound = conversations.messages.slice(firstNew).filter((message) => message.direction === 'outbound');
-  const own = outbound.filter((message) => conversations.sideFieldsOf(message.id).traceId === turn.traceId);
-  const unsolicited = outbound.filter((message) => !own.includes(message));
-  const messages = own.map((message) => replyMessage(message, conversations));
-  return {
-    index,
-    userText,
-    traceId: turn.traceId,
-    gapMs,
-    // No outbound for the trace is observed silence, evaluated with `turn.outcome` (AD-17).
-    reply: messages.length > 0 ? { messages, text: messages.map((message) => message.text).join(REPLY_MESSAGE_SEPARATOR) } : null,
-    unsolicited: unsolicited.map((message) => replyMessage(message, conversations)),
-    turn: turnTrace(turn.result),
-  };
-}
-
-/** Copies the stored `messageType` column into `metadata.messageType` (rules/proactive.ts contract). */
-function replyMessage(message: MessageRecord, conversations: InMemoryConversationRepository): ReplyMessage {
-  const { messageType } = conversations.sideFieldsOf(message.id);
-  return {
-    id: message.id,
-    text: message.text,
-    occurredAt: message.occurredAt.toISOString(),
-    metadata: { ...(message.metadata ?? {}), ...(messageType !== undefined ? { messageType } : {}) },
-  };
-}
-
-function turnTrace(result: OrchestrateResult): TurnTrace {
-  const trace: TurnTrace = {};
-  if (result.mode !== undefined) trace.mode = result.mode;
-  if (result.classification?.primaryIntent !== undefined) trace.intent = result.classification.primaryIntent;
-  if (result.outcome !== undefined) trace.outcome = result.outcome;
-  if (result.bundleReply !== undefined) trace.bundleReply = result.bundleReply;
-  return trace;
-}
-
-/** `from`: the earliest instant the run stamped (seed included); `to`: the clock at the end. */
-function clockRange(world: L0World, start: Date): { from: string; to: string } {
-  const stamps = world.state.conversationRepo.messages.map((message) => message.occurredAt.getTime());
-  const from = Math.min(start.getTime(), ...stamps);
-  return { from: new Date(from).toISOString(), to: world.clock.peek().toISOString() };
-}
-
-/** A rule precondition evaluated on the run after fixtures, before any step. */
-function rulePrecondition(run: CaseRun, check: RuleCheck, test: LoadedTest): PreconditionResult {
-  const at = { id: `${test.id}.precondition`, evaluatedAt: 'conversation' };
-  if (!Object.prototype.hasOwnProperty.call(RULES, check.rule)) {
-    return { source: 'rule', name: check.rule, satisfied: false, detail: 'unknown rule' };
-  }
-  const status = runRule(run, at, check, { seedHistory: test.seed?.history ?? [] });
-  return { source: 'rule', name: check.rule, satisfied: status === 'PASS', ...(status === 'PASS' ? {} : { detail: status }) };
-}
-
-function runRule(
-  run: CaseRun,
-  criterion: { id: string; evaluatedAt: string },
-  check: RuleCheck,
-  context: RuleContext,
-): 'PASS' | 'FAIL' | 'NOT_OBSERVABLE' {
-  const entry = (RULES as Record<string, (typeof RULES)[keyof typeof RULES]>)[check.rule];
-  if (!entry) return 'NOT_OBSERVABLE';
-  if (missingField(entry.requires, run)) return 'NOT_OBSERVABLE';
-  try {
-    return entry.run(run, criterion, check.params, context).status;
-  } catch (error) {
-    throw new SuiteExecutionError({ kind: 'infrastructure', step: 0, reason: `rule-error:${check.rule}`, cause: error });
-  }
-}
-
-function fixtureApplyError(name: FixtureName, message: string): ExecutionError {
-  return { kind: 'infrastructure', step: 0, reason: `fixture-apply:${name}`, message };
-}
-
-/** A turn that threw: the executor's own errors keep their kind; anything else is the product's. */
-function executionError(error: unknown, step: number): ExecutionError {
-  if (error instanceof SuiteExecutionError) {
-    return { kind: error.kind, step: error.step === 0 ? step : error.step, reason: error.reason, message: error.message };
-  }
-  return { kind: 'product', step, reason: 'agent-turn-error', message: describe(error) };
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }

@@ -20,6 +20,7 @@ export const freshPersonaFixture: FixtureModule<z.infer<typeof params>> = {
         if (questionConfirmationRepo.questionProgress().total > 0) found.push('question-window');
         if (questionConfirmationRepo.stagedBundleCount() > 0) found.push('staged-bundles');
         if (questionConfirmationRepo.pendingClarification()) found.push('pending-clarification');
+        if (context.survey?.state.hasWindow()) found.push('survey-window');
         return satisfied('freshPersona', found.length === 0, found.length > 0 ? found.join(', ') : undefined);
       },
     };

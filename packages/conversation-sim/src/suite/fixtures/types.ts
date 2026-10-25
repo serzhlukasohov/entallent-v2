@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type { CoachHarness } from '../../harness/coach-harness';
 import type { InMemoryQuestionConfirmationRepository } from '../../fakes/question-confirmation';
+import type { InMemorySurveyRepository } from '../../fakes/survey-repository';
 import type {
   InMemoryConversationRepository,
   InMemoryGoalRepository,
@@ -12,10 +13,10 @@ import type { ProactiveWorld } from '../executors/proactive-l0';
 import type { FixtureName, LoadedTest, PreconditionResult } from '../schema';
 
 /**
- * What a fixture works against at L0: the per-test harness, its in-memory state and the
- * controlled clock. `ports` are the recorded proxies (writes through them become
+ * What a fixture works against at L0 and L1: the per-test harness, its in-memory state and
+ * the controlled clock. `ports` are the recorded proxies (writes through them become
  * `RunEvent`s at `stepIndex` 0); `state` are the raw fakes, read by `verify` so read-backs
- * add no events.
+ * add no events. Fixtures stay level-agnostic over this context.
  */
 export interface FixtureContext {
   test: LoadedTest;
@@ -35,6 +36,8 @@ export interface FixtureContext {
     styleRepo: InMemoryStyleProfileRepository;
   };
   proactive: ProactiveWorld;
+  /** The survey repository, recorded (`port`) and raw (`state`); present at L1, absent at L0. */
+  survey?: { port: InMemorySurveyRepository; state: InMemorySurveyRepository };
 }
 
 export interface FixtureInstance {
@@ -50,7 +53,7 @@ export interface FixtureHarnessOptions {
   timezone?: string;
 }
 
-/** A named L0 fixture builder (architecture AD-4) with its own params schema. */
+/** A named fixture builder (architecture AD-4) with its own params schema. */
 export interface FixtureModule<P = unknown> {
   name: FixtureName;
   params: z.ZodType<P, z.ZodTypeDef, unknown>;

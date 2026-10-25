@@ -1,4 +1,7 @@
+import { run as scenarioRun } from '@langwatch/scenario';
 import { describe, expect, it } from 'vitest';
+import { withoutLangwatchEnv } from './executors/__fixtures__/offline-scenario-env';
+import { ScriptedAiProvider } from '../fakes/scripted-ai';
 import {
   RUNNER_CONFIG,
   agreementFor,
@@ -11,6 +14,7 @@ import {
 } from './__fixtures__/runner';
 import { TEST_RULES } from './__fixtures__/suite';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
+import { L1OrchestratorExecutor } from './executors/l1-orchestrator-executor';
 import { SuiteExecutionError } from './executors/types';
 import { loadSuite, validateSuite } from './loader';
 import { caseRunFailureKind, computeJudgeTrust, executionErrorKind, runSuite, type RunSuiteInput } from './runner';
@@ -412,5 +416,48 @@ describe('runSuite: L1 with a fake executor and a fake judge', () => {
     );
     const judging = { judge: fakeJudge(() => 'PASS').judge, model: 'gpt-4o', unpinned: false, agreement: null, labelsSha256: labelsSha256([]) };
     await expect(runSuite(input(fakeSuite(), { judging }))).rejects.toThrow('[suite] L0 runs have no judge; judging must not be given');
+  });
+});
+
+describe('runSuite: L1 with the real L1 executor and a fake judge (Story 13.4)', () => {
+  withoutLangwatchEnv();
+  const REPLY = 'Which release deadline comes first?';
+  const COACH = 'openai:gpt-4o-test';
+
+  it('records models.coach, passes the suite id, and judges the reply the orchestrator attributed by traceId', async () => {
+    const suite = judgedSuite();
+    const fake = fakeJudge(() => 'PASS');
+    const setIds: string[] = [];
+    const executor = new L1OrchestratorExecutor({
+      createAiProvider: () => new ScriptedAiProvider({ responses: [{ text: REPLY, confidence: 0.9, containsSurveyProbe: false }] }),
+      coachModel: COACH,
+      runScenario: (async (cfg: Parameters<typeof scenarioRun>[0]) => {
+        setIds.push(cfg.setId ?? '');
+        return scenarioRun(cfg);
+      }) as typeof scenarioRun,
+    });
+    const judging = { judge: fake.judge, model: 'gpt-4o', unpinned: false, agreement: null, labelsSha256: labelsSha256([]) };
+    const { report, caseRuns } = await runSuite(input(suite, { level: 'L1', executor, judging }));
+
+    expect(SuiteRunReportSchema.parse(JSON.parse(JSON.stringify(report)))).toEqual(report);
+    expect(report.level).toBe('L1');
+    expect(report.models).toEqual({ coach: COACH, judge: 'gpt-4o' });
+    expect(setIds).toEqual(['entalent-suite-x-judged']);
+    expect(caseRuns).toHaveLength(1);
+    const [record] = caseRuns;
+    expect(record!.run.steps[0]?.reply?.text).toBe(REPLY);
+    // Every meaning check was judged on that reply.
+    expect(fake.inputs).toHaveLength(3);
+    for (const judged of fake.inputs) {
+      expect(judged.transcript.turns[judged.transcript.evaluatedReplyIndex!]).toEqual({ role: 'coach', text: REPLY });
+    }
+    expect(report.results['Z-01.A1/Z-01.C1']).toMatchObject({ status: 'PASS', checkKind: 'meaning', method: 'n/a' });
+    expect(report.results['Z-01.A1/Z-01.C3']).toMatchObject({ status: 'PASS', checkKind: 'rule' });
+    expect(record!.run.events.filter((event) => event.port === 'aiProvider').every((event) => event.model?.name === COACH)).toBe(true);
+  });
+
+  it('keeps models.coach null for an executor without a coach model (L0)', async () => {
+    const { report } = await runSuite(input(liveSuite(), { executor: new L0DeterministicExecutor() }));
+    expect(report.models.coach).toBeNull();
   });
 });

@@ -60,11 +60,15 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
     return this.staged.length;
   }
 
-  /** Confirmed questions over all questions of the window; `{ 0, 0 }` without a window. */
-  questionProgress(): { answered: number; total: number } {
+  /**
+   * Confirmed questions over all questions of the window, or of `group` when given;
+   * `{ 0, 0 }` without a window (or without questions in that group).
+   */
+  questionProgress(group?: string): { answered: number; total: number } {
+    const questions = group === undefined ? this.questions : this.questions.filter((question) => question.questionGroup === group);
     return {
-      answered: this.questions.filter((question) => question.status === 'confirmed').length,
-      total: this.questions.length,
+      answered: questions.filter((question) => question.status === 'confirmed').length,
+      total: questions.length,
     };
   }
 

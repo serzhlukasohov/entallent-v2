@@ -8,11 +8,15 @@ export interface ExecutorOptions {
   interMessageGapMs: number;
   /** Business-time start of the run; a `clock` fixture `start` overrides it. */
   clockStart?: Date;
+  /** The suite being run (the runner passes `suite.id`); L1 names its Scenario set after it. */
+  suiteId?: string;
 }
 
 /** One executor adapter per level behind one port; it returns observations, never statuses. */
 export interface SuiteExecutor {
   readonly level: Level;
+  /** The coach model label the executor talks to (`models.coach`); absent or null when none (L0). */
+  readonly coachModel?: string | null;
   supports(fixture: FixtureName): boolean;
   observes(): ObservationField[];
   run(test: LoadedTest, options: ExecutorOptions): Promise<CaseRun>;
