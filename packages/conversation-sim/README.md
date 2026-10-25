@@ -508,3 +508,55 @@ to `main` and `develop` (AD-15). It is opt-in and inert by default.
 - **Required check.** `Suite L1 gate` blocks merges only once it is a required status check
   in branch protection (a repository setting, pending approval). Because it always reports,
   requiring it never leaves a pull request waiting on "Expected".
+
+### Scheduled L1 runs
+
+The `suite-l1` job (`Suite L1 scheduled run`) of `.github/workflows/conversation-sim.yml`
+observes conversation-quality drift between releases while the pinned coach model and judge
+fingerprint stay unchanged, for example provider-side behavior changes under unchanged code
+(AD-15). A changed coach model or judge fingerprint makes the diff exit 2 `baseline-invalid`
+and needs a re-accepted baseline. It reuses the workflow's `authorize` job unchanged.
+
+- **Opt-in.** Scheduled runs need the repository variable `CONVERSATION_SIM_SCHEDULED_ENABLED`
+  set to `true` (the same variable as the legacy `simulate` job); `workflow_dispatch` is a
+  manual run and needs no variable. The job runs only when `authorize` outputs
+  `should_run=true`, and its result is independent of the legacy gate's.
+- **Samples per schedule.** Nightly (`17 2 * * *`) n = 1: meaning criteria diff as
+  `inconclusive` (below `diff.minSamples.L1` = 3), so only rule and S regressions or lost
+  coverage can fail it. Weekly (`23 3 * * 0`) n = 5: the authoritative meaning diff. A manual
+  dispatch uses its `runs` input (1 or 5).
+- **Credentials** (existing secret names; no new secret): `OPENAI_API_KEY`,
+  `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`,
+  `AZURE_OPENAI_TESTING_DEPLOYMENT` (also used as `OPENAI_MODEL_BALANCED`); `LANGWATCH_API_KEY`
+  is set empty. Before any spend, `l1-gate.ts credentials` checks presence booleans against
+  `judge.provider` with the same rule as the PR gate and fails the job with `::error::` when a
+  name is missing. The pinned `openai` judge needs `OPENAI_API_KEY` even though `authorize`
+  accepts an Azure-only set.
+- **Command.** `run-live.ts ci --level L1 --runs "$RUNS" --include-unbaselined --live-model
+  --summary "$GITHUB_STEP_SUMMARY"`. `--runs N` overrides `diff.minSamples.L1`; the summary
+  adds `Samples per suite: n = N` and, below the minimum, the inconclusive line.
+  `--include-unbaselined` also runs suites that have L1 tests but no merge-base `L1.json`
+  (their diff reports `no baseline`, exit 0), because drift monitoring needs reports either way
+  and a weekly n = 5 report is the candidate for the first `suite:baseline:accept`. Suites
+  without L1 tests are still skipped `no L1 tests`; with none to run the job passes with
+  `no registered suite has L1 tests; L1 run passes with nothing to check`. Both flags are L1/L2
+  only (a usage error at L0), and the PR gate passes neither. Today both suites are empty, so
+  an opted-in run is a clean no-op.
+- **Artifacts.** `runs/suites/**` (reports and `case-runs.json`, which holds transcripts and
+  model request/response events for QA review) is uploaded as
+  `suite-l1-scheduled-<run id>-<attempt>` for 14 days and linked from the step summary. This
+  differs deliberately from the PR gate, which uploads reports only. Transcripts and events
+  never reach the CI log.
+- **Accepting the first baseline (human).** Download the `suite-l1-scheduled-*` artifact
+  within its 14-day retention, unpack the run folder to
+  `packages/conversation-sim/runs/suites/<runId>/` on a checkout of the run's commit, then run
+  `pnpm suite:baseline:accept --run <runId> --ci-run-url <workflow run url>` and commit the
+  resulting `baselines/<suite>/L1.json` in a pull request with the `baseline-change` label.
+  Accept refuses a run with n below `baseline.minSamples.L1` (5, so only a weekly or n = 5
+  dispatch run), an INCOMPLETE run (unless `--allow-incomplete`), a run made from a dirty tree
+  (unless `--allow-dirty`), a `--case` run, a run with no in-scope test criteria, an unpinned
+  judge model, or a judge fingerprint that differs from the one computed from the current
+  checkout (hence the checkout of the run's commit).
+- **Budgets.** Unchanged at 600 coach and 150 judge calls per suite run: weekly n = 5 is the
+  size of the baseline run the budgets already bound. The worst case per scheduled run is
+  (suites with L1 tests) x the per-run budgets.

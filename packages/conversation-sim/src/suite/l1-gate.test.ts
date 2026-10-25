@@ -247,6 +247,68 @@ describe('runL1Gate decide', () => {
   });
 });
 
+describe('runL1Gate credentials (scheduled L1 run)', () => {
+  let out: string[];
+  let err: string[];
+
+  beforeEach(() => {
+    out = [];
+    err = [];
+  });
+
+  const check = (env: Record<string, string | undefined>, argv: string[] = ['credentials'], packageDir = PACKAGE_DIR) =>
+    runL1Gate(argv, { cwd: PACKAGE_DIR, packageDir, env, log: (line) => out.push(line), error: (line) => err.push(line) });
+  const azureSet = {
+    HAS_AZURE_OPENAI_ENDPOINT: 'true',
+    HAS_AZURE_OPENAI_API_KEY: 'true',
+    HAS_AZURE_OPENAI_API_VERSION: 'true',
+    HAS_AZURE_OPENAI_TESTING_DEPLOYMENT: 'true',
+  };
+
+  it('the pinned openai judge with only the Azure set fails closed naming OPENAI_API_KEY', () => {
+    expect(check(azureSet)).toBe(1);
+    expect(err).toEqual(['[suite] l1-gate: model credentials missing for the L1 run: OPENAI_API_KEY']);
+    expect(out).toEqual([]);
+  });
+
+  it('exits 0 with the OpenAI key present, and with the full Azure set plus the OpenAI key', () => {
+    expect(check({ HAS_OPENAI_API_KEY: 'true' })).toBe(0);
+    expect(check({ ...azureSet, HAS_OPENAI_API_KEY: 'true' })).toBe(0);
+    expect(out).toEqual(['[suite] l1-gate: L1 credentials present', '[suite] l1-gate: L1 credentials present']);
+    expect(err).toEqual([]);
+  });
+
+  it('names every missing name of a partial Azure set and never prints a value', () => {
+    expect(check({ HAS_OPENAI_API_KEY: SECRET, HAS_AZURE_OPENAI_ENDPOINT: 'true' })).toBe(1);
+    expect(err).toEqual([
+      '[suite] l1-gate: model credentials missing for the L1 run: OPENAI_API_KEY, AZURE_OPENAI_API_KEY, AZURE_OPENAI_API_VERSION, AZURE_OPENAI_TESTING_DEPLOYMENT',
+    ]);
+    expect(`${out.join('\n')}${err.join('\n')}`).not.toContain(SECRET);
+  });
+
+  it('reads judge.provider from suite.config.json: an Azure judge needs the Azure trio', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'suite-l1-gate-credentials-'));
+    try {
+      const config = JSON.parse(readFileSync(join(PACKAGE_DIR, 'suite.config.json'), 'utf8')) as { judge: { provider: string } };
+      config.judge.provider = 'azure_openai';
+      writeFileSync(join(dir, 'suite.config.json'), JSON.stringify(config));
+      expect(check({ HAS_OPENAI_API_KEY: 'true' }, ['credentials'], dir)).toBe(1);
+      expect(err).toEqual([
+        '[suite] l1-gate: model credentials missing for the L1 run: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_API_VERSION',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('takes no options: --output is a usage error', () => {
+    expect(check({ HAS_OPENAI_API_KEY: 'true' }, ['credentials', '--output', 'x'])).toBe(1);
+    expect(err).toHaveLength(1);
+    expect(err[0]).toMatch(/^\[suite\] l1-gate: /);
+    expect(out).toEqual([]);
+  });
+});
+
 describe('runL1Gate changes in a real git repo', () => {
   let root: string;
   let out: string[];

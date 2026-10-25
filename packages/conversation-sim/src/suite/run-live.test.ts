@@ -90,6 +90,27 @@ describe('runLive', () => {
     expect(s.built.models).toBe(1);
   });
 
+  it('with the flag, passes the scheduled ci --runs and --include-unbaselined through to main without the flag', async () => {
+    const s = stubs();
+    expect(await runLive(['ci', '--level', 'L1', '--runs', '1', '--include-unbaselined', '--live-model'], s.overrides)).toBe(0);
+    expect(s.errors).toEqual([]);
+    expect(s.runs).toHaveLength(1);
+    expect(s.runs[0]!.argv).toEqual(['ci', '--level', 'L1', '--runs', '1', '--include-unbaselined']);
+    expect(s.runs[0]!.deps.createExecutor('L1')).toBeInstanceOf(L1OrchestratorExecutor);
+    expect(s.built).toEqual({ providers: 0, models: 0 });
+  });
+
+  it.each([
+    [['ci', '--level', 'L1', '--runs', '0', '--live-model'], '[suite] ci: --runs must be a positive integer, got 0'],
+    [['ci', '--level', 'L0', '--runs', '3', '--live-model'], '[suite] ci: --runs and --include-unbaselined are accepted only at L1 and L2'],
+  ])('refuses a bad scheduled ci %j before running anything', async (argv, message) => {
+    const s = stubs();
+    expect(await runLive(argv, s.overrides)).toBe(1);
+    expect(s.errors).toEqual([message]);
+    expect(s.runs).toEqual([]);
+    expect(s.built).toEqual({ providers: 0, models: 0 });
+  });
+
   it('with the flag, strips it and runs main with an L1 executor and a judge factory that build nothing until used', async () => {
     const s = stubs();
     expect(await runLive(['run', '--', '--suite', 'smoke-v1', '--live-model', '--level', 'L1', '--runs', '5'], s.overrides)).toBe(0);

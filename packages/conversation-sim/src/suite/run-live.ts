@@ -12,9 +12,11 @@ import type { SuiteConfig } from './schema';
  * coach provider and the live pinned judge into `suite:run` and `suite:ci`. Model egress and
  * cost are a human boundary, so it refuses (exit 1, nothing built) unless `--live-model` is
  * passed, and it runs only the `run` and `ci` commands at `--level L1`. Its only automated
- * caller is the opt-in L1 pull-request gate (`.github/workflows/conversation-suite-l1-pr.yml`,
- * live only when `CONVERSATION_SUITE_L1_PR_GATE_ENABLED` is `true`); no test or script runs it
- * with the flag. The CLI, runner and executors never import this module
+ * callers are the opt-in L1 pull-request gate (`.github/workflows/conversation-suite-l1-pr.yml`,
+ * live only when `CONVERSATION_SUITE_L1_PR_GATE_ENABLED` is `true`) and the opt-in scheduled
+ * `suite-l1` job of `.github/workflows/conversation-sim.yml` (`ci --level L1 --runs N
+ * --include-unbaselined`; scheduled runs need `CONVERSATION_SIM_SCHEDULED_ENABLED=true`, and
+ * `workflow_dispatch` is a manual run); no test or script runs it with the flag. The CLI, runner and executors never import this module
  * (`executors/import-graph.test.ts`).
  */
 

@@ -9,6 +9,8 @@ import { loadSuiteConfig } from './config';
  * gate (`.github/workflows/conversation-suite-l1-pr.yml`). `changes` lists the paths a pull
  * request changed and reports whether any of them is gated; `decide` turns that, the fork
  * flag, the opt-in variable and credential presence booleans into `run`, `skip` or `error`.
+ * `credentials` is the scheduled `suite-l1` job's (`conversation-sim.yml`) fail-closed check
+ * that the judge and coach credentials are present before any spend.
  * Imports Node builtins and `loadSuiteConfig` only, so the `changes` job needs no package
  * build. Never reads or prints a credential value: credentials arrive as `HAS_*` booleans.
  */
@@ -149,7 +151,8 @@ export interface L1GateDeps {
   append?: (path: string, text: string) => void;
 }
 
-const USAGE = 'usage: l1-gate.ts changes --base <sha> --head <sha> [--output <file>] | decide --changed <true|false> [--output <file>]';
+const USAGE =
+  'usage: l1-gate.ts changes --base <sha> --head <sha> [--output <file>] | decide --changed <true|false> [--output <file>] | credentials';
 
 function oneLine(text: string): string {
   return text.replace(/[\r\n]+/g, ' ').trim();
@@ -162,6 +165,7 @@ export function runL1Gate(argv: readonly string[], deps: L1GateDeps): number {
   try {
     if (command === 'changes') return changesCommand(rest, deps, append);
     if (command === 'decide') return decideCommand(rest, deps, append);
+    if (command === 'credentials') return credentialsCommand(rest, deps);
   } catch (error) {
     deps.error(`[suite] l1-gate: ${oneLine((error as Error).message)}`);
     return 1;
@@ -212,8 +216,7 @@ function decideCommand(argv: readonly string[], deps: L1GateDeps, append: (path:
     throw new Error(`decide: --changed must be true or false, got ${JSON.stringify(values.changed ?? null)}; ${USAGE}`);
   }
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
-  const has = (name: CredentialName) => deps.env[`HAS_${name}`] === 'true';
-  const credentials = Object.fromEntries(CREDENTIAL_NAMES.map((name) => [name, has(name)])) as Record<CredentialName, boolean>;
+  const credentials = credentialPresence(deps.env);
   const result = decideL1Gate({
     changed: values.changed === 'true',
     // Fail safe: only an explicit `false` counts as a same-repository pull request.
@@ -226,6 +229,27 @@ function decideCommand(argv: readonly string[], deps: L1GateDeps, append: (path:
   (result.decision === 'error' ? deps.error : deps.log)(`[suite] l1-gate: decision=${result.decision}: ${message}`);
   if (values.output !== undefined) append(values.output, `decision=${result.decision}\nmessage=${message}\n`);
   return result.decision === 'error' ? 1 : 0;
+}
+
+/** Credential presence from the `HAS_<NAME>` booleans; only exactly `true` counts as present. */
+function credentialPresence(env: L1GateDeps['env']): Record<CredentialName, boolean> {
+  return Object.fromEntries(CREDENTIAL_NAMES.map((name) => [name, env[`HAS_${name}`] === 'true'])) as Record<CredentialName, boolean>;
+}
+
+/**
+ * The scheduled L1 run's fail-closed credential check: exit 1 naming the missing credentials
+ * (never values) the pinned judge and the coach need, else exit 0. Takes no options.
+ */
+function credentialsCommand(argv: readonly string[], deps: L1GateDeps): number {
+  parseArgs({ args: [...argv], strict: true, allowPositionals: false, options: {} });
+  const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
+  const missing = missingL1Credentials({ judgeProvider: config.judge.provider, credentials: credentialPresence(deps.env) });
+  if (missing.length > 0) {
+    deps.error(`[suite] l1-gate: model credentials missing for the L1 run: ${missing.join(', ')}`);
+    return 1;
+  }
+  deps.log('[suite] l1-gate: L1 credentials present');
+  return 0;
 }
 
 function isEntryPoint(): boolean {

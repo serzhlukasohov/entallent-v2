@@ -51,7 +51,9 @@ import {
  * registered suite that has tests and exits with the first code present by precedence
  * 2 > 3 > 4 > 1 over all suites (a load or run failure counts as 1), else 0; at L1 it needs
  * an injected run judge (only `run-live.ts` wires one) and runs only suites with L1 tests and
- * an L1 baseline at the merge-base, `diff.minSamples.L1` samples each. `calibrate`
+ * an L1 baseline at the merge-base, `diff.minSamples.L1` samples each; the scheduled run adds
+ * `--runs N` (overrides `diff.minSamples.L1`) and `--include-unbaselined` (also runs suites
+ * with L1 tests but no merge-base baseline; their diff reports no baseline). `calibrate`
  * exits 0 when the import or agreement file was written, 1 on usage, config, load, label
  * or export errors (and without a judge unless `--import` is given), 3 when any label was
  * judged ERROR (the file is still written). This entry wires no judge and no L1 executor:
@@ -113,8 +115,9 @@ export const HELP = `Usage:
       runs only from the gated live entry (L2 lands in Epic 14):
   suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>] [--allow-unpinned-judge]
       Runs L1 through the real orchestrator with the live coach provider and the pinned judge
-      (calls OpenAI or Azure OpenAI; human-run; its only automated caller is the opt-in L1
-      pull-request gate, see run-live.ts ci below; LANGWATCH_API_KEY optionally streams the conversations). Refuses without --live-model. At L1/L2 SIM_JUDGE_MODEL must be unset
+      (calls OpenAI or Azure OpenAI; human-run; its only automated callers are the opt-in L1
+      pull-request gate and the opt-in scheduled L1 run, see run-live.ts ci below; LANGWATCH_API_KEY
+      optionally streams the conversations). Refuses without --live-model. At L1/L2 SIM_JUDGE_MODEL must be unset
       or equal the pinned judge model; with --allow-unpinned-judge a different model is called
       and the run is untrusted (unpinned-judge). Meaning checks count only when the judge is calibrated.
       Budgets (suite.config.json budgets): at most maxCoachCallsPerRun coach and maxJudgeCallsPerRun
@@ -132,11 +135,15 @@ export const HELP = `Usage:
       For every suite in suite.config.json that has tests: suite:run (n=1) then
       suite:diff --merge-base. Suites without tests are skipped. --summary appends a
       Markdown step summary (no evidence or transcript text) to <path>.
-  node --import tsx src/suite/run-live.ts ci --level L1 --live-model [--summary <path>]
-      The L1 pull-request gate (calls live models; its only automated caller is the opt-in
-      conversation-suite-l1-pr.yml workflow). For every suite with L1 tests and an L1 baseline
+  node --import tsx src/suite/run-live.ts ci --level L1 --live-model [--runs N] [--include-unbaselined] [--summary <path>]
+      The L1 pull-request gate and scheduled L1 run (calls live models; its only automated
+      callers are the opt-in conversation-suite-l1-pr.yml workflow and the opt-in scheduled
+      suite-l1 job of conversation-sim.yml). For every suite with L1 tests and an L1 baseline
       at the merge-base: suite:run --runs diff.minSamples.L1 then suite:diff --merge-base;
-      other suites are skipped without a run. This entry refuses ci --level L1 (no judge).
+      other suites are skipped without a run. --runs N (L1/L2 only) samples N times instead;
+      below diff.minSamples.L1 meaning criteria diff as inconclusive. --include-unbaselined
+      (L1/L2 only) also runs suites with L1 tests but no merge-base baseline (the diff reports
+      no baseline). This entry refuses ci --level L1 (no judge).
   suite:calibrate --suite <id> [--import <qa-export.json>]
       --import appends the QA export's labels to calibration/<id>/labels.json (deduplicated on
       criterion and transcript hash; any invalid entry rejects the whole import). Without a
@@ -159,7 +166,7 @@ export type ParsedCommand =
   | { command: 'run'; suite: string; level: Level; runs: number; case?: string; allowUnpinnedJudge?: true }
   | { command: 'baseline:accept'; run: string; allowIncomplete: boolean; allowDirty: boolean; ciRunUrl?: string }
   | { command: 'diff'; run: string; baseline?: string; mergeBase: boolean }
-  | { command: 'ci'; level: Level; summary?: string }
+  | { command: 'ci'; level: Level; summary?: string; runs?: number; includeUnbaselined?: true }
   | { command: 'calibrate'; suite: string; import?: string };
 
 export class CliUsageError extends Error {
@@ -270,6 +277,8 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
         options: {
           level: { type: 'string' },
           summary: { type: 'string' },
+          runs: { type: 'string' },
+          'include-unbaselined': { type: 'boolean' },
           help: { type: 'boolean', short: 'h' },
         },
       });
@@ -278,7 +287,25 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       const level = LevelSchema.safeParse(values.level);
       if (!level.success) throw new CliUsageError(`[suite] ci: --level must be L0, L1 or L2, got ${values.level}`);
       if (values.summary !== undefined && values.summary.trim() === '') throw new CliUsageError('[suite] ci: --summary must not be empty');
-      return { command: 'ci', level: level.data, ...(values.summary !== undefined ? { summary: values.summary } : {}) };
+      const includeUnbaselined = values['include-unbaselined'] === true;
+      // L0 keeps its exact 13.6 parse, logs and summary: the scheduled-run flags are L1/L2 only.
+      if (level.data === 'L0' && (values.runs !== undefined || includeUnbaselined)) {
+        throw new CliUsageError('[suite] ci: --runs and --include-unbaselined are accepted only at L1 and L2');
+      }
+      let runs: number | undefined;
+      if (values.runs !== undefined) {
+        runs = Number(values.runs);
+        if (!/^\d+$/.test(values.runs) || !Number.isInteger(runs) || runs < 1) {
+          throw new CliUsageError(`[suite] ci: --runs must be a positive integer, got ${values.runs}`);
+        }
+      }
+      return {
+        command: 'ci',
+        level: level.data,
+        ...(values.summary !== undefined ? { summary: values.summary } : {}),
+        ...(runs !== undefined ? { runs } : {}),
+        ...(includeUnbaselined ? { includeUnbaselined: true as const } : {}),
+      };
     }
     if (command === 'calibrate') {
       const { values } = parseNodeArgs({
@@ -484,6 +511,8 @@ export const CI_ADVISORY_LINE =
  * order, attempting every suite even after a failure. At L1 (the pull-request gate, only
  * with an injected judge) a suite runs only when it has L1 tests and an L1 baseline at the
  * merge-base, with `--runs diff.minSamples.L1`; a run without a baseline could gate nothing.
+ * The scheduled run passes `--runs N` and `--include-unbaselined`: it also runs suites without
+ * a merge-base baseline, because drift monitoring and the first `baseline:accept` need reports.
  */
 async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps: CliDeps): Promise<number> {
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
@@ -491,6 +520,10 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
   if (!config.levels.includes(parsed.level)) {
     throw new Error(`[suite] level ${parsed.level} is not enabled in suite.config.json`);
   }
+
+  const runs = parsed.level === 'L0' ? 1 : (parsed.runs ?? config.diff.minSamples[parsed.level]);
+  const samples = ciSamplesLines(parsed, config);
+  if (samples.inconclusive !== null) deps.log(`[suite] ci: ${samples.inconclusive}`);
 
   const outcomes: CiSuiteOutcome[] = [];
   const reports: SuiteRunReport[] = [];
@@ -528,13 +561,24 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
         outcomes.push({ suiteId, status: 'failed', exitCode: 1, error: skipReason.error });
         continue;
       }
+      if (skipReason.kind === 'missing-baseline') {
+        if (parsed.includeUnbaselined === true) {
+          deps.log(
+            `[suite] ci: ${suiteId} has no ${parsed.level} baseline at merge-base ${skipReason.ref}; running without a baseline (diff reports no baseline)`,
+          );
+        } else {
+          const reason = `no ${parsed.level} baseline at merge-base ${skipReason.ref}`;
+          deps.log(`[suite] ci: ${suiteId} skipped (${reason})`);
+          outcomes.push({ suiteId, status: 'skipped', exitCode: 0, skipReason: reason });
+          continue;
+        }
+      }
       if (skipReason.kind === 'skip') {
         deps.log(`[suite] ci: ${suiteId} skipped (${skipReason.reason})`);
         outcomes.push({ suiteId, status: 'skipped', exitCode: 0, skipReason: skipReason.reason });
         continue;
       }
     }
-    const runs = parsed.level === 'L0' ? 1 : config.diff.minSamples[parsed.level];
     let runId: string | undefined;
     try {
       runId = (await performRun({ command: 'run', suite: suiteId, level: parsed.level, runs }, deps, { suite, runId: uniqueRunId })).runId;
@@ -556,7 +600,7 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
 
   let exitCode = aggregateCiExitCode(outcomes.map((outcome) => outcome.exitCode));
   const nothingToCheck = !outcomes.some((outcome) => outcome.status !== 'skipped');
-  if (nothingToCheck) deps.log(`[suite] ci: ${nothingToCheckText(parsed.level)}`);
+  if (nothingToCheck) deps.log(`[suite] ci: ${nothingToCheckText(parsed)}`);
   const advisory = parsed.level !== 'L0' && reports.some((report) => report.judgeTrust.trusted === false);
   if (advisory) deps.log(`[suite] ci: ${CI_ADVISORY_LINE}`);
 
@@ -564,7 +608,7 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
     const path = resolve(deps.env.INIT_CWD ?? process.cwd(), parsed.summary);
     try {
       mkdirSync(dirname(path), { recursive: true });
-      appendFileSync(path, ciSummaryMarkdown(parsed.level, outcomes, reports, exitCode, advisory));
+      appendFileSync(path, ciSummaryMarkdown(parsed, outcomes, reports, exitCode, advisory, samples));
     } catch (error) {
       deps.error(`[suite] ci: could not append the step summary: ${errorMessage(error)}`);
       exitCode = aggregateCiExitCode([exitCode, 1]);
@@ -574,13 +618,42 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
   return exitCode;
 }
 
-/** At L0 the historical wording; at L1 a suite also needs L1 tests and a merge-base baseline. */
-function nothingToCheckText(level: Level): string {
+/**
+ * At L0 the historical wording; at L1 a suite also needs L1 tests and a merge-base baseline,
+ * unless `--include-unbaselined` (the scheduled run) runs suites without one.
+ */
+function nothingToCheckText(parsed: Extract<ParsedCommand, { command: 'ci' }>): string {
+  const { level } = parsed;
   if (level === 'L0') return `no registered suite has tests; ${level} gate passes with nothing to check`;
+  if (parsed.includeUnbaselined === true) return `no registered suite has ${level} tests; ${level} run passes with nothing to check`;
   return `no registered suite has ${level} tests and an ${level} baseline at the merge-base; ${level} gate passes with nothing to check`;
 }
 
-type CiLevelSkip = { kind: 'run' } | { kind: 'skip'; reason: string } | { kind: 'failed'; error: string };
+interface CiSamplesLines {
+  /** `Samples per suite: n = N`, only when `--runs` was given. */
+  samples: string | null;
+  /** The inconclusive-meaning line, only when `--runs` is below `diff.minSamples.<level>`. */
+  inconclusive: string | null;
+}
+
+/** Summary and log lines for an explicit `ci --runs N` (the scheduled nightly and weekly runs). */
+function ciSamplesLines(parsed: Extract<ParsedCommand, { command: 'ci' }>, config: SuiteConfig): CiSamplesLines {
+  if (parsed.runs === undefined || parsed.level === 'L0') return { samples: null, inconclusive: null };
+  const min = config.diff.minSamples[parsed.level];
+  return {
+    samples: `Samples per suite: n = ${parsed.runs}`,
+    inconclusive:
+      parsed.runs < min
+        ? `With n = ${parsed.runs} below diff.minSamples.${parsed.level} (${min}), meaning criteria diff as inconclusive; only rule and S regressions or lost coverage can fail this run.`
+        : null,
+  };
+}
+
+type CiLevelSkip =
+  | { kind: 'run' }
+  | { kind: 'skip'; reason: string }
+  | { kind: 'missing-baseline'; ref: string }
+  | { kind: 'failed'; error: string };
 
 /** L1/L2 `ci` preconditions per suite: tests at the level, then a baseline at the merge-base. */
 function ciLevelSkip(suite: LoadedSuite, level: Level, deps: CliDeps): CiLevelSkip {
@@ -588,7 +661,7 @@ function ciLevelSkip(suite: LoadedSuite, level: Level, deps: CliDeps): CiLevelSk
   const relativeBaseline = relative(deps.packageDir, baselinePath(deps.packageDir, suite.id, level));
   try {
     const file = (deps.mergeBase ?? ((path: string) => readMergeBaseFile(deps.packageDir, path)))(relativeBaseline);
-    if (file.text === null) return { kind: 'skip', reason: `no ${level} baseline at merge-base ${file.ref}` };
+    if (file.text === null) return { kind: 'missing-baseline', ref: file.ref };
     return { kind: 'run' };
   } catch (error) {
     return { kind: 'failed', error: `cannot read the ${level} baseline at the merge-base: ${errorMessage(error).replace(/^\[suite\] /, '')}` };
@@ -596,17 +669,20 @@ function ciLevelSkip(suite: LoadedSuite, level: Level, deps: CliDeps): CiLevelSk
 }
 
 function ciSummaryMarkdown(
-  level: Level,
+  parsed: Extract<ParsedCommand, { command: 'ci' }>,
   outcomes: readonly CiSuiteOutcome[],
   reports: readonly SuiteRunReport[],
   exitCode: number,
   advisory: boolean,
+  samples: CiSamplesLines,
 ): string {
-  const lines = [`## Suite ${level} gate`, ''];
+  const lines = [`## Suite ${parsed.level} gate`, ''];
   if (!outcomes.some((outcome) => outcome.status !== 'skipped')) {
-    const text = nothingToCheckText(level);
+    const text = nothingToCheckText(parsed);
     lines.push(`${text.charAt(0).toUpperCase()}${text.slice(1)}.`, '');
   }
+  if (samples.samples !== null) lines.push(samples.samples, '');
+  if (samples.inconclusive !== null) lines.push(samples.inconclusive, '');
   if (advisory) lines.push(CI_ADVISORY_LINE, '');
   lines.push(`Gate exit code: **${exitCode}**`, '');
   for (const outcome of outcomes) {
