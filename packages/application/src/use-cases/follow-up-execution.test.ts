@@ -229,3 +229,53 @@ describe('FollowUpExecutionUseCase — policy decisions', () => {
     expect(repo.markSent).toHaveBeenCalled();
   });
 });
+
+describe('FollowUpExecutionUseCase with an injected clock', () => {
+  const NOW = new Date('2026-01-05T23:30:00Z');
+  const clock = { now: () => new Date(NOW.getTime()) };
+
+  function build(action: ScheduledActionRecord, ctx: FollowUpContextData) {
+    const actionRepo = makeRepo(action);
+    const conversationRepo = makeConversationRepo();
+    const outbox = makeOutbox();
+    const useCase = new FollowUpExecutionUseCase(actionRepo, makeContextPort(ctx), conversationRepo, outbox, makeAi(), clock);
+    return { useCase, actionRepo, conversationRepo, outbox };
+  }
+
+  it('postpones by 8h30m when the clock is in the default quiet window', async () => {
+    const { useCase, actionRepo } = build(
+      makeAction({ dueAt: new Date(NOW.getTime() - 1000) }),
+      makeContext({ user: { proactiveMessagingEnabled: true, timezone: 'UTC', quietHours: { enabled: true }, preferredName: 'Alice' } }),
+    );
+
+    const result = await useCase.execute(baseInput);
+
+    expect(result).toEqual({ decision: 'postpone', reason: 'quiet_hours' });
+    const newDueAt = (actionRepo.postpone as ReturnType<typeof vi.fn>).mock.calls[0]![2] as Date;
+    expect(newDueAt.getTime() - NOW.getTime()).toBe((8 * 60 + 30) * 60 * 1000);
+  });
+
+  it('skips as not_due_yet when dueAt is after the clock instant', async () => {
+    const { useCase, outbox } = build(
+      makeAction({ dueAt: new Date(NOW.getTime() + 60_000) }),
+      makeContext(),
+    );
+
+    const result = await useCase.execute(baseInput);
+
+    expect(result).toEqual({ decision: 'skip', reason: 'not_due_yet' });
+    expect(outbox.enqueueFollowUpExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it('stamps the outbound occurredAt from the clock', async () => {
+    const { useCase, conversationRepo } = build(
+      makeAction({ dueAt: new Date(NOW.getTime() - 1000) }),
+      makeContext(),
+    );
+
+    const result = await useCase.execute(baseInput);
+
+    expect(result.decision).toBe('send');
+    expect(conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({ occurredAt: NOW }));
+  });
+});

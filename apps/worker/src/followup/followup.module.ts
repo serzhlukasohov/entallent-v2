@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { FollowUpExecutionUseCase, FollowUpSchedulerUseCase } from '@entalent/application';
+import { FollowUpExecutionUseCase, FollowUpSchedulerUseCase, systemClock } from '@entalent/application';
 import { FollowUpExecutionProcessor } from './follow-up-execution.processor';
 import { ScheduledActionRepository } from './repositories/scheduled-action.repository';
 import { FollowUpContextRepository } from './repositories/follow-up-context.repository';
@@ -33,7 +33,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
         convRepo: ConversationRepository,
         outbox: OutboxService,
         ai: AiService,
-      ) => new FollowUpExecutionUseCase(actionRepo, contextRepo, convRepo, outbox, ai),
+      ) => new FollowUpExecutionUseCase(actionRepo, contextRepo, convRepo, outbox, ai, systemClock),
       inject: [
         ScheduledActionRepository,
         FollowUpContextRepository,

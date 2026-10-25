@@ -118,7 +118,7 @@ development_status:
   12-3-suite-rule-implementations: review
   12-3b-proactive-state-and-clock-rules: backlog
   12-4-p-suite-atomic-tests-and-smoke-journeys: backlog
-  12-5-clockport-in-the-application-layer: ready-for-dev
+  12-5-clockport-in-the-application-layer: review
   12-6-cadence-policy-extracted-from-worker-sql: backlog
   12-7-l0-deterministic-executor-and-fixtures: backlog
   12-8-runner-suite-run-and-suite-baseline-accept: backlog

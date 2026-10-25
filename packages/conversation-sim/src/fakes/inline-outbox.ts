@@ -1,7 +1,9 @@
 import {
   MemoryExtractionUseCase,
+  systemClock,
   StyleAnalysisUseCase,
   type AiProviderPort,
+  type ClockPort,
   type ConversationRepositoryPort,
   type GoalRepositoryPort,
   type MemoryExtractionPayload,
@@ -15,6 +17,8 @@ import {
 export interface InlineOutboxOptions {
   /** Style analysis costs one extra LLM call per turn; off by default. */
   analyzeStyle?: boolean;
+  /** Source of the delivery `sentAt` stamp; defaults to the system clock. */
+  clock?: ClockPort;
 }
 
 /**
@@ -47,7 +51,7 @@ export class InlineOutbox implements OutboxPort {
       tenantId: payload.tenantId,
       conversationId: payload.conversationId,
       externalMessageId: `sim:${payload.messageId}`,
-      sentAt: new Date(),
+      sentAt: (this.options.clock ?? systemClock).now(),
     });
   }
 

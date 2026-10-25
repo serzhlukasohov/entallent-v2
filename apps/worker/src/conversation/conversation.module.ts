@@ -4,6 +4,7 @@ import {
   ConversationOrchestrator,
   ProactiveCheckInUseCase,
   PulseBacklogService,
+  systemClock,
 } from '@entalent/application';
 import { AiService } from './ai.service';
 import { ConversationProcessor } from './conversation.processor';
@@ -98,6 +99,7 @@ const orchestratorLogger = {
         { run: (callback) => db.withTransaction(callback) },
         onboardingTurn,
         orchestratorLogger,
+        systemClock,
       ),
       inject: [
         ConversationRepository,
@@ -133,6 +135,7 @@ const orchestratorLogger = {
         memoryRepo,
         pulseBacklogService,
         featureFlags,
+        systemClock,
       ),
       inject: [
         ConversationRepository,
