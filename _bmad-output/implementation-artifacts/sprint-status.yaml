@@ -117,6 +117,7 @@ development_status:
   # 12-3 split 2026-10-25: 12-3 = 12.3a (params validation, reply/turn rules); 12-3b = proactive, clock and state/event rules
   12-3-suite-rule-implementations: review
   12-3b-proactive-state-and-clock-rules: review
+  # 12-4 blocked 2026-10-25 (bmad-build-auto): needs verbatim Confluence texts and QA-approved seeds; see bmad-build-auto-result-12-4-*.md
   12-4-p-suite-atomic-tests-and-smoke-journeys: backlog
   12-5-clockport-in-the-application-layer: review
   12-6-cadence-policy-extracted-from-worker-sql: backlog
