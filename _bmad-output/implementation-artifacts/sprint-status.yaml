@@ -42,7 +42,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-10-25T10:00:00+02:00
+last_updated: 2026-10-25T12:00:00+02:00
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -113,7 +113,7 @@ development_status:
   epic-12: in-progress
   # 12-1 regenerated as spec-12-1-case-schema-loader-and-rule-registry-contract.md (bmad-build, 2026-10-24)
   12-1-case-schema-loader-and-rule-registry-contract: review
-  12-2-evaluation-scoring-and-report-core: ready-for-dev
+  12-2-evaluation-scoring-and-report-core: review
   # 12-3 split 2026-10-25: 12-3 = 12.3a (params validation, reply/turn rules); 12-3b = proactive, clock and state/event rules
   12-3-suite-rule-implementations: ready-for-dev
   12-3b-proactive-state-and-clock-rules: backlog

@@ -192,7 +192,7 @@ function joinCriteria(suiteId: string, test: SuiteTest, source: SourceCase): Loa
         { testId: test.id, path },
       );
     }
-    return { ...criterion, layer: entry.layer, passCondition: entry.passCondition };
+    return { ...criterion, layer: entry.layer, passCondition: entry.passCondition, stateEffect: entry.stateEffect };
   });
 }
 

@@ -62,6 +62,11 @@ describe('validateSuite: valid suite', () => {
       ['X-01.C1', 'P', 'The bundle is staged.'],
       ['X-01.C2', 'S', 'Staged bundle count grows by one.'],
     ]);
+    expect(a1!.criteria.find((c) => c.id === 'X-01.C2')!.stateEffect).toEqual({
+      port: 'questionConfirmationRepo',
+      method: 'stageBundle',
+      expected: 1,
+    });
     expect(journeyResult!.criteria.every((c) => typeof c.layer === 'string' && c.passCondition.length > 0)).toBe(true);
     expect(p06!.criteria[0]).toMatchObject({ layer: 'P', passCondition: 'Check-ins are 48 h apart.' });
   });

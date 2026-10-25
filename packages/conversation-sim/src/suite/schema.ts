@@ -432,7 +432,7 @@ export const SuiteTestSchema = SuiteTestObjectSchema.superRefine(refineSuiteTest
 export type SuiteTest = z.infer<typeof SuiteTestSchema>;
 
 /** A test criterion after the loader joined `layer` and `passCondition` from the manifest. */
-export type LoadedCriterion = Criterion & Pick<SourceCriterion, 'layer' | 'passCondition'>;
+export type LoadedCriterion = Criterion & Pick<SourceCriterion, 'layer' | 'passCondition' | 'stateEffect'>;
 export type LoadedTest = Omit<SuiteTest, 'criteria'> & { criteria: LoadedCriterion[] };
 export interface LoadedSuite {
   id: string;
@@ -583,6 +583,9 @@ export type CaseRun = z.infer<typeof CaseRunSchema>;
 // Results
 // ---------------------------------------------------------------------------
 
+export const MethodSchema = z.enum(['observed', 'substituted', 'n/a']);
+export type Method = z.infer<typeof MethodSchema>;
+
 export const CriterionResultSchema = z
   .object({
     testId: z.string().min(1),
@@ -590,12 +593,177 @@ export const CriterionResultSchema = z
     sourceCase: z.string().regex(SOURCE_CASE_ID),
     level: LevelSchema,
     layer: LayerSchema,
+    testKind: TestKindSchema,
+    /** False for `level-not-declared` and `no-judge-at-level`; out-of-scope results never count (AD-9). */
+    inScope: z.boolean(),
+    /** The step the criterion is evaluated at (0 for observation tests). */
+    step: nonNegativeInt.optional(),
     status: CriterionStatusSchema,
     advisory: z.boolean(),
-    method: z.enum(['observed', 'substituted', 'n/a']),
+    method: MethodSchema,
     reason: z.string().optional(),
     evidence: z.string().optional(),
     meaningSkipped: z.boolean().optional(),
   })
   .strict();
 export type CriterionResult = z.infer<typeof CriterionResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Judge trust (AD-8)
+// ---------------------------------------------------------------------------
+
+/** Computed once per run by the runner; `evaluate`, `score` and `report` copy it verbatim. */
+export const JudgeTrustSchema = z
+  .object({
+    trusted: z.boolean(),
+    reason: z.string().min(1),
+    pin: z.unknown().nullable(),
+    agreement: z.unknown().nullable(),
+  })
+  .strict();
+export type JudgeTrust = z.infer<typeof JudgeTrustSchema> & { pin: unknown; agreement: unknown };
+
+// ---------------------------------------------------------------------------
+// Scoring and reports (AD-9, AD-11)
+// ---------------------------------------------------------------------------
+
+/** `<testId>/<criterionId>`, or `<sourceCase>/<criterionId>` for manifest NOT TESTABLE rows. */
+export type TestCriterionKey = string;
+
+export const VerdictSchema = z.enum(['ADEQUATE', 'ACCEPTABLE WITH ISSUES', 'NOT ADEQUATE', 'n/a (journeys only)']);
+export type Verdict = z.infer<typeof VerdictSchema>;
+
+export const CriterionSampleSchema = z
+  .object({
+    status: CriterionStatusSchema,
+    advisory: z.boolean(),
+    reason: z.string().optional(),
+    evidence: z.string().optional(),
+    meaningSkipped: z.boolean().optional(),
+  })
+  .strict();
+export type CriterionSample = z.infer<typeof CriterionSampleSchema>;
+
+export const ScoredCriterionSchema = z
+  .object({
+    testId: z.string().min(1),
+    criterionId: z.string().regex(CRITERION_ID),
+    sourceCase: z.string().regex(SOURCE_CASE_ID),
+    /** `null` for manifest NOT TESTABLE rows, which belong to no test. */
+    testKind: TestKindSchema.nullable(),
+    layer: LayerSchema,
+    inScope: z.boolean(),
+    status: CriterionStatusSchema,
+    passCount: nonNegativeInt,
+    n: z.number().int().min(1),
+    /** Passes needed for PASS: n/n for rule-decided, ceil(0.8n) for meaning-decided criteria. */
+    minPasses: nonNegativeInt,
+    advisory: z.boolean(),
+    method: MethodSchema,
+    reason: z.string().optional(),
+    evidence: z.string().optional(),
+    samples: z.array(CriterionSampleSchema),
+  })
+  .strict();
+export type ScoredCriterion = z.infer<typeof ScoredCriterionSchema>;
+
+export const LayerRowSchema = z
+  .object({
+    layer: LayerSchema,
+    pass: nonNegativeInt,
+    fail: nonNegativeInt,
+    /** PASS / (PASS + FAIL) over non-advisory atomic and observation results; null when both are 0. */
+    passRate: z.number().min(0).max(1).nullable(),
+  })
+  .strict();
+export type LayerRow = z.infer<typeof LayerRowSchema>;
+
+export const LayerTableSchema = z
+  .object({
+    rows: z.array(LayerRowSchema),
+    /** Combined P+D+C pass rate the verdict is decided on. */
+    combinedPdc: LayerRowSchema.omit({ layer: true }),
+  })
+  .strict();
+export type LayerTable = z.infer<typeof LayerTableSchema>;
+
+export const JourneySectionSchema = z
+  .object({
+    keys: z.array(z.string()),
+    counts: z.record(CriterionStatusSchema, nonNegativeInt),
+  })
+  .strict();
+export type JourneySection = z.infer<typeof JourneySectionSchema>;
+
+export const CoverageRowSchema = z
+  .object({
+    requirement: z.array(z.string()),
+    sourceCase: z.string().regex(SOURCE_CASE_ID),
+    /** `null` when no test covers the criterion (manifest NOT TESTABLE). */
+    testId: z.string().nullable(),
+    criterionId: z.string().regex(CRITERION_ID),
+    layer: LayerSchema,
+    status: CriterionStatusSchema.nullable(),
+    reason: z.string().optional(),
+  })
+  .strict();
+export type CoverageRow = z.infer<typeof CoverageRowSchema>;
+
+export const CoverageSchema = z
+  .object({
+    rows: z.array(CoverageRowSchema),
+    notTestable: z.array(z.object({ key: z.string(), reason: z.string() }).strict()),
+    /** Criteria every check of which is a meaning check (decided only by a judge). */
+    judgeOnly: z.array(z.string()),
+    unobservable: z.array(z.object({ key: z.string(), field: z.string() }).strict()),
+  })
+  .strict();
+export type Coverage = z.infer<typeof CoverageSchema>;
+
+export const JudgeErrorSchema = z
+  .object({ key: z.string().min(1), reason: z.string().min(1), message: z.string().optional() })
+  .strict();
+export type JudgeError = z.infer<typeof JudgeErrorSchema>;
+
+export const UsageSchema = z.record(z.number().nonnegative());
+export type Usage = z.infer<typeof UsageSchema>;
+
+export const SuiteRunReportSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    /** `<ISO timestamp with - for : and .>-<short sha>`, as in `run-gate.ts`. */
+    runId: z.string().min(1),
+    suiteId: z.string().min(1),
+    level: LevelSchema,
+    n: z.number().int().min(1),
+    git: z.object({ sha: z.string().nullable(), dirty: z.boolean() }).strict(),
+    models: z.object({ coach: z.string().nullable(), judge: z.string().nullable() }).strict(),
+    judgeTrust: JudgeTrustSchema,
+    results: z.record(ScoredCriterionSchema),
+    /** `null` when only journeys are in scope. */
+    layers: LayerTableSchema.nullable(),
+    verdict: VerdictSchema,
+    complete: z.boolean(),
+    provisional: z.boolean(),
+    provisionalReason: z.string().optional(),
+    coverage: CoverageSchema,
+    journeys: JourneySectionSchema,
+    judgeErrors: z.array(JudgeErrorSchema),
+    usage: UsageSchema,
+  })
+  .strict();
+export type SuiteRunReport = z.infer<typeof SuiteRunReportSchema>;
+
+/** Output of `score`; a plain in-memory value, not a persisted artifact. */
+export interface SuiteScore {
+  suite: LoadedSuite;
+  level: Level;
+  n: number;
+  results: ScoredCriterion[];
+  layers: LayerTable | null;
+  verdict: Verdict;
+  complete: boolean;
+  provisional: boolean;
+  provisionalReason?: string;
+  journeys: JourneySection;
+}

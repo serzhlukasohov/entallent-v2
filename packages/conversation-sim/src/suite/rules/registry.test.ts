@@ -109,6 +109,26 @@ describe('rule registry', () => {
     expect(RULES['repeated-question'].run(run, { id: 'X-01.C1', evaluatedAt: 'reply:3' })).toEqual(expected);
   });
 
+  it('flags a reply that re-asks a seeded coach question and keeps run turn numbers', () => {
+    const q = 'What is taking most of your time right now?';
+    const seedHistory = [
+      { role: 'coach' as const, text: `Hi. ${q}`, atOffsetMs: 120_000 },
+      { role: 'user' as const, text: 'Deadlines.', atOffsetMs: 60_000 },
+    ];
+    const rule = RULES['repeated-question'];
+    const fail = syntheticRun('X-01.A1', [`Understood. ${q}`]);
+    expect(rule.run(fail, { id: 'X-01.C1', evaluatedAt: 'reply:1' }, undefined, { seedHistory })).toEqual({
+      status: 'FAIL',
+      evidence: `turn 1 — ${q} (already asked in seeded coach turn 1)`,
+    });
+    expect(rule.run(fail, { id: 'X-01.C1', evaluatedAt: 'reply:1' })).toEqual({ status: 'PASS' });
+    const repeatInRun = syntheticRun('X-01.J', ['Which deadline comes first this week?', 'Which deadline comes first this week?']);
+    expect(rule.run(repeatInRun, { id: 'X-01.C1', evaluatedAt: 'reply:2' }, undefined, { seedHistory })).toEqual({
+      status: 'FAIL',
+      evidence: 'turn 2 — Which deadline comes first this week? (already asked on turn 1)',
+    });
+  });
+
   it('delegates reflective-opener to the product-shared definition', () => {
     const text = RULES['reflective-opener'].fixtures.fail.steps[0]!.reply!.text;
     expect(hasReflectiveOpener(text)).toBe(true);

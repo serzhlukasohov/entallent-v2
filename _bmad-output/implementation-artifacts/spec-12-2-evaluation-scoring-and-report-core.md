@@ -2,7 +2,8 @@
 title: 'Story 12.2: Evaluation, Scoring and Report Core'
 type: 'feature'
 created: '2026-10-25'
-status: 'ready-for-dev'
+status: 'done'
+baseline_commit: '29d39ae061416a9d2bf1f301787e3bdc9837b94a'
 route: 'dispatch'
 review_loop_iteration: 0
 context:
@@ -77,12 +78,12 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `src/suite/schema.ts` -- add the schema extensions from the Code Map -- single type source.
-- [ ] `src/suite/loader.ts`, `src/suite/rules/registry.ts`, `src/suite/rules/repeated-question.ts` -- join `stateEffect`; add `RuleContext`; consume seed in `repeated-question` plus a fail fixture test where the reply re-asks a seeded coach question.
-- [ ] `src/suite/evaluate.ts` -- `evaluate(test: LoadedTest, run: CaseRun, judge: null, trust: JudgeTrust, rules = RULES): CriterionResult[]` -- scope, effect-count synthesis, checkpoint evaluation, precedence, rule calls with `RuleContext`; `advisory` is `!trust.trusted` only on meaning-derived results; `method: 'n/a'` until 13/14 set it.
-- [ ] `src/suite/score.ts` -- `score({ suite, level, n, results }): SuiteScore` -- aggregate per key by `minPasses`, add manifest NOT_TESTABLE rows (see Decisions), layer table P/D/C/S over atomic+observation non-advisory, journeys section, COMPLETE, verdict, provisional reason.
-- [ ] `src/suite/report.ts` -- `buildSuiteReport(score, meta)` (meta: runId, suiteId, level, n, git `{ sha, dirty }`, models, judgeTrust, judgeErrors, usage), `renderSuiteReportMarkdown(report)`, `writeSuiteReport(report, baseDir)` → `<baseDir>/runs/suites/<runId>/report.{json,md}`; coverage table requirement → source → test → criterion, NOT TESTABLE reasons, judge-only criteria, unobservable fields.
-- [ ] `src/suite/evaluate.test.ts`, `score.test.ts`, `report.test.ts` -- one test per matrix row, each verdict band boundary (0.90, 0.75), each precedence branch, journey checkpoint propagation, scope exclusion; report JSON parses with `SuiteRunReportSchema`; writer test uses a temp dir.
+- [x] `src/suite/schema.ts` -- add the schema extensions from the Code Map -- single type source.
+- [x] `src/suite/loader.ts`, `src/suite/rules/registry.ts`, `src/suite/rules/repeated-question.ts` -- join `stateEffect`; add `RuleContext`; consume seed in `repeated-question` plus a fail fixture test where the reply re-asks a seeded coach question.
+- [x] `src/suite/evaluate.ts` -- `evaluate(test: LoadedTest, run: CaseRun, judge: null, trust: JudgeTrust, rules = RULES): CriterionResult[]` -- scope, effect-count synthesis, checkpoint evaluation, precedence, rule calls with `RuleContext`; `advisory` is `!trust.trusted` only on meaning-derived results; `method: 'n/a'` until 13/14 set it.
+- [x] `src/suite/score.ts` -- `score({ suite, level, n, results }): SuiteScore` -- aggregate per key by `minPasses`, add manifest NOT_TESTABLE rows (see Decisions), layer table P/D/C/S over atomic+observation non-advisory, journeys section, COMPLETE, verdict, provisional reason.
+- [x] `src/suite/report.ts` -- `buildSuiteReport(score, meta)` (meta: runId, suiteId, level, n, git `{ sha, dirty }`, models, judgeTrust, judgeErrors, usage), `renderSuiteReportMarkdown(report)`, `writeSuiteReport(report, baseDir)` → `<baseDir>/runs/suites/<runId>/report.{json,md}`; coverage table requirement → source → test → criterion, NOT TESTABLE reasons, judge-only criteria, unobservable fields.
+- [x] `src/suite/evaluate.test.ts`, `score.test.ts`, `report.test.ts` -- one test per matrix row, each verdict band boundary (0.90, 0.75), each precedence branch, journey checkpoint propagation, scope exclusion; report JSON parses with `SuiteRunReportSchema`; writer test uses a temp dir.
 
 **Acceptance Criteria:**
 - Given the same `(test, run, trust)`, when `evaluate` runs twice, then results are deep-equal and inputs are not mutated (deep-frozen fixture).
@@ -94,6 +95,34 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+Review 1 (2026-10-25; Blind Hunter, Edge Case Hunter, Verification Gap):
+
+| # | Finding | Verdict | Route | Evidence |
+|---|---------|---------|-------|----------|
+| 1 | `writeSuiteReport` accepts runId `.`/`..` | low | patch | Regex allows dots-only ids; `join` then writes to `runs/` or `runs/suites/`. |
+| 2 | Fewer samples than n: FAIL without reason/evidence; no short-sample test | medium | patch | Representative falls back to a PASS sample; all multi-sample tests send exactly n. |
+| 3 | `journeySection` counts out-of-scope journey results | low | patch | No `inScope` filter; `level-not-declared` inflates `counts.NOT_RUN`. |
+| 4 | Markdown omits FAIL evidence; list items not newline-escaped | low | patch | `pushResultTable` prints reason only; `pushList` writes raw strings. |
+| 5 | Checkpoint evaluated past `stoppedAtStep` | low | patch | `failedCheckpoint` only checks `k > run.steps.length`. |
+| 6 | Loader `stateEffect` join untested | medium | patch | Verification-gap layer: no test reads `stateEffect` on a loaded criterion. |
+| 7 | No evaluate test for observation tests (step 0) | low | patch | Blind Hunter test-gap; only reply/state/conversation criteria are exercised. |
+| 8 | `score` does not detect suite criteria with no results / empty run reads complete journeys-only | maybe-false (medium if true) | defer | Depends on whether the 12.8 runner can drop results; runner does not exist yet. |
+| 9 | Synthesized `effect-count` counts only the evaluated step; a journey staging at step 1 with `at: after` would FAIL | maybe-false (medium if true) | defer | Spec-literal (`step` = criterion step); counting semantics belong to the 12.3b rule, still draft. |
+| 10 | `state` criteria at `after-step:n <= k` invalidated by checkpoint k | false | reject | Frozen matrix invalidates `conversation`/`state` criteria without `independentOfCheckpoints`; fix would edit the spec. |
+| 11 | NOT_OBSERVABLE checkpoint treated as passed | false | reject | Design Notes: "only FAIL fails it". |
+| 12 | Undecided or journey S result can leave ADEQUATE | false | reject | Matrix: "any non-advisory S FAIL"; undecided S makes the run incomplete and provisional. |
+| 13 | Default `RULES` throws for paired change criteria (incl. out-of-scope) | false | reject | Frozen Always: throw on a rule absent from the registry; `effect-count` arrives in 12.3b; no case data before 12.4. |
+| 14 | `renumber` parses legacy evidence text | low | reject | Registry test pins the evidence wording; restructuring the legacy finder is more than a direct fix. |
+| 15 | `alreadySatisfied` outranks ERROR / step-not-reached | false | reject | Framework precedence INVALID > ERROR > NOT_RUN, as the spec states. |
+| 16 | `score` does not check sample agreement (layer/inScope) | low | reject | Samples come from one `evaluate` per key; mismatch not demonstrated reachable. |
+| 17 | `onFail: stop` vs `continue` not distinguished | false | reject | Stopping is executor behaviour (`stoppedAtStep`); evaluate handles it via step-not-reached. |
+| 18 | `change` query at `before` | low | reject | Authoring error that surfaces loudly as INVALID already-satisfied; guard not needed now. |
+| 19 | `run.steps` longer than `test.steps` not rejected | low | reject | Executor contract; not demonstrated reachable. |
+| 20 | Stray results not in suite are scored | low | reject | Results come only from `evaluate` over suite tests. |
+| 21 | All-undecided run gives NOT ADEQUATE | false | reject | Provisional with "no decided P/D/C criterion" reason; documented decision. |
+| 22 | Uncovered criterion missing from coverage | false | reject | Loader throws `uncovered-criterion` (loader.ts:261,274). |
+| 23 | Task-log row lacks receipt path | low | patch | Fixed in bookkeeping (row rewritten with receipt). |
 
 ## Design Notes
 

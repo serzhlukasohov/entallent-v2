@@ -284,3 +284,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3-suite-rule-implementations.md`
   summary: Story 12.3 split; the proactive-window rules, `clock-leak` and the state/event rules (`effect-count`, `state-equals`, `state-not-greater-than`) moved to Story 12.3b (`spec-12-3b-proactive-state-and-clock-rules.md`, draft).
   evidence: The full 12.3 spec was about 2,300 tokens; the user approved the split on 2026-10-25.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-2-evaluation-scoring-and-report-core.md`
+  summary: `score` only sees results it is given; a suite criterion with no results (or an empty run) leaves `complete: true`, and an empty run reads as `n/a (journeys only)`.
+  evidence: Blind Hunter and Edge Case Hunter (Story 12.2 review). Unverified, medium if the 12.8 runner can drop a test's results; settle in 12.8 by checking every suite key is present before scoring.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-2-evaluation-scoring-and-report-core.md`
+  summary: The synthesized `effect-count` carries `step` = the criterion's evaluated step, so a `change` criterion at `after` in a multi-step journey counts only last-step events.
+  evidence: Blind Hunter and Edge Case Hunter (Story 12.2 review). Unverified, medium if real journeys stage effects before the last step; settle in 12.3b (draft) by deciding whether `effect-count` counts on the step or over steps 1..step.
