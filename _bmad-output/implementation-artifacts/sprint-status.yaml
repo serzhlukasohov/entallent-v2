@@ -120,7 +120,9 @@ development_status:
   # 12-4 blocked 2026-10-25 (bmad-build-auto): needs verbatim Confluence texts and QA-approved seeds; see bmad-build-auto-result-12-4-*.md
   12-4-p-suite-atomic-tests-and-smoke-journeys: backlog
   12-5-clockport-in-the-application-layer: review
+  # 12-6 blocked 2026-10-25 (bmad-build-auto): intent gap on batch LIMIT vs moved filters and QA cohort facts; see bmad-build-auto-result-12-6-*.md
   12-6-cadence-policy-extracted-from-worker-sql: backlog
+  # 12-7..12-9 not started 2026-10-25: 12.7 P-06 path needs 12.6; 12.8 needs 12.4 and 12.7; 12.9 needs 12.8
   12-7-l0-deterministic-executor-and-fixtures: backlog
   12-8-runner-suite-run-and-suite-baseline-accept: backlog
   12-9-suite-diff-with-regression-categories: backlog
