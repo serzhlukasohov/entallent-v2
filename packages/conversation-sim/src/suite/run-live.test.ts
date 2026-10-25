@@ -48,16 +48,46 @@ describe('runLive', () => {
   });
 
   it.each([
-    [['calibrate', '--suite', 'smoke-v1', '--live-model'], '[suite] run:live runs only the run command, got calibrate'],
+    [['calibrate', '--suite', 'smoke-v1', '--live-model'], '[suite] run:live runs only the run and ci commands, got calibrate'],
     [['run', '--suite', 'smoke-v1', '--level', 'L0', '--live-model'], '[suite] run:live runs only --level L1, got L0'],
     [['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model'], '[suite] run:live runs only --level L1, got L2'],
     [['run', '--suite', 'smoke-v1', '--live-model'], '[suite] run: --level <L0|L1|L2> is required'],
-  ])('runs only the run command at L1: %j', async (argv, message) => {
+    [['ci', '--level', 'L0', '--live-model'], '[suite] run:live runs only --level L1, got L0'],
+    [['ci', '--level', 'L2', '--live-model'], '[suite] run:live runs only --level L1, got L2'],
+    [['diff', '--run', 'x', '--live-model'], '[suite] run:live runs only the run and ci commands, got diff'],
+    [['baseline:accept', '--run', 'x', '--live-model'], '[suite] run:live runs only the run and ci commands, got baseline:accept'],
+  ])('runs only the run and ci commands at L1: %j', async (argv, message) => {
     const s = stubs();
     expect(await runLive(argv, s.overrides)).toBe(1);
     expect(s.errors).toEqual([message]);
     expect(s.runs).toEqual([]);
     expect(s.built).toEqual({ providers: 0, models: 0 });
+  });
+
+  it('refuses ci --level L1 without --live-model, building nothing and running nothing', async () => {
+    const s = stubs();
+    expect(await runLive(['ci', '--level', 'L1', '--summary', 'summary.md'], s.overrides)).toBe(1);
+    expect(s.errors).toEqual([
+      '[suite] run:live refuses without --live-model: it calls the live coach and judge models (model egress and cost are a human boundary)',
+    ]);
+    expect(s.runs).toEqual([]);
+    expect(s.built).toEqual({ providers: 0, models: 0 });
+  });
+
+  it('with the flag, runs ci --level L1 through main with the same L1 executor and judge wiring', async () => {
+    const s = stubs();
+    expect(await runLive(['ci', '--level', 'L1', '--live-model', '--summary', 'summary.md'], s.overrides)).toBe(0);
+    expect(s.errors).toEqual([]);
+    expect(s.runs).toHaveLength(1);
+    const { argv, deps } = s.runs[0]!;
+    expect(argv).toEqual(['ci', '--level', 'L1', '--summary', 'summary.md']);
+    const executor = deps.createExecutor('L1');
+    expect(executor).toBeInstanceOf(L1OrchestratorExecutor);
+    expect(executor.coachModel).toBe('openai:analysis=gpt-4o-mini,generation=gpt-4o');
+    expect(() => deps.createExecutor('L0')).toThrow('[suite] run:live runs only --level L1, got L0');
+    expect(s.built).toEqual({ providers: 0, models: 0 });
+    expect(() => deps.createRunJudge!(RUNNER_CONFIG.judge, { callTimeoutMs: 60_000 })).toThrow('no model in tests');
+    expect(s.built.models).toBe(1);
   });
 
   it('with the flag, strips it and runs main with an L1 executor and a judge factory that build nothing until used', async () => {

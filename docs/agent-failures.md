@@ -3292,3 +3292,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: The L1 executor loads `@langwatch/scenario` with a dynamic import (resolves the ES module build), passes a passive User-role adapter that throws if asked to generate, and `run-live.ts` forces exit after an unreferenced one-second grace timer. The README L1 section records the adapter.
 - Regression check: `import-graph.test.ts` "runs one scripted atomic L1 case through the L1 executor and Scenario in plain Node (no Vitest)" (spawns `node --import tsx src/suite/executors/__fixtures__/l1-plain-node-probe.ts` with PATH only and expects exit 0 and one recorded step), plus `l1-orchestrator-executor.test.ts` (real Scenario `run()` offline, agent roles asserted).
 - Status: fixed
+
+## 2026-10-25: L1 PR workflow draft was not valid YAML
+
+- Symptom: The first draft of `.github/workflows/conversation-suite-l1-pr.yml` (Story 13.6) failed `yaml.safe_load` ("mapping values are not allowed here") because a plain `run:` scalar contained `: ` (`echo "Suite L1 reports: $ARTIFACT_URL"`). The text-based workflow test passed anyway.
+- Expected: A workflow file parses as YAML before the task finishes.
+- Root cause layer: verification
+- Harness fix: Parse every new or edited workflow with `yaml.safe_load` before finishing; multi-word shell lines go in `run: |` block scalars; `l1-gate-workflow.test.ts` asserts the workflow structure.
+- Regression check: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/conversation-suite-l1-pr.yml'))"` plus `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/l1-gate-workflow.test.ts`.
+- Status: fixed

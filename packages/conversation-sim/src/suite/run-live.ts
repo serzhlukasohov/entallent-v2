@@ -8,11 +8,14 @@ import { createLiveJudgeModel, type JudgeEnv } from './judge/live-judge-model';
 import type { SuiteConfig } from './schema';
 
 /**
- * `suite:run:live` (architecture AD-14, AD-16): the only entry that wires the live coach
- * provider and the live pinned judge into `suite:run`. Model egress and cost are a human
- * boundary, so it refuses (exit 1, nothing built) unless `--live-model` is passed, and it
- * runs only the `run` command at `--level L1`. No test, script or CI step runs it with the
- * flag. The CLI, runner and executors never import this module (`executors/import-graph.test.ts`).
+ * `suite:run:live` (architecture AD-14, AD-15, AD-16): the only entry that wires the live
+ * coach provider and the live pinned judge into `suite:run` and `suite:ci`. Model egress and
+ * cost are a human boundary, so it refuses (exit 1, nothing built) unless `--live-model` is
+ * passed, and it runs only the `run` and `ci` commands at `--level L1`. Its only automated
+ * caller is the opt-in L1 pull-request gate (`.github/workflows/conversation-suite-l1-pr.yml`,
+ * live only when `CONVERSATION_SUITE_L1_PR_GATE_ENABLED` is `true`); no test or script runs it
+ * with the flag. The CLI, runner and executors never import this module
+ * (`executors/import-graph.test.ts`).
  */
 
 export const LIVE_MODEL_FLAG = '--live-model';
@@ -59,8 +62,8 @@ export async function runLive(argv: readonly string[], overrides: Partial<RunLiv
     deps.error(error.message);
     return 1;
   }
-  if (parsed.command !== 'run') {
-    deps.error(`[suite] run:live runs only the run command, got ${parsed.command}`);
+  if (parsed.command !== 'run' && parsed.command !== 'ci') {
+    deps.error(`[suite] run:live runs only the run and ci commands, got ${parsed.command}`);
     return 1;
   }
   if (parsed.level !== 'L1') {

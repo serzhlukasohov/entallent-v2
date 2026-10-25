@@ -49,7 +49,9 @@ import {
  * entry, 2 baseline-invalid, 3 judge infrastructure, 4 budget exceeded; usage errors and an
  * unreadable run report are 1 and write nothing. `ci` runs and merge-base-diffs every
  * registered suite that has tests and exits with the first code present by precedence
- * 2 > 3 > 4 > 1 over all suites (a load or run failure counts as 1), else 0. `calibrate`
+ * 2 > 3 > 4 > 1 over all suites (a load or run failure counts as 1), else 0; at L1 it needs
+ * an injected run judge (only `run-live.ts` wires one) and runs only suites with L1 tests and
+ * an L1 baseline at the merge-base, `diff.minSamples.L1` samples each. `calibrate`
  * exits 0 when the import or agreement file was written, 1 on usage, config, load, label
  * or export errors (and without a judge unless `--import` is given), 3 when any label was
  * judged ERROR (the file is still written). This entry wires no judge and no L1 executor:
@@ -111,8 +113,8 @@ export const HELP = `Usage:
       runs only from the gated live entry (L2 lands in Epic 14):
   suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>] [--allow-unpinned-judge]
       Runs L1 through the real orchestrator with the live coach provider and the pinned judge
-      (calls OpenAI or Azure OpenAI; human-run, never in CI; LANGWATCH_API_KEY optionally streams
-      the conversations). Refuses without --live-model. At L1/L2 SIM_JUDGE_MODEL must be unset
+      (calls OpenAI or Azure OpenAI; human-run; its only automated caller is the opt-in L1
+      pull-request gate, see run-live.ts ci below; LANGWATCH_API_KEY optionally streams the conversations). Refuses without --live-model. At L1/L2 SIM_JUDGE_MODEL must be unset
       or equal the pinned judge model; with --allow-unpinned-judge a different model is called
       and the run is untrusted (unpinned-judge). Meaning checks count only when the judge is calibrated.
       Budgets (suite.config.json budgets): at most maxCoachCallsPerRun coach and maxJudgeCallsPerRun
@@ -130,6 +132,11 @@ export const HELP = `Usage:
       For every suite in suite.config.json that has tests: suite:run (n=1) then
       suite:diff --merge-base. Suites without tests are skipped. --summary appends a
       Markdown step summary (no evidence or transcript text) to <path>.
+  node --import tsx src/suite/run-live.ts ci --level L1 --live-model [--summary <path>]
+      The L1 pull-request gate (calls live models; its only automated caller is the opt-in
+      conversation-suite-l1-pr.yml workflow). For every suite with L1 tests and an L1 baseline
+      at the merge-base: suite:run --runs diff.minSamples.L1 then suite:diff --merge-base;
+      other suites are skipped without a run. This entry refuses ci --level L1 (no judge).
   suite:calibrate --suite <id> [--import <qa-export.json>]
       --import appends the QA export's labels to calibration/<id>/labels.json (deduplicated on
       criterion and transcript hash; any invalid entry rejects the whole import). Without a
@@ -454,6 +461,8 @@ export interface CiSuiteOutcome {
   suiteId: string;
   status: 'skipped' | 'ran' | 'failed';
   exitCode: number;
+  /** Why a suite was skipped; absent means `no tests`. */
+  skipReason?: string;
   runId?: string;
   /** Load or run failure message (never environment values). */
   error?: string;
@@ -465,14 +474,20 @@ export function aggregateCiExitCode(codes: readonly number[]): number {
   return 0;
 }
 
+/** The advisory line of an L1 gate whose judge is untrusted (AD-15). */
+export const CI_ADVISORY_LINE =
+  'Meaning checks are advisory (judge uncalibrated): this gate fails only on rule and S regressions or lost coverage.';
+
 /**
  * `suite:ci` (AD-15): exactly `suite:run --suite <id> --level <L> --runs 1` then
  * `suite:diff --run <runId> --merge-base` per registered suite that has tests, in config
- * order, attempting every suite even after a failure.
+ * order, attempting every suite even after a failure. At L1 (the pull-request gate, only
+ * with an injected judge) a suite runs only when it has L1 tests and an L1 baseline at the
+ * merge-base, with `--runs diff.minSamples.L1`; a run without a baseline could gate nothing.
  */
 async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps: CliDeps): Promise<number> {
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
-  if (parsed.level !== 'L0') throw new Error(unsupportedLevel(parsed.level));
+  if (parsed.level === 'L2' || (parsed.level === 'L1' && !deps.createRunJudge)) throw new Error(unsupportedLevel(parsed.level));
   if (!config.levels.includes(parsed.level)) {
     throw new Error(`[suite] level ${parsed.level} is not enabled in suite.config.json`);
   }
@@ -501,14 +516,28 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
       outcomes.push({ suiteId, status: 'failed', exitCode: 1, error: message });
       continue;
     }
-    if (suite.tests.length === 0) {
+    if (parsed.level === 'L0' && suite.tests.length === 0) {
       deps.log(`[suite] ci: ${suiteId} skipped (no tests)`);
       outcomes.push({ suiteId, status: 'skipped', exitCode: 0 });
       continue;
     }
+    if (parsed.level !== 'L0') {
+      const skipReason = ciLevelSkip(suite, parsed.level, deps);
+      if (skipReason.kind === 'failed') {
+        deps.error(`[suite] ci: ${suiteId} failed: ${skipReason.error}`);
+        outcomes.push({ suiteId, status: 'failed', exitCode: 1, error: skipReason.error });
+        continue;
+      }
+      if (skipReason.kind === 'skip') {
+        deps.log(`[suite] ci: ${suiteId} skipped (${skipReason.reason})`);
+        outcomes.push({ suiteId, status: 'skipped', exitCode: 0, skipReason: skipReason.reason });
+        continue;
+      }
+    }
+    const runs = parsed.level === 'L0' ? 1 : config.diff.minSamples[parsed.level];
     let runId: string | undefined;
     try {
-      runId = (await performRun({ command: 'run', suite: suiteId, level: parsed.level, runs: 1 }, deps, { suite, runId: uniqueRunId })).runId;
+      runId = (await performRun({ command: 'run', suite: suiteId, level: parsed.level, runs }, deps, { suite, runId: uniqueRunId })).runId;
       const exitCode = diffCommand({ command: 'diff', run: runId, mergeBase: true }, deps);
       // A failed re-read only drops this suite's summary section; the diff exit code stands.
       try {
@@ -527,13 +556,15 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
 
   let exitCode = aggregateCiExitCode(outcomes.map((outcome) => outcome.exitCode));
   const nothingToCheck = !outcomes.some((outcome) => outcome.status !== 'skipped');
-  if (nothingToCheck) deps.log(`[suite] ci: no registered suite has tests; ${parsed.level} gate passes with nothing to check`);
+  if (nothingToCheck) deps.log(`[suite] ci: ${nothingToCheckText(parsed.level)}`);
+  const advisory = parsed.level !== 'L0' && reports.some((report) => report.judgeTrust.trusted === false);
+  if (advisory) deps.log(`[suite] ci: ${CI_ADVISORY_LINE}`);
 
   if (parsed.summary !== undefined) {
     const path = resolve(deps.env.INIT_CWD ?? process.cwd(), parsed.summary);
     try {
       mkdirSync(dirname(path), { recursive: true });
-      appendFileSync(path, ciSummaryMarkdown(parsed.level, outcomes, reports, exitCode));
+      appendFileSync(path, ciSummaryMarkdown(parsed.level, outcomes, reports, exitCode, advisory));
     } catch (error) {
       deps.error(`[suite] ci: could not append the step summary: ${errorMessage(error)}`);
       exitCode = aggregateCiExitCode([exitCode, 1]);
@@ -543,14 +574,43 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
   return exitCode;
 }
 
-function ciSummaryMarkdown(level: Level, outcomes: readonly CiSuiteOutcome[], reports: readonly SuiteRunReport[], exitCode: number): string {
+/** At L0 the historical wording; at L1 a suite also needs L1 tests and a merge-base baseline. */
+function nothingToCheckText(level: Level): string {
+  if (level === 'L0') return `no registered suite has tests; ${level} gate passes with nothing to check`;
+  return `no registered suite has ${level} tests and an ${level} baseline at the merge-base; ${level} gate passes with nothing to check`;
+}
+
+type CiLevelSkip = { kind: 'run' } | { kind: 'skip'; reason: string } | { kind: 'failed'; error: string };
+
+/** L1/L2 `ci` preconditions per suite: tests at the level, then a baseline at the merge-base. */
+function ciLevelSkip(suite: LoadedSuite, level: Level, deps: CliDeps): CiLevelSkip {
+  if (!suite.tests.some((test) => test.levels.includes(level))) return { kind: 'skip', reason: `no ${level} tests` };
+  const relativeBaseline = relative(deps.packageDir, baselinePath(deps.packageDir, suite.id, level));
+  try {
+    const file = (deps.mergeBase ?? ((path: string) => readMergeBaseFile(deps.packageDir, path)))(relativeBaseline);
+    if (file.text === null) return { kind: 'skip', reason: `no ${level} baseline at merge-base ${file.ref}` };
+    return { kind: 'run' };
+  } catch (error) {
+    return { kind: 'failed', error: `cannot read the ${level} baseline at the merge-base: ${errorMessage(error).replace(/^\[suite\] /, '')}` };
+  }
+}
+
+function ciSummaryMarkdown(
+  level: Level,
+  outcomes: readonly CiSuiteOutcome[],
+  reports: readonly SuiteRunReport[],
+  exitCode: number,
+  advisory: boolean,
+): string {
   const lines = [`## Suite ${level} gate`, ''];
   if (!outcomes.some((outcome) => outcome.status !== 'skipped')) {
-    lines.push(`No registered suite has tests; ${level} gate passes with nothing to check.`, '');
+    const text = nothingToCheckText(level);
+    lines.push(`${text.charAt(0).toUpperCase()}${text.slice(1)}.`, '');
   }
+  if (advisory) lines.push(CI_ADVISORY_LINE, '');
   lines.push(`Gate exit code: **${exitCode}**`, '');
   for (const outcome of outcomes) {
-    if (outcome.status === 'skipped') lines.push(`- ${outcome.suiteId}: skipped (no tests)`);
+    if (outcome.status === 'skipped') lines.push(`- ${outcome.suiteId}: skipped (${outcome.skipReason ?? 'no tests'})`);
     else if (outcome.status === 'failed') {
       lines.push(`- ${outcome.suiteId}: failed (exit 1): ${firstLine(outcome.error).replace(/\|/g, '\\|')}`);
     } else lines.push(`- ${outcome.suiteId}: ran (exit ${outcome.exitCode}), run ${outcome.runId}`);

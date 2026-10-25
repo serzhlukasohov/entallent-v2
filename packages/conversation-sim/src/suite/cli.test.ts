@@ -1491,3 +1491,189 @@ describe('budgets, usage and the L1 baseline path (Story 13.5)', () => {
     expect(report.budget?.exceeded).toEqual([]);
   });
 });
+
+describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)', () => {
+  const REPLY = 'Which release deadline comes first?';
+  const ADVISORY = 'Meaning checks are advisory (judge uncalibrated): this gate fails only on rule and S regressions or lost coverage.';
+  const NOTHING = 'no registered suite has L1 tests and an L1 baseline at the merge-base; L1 gate passes with nothing to check';
+  const summaryFile = () => join(dir, 'out', 'summary.md');
+  const readRun = (runId: string) => SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8')));
+
+  beforeEach(() => {
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1', 'x-judged'] }));
+  });
+
+  /** `reply` drives the executor; `judge` decides meaning checks; `files[suiteId]` is the merge-base baseline text. */
+  function l1Ci(options: { reply?: () => string | null; judge?: (input: JudgeInput) => 'PASS' | 'FAIL'; files?: Record<string, string | null> } = {}) {
+    let reply = options.reply ?? (() => REPLY);
+    let decide = options.judge ?? (() => 'PASS' as const);
+    const executor = fakeReplyExecutor(() => reply());
+    const h = harness({ executor: () => executor });
+    const fallback = h.deps.loadSuite;
+    h.deps.loadSuite = (id) => (id === 'x-judged' ? judgedSuite() : fallback(id));
+    const judge = fakeJudge((input) => decide(input));
+    h.deps.createRunJudge = () => judge.judge;
+    const mergeBaseReads: string[] = [];
+    let files = options.files ?? {};
+    h.deps.mergeBase = (path) => {
+      mergeBaseReads.push(path);
+      const suiteId = path.split(/[\\/]/)[1]!;
+      return { ref: 'base0000', path: `packages/conversation-sim/${path}`, text: files[suiteId] ?? null };
+    };
+    return {
+      h,
+      executor,
+      judge,
+      mergeBaseReads,
+      setReply: (next: () => string | null) => (reply = next),
+      setJudge: (next: (input: JudgeInput) => 'PASS' | 'FAIL') => (decide = next),
+      setFiles: (next: Record<string, string | null>) => (files = next),
+    };
+  }
+
+  /** A five-sample L1 run of x-judged accepted as a baseline; returns its text (the working-tree file is removed). */
+  async function acceptedBaseline(ci: ReturnType<typeof l1Ci>): Promise<string> {
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1', '--runs', '5'], ci.h.deps)).toBe(0);
+    expect(await main(['baseline:accept', '--run', runDirs()[0]!], ci.h.deps)).toBe(0);
+    const path = join(dir, 'baselines', 'x-judged', 'L1.json');
+    const text = readFileSync(path, 'utf8');
+    rmSync(path);
+    ci.h.out.length = 0;
+    ci.h.setNow('2026-10-25T12:00:00.000Z');
+    return text;
+  }
+
+  it('the default entry refuses ci --level L1 without a judge, naming suite:run:live and running nothing', async () => {
+    const h = harness();
+    expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], h.deps)).toBe(1);
+    expect(h.err).toEqual([L1_REFUSAL]);
+    expect(h.err[0]).toContain('suite:run:live');
+    expect(runDirs()).toEqual([]);
+    expect(existsSync(summaryFile())).toBe(false);
+  });
+
+  it('still refuses L2, even with a judge', async () => {
+    const { h } = l1Ci();
+    expect(await main(['ci', '--level', 'L2'], h.deps)).toBe(1);
+    expect(h.err).toEqual(['[suite] L2 executor lands in Epic 14']);
+  });
+
+  it('skips empty suites as "no L1 tests" and passes with nothing to check, writing no run folder', async () => {
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1'] }));
+    const { h, executor, mergeBaseReads } = l1Ci();
+    expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+    expect(h.out).toEqual([
+      '[suite] ci: p-v1 skipped (no L1 tests)',
+      '[suite] ci: smoke-v1 skipped (no L1 tests)',
+      `[suite] ci: ${NOTHING}`,
+      '[suite] ci: L1 gate exit 0',
+    ]);
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('## Suite L1 gate');
+    expect(summary).toContain('No registered suite has L1 tests and an L1 baseline at the merge-base; L1 gate passes with nothing to check.');
+    expect(summary).toContain('- p-v1: skipped (no L1 tests)');
+    expect(summary).not.toContain(ADVISORY);
+    expect(runDirs()).toEqual([]);
+    expect(executor.calls).toEqual([]);
+    expect(mergeBaseReads).toEqual([]);
+  });
+
+  it('a suite whose tests declare only L0 is skipped as "no L1 tests"', async () => {
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['x-suite'] }));
+    const l0Only = () => {
+      const suite = fakeSuite();
+      return { ...suite, tests: suite.tests.filter((test) => !test.levels.includes('L1')) };
+    };
+    expect(l0Only().tests.length).toBeGreaterThan(0);
+    const ci = l1Ci();
+    const fallback = ci.h.deps.loadSuite;
+    ci.h.deps.loadSuite = (id) => (id === 'x-suite' ? l0Only() : fallback(id));
+    expect(await main(['ci', '--level', 'L1'], ci.h.deps)).toBe(0);
+    expect(ci.h.out[0]).toBe('[suite] ci: x-suite skipped (no L1 tests)');
+    expect(ci.executor.calls).toEqual([]);
+    expect(ci.mergeBaseReads).toEqual([]);
+  });
+
+  it('skips a suite with L1 tests but no L1 baseline at the merge-base without calling the executor or the judge', async () => {
+    const { h, executor, judge, mergeBaseReads } = l1Ci();
+    expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+    expect(h.out).toContain('[suite] ci: x-judged skipped (no L1 baseline at merge-base base0000)');
+    expect(h.out).toContain(`[suite] ci: ${NOTHING}`);
+    expect(mergeBaseReads).toEqual([join('baselines', 'x-judged', 'L1.json')]);
+    expect(executor.calls).toEqual([]);
+    expect(judge.inputs).toEqual([]);
+    expect(runDirs()).toEqual([]);
+    expect(readFileSync(summaryFile(), 'utf8')).toContain('- x-judged: skipped (no L1 baseline at merge-base base0000)');
+  });
+
+  it('a merge-base read error is a failed suite (exit 1) and runs nothing', async () => {
+    const { h, executor } = l1Ci();
+    h.deps.mergeBase = () => {
+      throw new Error('[suite] git merge-base HEAD origin/main failed (fatal: no such ref)');
+    };
+    expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], h.deps)).toBe(1);
+    expect(h.err).toEqual([
+      '[suite] ci: x-judged failed: cannot read the L1 baseline at the merge-base: git merge-base HEAD origin/main failed (fatal: no such ref)',
+    ]);
+    expect(h.out).not.toContain(`[suite] ci: ${NOTHING}`);
+    expect(executor.calls).toEqual([]);
+    expect(runDirs()).toEqual([]);
+    expect(readFileSync(summaryFile(), 'utf8')).toContain('- x-judged: failed (exit 1): cannot read the L1 baseline at the merge-base');
+  });
+
+  it('runs diff.minSamples.L1 samples against the merge-base baseline; an untrusted meaning regression is advisory (exit 0)', async () => {
+    const ci = l1Ci();
+    const baseline = await acceptedBaseline(ci);
+    ci.setFiles({ 'x-judged': baseline });
+    ci.setJudge((input) => (input.layer === 'P' ? 'FAIL' : 'PASS'));
+    ci.executor.calls.length = 0;
+
+    expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], ci.h.deps)).toBe(0);
+    expect(ci.h.err).toEqual([]);
+    const runId = runDirs().find((id) => readRun(id).n === RUNNER_CONFIG.diff.minSamples.L1)!;
+    const report = readRun(runId);
+    expect(report.n).toBe(3);
+    expect(ci.executor.calls).toHaveLength(3);
+    expect(report.judgeTrust.trusted).toBe(false);
+    expect(report.diff).toMatchObject({ exitCode: 0, baseline: { kind: 'merge-base', ref: 'base0000', missing: false } });
+    expect(ci.h.out).toContain('[suite] ci: x-judged exit 0');
+    expect(ci.h.out).toContain(`[suite] ci: ${ADVISORY}`);
+    expect(ci.h.out.at(-1)).toBe('[suite] ci: L1 gate exit 0');
+
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('## Suite L1 gate');
+    expect(summary).toContain(ADVISORY);
+    expect(summary).not.toContain('nothing to check');
+    expect(summary).toContain(`- x-judged: ran (exit 0), run ${runId}`);
+    expect(summary).toContain(`### x-judged L1 — ${runId}`);
+    expect(summary).toContain('- Baseline: merge-base packages/conversation-sim/baselines/x-judged/L1.json at base0000');
+    expect(summary).toContain('| inconclusive | Z-01.A1/Z-01.C1 |');
+    expect(summary).not.toContain(REPLY);
+  });
+
+  it('an S rule regression fails the gate (exit 1) while meaning checks stay advisory', async () => {
+    const ci = l1Ci();
+    const baseline = await acceptedBaseline(ci);
+    ci.setFiles({ 'x-judged': baseline });
+    ci.setReply(() => null);
+
+    expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], ci.h.deps)).toBe(1);
+    expect(ci.h.out).toContain('[suite] ci: x-judged exit 1');
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain(ADVISORY);
+    expect(summary).toContain('Gate exit code: **1**');
+    expect(summary).toContain('| regressed | Z-01.A1/Z-01.C3 | S | rule |');
+  });
+
+  it('a trusted judge prints no advisory line', async () => {
+    writeAgreementFile(dir, 'x-judged', agreementFor(judgedSuite()));
+    const ci = l1Ci();
+    const baseline = await acceptedBaseline(ci);
+    ci.setFiles({ 'x-judged': baseline });
+    expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], ci.h.deps)).toBe(0);
+    expect(ci.h.out).not.toContain(`[suite] ci: ${ADVISORY}`);
+    expect(readFileSync(summaryFile(), 'utf8')).not.toContain(ADVISORY);
+  });
+});

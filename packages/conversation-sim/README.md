@@ -256,6 +256,9 @@ pnpm suite:ci --level L0 [--summary <path>]
 pnpm suite:calibrate --suite <id> [--import <qa-export.json>]
 pnpm suite:calibrate:live --suite <id> --live-judge   # human-run only: calls the pinned judge model
 pnpm suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>]   # human-run only: live coach and judge
+node --import tsx src/suite/run-live.ts ci --level L1 --live-model [--summary <path>]   # the opt-in L1 PR gate (from this package)
+node --import tsx src/suite/l1-gate.ts changes --base <sha> --head <sha> [--output <file>]   # L1 PR gate path filter
+node --import tsx src/suite/l1-gate.ts decide --changed <true|false> [--output <file>]     # L1 PR gate run decision
 pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --head <rev> --labels '<json-array>'
 ```
 
@@ -284,6 +287,9 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
   directory you ran `pnpm` from). The summary has the layer table, verdict, diff outcome,
   baseline source, category counts and every changed entry, and no evidence, reason or
   transcript text. With no suite that has tests it passes with nothing to check.
+  `--level L1` needs an injected judge, so the default entry refuses it (exit 1, the
+  `suite:run:live` hint); only `run-live.ts ci --level L1 --live-model` runs it (see
+  [L1 pull-request gate](#l1-pull-request-gate)). `--level L2` is refused.
 - `suite:calibrate` manages judge calibration (AD-8). `--import` converts a QA session
   export (`{ schemaVersion: 1, sessions: [{ ref, labeler, labeledAt, dialogue, statuses:
   [{ criterionId, status, replyIndex }] }] }`; an assumed format until QA confirms theirs)
@@ -307,8 +313,9 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
   built) without `--live-judge`; no test, script or CI step runs it with the flag. It reads
   `OPENAI_API_KEY` or `AZURE_OPENAI_*` from the shell environment and never loads `.env`.
 - `suite:run:live` is the only path to an L1 run. It refuses (exit 1, no provider or model
-  built) without `--live-model`, and runs only the `run` command at `--level L1`; no test,
-  script or CI step runs it with the flag. It wires `L1OrchestratorExecutor` with
+  built) without `--live-model`, and runs only the `run` and `ci` commands at `--level L1`; no
+  test or script runs it with the flag, and its only automated caller is the opt-in L1
+  pull-request gate. It wires `L1OrchestratorExecutor` with
   `createLiveProvider` (coach model label `azure:<OPENAI_MODEL_BALANCED ?? gpt-4o>` when
   `AZURE_OPENAI_ENDPOINT` is set, else `openai:analysis=gpt-4o-mini,generation=gpt-4o`, the
   provider's two default tiers; recorded as `models.coach`) and the
@@ -453,3 +460,51 @@ to and pushes on `main` and `develop`, with full history so the merge-base resol
 `Suite L0 gate` and `Baseline change label` block merges only once they are required status
 checks in branch protection (a repository setting, pending approval, like the CODEOWNERS rule). A QA
 CODEOWNERS review for `baselines/**` is pending: the QA owner handle is not decided yet.
+
+### L1 pull-request gate
+
+`.github/workflows/conversation-suite-l1-pr.yml` is the meaning-level gate for pull requests
+to `main` and `develop` (AD-15). It is opt-in and inert by default.
+
+- **No `paths` filter.** The `Suite L1 changes` job always runs
+  `l1-gate.ts changes` (`git diff --name-only base...head`) over the gated paths
+  `packages/ai-openai/src/prompts/**`, `packages/ai-openai/src/openai-provider.ts`,
+  `packages/application/src/use-cases/conversation-orchestrator.ts`,
+  `packages/application/src/use-cases/proactive-*.ts`, `packages/application/src/policies/**`,
+  `packages/application/src/utils/quiet-hours.ts` and `packages/conversation-sim/**`, then
+  `l1-gate.ts decide`. A git failure fails the job, and with it the gate.
+- **Decision, in order.** No gated path changed: skip. Fork pull request: skip (forks never
+  run live models or receive secrets). The repository variable
+  `CONVERSATION_SUITE_L1_PR_GATE_ENABLED` is not exactly `true`: skip, naming the variable.
+  Enabled but credentials missing: **error** (a misconfigured opt-in fails closed). Otherwise
+  run. The decision job sees secrets only as presence booleans.
+- **Credentials** (existing secret names; the gate adds none): the judge needs
+  `OPENAI_API_KEY` (`judge.provider` `openai`) or `AZURE_OPENAI_ENDPOINT`,
+  `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` (`azure_openai`); the coach needs the full
+  Azure set including `AZURE_OPENAI_TESTING_DEPLOYMENT` (used as `OPENAI_MODEL_BALANCED`) when
+  `AZURE_OPENAI_ENDPOINT` is set, else `OPENAI_API_KEY`. `LANGWATCH_API_KEY` is set empty.
+- **`Suite L1 gate`** (the `l1` job, always named the same, `if: ${{ !cancelled() }}`, so a run superseded
+  by a newer push posts no failing check) fails when the
+  changes job did not succeed, prints a `::notice::` and passes on skip, prints `::error::`
+  and fails on error. On run it builds the dependencies, runs `suite:baseline:guard` with the
+  pull request's current labels (read with `gh pr view`, so re-running the job after adding
+  `baseline-change` sees it; the workflow does not trigger on label events), then
+  `run-live.ts ci --level L1 --live-model --summary "$GITHUB_STEP_SUMMARY"`.
+- **`ci --level L1`** runs, per registered suite in config order, only suites that have L1
+  tests (else `skipped (no L1 tests)`) and an `L1.json` baseline at the merge-base (else
+  `skipped (no L1 baseline at merge-base <ref>)`, with no run and no model spend); a
+  merge-base read error fails that suite. It runs `suite:run --runs diff.minSamples.L1` (3)
+  and `suite:diff --merge-base`, with the `suite:ci` exit-code precedence. With nothing to
+  check it passes: `no registered suite has L1 tests and an L1 baseline at the merge-base`.
+  While the judge is untrusted the summary states that meaning checks are advisory and the
+  gate fails only on rule and S regressions or lost coverage. Today both suites are empty and
+  no L1 baseline exists, so an enabled gate passes with nothing to check.
+- **Artifacts.** Only `runs/suites/*/report.json` and `report.md` are uploaded (14 days),
+  linked from the step summary. The run reports can include reply excerpts and evidence;
+  full transcripts and model request/response events (`case-runs.json`) are never uploaded.
+  With nothing to check the step also prints a `::notice::`.
+- **Cost.** Call budgets apply per suite run, so a gate run's worst case is (suites with L1
+  tests and a baseline) x the per-run budgets, on every push (superseded runs are cancelled).
+- **Required check.** `Suite L1 gate` blocks merges only once it is a required status check
+  in branch protection (a repository setting, pending approval). Because it always reports,
+  requiring it never leaves a pull request waiting on "Expected".
