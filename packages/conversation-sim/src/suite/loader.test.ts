@@ -119,8 +119,12 @@ describe('loadSuite', () => {
     }
   });
 
-  it('lists every p-v1 *.case.ts module in index.ts', () => {
-    const dir = join(__dirname, 'cases', 'p-v1');
+  it('loads the empty smoke-v1 suite', () => {
+    expect(loadSuite('smoke-v1')).toEqual({ id: 'smoke-v1', sources: [], tests: [] });
+  });
+
+  it.each(['p-v1', 'smoke-v1'])('lists every %s *.case.ts module in index.ts', (suiteId) => {
+    const dir = join(__dirname, 'cases', suiteId);
     const index = readFileSync(join(dir, 'index.ts'), 'utf8');
     const missing = readdirSync(dir)
       .filter((file) => file.endsWith('.case.ts'))

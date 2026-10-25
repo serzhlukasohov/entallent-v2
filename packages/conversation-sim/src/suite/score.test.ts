@@ -77,6 +77,16 @@ describe('score: layer table scope', () => {
     expect(scored.journeys).toEqual({ keys: ['X-01.J/X-01.C1'], counts: { FAIL: 1 } });
   });
 
+  it('marks a non-empty run with no in-scope result INCOMPLETE, not journeys-only', () => {
+    const scored = run([
+      result({ testId: 'X-01.A1', criterionId: 'X-01.C1', status: 'NOT_RUN', inScope: false, reason: 'level-not-declared' }),
+    ]);
+    expect(scored.complete).toBe(false);
+    expect(scored.provisional).toBe(true);
+    expect(scored.provisionalReason).toContain('incomplete: no in-scope test criteria');
+    expect(scored.verdict).not.toBe('n/a (journeys only)');
+  });
+
   it('reports n/a (journeys only) and no layer table when no atomic or observation result is in scope', () => {
     const scored = run([
       result({ testId: 'X-01.J', criterionId: 'X-01.C2', testKind: 'journey', status: 'PASS' }),

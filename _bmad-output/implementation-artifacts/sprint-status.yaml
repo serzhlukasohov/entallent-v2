@@ -122,9 +122,9 @@ development_status:
   12-5-clockport-in-the-application-layer: review
   # 12-6 unblocked 2026-10-25: user chose option (a) (SQL prefilter kept, policy on top; QA cohort membership is a per-user fact)
   12-6-cadence-policy-extracted-from-worker-sql: review
-  # 12-8..12-9 not started 2026-10-25: 12.8 needs 12.4 cases (and a lazy vitest import in harness/report.ts); 12.9 needs 12.8
+  # 12-8 done 2026-10-25 (bmad-build-auto): runner + CLI proven on synthetic suites; p-v1 out of scope, smoke-v1 registered empty (user decision); no baseline committed yet
   12-7-l0-deterministic-executor-and-fixtures: review
-  12-8-runner-suite-run-and-suite-baseline-accept: backlog
+  12-8-runner-suite-run-and-suite-baseline-accept: review
   12-9-suite-diff-with-regression-categories: backlog
   12-10-l0-gate-in-ci-and-baseline-governance: backlog
   epic-12-retrospective: optional

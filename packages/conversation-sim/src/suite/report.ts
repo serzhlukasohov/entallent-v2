@@ -26,6 +26,8 @@ export interface SuiteReportMeta {
   judgeTrust: JudgeTrust;
   judgeErrors: JudgeError[];
   usage: Usage;
+  /** `--case` narrowing, recorded so a partial run is never accepted as a baseline. */
+  selection?: { case: string };
 }
 
 /** Assembles `SuiteRunReport` v1 (architecture AD-11) from a score; pure. */
@@ -57,6 +59,7 @@ export function buildSuiteReport(score: SuiteScore, meta: SuiteReportMeta): Suit
     journeys: score.journeys,
     judgeErrors: meta.judgeErrors,
     usage: meta.usage,
+    ...(meta.selection !== undefined ? { selection: meta.selection } : {}),
   };
   return SuiteRunReportSchema.parse(report) as SuiteRunReport;
 }
@@ -128,6 +131,7 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   if (report.provisionalReason) lines.push(`- Provisional: ${report.provisionalReason}`);
   lines.push(`- Complete: ${report.complete ? 'yes' : 'no'}`);
   lines.push(`- Samples: n = ${report.n}`);
+  if (report.selection) lines.push(`- Selection: case ${report.selection.case}`);
   lines.push(`- Git: ${report.git.sha ?? 'unknown'}${report.git.dirty ? ' (dirty)' : ''}`);
   lines.push(`- Models: coach ${report.models.coach ?? 'n/a'}, judge ${report.models.judge ?? 'n/a'}`);
   lines.push(

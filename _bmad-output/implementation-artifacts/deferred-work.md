@@ -287,6 +287,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-2-evaluation-scoring-and-report-core.md`
   summary: `score` only sees results it is given; a suite criterion with no results (or an empty run) leaves `complete: true`, and an empty run reads as `n/a (journeys only)`.
   evidence: Blind Hunter and Edge Case Hunter (Story 12.2 review). Unverified, medium if the 12.8 runner can drop a test's results; settle in 12.8 by checking every suite key is present before scoring.
+  resolution: Resolved in 12.8 (2026-10-25) — `score` marks a run with no in-scope test result INCOMPLETE and provisional (`incomplete: no in-scope test criteria`) with the verdict from `decideVerdict`, and `runSuite` asserts n results per `<testId>/<criterionId>` before scoring.
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-2-evaluation-scoring-and-report-core.md`
   summary: The synthesized `effect-count` carries `step` = the criterion's evaluated step, so a `change` criterion at `after` in a multi-step journey counts only last-step events.
   evidence: Blind Hunter and Edge Case Hunter (Story 12.2 review). Unverified, medium if real journeys stage effects before the last step; settle in 12.3b (draft) by deciding whether `effect-count` counts on the step or over steps 1..step.
@@ -320,6 +321,13 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-7-l0-deterministic-executor-and-fixtures.md`
   summary: `harness/report.ts` imports `vitest` at module load, so `CoachHarness` cannot load under tsx; `suite:run` (12.8) must make it lazy first.
   evidence: Story 12.7 implementer probe; `docs/agent-failures.md` 2026-10-25 entry. Severity medium.
+  resolution: Resolved in 12.8 (2026-10-25) — the hook lives in vitest-free `harness/test-failure-hook.ts`; the import-graph test bans runtime `vitest` imports and spawns the CLI under plain Node.
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-7-l0-deterministic-executor-and-fixtures.md`
   summary: The in-memory question-confirmation fake has no contract test against the PostgreSQL repository; `disclosureDelivered` copies an unexported disclosure version literal.
   evidence: Story 12.7 review (Blind Hunter). Settle when P-07/P-09/P-10 L0 cases exist. Severity medium (unverified).
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-8-runner-suite-run-and-suite-baseline-accept.md`
+  summary: The test-failure hook falls back to Vitest's undocumented `globalThis.__vitest_index__` for the fixture Vitest configs spawned by `failure-classifier.test.ts` and `coach-harness.test.ts`, which lack `setupFiles`.
+  evidence: Story 12.8 review (Blind Hunter). Add `setupFiles` to those fixture configs and drop the fallback; open entry in `docs/agent-failures.md`. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-8-runner-suite-run-and-suite-baseline-accept.md`
+  summary: `budgets.maxCoachCallsPerRun` / `maxJudgeCallsPerRun` are validated but not enforced by the runner.
+  evidence: Story 12.8 review (Blind Hunter). No cost at L0; enforce `budget-exceeded` (AD-15) when the L1/L2 executors land. Severity medium (unverified).

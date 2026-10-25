@@ -758,9 +758,100 @@ export const SuiteRunReportSchema = z
     journeys: JourneySectionSchema,
     judgeErrors: z.array(JudgeErrorSchema),
     usage: UsageSchema,
+    /** Present when `--case` narrowed the run; such runs are never accepted as baselines. */
+    selection: z.object({ case: z.string().min(1) }).strict().optional(),
   })
   .strict();
 export type SuiteRunReport = z.infer<typeof SuiteRunReportSchema>;
+
+// ---------------------------------------------------------------------------
+// Suite config (suite.config.json) and baselines (AD-8, AD-11, AD-15)
+// ---------------------------------------------------------------------------
+
+const positiveInt = z.number().int().min(1);
+
+export const SuiteConfigSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    suites: z
+      .array(z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'suite ids are lowercase kebab-case'))
+      .min(1)
+      .refine((ids) => new Set(ids).size === ids.length, { message: 'suite ids must be unique' }),
+    levels: z.array(LevelSchema).min(1),
+    /** Realized before every journey step after the first (AD-18). */
+    interMessageGapMs: nonNegativeInt,
+    baseline: z
+      .object({ minSamples: z.object({ L0: positiveInt, L1: positiveInt, L2: positiveInt }).strict() })
+      .strict(),
+    diff: z.object({ minSamples: z.object({ L1: positiveInt, L2: positiveInt }).strict() }).strict(),
+    /** Re-runs of a case whose errors are all infrastructure (AD-18). */
+    retries: z.object({ infrastructure: z.number().int().min(0).max(3) }).strict(),
+    budgets: z.object({ maxCoachCallsPerRun: positiveInt, maxJudgeCallsPerRun: positiveInt }).strict(),
+    judge: z
+      .object({
+        provider: z.enum(['openai', 'azure_openai']),
+        model: z.string().min(1),
+        decoding: z
+          .object({
+            temperature: z.number().min(0).max(2),
+            reasoningEffort: z.string().min(1).nullable(),
+            maxOutputTokens: positiveInt,
+          })
+          .strict(),
+        agreementThreshold: z.object({ overall: z.number().min(0).max(1), kappa: z.number().min(-1).max(1) }).strict(),
+        minLabels: positiveInt,
+      })
+      .strict(),
+  })
+  .strict();
+export type SuiteConfig = z.infer<typeof SuiteConfigSchema>;
+
+const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+
+/** The pinned judge plus run-time hashes of its prompt, schema and guidance (AD-8). */
+export const JudgeFingerprintSchema = z
+  .object({
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    decoding: z
+      .object({
+        temperature: z.number(),
+        reasoningEffort: z.string().nullable(),
+        maxOutputTokens: positiveInt,
+      })
+      .strict(),
+    promptSha256: Sha256Schema,
+    schemaSha256: Sha256Schema,
+    guidanceSha256: Sha256Schema,
+  })
+  .strict();
+export type JudgeFingerprint = z.infer<typeof JudgeFingerprintSchema>;
+
+export const BaselineResultSchema = z
+  .object({ status: CriterionStatusSchema, passCount: nonNegativeInt, n: positiveInt })
+  .strict();
+export type BaselineResult = z.infer<typeof BaselineResultSchema>;
+
+/** Committed at `baselines/<suiteId>/<level>.json`, written only by `suite:baseline:accept` (AD-11). */
+export const BaselineSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    suiteId: z.string().min(1),
+    level: LevelSchema,
+    /** Both `null` at L0 (no judge). */
+    judge: z.object({ fingerprint: JudgeFingerprintSchema.nullable(), agreement: z.unknown().nullable() }).strict(),
+    coach: z.object({ model: z.string().nullable() }).strict(),
+    acceptedFrom: z
+      .object({ runId: z.string().min(1), gitSha: z.string().min(1), ciRunUrl: z.string().url().optional() })
+      .strict(),
+    acceptedAt: IsoTimestampSchema,
+    /** True when the run was INCOMPLETE or its verdict provisional (`--allow-incomplete`). */
+    provisional: z.boolean(),
+    /** Every in-scope criterion of the run, keyed `<testId>/<criterionId>`. */
+    results: z.record(BaselineResultSchema),
+  })
+  .strict();
+export type Baseline = z.infer<typeof BaselineSchema> & { judge: { agreement: unknown } };
 
 /** Output of `score`; a plain in-memory value, not a persisted artifact. */
 export interface SuiteScore {

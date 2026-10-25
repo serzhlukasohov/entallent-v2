@@ -3262,6 +3262,15 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Symptom: Loading `CoachHarness` under tsx (the planned `suite:run` CLI, Story 12.8) crashes with "Vitest cannot be imported in a CommonJS module", because `harness/report.ts` imports `onTestFailed` from `vitest` at module load. Found while building the L0 executor (Story 12.7).
 - Expected: The L0 executor and everything it imports load in a plain Node/tsx process.
 - Root cause layer: architecture
-- Harness fix: Make the vitest import in `harness/report.ts` lazy (or move the failure-report hook to a test-only module) in Story 12.8, and extend `suite/executors/import-graph.test.ts` to forbid runtime `vitest` imports reachable from the executor.
-- Regression check: `pnpm --filter @entalent/conversation-sim exec tsx -e "import('./src/suite/executors/l0-deterministic-executor.ts')"` exits 0.
+- Harness fix: Story 12.8 moved the failure-report hook behind the vitest-free `harness/test-failure-hook.ts` (installed by the `harness/vitest-setup.ts` setup file, with a fallback to the Vitest worker namespace for fixture configs), and `suite/executors/import-graph.test.ts` now forbids runtime `vitest` imports reachable from the executor, runner and CLI.
+- Regression check: `import-graph.test.ts` "loads the CLI in plain Node with tsx (no Vitest)" spawns `node --import tsx src/suite/cli.ts --help` and expects exit 0 (part of `pnpm --filter @entalent/conversation-sim test`).
+- Status: fixed
+
+## 2026-10-25: Fixture Vitest configs rely on an undocumented Vitest global for the failure hook
+
+- Symptom: `failure-classifier.test.ts` and `coach-harness.test.ts` spawn Vitest with generated configs that have no `setupFiles`, so `harness/vitest-setup.ts` never installs the failure hook there; `harness/test-failure-hook.ts` falls back to the undocumented `globalThis.__vitest_index__.onTestFailed` to keep those fixtures finalizing reports (Story 12.8).
+- Expected: Every Vitest config that loads the harness installs the hook through `vitest-setup.ts`, and the hook needs no Vitest internals.
+- Root cause layer: tooling
+- Harness fix: Add `setupFiles: [<abs path>/src/harness/vitest-setup.ts]` to the generated fixture configs in `failure-classifier.test.ts` and `coach-harness.test.ts`, then remove the `__vitest_index__` fallback from `test-failure-hook.ts`.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/gate/failure-classifier.test.ts src/harness/coach-harness.test.ts src/harness/test-failure-hook.test.ts` passes with the fallback removed.
 - Status: open

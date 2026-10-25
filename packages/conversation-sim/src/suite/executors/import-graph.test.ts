@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -7,9 +8,14 @@ import { describe, expect, it } from 'vitest';
  * simulator models, credentials) or `OpenAiProvider` (live model calls). This walks the
  * executor's static relative imports transitively; `import type` (and all-`type`
  * specifier lists, which TypeScript elides) are skipped because they vanish at runtime.
+ * The executor, runner and CLI also never import `vitest` at runtime (Story 12.8), so
+ * they load in plain Node/tsx.
  */
 const SRC = resolve(__dirname, '..', '..');
+const PACKAGE_DIR = resolve(SRC, '..');
 const EXECUTOR = join(SRC, 'suite', 'executors', 'l0-deterministic-executor.ts');
+const RUNNER = join(SRC, 'suite', 'runner.ts');
+const CLI = join(SRC, 'suite', 'cli.ts');
 
 interface ImportStatement {
   specifier: string;
@@ -87,6 +93,9 @@ function forbiddenImports(entry: string, read: ReadSource = readFromDisk, root =
         // A namespace, default, star or dynamic import reaches OpenAiProvider without naming it.
         violations.push({ file: at, specifier: statement.specifier, reason: 'whole-module import of @entalent/ai-openai' });
       }
+      if (/^vitest(?:\/|$)/.test(statement.specifier)) {
+        violations.push({ file: at, specifier: statement.specifier, reason: 'value import of vitest' });
+      }
       if (!statement.specifier.startsWith('.')) continue;
       const target = resolveRelative(file, statement.specifier, read);
       if (!target) throw new Error(`${at}: cannot resolve ${statement.specifier}`);
@@ -109,6 +118,62 @@ describe('L0 executor import graph', () => {
     expect(visited).toContain(join('harness', 'coach-harness.ts'));
     expect(visited).toContain(join('suite', 'fixtures', 'seeded-history.ts'));
     expect(violations).toEqual([]);
+  });
+
+  it.each([
+    ['executor', EXECUTOR, join('harness', 'report.ts')],
+    ['runner', RUNNER, join('gate', 'failure-kind.ts')],
+    ['cli', CLI, join('harness', 'report.ts')],
+  ])('the %s reaches no forbidden module and no vitest', (_name, entry, reached) => {
+    const { visited, violations } = forbiddenImports(entry);
+    expect(visited).toContain(reached);
+    expect(violations).toEqual([]);
+  });
+
+  it('flags value imports of vitest, not type-only ones', () => {
+    const files: Record<string, string> = {
+      [EXECUTOR]: ["import type { TestContext } from 'vitest';", "import { helper } from './helper';"].join('\n'),
+      [join(SRC, 'suite', 'executors', 'helper.ts')]: [
+        "import { onTestFailed } from 'vitest';",
+        "import { vi } from 'vitest/dist/index.js';",
+        'export const helper = [onTestFailed, vi];',
+      ].join('\n'),
+    };
+    const { violations } = forbiddenImports(EXECUTOR, (file) => files[file] ?? null);
+    expect(violations.map((violation) => `${violation.specifier}: ${violation.reason}`)).toEqual([
+      'vitest: value import of vitest',
+      'vitest/dist/index.js: value import of vitest',
+    ]);
+  });
+
+  it('loads the CLI in plain Node with tsx (no Vitest)', () => {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/suite/cli.ts', '--help'], {
+      cwd: PACKAGE_DIR,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('suite:run --suite <id> --level L0');
+  });
+
+  it('runs the real CLI wiring on smoke-v1 in plain Node and writes the report under the package', () => {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/suite/cli.ts', 'run', '--suite', 'smoke-v1', '--level', 'L0'], {
+      cwd: PACKAGE_DIR,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 60_000,
+    });
+    const match = /^\[suite\] report: (runs\/suites\/([^/\s]+)\/report\.json)$/m.exec(result.stdout);
+    try {
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(match, result.stdout).not.toBeNull();
+      expect(existsSync(join(PACKAGE_DIR, match![1]!))).toBe(true);
+    } finally {
+      if (match) rmSync(join(PACKAGE_DIR, 'runs', 'suites', match[2]!), { recursive: true, force: true });
+    }
   });
 
   it('fails on a fixture file that imports scenarios/config.ts', () => {

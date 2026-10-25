@@ -61,13 +61,18 @@ export function score(input: ScoreInput): SuiteScore {
 
   const results = [...aggregate(input), ...manifestNotTestable(suite, n)];
   const counted = results.filter(countsTowardVerdict);
-  const journeysOnly = !input.results.some((result) => result.inScope && result.testKind !== 'journey');
+  // No in-scope test result (an empty suite, or every test out of scope) is not a
+  // journeys-only run: nothing was decided, so the run is INCOMPLETE.
+  const hasInScopeTest = input.results.some((result) => result.inScope);
+  const journeysOnly =
+    hasInScopeTest && !input.results.some((result) => result.inScope && result.testKind !== 'journey');
 
   const inScope = results.filter((result) => result.inScope);
   const undecided = inScope.filter((result) => !['PASS', 'FAIL', 'NOT_TESTABLE'].includes(result.status));
-  const complete = undecided.length === 0;
+  const complete = hasInScopeTest && undecided.length === 0;
   const provisionalReasons: string[] = [];
-  if (!complete) provisionalReasons.push(`incomplete: ${describeUndecided(undecided)}`);
+  if (!hasInScopeTest) provisionalReasons.push('incomplete: no in-scope test criteria');
+  else if (!complete) provisionalReasons.push(`incomplete: ${describeUndecided(undecided)}`);
 
   let layers: LayerTable | null = null;
   let verdict: Verdict = 'n/a (journeys only)';

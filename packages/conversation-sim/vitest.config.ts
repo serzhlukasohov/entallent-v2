@@ -10,6 +10,8 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     env: rootEnv,
+    // Installs Vitest's onTestFailed into the vitest-free harness hook (harness/test-failure-hook.ts).
+    setupFiles: ['./src/harness/vitest-setup.ts'],
     include: ['src/scenarios/**/*.sim.test.ts', 'src/gate/**/*.test.ts', 'src/harness/**/*.test.ts', 'src/suite/**/*.test.ts'],
     // Simulations are long chains of live LLM calls, not unit tests.
     testTimeout: 300_000,

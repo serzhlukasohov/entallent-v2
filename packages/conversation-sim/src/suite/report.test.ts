@@ -117,10 +117,41 @@ describe('renderSuiteReportMarkdown', () => {
   });
 
   it('renders n/a for a journeys-only run', () => {
-    const scored = score({ suite, level: 'L0', n: 1, results: [] });
+    const journey: CriterionResult = {
+      testId: 'X-01.J',
+      criterionId: 'X-01.C2',
+      sourceCase: 'X-01',
+      level: 'L0',
+      layer: 'S',
+      testKind: 'journey',
+      inScope: true,
+      status: 'PASS',
+      advisory: false,
+      method: 'n/a',
+    };
+    const scored = score({ suite, level: 'L0', n: 1, results: [journey] });
     const markdown = renderSuiteReportMarkdown(buildSuiteReport(scored, meta));
     expect(markdown).toContain('**n/a (journeys only)**');
     expect(markdown).toContain('n/a (journeys only)\n');
+  });
+
+  it('reports an empty run as INCOMPLETE and provisional, not journeys-only', () => {
+    const empty = validateSuite('empty', { sources: [], tests: [] });
+    const report = buildSuiteReport(score({ suite: empty, level: 'L0', n: 1, results: [] }), { ...meta, suiteId: 'empty' });
+    expect(report.complete).toBe(false);
+    expect(report.provisional).toBe(true);
+    expect(report.verdict).toBe('NOT ADEQUATE');
+    expect(report.provisionalReason).toBe('incomplete: no in-scope test criteria; no decided P/D/C criterion');
+    expect(report.layers).not.toBeNull();
+    const markdown = renderSuiteReportMarkdown(report);
+    expect(markdown).toContain('**NOT ADEQUATE** (provisional)');
+    expect(markdown).not.toContain('journeys only');
+  });
+
+  it('renders the --case selection', () => {
+    const report = buildSuiteReport(score({ suite, level: 'L0', n: 1, results: [] }), { ...meta, selection: { case: 'X-01' } });
+    expect(report.selection).toEqual({ case: 'X-01' });
+    expect(renderSuiteReportMarkdown(report)).toContain('- Selection: case X-01');
   });
 });
 

@@ -1,6 +1,8 @@
 import type { ZodError, ZodType } from 'zod';
 import { tests as pV1Tests } from './cases/p-v1';
 import { sources as pV1Sources } from './cases/p-v1/sources';
+import { tests as smokeV1Tests } from './cases/smoke-v1';
+import { sources as smokeV1Sources } from './cases/smoke-v1/sources';
 import { RULES, type RuleRegistry } from './rules/registry';
 import {
   SourceCaseSchema,
@@ -67,6 +69,7 @@ export interface SuiteModules {
 /** Explicit suite registry; no directory scanning. */
 export const SUITES: Readonly<Record<string, SuiteModules>> = Object.freeze({
   'p-v1': { sources: pV1Sources, tests: pV1Tests },
+  'smoke-v1': { sources: smokeV1Sources, tests: smokeV1Tests },
 });
 
 export function loadSuite(suiteId: string, rules: RuleRegistry = RULES): LoadedSuite {

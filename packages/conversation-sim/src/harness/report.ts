@@ -1,10 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { onTestFailed } from 'vitest';
 import type { ScenarioResult } from '@langwatch/scenario';
 import type { StyleDimensions } from '@entalent/application';
 import { describeViolations, findViolations } from './assertions';
 import type { AgentTurnFailure, CoachHarness, GenerateResponseCall } from './coach-harness';
+import { testFailedHook, type FailedTaskLike } from './test-failure-hook';
 
 const RUNS_DIR = join(process.cwd(), 'runs');
 
@@ -85,7 +85,8 @@ export function writeScenarioRunReport(input: ScenarioRunReport): void {
   const persist = persistReport(data);
   // Each report registers its own finalizer, including multiple reports in one test.
   // Paths belong to this attempt even if environment variables change afterward.
-  onTestFailed(({ task }) => {
+  // Outside Vitest no hook is installed and nothing is registered.
+  testFailedHook()?.(({ task }) => {
     appendTestFailure(data, task);
     persist();
   });
@@ -98,6 +99,8 @@ export function writeScenarioRunReport(input: ScenarioRunReport): void {
  * test error; the judge is marked not run. Outside a Vitest test nothing is registered.
  */
 export function registerFallbackReport(harness: CoachHarness): void {
+  const onTestFailed = testFailedHook();
+  if (!onTestFailed) return;
   try {
     onTestFailed(async ({ task }) => {
       if (reportedHarnesses.has(harness)) return;
@@ -119,11 +122,7 @@ export function registerFallbackReport(harness: CoachHarness): void {
   }
 }
 
-interface TaskLike {
-  name: string;
-  suite?: TaskLike;
-  result?: { errors?: Array<{ message: string }> };
-}
+type TaskLike = FailedTaskLike;
 
 const fallbackReportsByTask = new WeakMap<TaskLike, number>();
 
