@@ -2,7 +2,8 @@
 title: 'Story 12.5: ClockPort in the Application Layer'
 type: 'refactor'
 created: '2026-10-25'
-status: 'ready-for-dev'
+status: 'done'
+baseline_commit: '29d39ae061416a9d2bf1f301787e3bdc9837b94a'
 route: 'dispatch'
 review_loop_iteration: 0
 context:
@@ -69,13 +70,13 @@ Do not touch: `services/pulse-backlog.service.ts` (out of scope, stays wall cloc
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `packages/application/src/ports/clock.port.ts` -- add `ClockPort`, `systemClock = { now: () => new Date() }`; export both from `index.ts`.
-- [ ] `packages/application/src/utils/quiet-hours.ts` + `quiet-hours.test.ts` -- explicit `now` first param; tests use fixed instants (cover cross-midnight and same-day windows).
-- [ ] The four use-case files -- add `private readonly clock: ClockPort = systemClock` last; replace each read listed in Code Map 1:1; pass `now` to module helpers.
-- [ ] The four use-case test files -- add fixed-clock tests for each matrix row (quiet hours, not-due, past reminder, scheduler traceId, outbound `occurredAt` equals clock).
-- [ ] Three worker modules -- pass `systemClock` explicitly; extend `conversation.module.test.ts` to assert it and keep the "no agent runtime router" test green.
-- [ ] `conversation-sim` harness/fakes -- `clock?: ClockPort` option (default `systemClock`) threaded into all in-memory repos, outbox and orchestrator; traceId gets the clock suffix; add a harness test with a fixed clock.
-- [ ] `.eslintrc.cjs` -- `overrides` for the five application files: `no-restricted-syntax` with `NewExpression[callee.name='Date'][arguments.length=0]` and `CallExpression[callee.object.name='Date'][callee.property.name='now']`.
+- [x] `packages/application/src/ports/clock.port.ts` -- add `ClockPort`, `systemClock = { now: () => new Date() }`; export both from `index.ts`.
+- [x] `packages/application/src/utils/quiet-hours.ts` + `quiet-hours.test.ts` -- explicit `now` first param; tests use fixed instants (cover cross-midnight and same-day windows).
+- [x] The four use-case files -- add `private readonly clock: ClockPort = systemClock` last; replace each read listed in Code Map 1:1; pass `now` to module helpers.
+- [x] The four use-case test files -- add fixed-clock tests for each matrix row (quiet hours, not-due, past reminder, scheduler traceId, outbound `occurredAt` equals clock).
+- [x] Three worker modules -- pass `systemClock` explicitly; extend `conversation.module.test.ts` to assert it and keep the "no agent runtime router" test green.
+- [x] `conversation-sim` harness/fakes -- `clock?: ClockPort` option (default `systemClock`) threaded into all in-memory repos, outbox and orchestrator; traceId gets the clock suffix; add a harness test with a fixed clock.
+- [x] `.eslintrc.cjs` -- `overrides` for the five application files: `no-restricted-syntax` with `NewExpression[callee.name='Date'][arguments.length=0]` and `CallExpression[callee.object.name='Date'][callee.property.name='now']`.
 
 **Acceptance Criteria:**
 - Given the five scoped files, when grepped for zero-arg `new Date()` / `Date.now()`, then none remain and `pnpm lint` passes.
@@ -84,9 +85,37 @@ Do not touch: `services/pulse-backlog.service.ts` (out of scope, stays wall cloc
 
 ## Implementation Notes
 
+- Former reads that happened twice inside one helper now take one `now` from the call site: `parseReminderDueAt` (compare + nudge) and `msUntilEndOfQuietHours` (hour + minute, previously two `new Date()` reads). `describeLocalTime` receives `clock.now()` even when the timezone is null; the value is unused there. No behavioral difference beyond sub-millisecond drift.
+- `computeRiskExpiry` copies `now` before mutating it with `setDate`.
+- Existing use-case tests that use Vitest fake timers were left unchanged (default `systemClock` reads the faked `Date`); new fixed-clock tests are separate `describe` blocks without fake timers. `quiet-hours.test.ts` dropped fake timers and passes instants explicitly.
+- `InlineOutbox` takes the clock through its existing options object (`clock?: ClockPort`) rather than a new positional parameter.
+- Harness does not construct a scheduled-action repository (it is an injected option); the fake accepts the clock and the harness test passes the same clock to it.
+- Lint negative check: appending `Date.now() + new Date().getTime()` to `proactive-scheduler.use-case.ts` produced two `no-restricted-syntax` errors; reverted.
+
 ## Spec Change Log
 
 ## Review Triage Log
+
+| # | Layer | Finding | Verdict | Route | Evidence |
+|---|-------|---------|---------|-------|----------|
+| 1 | blind, edge | Follow-up quiet-hours path reads the clock twice (`isInQuietHours`, then `msUntilEndOfQuietHours`); an hour-boundary straddle postpones ~24h | low | reject | Real but pre-existing (original code made three wall-clock reads there); the frozen intent forbids collapsing reads, so it stays 1:1. |
+| 2 | blind | No single per-turn/per-scan instant in orchestrator and scheduler | false | reject | Frozen Always rule explicitly says "no collapsing into one per-turn instant". |
+| 3 | blind | `MemoryExtractionUseCase` expiry stays on wall clock while the memory fake filters by the injected clock | medium | defer | Confirmed (`computeExpiry` zero-arg `new Date()`); unchanged under systemClock, matters for multi-day 12.7 journeys. Logged in deferred-work. |
+| 4 | blind | Harness `traceId` no longer deterministic under systemClock | false | reject | Approved decision 2026-10-25 (`sim-turn-<n>-<epoch ms>`); fix would edit the spec. |
+| 5 | blind | No reusable fixed/manual test clock | low | reject | No named harm today; adds public surface; 12.7 can add one when it needs advancing time. |
+| 6 | blind | ESLint rule misses `Date()` without `new` | low | patch | Direct correction: added `CallExpression[callee.name='Date']`; negative check fails as expected. Aliasing/glob widening rejected as unlikely. |
+| 7 | blind, verif-gap | tzStale and risk `expiresAt` clock paths unpinned by tests | medium | patch | Pre-verified gap; added boundary tzStale test (dispatch `profile_hydration`) and risk expiry = clock + 30d with no mutation. |
+| 8 | blind, edge | Worker wiring test casts `providers.find` without asserting it exists | low | patch | Added `expect(provider).toBeDefined()`; followup/scheduler module asserts rejected (dropping the arg is behavior-identical). |
+| 9 | blind | Positional `undefined` constructor args are brittle | false | reject | Frozen Always rule mandates `clock` as the last constructor parameter. |
+| 10 | blind | Tracking artifacts disagree (spec in-review vs sprint in-progress, `last_updated` earlier, harness base, receipt path) | low | patch (partial) | Status syncs at step 5; base 3af7d0e is the task-specified merge base; `last_updated` reflects real system time; task-log row now carries the receipt path. |
+| 11 | blind | `isInQuietHours`/`getLocalHour` public signature changed without note | false | reject | Only in-repo callers, all updated; typecheck across api/worker/sim is green. |
+| 12 | blind, edge | Harness accepts a scheduled-action repo built without its clock | low | patch | Added JSDoc on the option; building a default repo would change sim behavior. |
+| 13 | edge | Invalid IANA timezone throws in scheduler loop | low | reject | Pre-existing (old `getLocalHour` threw identically); fix adds guards. |
+| 14 | edge | Invalid Date from an injected clock gives opaque RangeError | low | reject | Unreachable with systemClock; fix adds guards. |
+| 15 | edge | Fake `findMessagesThrough` drops prior turns when a frozen clock makes `occurredAt` tie | medium | patch | Confirmed: production repo keeps ties via order key; fake now keeps equal-timestamp messages stored at or before the anchor; two-turn frozen-clock test added. |
+| 16 | edge | Pulse-capture receipt resolves `unresolved` when frozen clock makes `sentAt == occurredAt` | false | reject | Orchestrator logic is correct for equal instants; a frozen clock is unrealistic input — 12.7 should advance the clock between turns. |
+| 17 | edge | Helpers collapse two former reads (`parseReminderDueAt`, `msUntilEndOfQuietHours`) contrary to 1:1 | low | reject | Same synchronous expression, sub-ms; removes a latent hour-boundary race; recorded in Implementation Notes. |
+| 18 | verif-gap | Fake memory expiry filter and scheduled-action lifecycle stamps untested | medium | patch | Pre-verified gap; added expiry boundary and markSent/postpone/cancel stamp tests. |
 
 ## Verification
 

@@ -7157,3 +7157,103 @@ describe('GC round 3 CAP-1: topic steering inside an active V2 cycle', () => {
     expect(savedOutbound(m).metadata).toMatchObject({ topicCompleted: 'autonomy' });
   });
 });
+
+describe('ConversationOrchestrator with an injected clock', () => {
+  const NOW = new Date('2026-01-05T12:00:00.000Z');
+  const clock = { now: () => new Date(NOW.getTime()) };
+
+  function orchestratorWithClock(m: ReturnType<typeof baseMocks>): ConversationOrchestrator {
+    return new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, m.scheduledActionRepo, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, clock,
+    );
+  }
+
+  it('stamps the outbound occurredAt from the clock', async () => {
+    const m = baseMocks();
+
+    await orchestratorWithClock(m).orchestrate(INPUT);
+
+    const outbound = m.conversationRepo.saveMessage.mock.calls
+      .map((call: unknown[]) => call[0] as { direction: string; occurredAt: Date })
+      .filter((params: { direction: string }) => params.direction === 'outbound');
+    expect(outbound.length).toBeGreaterThan(0);
+    for (const params of outbound) expect(params.occurredAt).toEqual(NOW);
+  });
+
+  it('nudges a past LLM reminder time to one minute after the clock instant', async () => {
+    const m = baseMocks();
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
+      urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
+      reasoningSummary: 'test', reminderRequest: {
+        intent: 'send the report', dueAt: '2026-01-05T11:00:00.000Z',
+      }, dialogueAct: 'request', latestUserSubstance: 'remind me', topicAnchor: null,
+    });
+
+    await orchestratorWithClock(m).orchestrate(INPUT);
+
+    expect(reminderConfirmationOf(m)).toEqual(expect.objectContaining({
+      intent: 'send the report', dueAt: new Date(NOW.getTime() + 60_000).toISOString(),
+    }));
+  });
+
+  it('keeps a future LLM reminder time and drops an invalid one', async () => {
+    const future = '2026-01-06T09:00:00.000Z';
+    for (const [dueAt, expected] of [[future, future], ['not-a-date', undefined]] as const) {
+      const m = baseMocks();
+      m.aiProvider.classifySituation.mockResolvedValue({
+        primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
+        urgency: 'low', confidence: 0.9, surveyAllowed: true, requiresSafetyCheck: false,
+        reasoningSummary: 'test', reminderRequest: { intent: 'send the report', dueAt },
+        dialogueAct: 'request', latestUserSubstance: 'remind me', topicAnchor: null,
+      });
+
+      await orchestratorWithClock(m).orchestrate(INPUT);
+
+      expect(reminderConfirmationOf(m)?.dueAt).toBe(expected);
+    }
+  });
+
+  it('marks the timezone stale only when it was refreshed more than 30 days before the clock', async () => {
+    const thirtyDaysMs = 30 * 86_400_000;
+    for (const [ageMs, expectHydration] of [[thirtyDaysMs + 1000, true], [thirtyDaysMs - 1000, false]] as const) {
+      const m = baseMocks();
+      m.conversationRepo.findById.mockResolvedValue({
+        id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'ec',
+        userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+        userTimezoneUpdatedAt: new Date(NOW.getTime() - ageMs),
+      });
+      m.conversationRepo.findCommittedTurnForInbound = vi.fn().mockResolvedValue(null);
+      m.conversationRepo.recordCommittedTurn = vi.fn().mockResolvedValue(undefined);
+      m.conversationRepo.findUnqueuedCommittedDispatchKinds = vi.fn().mockResolvedValue(['message_send']);
+      m.conversationRepo.markCommittedDispatchQueued = vi.fn().mockResolvedValue(undefined);
+
+      await orchestratorWithClock(m).orchestrate(INPUT);
+
+      const { dispatchKinds } = m.conversationRepo.recordCommittedTurn.mock.calls[0]![0] as { dispatchKinds: string[] };
+      expect(dispatchKinds.includes('profile_hydration')).toBe(expectHydration);
+    }
+  });
+
+  it('sets risk expiry from the clock plus the severity window without mutating the clock value', async () => {
+    const frozen = new Date(NOW.getTime());
+    const m = baseMocks();
+    m.aiProvider.detectRisk.mockResolvedValue({ ...NO_RISK, riskType: 'burnout', severity: 'medium' });
+    const riskSignalRepo = { saveOnceForSource: vi.fn().mockResolvedValue(undefined) };
+    const orch = new ConversationOrchestrator(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo, riskSignalRepo as any,
+      undefined, m.featureFlags, m.scheduledActionRepo, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, { now: () => frozen },
+    );
+
+    await orch.orchestrate(INPUT);
+
+    expect(riskSignalRepo.saveOnceForSource).toHaveBeenCalledWith(expect.objectContaining({
+      severity: 'medium', expiresAt: new Date(NOW.getTime() + 30 * 86_400_000),
+    }));
+    expect(frozen.getTime()).toBe(NOW.getTime());
+  });
+});

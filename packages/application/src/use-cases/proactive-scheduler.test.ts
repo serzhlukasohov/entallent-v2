@@ -170,3 +170,31 @@ describe('ProactiveSchedulerUseCase', () => {
     vi.clearAllMocks();
   });
 });
+
+describe('ProactiveSchedulerUseCase with an injected clock', () => {
+  const fixedClock = (iso: string) => ({ now: () => new Date(iso) });
+
+  it('skips a candidate in default quiet hours at the clock instant', async () => {
+    const repo = makeRepo([makeCandidate({ timezone: 'UTC', quietHours: { enabled: true } })]);
+    const queue = makeQueue();
+    const useCase = new ProactiveSchedulerUseCase(repo, queue, undefined, fixedClock('2026-01-05T23:30:00Z'));
+
+    const result = await useCase.scan();
+
+    expect(queue.enqueueCheckIn).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ candidatesFound: 1, enqueued: 0, skippedQuietHours: 1 });
+  });
+
+  it('enqueues outside quiet hours with a traceId derived from the clock', async () => {
+    const clock = fixedClock('2026-01-05T12:00:00Z');
+    const repo = makeRepo([makeCandidate({ userId: 'u-9', timezone: 'UTC', quietHours: { enabled: true } })]);
+    const queue = makeQueue();
+    const useCase = new ProactiveSchedulerUseCase(repo, queue, undefined, clock);
+
+    await useCase.scan();
+
+    expect(queue.enqueueCheckIn).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: `checkin-u-9-${Date.parse('2026-01-05T12:00:00Z')}` }),
+    );
+  });
+});

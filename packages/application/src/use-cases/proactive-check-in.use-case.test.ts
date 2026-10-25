@@ -440,3 +440,29 @@ describe('ProactiveCheckInUseCase', () => {
     });
   });
 });
+
+describe('ProactiveCheckInUseCase with an injected clock', () => {
+  it('reads disclosure, outbound occurredAt and probe-sent instants from the clock', async () => {
+    const NOW = new Date('2026-01-05T12:00:00Z');
+    const clock = { now: () => new Date(NOW.getTime()) };
+    const conversationRepo = makeConversationRepo();
+    const service = makePulseBacklogService(makeQuestion());
+    const useCase = new ProactiveCheckInUseCase(
+      conversationRepo,
+      makeAiProvider(true, 'q-1'),
+      makeOutbox(),
+      undefined,
+      service,
+      undefined,
+      clock,
+    );
+
+    await useCase.execute(BASE_INPUT);
+
+    expect(conversationRepo.findLatestDeliveredReportingDisclosure).toHaveBeenCalledWith(
+      't-1', 'u-1', REPORTING_DISCLOSURE_VERSION, NOW,
+    );
+    expect(conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({ occurredAt: NOW }));
+    expect(service.recordProbeSent).toHaveBeenCalledWith('u-1', 'w-1', 'q-1', NOW);
+  });
+});

@@ -5,6 +5,7 @@ import type { ScheduledActionRepositoryPort } from '../ports/scheduled-action.re
 import type { FollowUpContextPort } from '../ports/follow-up-context.port';
 import type { OutboxPort, FollowUpExecutionPayload } from '../ports/outbox.port';
 import { isInQuietHours, getLocalHour } from '../utils/quiet-hours';
+import { systemClock, type ClockPort } from '../ports/clock.port';
 import { resolveLanguagePolicy } from '../utils/language-policy';
 import { modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
 
@@ -42,6 +43,7 @@ export class FollowUpExecutionUseCase {
     private readonly conversationRepo: ConversationRepositoryPort,
     private readonly outbox: OutboxPort,
     private readonly ai: AiProviderPort,
+    private readonly clock: ClockPort = systemClock,
   ) {}
 
   async execute(input: FollowUpExecutionInput): Promise<PolicyDecision> {
@@ -54,7 +56,7 @@ export class FollowUpExecutionUseCase {
     }
 
     // Guard: job fired before dueAt (stale BullMQ job after a postpone)
-    if (new Date() < action.dueAt) {
+    if (this.clock.now() < action.dueAt) {
       await this.reschedule(action as { id: string; tenantId: string; userId: string; dueAt: Date; attemptCount: number }, action.dueAt);
       return { decision: 'skip', reason: 'not_due_yet' };
     }
@@ -88,8 +90,8 @@ export class FollowUpExecutionUseCase {
     }
 
     // Policy: quiet hours
-    if (isInQuietHours(ctx.user.timezone, ctx.user.quietHours)) {
-      const delayMs = msUntilEndOfQuietHours(ctx.user.timezone, ctx.user.quietHours);
+    if (isInQuietHours(this.clock.now(), ctx.user.timezone, ctx.user.quietHours)) {
+      const delayMs = msUntilEndOfQuietHours(this.clock.now(), ctx.user.timezone, ctx.user.quietHours);
       await this.postpone(action, input.tenantId, delayMs, newAttemptCount);
       return { decision: 'postpone', reason: 'quiet_hours' };
     }
@@ -108,7 +110,7 @@ export class FollowUpExecutionUseCase {
 
     // Policy: recent incoming message — conversation is active (skipped for reminders,
     // which are time-bound and fine to deliver even mid-conversation)
-    if (!isReminder && ctx.lastInboundAt && Date.now() - ctx.lastInboundAt.getTime() < MIN_INBOUND_GAP_MS) {
+    if (!isReminder && ctx.lastInboundAt && this.clock.now().getTime() - ctx.lastInboundAt.getTime() < MIN_INBOUND_GAP_MS) {
       await this.postpone(action, input.tenantId, 60 * 60 * 1000, newAttemptCount);
       return { decision: 'postpone', reason: 'recent_inbound_activity' };
     }
@@ -162,7 +164,7 @@ export class FollowUpExecutionUseCase {
       userId: action.userId,
       direction: 'outbound',
       text: generated.text,
-      occurredAt: new Date(),
+      occurredAt: this.clock.now(),
       messageType: isReminder ? 'reminder' : 'proactive_follow_up',
     });
 
@@ -188,7 +190,7 @@ export class FollowUpExecutionUseCase {
     delayMs: number,
     attemptCount: number,
   ): Promise<void> {
-    const newDueAt = new Date(Date.now() + delayMs);
+    const newDueAt = new Date(this.clock.now().getTime() + delayMs);
     await this.actionRepo.postpone(action.id, tenantId, newDueAt, attemptCount);
     await this.reschedule(action, newDueAt);
   }
@@ -209,19 +211,20 @@ export class FollowUpExecutionUseCase {
 }
 
 function msUntilEndOfQuietHours(
+  now: Date,
   timezone: string,
   quietHours: { enabled: boolean; startHour?: number; endHour?: number },
 ): number {
   const endHour = quietHours.endHour ?? 8;
-  const localHour = getLocalHour(timezone);
-  const localMinute = getLocalMinute(timezone);
+  const localHour = getLocalHour(now, timezone);
+  const localMinute = getLocalMinute(now, timezone);
   let hoursRemaining = endHour - localHour;
   if (hoursRemaining <= 0) hoursRemaining += 24;
   return (hoursRemaining * 60 - localMinute) * 60 * 1000;
 }
 
-function getLocalMinute(timezone: string): number {
+function getLocalMinute(now: Date, timezone: string): number {
   return Number(
-    new Intl.DateTimeFormat('en-US', { minute: 'numeric', timeZone: timezone }).format(new Date()),
+    new Intl.DateTimeFormat('en-US', { minute: 'numeric', timeZone: timezone }).format(now),
   );
 }

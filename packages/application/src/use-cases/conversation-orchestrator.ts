@@ -92,6 +92,7 @@ import type {
 } from '../ports/agent-runtime.port';
 import type { OnboardingApplyResult, OnboardingTurnPort } from '../ports/onboarding.port';
 import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
+import { systemClock, type ClockPort } from '../ports/clock.port';
 import { interpretOnboardingSignal, type SignalOutcome } from '../onboarding/onboarding-signal';
 import type { OnboardingState } from '../onboarding/onboarding-state';
 
@@ -173,6 +174,7 @@ export class ConversationOrchestrator {
     private readonly unitOfWork?: ConversationUnitOfWorkPort,
     private readonly onboardingTurn?: OnboardingTurnPort,
     private readonly logger: OrchestratorLogger = SILENT_LOGGER,
+    private readonly clock: ClockPort = systemClock,
   ) {}
 
   async resumeCommittedTurn(input: OrchestrateInput): Promise<boolean> {
@@ -261,7 +263,7 @@ export class ConversationOrchestrator {
         userId: input.userId,
         direction: 'outbound',
         text: responseText,
-        occurredAt: new Date(),
+        occurredAt: this.clock.now(),
         traceId: input.traceId,
         metadata: {
           conversationOutcome: outcome,
@@ -333,7 +335,7 @@ export class ConversationOrchestrator {
     const displayNameMissing = !conversation.userDisplayName;
     const tzMissing = !conversation.userTimezone;
     const tzStale = !!conversation.userTimezoneUpdatedAt &&
-      Date.now() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000;
+      this.clock.now().getTime() - conversation.userTimezoneUpdatedAt.getTime() > TZ_REFRESH_DAYS * 86_400_000;
     const profileHydrationNeeded = displayNameMissing || tzMissing || tzStale;
 
     const { messages: dbMessages, boundaryApplied } = modelMessagesForInbound(recentMessages, inboundMessageIndex);
@@ -868,7 +870,7 @@ export class ConversationOrchestrator {
         confidence: risk.confidence,
         evidenceMessageIds: [input.messageId],
         policyVersion: 'v1',
-        expiresAt: computeRiskExpiry(risk.severity),
+        expiresAt: computeRiskExpiry(risk.severity, this.clock.now()),
       });
     }
 
@@ -878,7 +880,7 @@ export class ConversationOrchestrator {
     const reminder = classification.reminderRequest;
     let reminderToSchedule: { intent: string; dueAt: Date; dedupKey: string } | null = null;
     if (reminder && this.scheduledActionRepo) {
-      const dueAt = parseReminderDueAt(reminder.dueAt);
+      const dueAt = parseReminderDueAt(reminder.dueAt, this.clock.now());
       if (dueAt) {
         const dedupKey = `${userId}:user_reminder:${slugify(reminder.intent)}:${dueAt.getTime()}`;
         reminderToSchedule = { intent: reminder.intent, dueAt, dedupKey };
@@ -1117,7 +1119,7 @@ export class ConversationOrchestrator {
       cycleProgress,
       confirmationRequest,
       styleAdaptation,
-      localTime: describeLocalTime(conversation.userTimezone),
+      localTime: describeLocalTime(conversation.userTimezone, this.clock.now()),
       isSessionStart: sessionStart,
       replyBrief: replyPlan,
       replyPlan,
@@ -1287,7 +1289,7 @@ export class ConversationOrchestrator {
           questionNotCollected: questionNotCollected ? { questionGroup: questionNotCollected } : undefined,
           cycleProgress,
           styleAdaptation,
-          localTime: describeLocalTime(conversation.userTimezone),
+          localTime: describeLocalTime(conversation.userTimezone, this.clock.now()),
           isSessionStart: sessionStart,
           replyBrief: replyPlan,
           replyPlan,
@@ -1330,7 +1332,7 @@ export class ConversationOrchestrator {
         // GC round 3 CAP-2: the driver is asked at most once per question and window.
         await this.questionConfirmationRepo.recordDriverRequested({
           tenantId, userId, surveyWindowId: v2CycleSnapshot.surveyWindowId,
-          surveyQuestionId: topicQuestion!.questionId, requestedAt: new Date(),
+          surveyQuestionId: topicQuestion!.questionId, requestedAt: this.clock.now(),
         });
       }
       if (v2PhaseB.verdictProposal && this.questionConfirmationRepo) {
@@ -1364,7 +1366,7 @@ export class ConversationOrchestrator {
         userId,
         direction: 'outbound',
         text: responseText,
-        occurredAt: new Date(),
+        occurredAt: this.clock.now(),
         traceId: input.traceId,
         ...(onboardingAck !== undefined ? { messageType: 'onboarding_ack' } : {}),
         metadata: {
@@ -2013,7 +2015,7 @@ export class ConversationOrchestrator {
         ? input.memoryContext
         : undefined,
       styleAdaptation: input.styleAdaptation,
-      localTime: describeLocalTime(input.timezone),
+      localTime: describeLocalTime(input.timezone, this.clock.now()),
       isSessionStart: input.isSessionStart,
       proactiveCheckIn: {
         probeQuestion: {
@@ -2337,11 +2339,11 @@ function normalizeExactMatch(value: string | null | undefined): string {
 }
 
 /** Parse an LLM-provided ISO reminder time; reject invalid or past timestamps. */
-function parseReminderDueAt(iso: string): Date | null {
+function parseReminderDueAt(iso: string, now: Date): Date | null {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return null;
   // Ignore reminders in the past (LLM miscomputed relative time) — nudge to +1 min
-  if (d.getTime() <= Date.now()) return new Date(Date.now() + 60_000);
+  if (d.getTime() <= now.getTime()) return new Date(now.getTime() + 60_000);
   return d;
 }
 
@@ -2353,8 +2355,8 @@ function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 32);
 }
 
-function computeRiskExpiry(severity: string): Date {
-  const d = new Date();
+function computeRiskExpiry(severity: string, now: Date): Date {
+  const d = new Date(now.getTime());
   if (severity === 'critical' || severity === 'high') d.setDate(d.getDate() + 90);
   else if (severity === 'medium') d.setDate(d.getDate() + 30);
   else d.setDate(d.getDate() + 7);
@@ -2366,10 +2368,9 @@ function errorMessage(error: unknown): string {
 }
 
 /** Human-readable local time in the employee's timezone, e.g. "Saturday, 15:30 (afternoon)". */
-function describeLocalTime(timezone: string | undefined | null): string | undefined {
+function describeLocalTime(timezone: string | undefined | null, now: Date): string | undefined {
   if (!timezone) return undefined;
   try {
-    const now = new Date();
     const when = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone, weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(now);

@@ -1,5 +1,7 @@
 import {
   ConversationOrchestrator,
+  systemClock,
+  type ClockPort,
   type AiProviderPort,
   type ClassifyContext,
   type ConversationRecord,
@@ -63,6 +65,10 @@ export interface CoachHarnessOptions {
   /** Style profile learned in a previous conversation. */
   seedStyleProfile?: StyleProfileRecord;
   aiProvider?: AiProviderPort;
+  /**
+   * Not built by the harness: when `clock` is set, construct it with the same clock
+   * (e.g. `new InMemoryScheduledActionRepository(clock)`) or its stamps use the system clock.
+   */
   scheduledActionRepo?: ScheduledActionRepositoryPort;
   surveyRepo?: SurveyRepositoryPort;
   onboardingTurn?: OnboardingTurnPort;
@@ -70,6 +76,8 @@ export interface CoachHarnessOptions {
   questionConfirmationRepo?: QuestionConfirmationPort;
   /** Topic selection for the pulse cycle (GC round 3 CAP-1); omitted means no topic questions. */
   pulseBacklogService?: Pick<PulseBacklogService, 'getNextProbeQuestion'>;
+  /** Business time for the orchestrator, in-memory repositories and outbox; defaults to the system clock. */
+  clock?: ClockPort;
 }
 
 export interface GenerateResponseCall {
@@ -105,8 +113,9 @@ class RecordingEscalation implements EscalationPort {
  */
 export class CoachHarness {
   readonly conversationRepo: InMemoryConversationRepository;
-  readonly memoryRepo = new InMemoryMemoryRepository();
-  readonly goalRepo = new InMemoryGoalRepository();
+  readonly clock: ClockPort;
+  readonly memoryRepo: InMemoryMemoryRepository;
+  readonly goalRepo: InMemoryGoalRepository;
   readonly styleRepo: InMemoryStyleProfileRepository;
   readonly escalation = new RecordingEscalation();
   readonly outbox: InlineOutbox;
@@ -124,6 +133,9 @@ export class CoachHarness {
   private readonly orchestrator: ConversationOrchestrator;
 
   constructor(options: CoachHarnessOptions = {}) {
+    this.clock = options.clock ?? systemClock;
+    this.memoryRepo = new InMemoryMemoryRepository(this.clock);
+    this.goalRepo = new InMemoryGoalRepository(this.clock);
     const conversation: ConversationRecord = {
       id: CONVERSATION_ID,
       tenantId: TENANT_ID,
@@ -133,10 +145,10 @@ export class CoachHarness {
       status: 'active',
       userDisplayName: options.userName ?? 'Alex',
       userTimezone: options.timezone ?? 'Europe/Berlin',
-      userTimezoneUpdatedAt: new Date(),
+      userTimezoneUpdatedAt: this.clock.now(),
     };
 
-    this.conversationRepo = new InMemoryConversationRepository(conversation);
+    this.conversationRepo = new InMemoryConversationRepository(conversation, this.clock);
     this.styleRepo = new InMemoryStyleProfileRepository(options.seedStyleProfile ?? null);
 
     const ai = new RecordingAiProvider(
@@ -149,7 +161,7 @@ export class CoachHarness {
       this.memoryRepo,
       this.goalRepo,
       this.styleRepo,
-      { analyzeStyle: options.analyzeStyle },
+      { analyzeStyle: options.analyzeStyle, clock: this.clock },
     );
 
     for (const item of options.seedMemory ?? []) {
@@ -185,6 +197,8 @@ export class CoachHarness {
       options.questionConfirmationRepo,
       undefined,
       options.onboardingTurn,
+      undefined,
+      this.clock,
     );
 
     // A report must exist even when the scenario aborts before `reportRun` is reached.
@@ -212,7 +226,7 @@ export class CoachHarness {
         tenantId: TENANT_ID,
         externalWorkspaceId: 'sim-workspace',
         externalConversationId: 'sim-channel',
-        traceId: `sim-turn-${turn}`,
+        traceId: `sim-turn-${turn}-${this.clock.now().getTime()}`,
       });
     } catch (error) {
       this.failures.push(describeFailure(error, turn, this.generateResponseCalls.length - generationStart));

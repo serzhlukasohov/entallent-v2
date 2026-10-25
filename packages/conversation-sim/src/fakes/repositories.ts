@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { systemClock } from '@entalent/application';
 import type {
+  ClockPort,
   ConversationRecord,
   ConversationRepositoryPort,
   CommittedStyleAnalysisInput,
@@ -26,7 +28,10 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
   readonly messages: MessageRecord[] = [];
   private readonly deliveredAt = new Map<string, Date>();
 
-  constructor(private readonly conversation: ConversationRecord) {}
+  constructor(
+    private readonly conversation: ConversationRecord,
+    private readonly clock: ClockPort = systemClock,
+  ) {}
 
   async findById(id: string, tenantId: string): Promise<ConversationRecord | null> {
     const match = this.conversation.id === id && this.conversation.tenantId === tenantId;
@@ -49,10 +54,14 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
       && message.tenantId === input.tenantId && message.userId === input.userId
       && message.direction === 'inbound');
     if (!anchor) return [];
-    return this.messages.filter((message) =>
+    const anchorIndex = this.messages.indexOf(anchor);
+    // Mirrors the production repository: equal-timestamp messages persisted at or before the
+    // anchor stay in history, so a frozen clock does not drop earlier turns.
+    return this.messages.filter((message, index) =>
       message.conversationId === input.conversationId && message.tenantId === input.tenantId
       && message.userId === input.userId
-      && (message.occurredAt.getTime() < anchor.occurredAt.getTime() || message.id === anchor.id))
+      && (message.occurredAt.getTime() < anchor.occurredAt.getTime()
+        || (message.occurredAt.getTime() === anchor.occurredAt.getTime() && index <= anchorIndex)))
       .slice(-input.limit);
   }
 
@@ -90,7 +99,7 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
   }
 
   async saveMessage(params: SaveMessageParams): Promise<MessageRecord> {
-    const now = new Date();
+    const now = this.clock.now();
     const record: MessageRecord = {
       id: randomUUID(),
       conversationId: params.conversationId,
@@ -133,8 +142,10 @@ export class InMemoryConversationRepository implements ConversationRepositoryPor
 export class InMemoryMemoryRepository implements MemoryRepositoryPort {
   readonly items: MemoryItemRecord[] = [];
 
+  constructor(private readonly clock: ClockPort = systemClock) {}
+
   async findActiveByUser(userId: string, tenantId: string, limit = 20): Promise<MemoryItemRecord[]> {
-    const now = Date.now();
+    const now = this.clock.now().getTime();
     return this.items
       .filter(
         (i) =>
@@ -168,7 +179,7 @@ export class InMemoryMemoryRepository implements MemoryRepositoryPort {
   }
 
   async save(params: SaveMemoryItemParams): Promise<MemoryItemRecord> {
-    const now = new Date();
+    const now = this.clock.now();
     const record: MemoryItemRecord = {
       ...params,
       id: nextId('mem'),
@@ -187,7 +198,7 @@ export class InMemoryMemoryRepository implements MemoryRepositoryPort {
     if (!old) return;
     old.status = 'superseded';
     old.supersededById = newItemId;
-    old.updatedAt = new Date();
+    old.updatedAt = this.clock.now();
   }
 
   async softDelete(id: string, tenantId: string): Promise<void> {
@@ -198,6 +209,8 @@ export class InMemoryMemoryRepository implements MemoryRepositoryPort {
 
 export class InMemoryGoalRepository implements GoalRepositoryPort {
   readonly goals: UserGoalRecord[] = [];
+
+  constructor(private readonly clock: ClockPort = systemClock) {}
 
   async findActiveByUser(userId: string, tenantId: string): Promise<UserGoalRecord[]> {
     return this.goals.filter(
@@ -210,7 +223,7 @@ export class InMemoryGoalRepository implements GoalRepositoryPort {
   }
 
   async save(params: SaveGoalParams): Promise<UserGoalRecord> {
-    const now = new Date();
+    const now = this.clock.now();
     const record: UserGoalRecord = {
       ...params,
       id: nextId('goal'),
@@ -231,7 +244,7 @@ export class InMemoryGoalRepository implements GoalRepositoryPort {
     const goal = this.goals.find((g) => g.id === id && g.tenantId === tenantId);
     if (goal) {
       goal.status = status;
-      goal.updatedAt = new Date();
+      goal.updatedAt = this.clock.now();
     }
   }
 }
@@ -239,8 +252,10 @@ export class InMemoryGoalRepository implements GoalRepositoryPort {
 export class InMemoryScheduledActionRepository implements ScheduledActionRepositoryPort {
   readonly actions: ScheduledActionRecord[] = [];
 
+  constructor(private readonly clock: ClockPort = systemClock) {}
+
   async save(params: SaveScheduledActionParams): Promise<ScheduledActionRecord> {
-    const now = new Date();
+    const now = this.clock.now();
     const record: ScheduledActionRecord = {
       ...params,
       id: nextId('act'),
@@ -263,15 +278,15 @@ export class InMemoryScheduledActionRepository implements ScheduledActionReposit
     if (!action) return;
     action.status = 'sent';
     action.attemptCount = attemptCount;
-    action.lastAttemptAt = new Date();
-    action.updatedAt = new Date();
+    action.lastAttemptAt = this.clock.now();
+    action.updatedAt = this.clock.now();
   }
 
   async cancel(id: string, tenantId: string): Promise<void> {
     const action = await this.findById(id, tenantId);
     if (!action) return;
     action.status = 'cancelled';
-    action.updatedAt = new Date();
+    action.updatedAt = this.clock.now();
   }
 
   async postpone(
@@ -285,8 +300,8 @@ export class InMemoryScheduledActionRepository implements ScheduledActionReposit
     action.status = 'pending';
     action.dueAt = newDueAt;
     action.attemptCount = attemptCount;
-    action.lastAttemptAt = new Date();
-    action.updatedAt = new Date();
+    action.lastAttemptAt = this.clock.now();
+    action.updatedAt = this.clock.now();
   }
 
   async existsByDeduplicationKey(key: string): Promise<boolean> {
@@ -308,7 +323,7 @@ export class InMemoryScheduledActionRepository implements ScheduledActionReposit
         action.status === 'pending'
       ) {
         action.status = 'cancelled';
-        action.updatedAt = new Date();
+        action.updatedAt = this.clock.now();
       }
     }
   }

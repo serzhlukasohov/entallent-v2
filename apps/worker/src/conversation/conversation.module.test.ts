@@ -1,7 +1,7 @@
 import { MODULE_METADATA } from '@nestjs/common/constants';
 import { AGENT_RUNTIME_PORT } from '@entalent/application';
 import { describe, expect, it } from 'vitest';
-import { ConversationOrchestrator } from '@entalent/application';
+import { ConversationOrchestrator, ProactiveCheckInUseCase, systemClock } from '@entalent/application';
 import { AiService } from './ai.service';
 import { ConversationModule } from './conversation.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
@@ -42,5 +42,24 @@ describe('ConversationModule runtime boundary', () => {
   it('imports OnboardingModule so the orchestrator receives the onboarding turn port', () => {
     const imports = Reflect.getMetadata(MODULE_METADATA.IMPORTS, ConversationModule) as unknown[];
     expect(imports).toContain(OnboardingModule);
+  });
+
+  it('wires the system clock explicitly into the orchestrator and proactive check-in', () => {
+    const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ConversationModule) as Array<
+      | unknown
+      | { provide?: unknown; inject?: unknown[]; useFactory?: (...args: unknown[]) => unknown }
+    >;
+    for (const token of [ConversationOrchestrator, ProactiveCheckInUseCase]) {
+      const provider = providers.find((candidate) => (
+        typeof candidate === 'object'
+        && candidate !== null
+        && 'provide' in candidate
+        && candidate.provide === token
+      )) as { inject: unknown[]; useFactory: (...args: unknown[]) => unknown } | undefined;
+      expect(provider).toBeDefined();
+      const instance = provider!.useFactory(...provider!.inject.map(() => ({})));
+      expect(instance).toBeInstanceOf(token);
+      expect((instance as { clock: unknown }).clock).toBe(systemClock);
+    }
   });
 });

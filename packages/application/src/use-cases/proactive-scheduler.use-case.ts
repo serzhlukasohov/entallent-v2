@@ -3,6 +3,7 @@ import type {
   CheckInEnqueuePort,
 } from '../ports/proactive-scheduler.repository.port';
 import { isInQuietHours } from '../utils/quiet-hours';
+import { systemClock, type ClockPort } from '../ports/clock.port';
 
 export interface ProactiveScanConfig {
   /** Days of silence since the user's last message before a check-in is considered */
@@ -42,6 +43,7 @@ export class ProactiveSchedulerUseCase {
     private readonly repo: ProactiveSchedulerRepositoryPort,
     private readonly queue: CheckInEnqueuePort,
     config?: Partial<ProactiveScanConfig>,
+    private readonly clock: ClockPort = systemClock,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -58,7 +60,7 @@ export class ProactiveSchedulerUseCase {
     let skippedQuietHours = 0;
 
     for (const c of candidates) {
-      if (this.config.quietHoursEnabled && isInQuietHours(c.timezone, c.quietHours)) {
+      if (this.config.quietHoursEnabled && isInQuietHours(this.clock.now(), c.timezone, c.quietHours)) {
         skippedQuietHours++;
         continue;
       }
@@ -69,7 +71,7 @@ export class ProactiveSchedulerUseCase {
         tenantId: c.tenantId,
         externalWorkspaceId: c.externalWorkspaceId,
         externalConversationId: c.externalConversationId,
-        traceId: `checkin-${c.userId}-${Date.now()}`,
+        traceId: `checkin-${c.userId}-${this.clock.now().getTime()}`,
       });
       enqueued++;
     }

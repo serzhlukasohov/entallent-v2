@@ -284,3 +284,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3-suite-rule-implementations.md`
   summary: Story 12.3 split; the proactive-window rules, `clock-leak` and the state/event rules (`effect-count`, `state-equals`, `state-not-greater-than`) moved to Story 12.3b (`spec-12-3b-proactive-state-and-clock-rules.md`, draft).
   evidence: The full 12.3 spec was about 2,300 tokens; the user approved the split on 2026-10-25.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-5-clockport-in-the-application-layer.md`
+  summary: `MemoryExtractionUseCase` still computes memory `expiresAt` from the wall clock (`memory-extraction.use-case.ts` `computeExpiry`), while the sim's `InMemoryMemoryRepository.findActiveByUser` now filters by the injected clock; under a harness clock that is advanced across simulated days, extracted memories expire on real time, not simulated time.
+  evidence: Blind Hunter (Story 12.5 review, 2026-10-25); confirmed by reading `computeExpiry` (zero-arg `new Date()`). Behavior with the default system clock is unchanged; the gap matters once 12.7 runs multi-day journeys. Thread `ClockPort` into `MemoryExtractionUseCase` (and the inline outbox) in 12.3b or 12.7. Severity medium.

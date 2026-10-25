@@ -9,6 +9,7 @@ import type { ProactivePulseConfig } from '../ports/pulse-backlog.repository.por
 import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
 import type { PulseBacklogService } from '../services/pulse-backlog.service';
 import type { SurveyQuestionRecord } from '../types/records';
+import { systemClock, type ClockPort } from '../ports/clock.port';
 import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
 import { resolveLanguagePolicy } from '../utils/language-policy';
 import { isContentFilterOutcome, modelMessagesAfterContentFilter } from '../utils/content-filter-recovery';
@@ -60,6 +61,7 @@ export class ProactiveCheckInUseCase {
     private readonly memoryRepo?: MemoryRepositoryPort,
     private readonly pulseBacklogService?: PulseBacklogService,
     private readonly featureFlags?: FeatureFlagPort,
+    private readonly clock: ClockPort = systemClock,
   ) {}
 
   async execute(input: ProactiveCheckInInput): Promise<ProactiveCheckInResult> {
@@ -131,7 +133,7 @@ export class ProactiveCheckInUseCase {
         tenantId,
         userId,
         REPORTING_DISCLOSURE_VERSION,
-        new Date(),
+        this.clock.now(),
       )
       : null;
     const hasCurrentDeliveredDisclosure =
@@ -219,7 +221,7 @@ export class ProactiveCheckInUseCase {
       userId,
       direction: 'outbound',
       text: responseText,
-      occurredAt: new Date(),
+      occurredAt: this.clock.now(),
       traceId: input.traceId,
       messageType: 'proactive_check_in',
       metadata: {
@@ -250,7 +252,7 @@ export class ProactiveCheckInUseCase {
         userId,
         probeResult.windowId,
         generated.surveyProbeQuestionId,
-        new Date(),
+        this.clock.now(),
       );
     }
 
