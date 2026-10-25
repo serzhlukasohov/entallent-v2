@@ -10,9 +10,13 @@ import { RUNNER_CONFIG } from './__fixtures__/runner';
 import { diffRun } from './diff';
 import { createCriterionJudge } from './judge/criterion-judge';
 import { mockJudgeModel } from './judge/__fixtures__/mock-model';
+import { judgedSuite, replyRun } from './__fixtures__/runner';
+import { computeJudgeFingerprint } from './judge/fingerprint';
 import {
   buildSuiteReport,
   collectJudgeErrors,
+  collectQaReview,
+  fingerprintLine,
   judgeUsageTotals,
   renderCiSummary,
   renderSuiteReportMarkdown,
@@ -33,6 +37,7 @@ const meta: SuiteReportMeta = {
   models: { coach: null, judge: null },
   judgeTrust: UNTRUSTED,
   judgeErrors: [],
+  qaReview: [],
   usage: { coachCalls: 0, judgeCalls: 0 },
 };
 
@@ -277,3 +282,113 @@ const baseResult: CriterionResult = {
   advisory: true,
   method: 'n/a',
 };
+
+describe('effective judge fingerprint (Story 13.3)', () => {
+  it('prints none at L0 and the full pin at L1 after the meaning-checks line', () => {
+    const report = l0Report();
+    const markdown = renderSuiteReportMarkdown(report);
+    expect(markdown).toContain('- Meaning checks: advisory (uncalibrated) (no-agreement)\n- Judge fingerprint: none (no judge at L0)\n');
+    expect(renderCiSummary(report)).toContain('- Judge fingerprint: none (no judge at L0)');
+
+    const pin = computeJudgeFingerprint(RUNNER_CONFIG.judge, judgedSuite());
+    const l1 = { ...report, level: 'L1' as const, judgeTrust: { trusted: false, reason: 'no-agreement', pin, agreement: null } };
+    const expected = `- Judge fingerprint: openai gpt-4o · temperature 0 · reasoningEffort null · maxOutputTokens 1024 · prompt ${pin.promptSha256} · schema ${pin.schemaSha256} · guidance ${pin.guidanceSha256}`;
+    expect(fingerprintLine(l1)).toBe(expected);
+    expect(renderSuiteReportMarkdown(l1)).toContain(`- Meaning checks: advisory (uncalibrated) (no-agreement)\n${expected}\n`);
+  });
+});
+
+describe('QA review (Story 13.3)', () => {
+  const judged = judgedSuite();
+  const test = judged.tests[0]!;
+  const base = { testId: test.id, sourceCase: 'Z-01', level: 'L1' as const, testKind: 'atomic' as const, inScope: true, method: 'n/a' as const };
+  const usage = { calls: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+
+  it('collects judge FAILs and no-reply FAILs, never rule FAILs, PASSes or out-of-scope results', () => {
+    const reply = 'Two | three\nquestions?';
+    const run = replyRun(test, 1, reply);
+    const results: CriterionResult[] = [
+      { ...base, criterionId: 'Z-01.C1', layer: 'P', status: 'FAIL', advisory: true, reason: 'misses | the point', judgeUsage: usage },
+      { ...base, criterionId: 'Z-01.C2', layer: 'D', status: 'PASS', advisory: true, reason: 'ok', evidence: 'Two', judgeUsage: usage },
+      { ...base, criterionId: 'Z-01.C3', layer: 'S', status: 'FAIL', advisory: false, evidence: 'turn 1 — no reply' },
+      { ...base, criterionId: 'Z-01.C4', layer: 'C', status: 'FAIL', advisory: false, meaningSkipped: true, evidence: 'turn 1 — 2 questions' },
+    ];
+    expect(collectQaReview(test, run, 3, results)).toEqual([
+      {
+        key: 'Z-01.A1/Z-01.C1',
+        testId: 'Z-01.A1',
+        sourceCase: 'Z-01',
+        criterionId: 'Z-01.C1',
+        layer: 'P',
+        sample: 3,
+        advisory: true,
+        replies: [reply],
+        reason: 'misses | the point',
+      },
+    ]);
+    const silent = replyRun(test, 1, null);
+    const noReply: CriterionResult = { ...base, criterionId: 'Z-01.C2', layer: 'D', status: 'FAIL', advisory: true, evidence: 'no-reply', judgeUsage: usage };
+    expect(collectQaReview(test, silent, 1, [noReply])).toEqual([expect.objectContaining({ criterionId: 'Z-01.C2', replies: [], reason: 'no-reply' })]);
+    expect(collectQaReview(test, silent, 1, [{ ...noReply, inScope: false }])).toEqual([]);
+  });
+
+  it('renders the section in report.md with escaped cells, never in the CI summary', () => {
+    const report = l0Report();
+    expect(renderSuiteReportMarkdown(report)).toContain('## QA review\n\nNone.\n');
+    const withQa: SuiteRunReport = {
+      ...report,
+      qaReview: [
+        {
+          key: 'Z-01.A1/Z-01.C1',
+          testId: 'Z-01.A1',
+          sourceCase: 'Z-01',
+          criterionId: 'Z-01.C1',
+          layer: 'P',
+          sample: 1,
+          advisory: true,
+          replies: ['First | reply\nline two', 'Second reply'],
+          reason: 'misses | the point',
+        },
+        {
+          key: 'Z-01.A1/Z-01.C2',
+          testId: 'Z-01.A1',
+          sourceCase: 'Z-01',
+          criterionId: 'Z-01.C2',
+          layer: 'D',
+          sample: 2,
+          advisory: false,
+          replies: [],
+          reason: 'no-reply',
+        },
+      ],
+    };
+    expect(SuiteRunReportSchema.parse(JSON.parse(JSON.stringify(withQa)))).toEqual(withQa);
+    const markdown = renderSuiteReportMarkdown(withQa);
+    expect(markdown).toContain(
+      [
+        '## QA review',
+        '',
+        '| Case | Test | Criterion | Layer | Sample | Advisory | Reply | Judge reason |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| Z-01 | Z-01.A1 | Z-01.C1 | P | 1 | yes | First \\| reply line two // Second reply | misses \\| the point |',
+        '| Z-01 | Z-01.A1 | Z-01.C2 | D | 2 | no |  | no-reply |',
+      ].join('\n'),
+    );
+    const tricky: SuiteRunReport = {
+      ...withQa,
+      qaReview: [{ ...withQa.qaReview![0]!, replies: ['a\\|b\r\nc\rd'], reason: 'x\\|y' }],
+    };
+    expect(renderSuiteReportMarkdown(tricky)).toContain('| Z-01 | Z-01.A1 | Z-01.C1 | P | 1 | yes | a\\\\\\|b c d | x\\\\\\|y |');
+    const summary = renderCiSummary(withQa);
+    expect(summary).not.toContain('QA review');
+    expect(summary).not.toContain('First');
+    expect(summary).not.toContain('misses');
+  });
+
+  it('still parses a pre-13.3 report without qaReview', () => {
+    const legacy: Partial<SuiteRunReport> = { ...l0Report() };
+    delete legacy.qaReview;
+    expect(SuiteRunReportSchema.parse(legacy).qaReview).toBeUndefined();
+    expect(renderSuiteReportMarkdown(SuiteRunReportSchema.parse(legacy))).toContain('## QA review\n\nNone.');
+  });
+});

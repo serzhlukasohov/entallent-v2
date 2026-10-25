@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { RUNNER_CONFIG, cleanRun, fakeExecutor, fakeSuite, liveSuite } from './__fixtures__/runner';
+import {
+  RUNNER_CONFIG,
+  agreementFor,
+  cleanRun,
+  fakeExecutor,
+  fakeReplyExecutor,
+  fakeSuite,
+  judgedSuite,
+  liveSuite,
+} from './__fixtures__/runner';
 import { TEST_RULES } from './__fixtures__/suite';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import { SuiteExecutionError } from './executors/types';
 import { loadSuite, validateSuite } from './loader';
 import { caseRunFailureKind, computeJudgeTrust, executionErrorKind, runSuite, type RunSuiteInput } from './runner';
-import { SuiteRunReportSchema, type ExecutionError, type LoadedSuite } from './schema';
+import { fakeJudge } from './judge/__fixtures__/calibration';
+import { labelsSha256 } from './judge/calibrate';
+import { computeJudgeFingerprint } from './judge/fingerprint';
+import { SuiteRunReportSchema, type AgreementFile, type ExecutionError, type LoadedSuite } from './schema';
 
 const RUN_ID = '2026-10-25T10-00-00-000Z-abc1234';
 const GIT = { sha: 'abc1234def', dirty: false };
@@ -36,9 +48,15 @@ describe('computeJudgeTrust', () => {
     expect(computeJudgeTrust('L0')).toEqual({ trusted: false, reason: 'no-judge-at-level', pin: null, agreement: null });
   });
 
-  it('refuses L1 and L2 until Epic 13', () => {
-    expect(() => computeJudgeTrust('L1')).toThrow(/lands in Epic 13/);
-    expect(() => computeJudgeTrust('L2')).toThrow(/lands in Epic 13/);
+  it('needs the trust inputs at L1 and L2', () => {
+    expect(() => computeJudgeTrust('L1')).toThrow(/^\[suite\] judge trust for L1 needs/);
+    expect(() => computeJudgeTrust('L2')).toThrow(/^\[suite\] judge trust for L2 needs/);
+  });
+
+  it('delegates L1/L2 to the trust decision, keeping the configured pin', () => {
+    const suite = judgedSuite();
+    const trust = computeJudgeTrust('L1', { judge: RUNNER_CONFIG.judge, suite, agreement: null, labelsSha256: labelsSha256([]), unpinned: false });
+    expect(trust).toEqual({ trusted: false, reason: 'no-agreement', pin: computeJudgeFingerprint(RUNNER_CONFIG.judge, suite), agreement: null });
   });
 });
 
@@ -246,5 +264,153 @@ describe('runSuite: --case', () => {
     await expect(runSuite(input(validateSuite('empty', { sources: [], tests: [] }), { caseFilter: 'X-01' }))).rejects.toThrow(
       /the suite has no tests/,
     );
+  });
+});
+
+describe('runSuite: L1 with a fake executor and a fake judge', () => {
+  const REPLY = 'Which release deadline comes first?';
+
+  function l1(options: {
+    /** The reply for the k-th executor call (1-based); defaults to REPLY. */
+    reply?: (call: number) => string | null;
+    decide?: Parameters<typeof fakeJudge>[0];
+    agreement?: AgreementFile | null;
+    model?: string;
+    unpinned?: boolean;
+    n?: number;
+  } = {}) {
+    const suite = judgedSuite();
+    const fake = fakeJudge(options.decide ?? (() => 'PASS'));
+    let agreementReads = 0;
+    const agreement = options.agreement ?? null;
+    const judging = {
+      judge: fake.judge,
+      model: options.model ?? 'gpt-4o',
+      unpinned: options.unpinned ?? false,
+      labelsSha256: labelsSha256([]),
+      get agreement() {
+        agreementReads += 1;
+        return agreement;
+      },
+    };
+    let calls = 0;
+    const executor = fakeReplyExecutor(() => {
+      calls += 1;
+      return options.reply ? options.reply(calls) : REPLY;
+    });
+    const run = input(suite, { level: 'L1', n: options.n ?? 1, executor, judging });
+    return { suite, fake, run, reads: () => agreementReads };
+  }
+
+  it('without an agreement: untrusted no-agreement, advisory meaning results outside the layers and verdict', async () => {
+    const { suite, fake, run, reads } = l1({ n: 2 });
+    const { report } = await runSuite(run);
+
+    expect(SuiteRunReportSchema.parse(JSON.parse(JSON.stringify(report)))).toEqual(report);
+    expect(reads()).toBe(1);
+    expect(report.judgeTrust).toEqual({
+      trusted: false,
+      reason: 'no-agreement',
+      pin: computeJudgeFingerprint(RUNNER_CONFIG.judge, suite),
+      agreement: null,
+    });
+    expect(report.models).toEqual({ coach: null, judge: 'gpt-4o' });
+    // C1, C2 and C4 are meaning-decided (C4's rule passed): 3 judge calls per sample.
+    expect(fake.inputs).toHaveLength(6);
+    for (const key of ['Z-01.A1/Z-01.C1', 'Z-01.A1/Z-01.C2', 'Z-01.A1/Z-01.C4']) {
+      expect(report.results[key], key).toMatchObject({ status: 'PASS', advisory: true, checkKind: 'meaning', passCount: 2, n: 2 });
+    }
+    expect(report.results['Z-01.A1/Z-01.C3']).toMatchObject({ status: 'PASS', advisory: false, checkKind: 'rule' });
+    const layer = (name: string) => report.layers!.rows.find((row) => row.layer === name)!;
+    expect(layer('P')).toMatchObject({ pass: 0, fail: 0 });
+    expect(layer('D')).toMatchObject({ pass: 0, fail: 0 });
+    expect(layer('C')).toMatchObject({ pass: 0, fail: 0 });
+    expect(layer('S')).toMatchObject({ pass: 1, fail: 0 });
+    expect(report.layers!.combinedPdc).toMatchObject({ pass: 0, fail: 0 });
+    expect(report.qaReview).toEqual([]);
+    expect(report.usage).toMatchObject({ judgeCalls: 6 });
+  });
+
+  it('with a calibrated agreement: trusted and the meaning statuses count toward pass rate and verdict', async () => {
+    const agreement = agreementFor(judgedSuite());
+    const { run } = l1({ agreement, decide: (judgeInput) => (judgeInput.layer === 'P' ? 'FAIL' : 'PASS') });
+    const { report } = await runSuite(run);
+    expect(report.judgeTrust).toMatchObject({ trusted: true, reason: 'calibrated', agreement });
+    expect(report.results['Z-01.A1/Z-01.C1']).toMatchObject({ status: 'FAIL', advisory: false });
+    const layer = (name: string) => report.layers!.rows.find((row) => row.layer === name)!;
+    expect(layer('P')).toMatchObject({ pass: 0, fail: 1 });
+    expect(layer('D')).toMatchObject({ pass: 1, fail: 0 });
+    expect(report.layers!.combinedPdc).toMatchObject({ pass: 2, fail: 1 });
+    expect(report.verdict).toBe('NOT ADEQUATE');
+    expect(report.qaReview).toEqual([
+      expect.objectContaining({ key: 'Z-01.A1/Z-01.C1', advisory: false, replies: [REPLY], reason: 'judged FAIL' }),
+    ]);
+  });
+
+  it('records the model called on an unpinned run and keeps the pin', async () => {
+    const { suite, run } = l1({ model: 'gpt-4o-mini', unpinned: true, agreement: agreementFor(judgedSuite()) });
+    const { report } = await runSuite(run);
+    expect(report.models.judge).toBe('gpt-4o-mini');
+    expect(report.judgeTrust).toMatchObject({ trusted: false, reason: 'unpinned-judge', pin: computeJudgeFingerprint(RUNNER_CONFIG.judge, suite) });
+    expect(report.judgeTrust.pin!.model).toBe('gpt-4o');
+  });
+
+  it('lists every meaning FAIL for QA review (judge FAIL and no-reply), never rule FAILs', async () => {
+    // Sample 1 asks two questions: C4's rule FAILs (meaningSkipped) and the judge FAILs C1.
+    // Sample 2 is silent: C3's rule FAILs, C1 and C2 are no-reply meaning FAILs.
+    const twoQuestions = 'How is it going? And | the team?';
+    const { run } = l1({
+      n: 2,
+      reply: (call) => (call === 1 ? twoQuestions : null),
+      decide: (judgeInput) => (judgeInput.layer === 'P' ? 'FAIL' : 'PASS'),
+    });
+    const { report } = await runSuite(run);
+
+    expect(report.results['Z-01.A1/Z-01.C4']!.samples[0]).toMatchObject({ status: 'FAIL', meaningSkipped: true });
+    expect(report.results['Z-01.A1/Z-01.C3']!.samples[1]).toMatchObject({ status: 'FAIL' });
+    expect(report.qaReview).toEqual([
+      {
+        key: 'Z-01.A1/Z-01.C1',
+        testId: 'Z-01.A1',
+        sourceCase: 'Z-01',
+        criterionId: 'Z-01.C1',
+        layer: 'P',
+        sample: 1,
+        advisory: true,
+        replies: [twoQuestions],
+        reason: 'judged FAIL',
+      },
+      {
+        key: 'Z-01.A1/Z-01.C1',
+        testId: 'Z-01.A1',
+        sourceCase: 'Z-01',
+        criterionId: 'Z-01.C1',
+        layer: 'P',
+        sample: 2,
+        advisory: true,
+        replies: [],
+        reason: 'no-reply',
+      },
+      {
+        key: 'Z-01.A1/Z-01.C2',
+        testId: 'Z-01.A1',
+        sourceCase: 'Z-01',
+        criterionId: 'Z-01.C2',
+        layer: 'D',
+        sample: 2,
+        advisory: true,
+        replies: [],
+        reason: 'no-reply',
+      },
+    ]);
+  });
+
+  it('requires judging at L1/L2 and rejects it at L0', async () => {
+    const suite = judgedSuite();
+    await expect(runSuite(input(suite, { level: 'L1', executor: fakeReplyExecutor(() => 'Hi?') }))).rejects.toThrow(
+      '[suite] L1 run needs judging (a judge and its trust inputs)',
+    );
+    const judging = { judge: fakeJudge(() => 'PASS').judge, model: 'gpt-4o', unpinned: false, agreement: null, labelsSha256: labelsSha256([]) };
+    await expect(runSuite(input(fakeSuite(), { judging }))).rejects.toThrow('[suite] L0 runs have no judge; judging must not be given');
   });
 });

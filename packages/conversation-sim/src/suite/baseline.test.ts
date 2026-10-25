@@ -14,6 +14,7 @@ import {
   writeBaseline,
   type BaselineRefusalOptions,
 } from './baseline';
+import { computeJudgeFingerprint } from './judge/fingerprint';
 import { writeSuiteReport } from './report';
 import { runSuite } from './runner';
 import { BaselineSchema, type SuiteRunReport } from './schema';
@@ -130,10 +131,40 @@ describe('baselineRefusals', () => {
 });
 
 describe('currentJudgeFingerprint', () => {
-  it('is null at L0 and refused at L1/L2', () => {
-    expect(currentJudgeFingerprint('L0')).toBeNull();
-    expect(() => currentJudgeFingerprint('L1')).toThrow('[suite] judge fingerprint for L1 lands in Epic 13');
-    expect(() => currentJudgeFingerprint('L2')).toThrow('[suite] judge fingerprint for L2 lands in Epic 13');
+  it('is null at L0 and the configured pin over the suite at L1/L2', () => {
+    const suite = fakeSuite();
+    expect(currentJudgeFingerprint('L0', RUNNER_CONFIG, null)).toBeNull();
+    expect(currentJudgeFingerprint('L0', RUNNER_CONFIG, suite)).toBeNull();
+    expect(currentJudgeFingerprint('L1', RUNNER_CONFIG, suite)).toEqual(computeJudgeFingerprint(RUNNER_CONFIG.judge, suite));
+    expect(currentJudgeFingerprint('L2', RUNNER_CONFIG, suite)).toEqual(computeJudgeFingerprint(RUNNER_CONFIG.judge, suite));
+    expect(() => currentJudgeFingerprint('L1', RUNNER_CONFIG, null)).toThrow('[suite] judge fingerprint for L1 needs the suite');
+  });
+});
+
+describe('baselineRefusals: unpinned judge model', () => {
+  async function l1Report(calledModel: string | null): Promise<SuiteRunReport> {
+    const report = await completeReport();
+    return {
+      ...report,
+      level: 'L1',
+      n: 5,
+      models: { coach: null, judge: calledModel },
+      judgeTrust: { trusted: false, reason: calledModel === 'gpt-4o' ? 'no-agreement' : 'unpinned-judge', pin: FINGERPRINT, agreement: null },
+    };
+  }
+
+  it('refuses a non-L0 run whose called judge model differs from the pin', async () => {
+    const options = { ...OPTIONS, currentFingerprint: FINGERPRINT };
+    expect(baselineRefusals(await l1Report('gpt-4o'), options)).toEqual([]);
+    expect(baselineRefusals(await l1Report('gpt-4o-mini'), options)).toEqual(['run called judge model gpt-4o-mini, not the pinned gpt-4o']);
+    expect(baselineRefusals(await l1Report(null), options)).toEqual(['run called judge model none, not the pinned gpt-4o']);
+  });
+
+  it('refuses an L1 run whose pin differs from the current fingerprint', async () => {
+    const report = await l1Report('gpt-4o');
+    expect(baselineRefusals(report, { ...OPTIONS, currentFingerprint: { ...FINGERPRINT, guidanceSha256: 'd'.repeat(64) } })).toEqual([
+      'judge fingerprint of the run differs from the current one',
+    ]);
   });
 });
 

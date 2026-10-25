@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { computeJudgeFingerprint } from './judge/fingerprint';
 import {
   BaselineSchema,
   SuiteRunReportSchema,
@@ -7,6 +8,7 @@ import {
   type BaselineResult,
   type JudgeFingerprint,
   type Level,
+  type LoadedSuite,
   type SuiteConfig,
   type SuiteRunReport,
 } from './schema';
@@ -22,10 +24,15 @@ export function isSafeId(id: string): boolean {
   return SAFE_ID.test(id) && !/^\.+$/.test(id);
 }
 
-/** The current judge fingerprint for a level: none at L0; L1/L2 land with the judge. */
-export function currentJudgeFingerprint(level: Level): JudgeFingerprint | null {
+/** The current judge fingerprint for a level: none at L0, else the configured pin over the suite (AD-8). */
+export function currentJudgeFingerprint(
+  level: Level,
+  config: Pick<SuiteConfig, 'judge'>,
+  suite: Pick<LoadedSuite, 'tests'> | null,
+): JudgeFingerprint | null {
   if (level === 'L0') return null;
-  throw new Error(`[suite] judge fingerprint for ${level} lands in Epic 13`);
+  if (suite === null) throw new Error(`[suite] judge fingerprint for ${level} needs the suite`);
+  return computeJudgeFingerprint(config.judge, suite);
 }
 
 export interface BaselineRefusalOptions {
@@ -59,6 +66,11 @@ export function baselineRefusals(report: SuiteRunReport, options: BaselineRefusa
   }
   if (stableJson(report.judgeTrust.pin ?? null) !== stableJson(options.currentFingerprint)) {
     refusals.push('judge fingerprint of the run differs from the current one');
+  }
+  // The pin stays the configured fingerprint on an unpinned run, so compare the model called.
+  const pin = report.judgeTrust.pin;
+  if (report.level !== 'L0' && pin !== null && report.models.judge !== pin.model) {
+    refusals.push(`run called judge model ${report.models.judge ?? 'none'}, not the pinned ${pin.model}`);
   }
   // Manifest NOT TESTABLE rows (testKind null) are in scope but no test executed them.
   if (!Object.values(report.results).some((result) => result.inScope && result.testKind !== null)) {

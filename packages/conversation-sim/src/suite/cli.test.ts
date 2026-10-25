@@ -3,11 +3,22 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RUNNER_CONFIG, cleanRun, fakeExecutor, fakeSuite, liveSuite } from './__fixtures__/runner';
+import {
+  RUNNER_CONFIG,
+  agreementFor,
+  cleanRun,
+  fakeExecutor,
+  fakeReplyExecutor,
+  fakeSuite,
+  judgedSuite,
+  liveSuite,
+} from './__fixtures__/runner';
 import { TEST_RULES, validModules } from './__fixtures__/suite';
 import {
   aggregateCiExitCode,
   ciRunUrlFromEnv,
+  defaultDeps,
+  judgeModelToCall,
   main,
   parseArgs,
   readMergeBaseFile,
@@ -20,7 +31,8 @@ import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import type { SuiteExecutor } from './executors/types';
 import { loadSuite, validateSuite } from './loader';
 import { fakeJudge } from './judge/__fixtures__/calibration';
-import { labelsSha256 } from './judge/calibrate';
+import { labelsSha256, writeAgreementFile, writeLabelsFile } from './judge/calibrate';
+import { label } from './judge/__fixtures__/calibration';
 import type { JudgeInput } from './judge/criterion-judge';
 import { computeJudgeFingerprint } from './judge/fingerprint';
 import { buildJudgeInput } from './judge/judge-input';
@@ -220,8 +232,9 @@ describe('suite:run', () => {
   it.each([
     ['L1', '[suite] L1 executor lands in Epic 13'],
     ['L2', '[suite] L2 executor lands in Epic 14'],
-  ])('refuses %s and runs nothing', async (level, message) => {
+  ])('refuses %s through the default executor factory and runs nothing', async (level, message) => {
     const h = harness();
+    h.deps.createExecutor = defaultDeps().createExecutor;
     expect(await main(['run', '--suite', 'x-suite', '--level', level], h.deps)).toBe(1);
     expect(h.err).toEqual([message]);
     expect(runDirs()).toEqual([]);
@@ -363,9 +376,9 @@ describe('suite:baseline:accept', () => {
     expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(1);
     expect(h.err).toEqual([
       `[suite] baseline:accept refused run ${runId}:`,
-      '[suite]   - judge fingerprint for L1 lands in Epic 13',
       '[suite]   - n 1 is below baseline.minSamples.L1 5',
       '[suite]   - run was made from a dirty working tree; pass --allow-dirty to accept it',
+      '[suite]   - judge fingerprint of the run differs from the current one',
     ]);
     expect(existsSync(baselineFile())).toBe(false);
   });
@@ -378,6 +391,230 @@ describe('suite:baseline:accept', () => {
     expect(await main(['baseline:accept', '--run', '../../etc'], unsafe.deps)).toBe(1);
     expect(unsafe.err).toEqual(['[suite] unsafe run id ../../etc']);
     expect(existsSync(join(dir, 'baselines'))).toBe(false);
+  });
+});
+
+describe('suite:run at L1 with an injected executor and judge (Story 13.3)', () => {
+  const REPLY = 'Which release deadline comes first?';
+  const OTHER_MODEL = 'judge-override-model-xyz';
+
+  beforeEach(() => {
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: [...RUNNER_CONFIG.suites, 'x-judged'] }));
+  });
+
+  function l1Harness(options: { env?: Record<string, string | undefined>; decide?: Parameters<typeof fakeJudge>[0]; judge?: boolean } = {}) {
+    const h = harness({ env: options.env ?? {}, executor: () => fakeReplyExecutor(() => REPLY) });
+    const fallback = h.deps.loadSuite;
+    let suite = judgedSuite();
+    h.deps.loadSuite = (id) => (id === 'x-judged' ? suite : fallback(id));
+    const configs: Array<{ model: string }> = [];
+    const fake = fakeJudge(options.decide ?? ((input) => (input.layer === 'P' ? 'FAIL' : 'PASS')));
+    if (options.judge !== false) {
+      h.deps.createRunJudge = (judge) => {
+        configs.push(judge);
+        return fake.judge;
+      };
+    }
+    return { h, configs, fake, setSuite: (next: LoadedSuite) => (suite = next) };
+  }
+
+  const readRun = (runId: string) => SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8')));
+  const readMarkdown = (runId: string) => readFileSync(join(dir, 'runs', 'suites', runId, 'report.md'), 'utf8');
+
+  it('without an agreement: untrusted no-agreement, advisory meaning results, fingerprint and QA review in report.md', async () => {
+    const { h, configs } = l1Harness();
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+    const [runId] = runDirs();
+    const report = readRun(runId!);
+    const pin = computeJudgeFingerprint(RUNNER_CONFIG.judge, judgedSuite());
+    expect(report.judgeTrust).toEqual({ trusted: false, reason: 'no-agreement', pin, agreement: null });
+    expect(report.models).toEqual({ coach: null, judge: 'gpt-4o' });
+    expect(configs).toEqual([RUNNER_CONFIG.judge]);
+    for (const [key, result] of Object.entries(report.results)) {
+      if (result.checkKind === 'meaning') expect(result.advisory, key).toBe(true);
+    }
+    expect(report.layers!.combinedPdc).toMatchObject({ pass: 0, fail: 0 });
+    expect(report.qaReview).toEqual([expect.objectContaining({ key: 'Z-01.A1/Z-01.C1', replies: [REPLY], reason: 'judged FAIL', advisory: true })]);
+
+    const markdown = readMarkdown(runId!);
+    expect(markdown).toContain('- Meaning checks: advisory (uncalibrated) (no-agreement)');
+    expect(markdown).toContain(`- Judge fingerprint: openai gpt-4o · temperature 0 · reasoningEffort null · maxOutputTokens 1024 · prompt ${pin.promptSha256}`);
+    expect(markdown).toContain(`| Z-01 | Z-01.A1 | Z-01.C1 | P | 1 | yes | ${REPLY} | judged FAIL |`);
+    expect(h.out).toContain('[suite] meaning checks: advisory (uncalibrated) (no-agreement)');
+    expect(h.out).toContain('[suite] QA review: 1 meaning FAIL(s) listed in report.md');
+    expect(h.out.join('\n')).not.toContain(REPLY);
+  });
+
+  it('with a matching calibrated agreement: trusted and meaning statuses count', async () => {
+    writeAgreementFile(dir, 'x-judged', agreementFor(judgedSuite()));
+    const { h } = l1Harness();
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(0);
+    const report = readRun(runDirs()[0]!);
+    expect(report.judgeTrust).toMatchObject({ trusted: true, reason: 'calibrated' });
+    expect(report.results['Z-01.A1/Z-01.C1']).toMatchObject({ status: 'FAIL', advisory: false });
+    expect(report.layers!.combinedPdc).toMatchObject({ pass: 2, fail: 1 });
+    expect(h.out).toContain('[suite] meaning checks: trusted (calibrated)');
+  });
+
+  it.each([
+    ['a swapped judge model', { fingerprint: { ...computeJudgeFingerprint(RUNNER_CONFIG.judge, judgedSuite()), model: 'gpt-4o-mini' } }, 'fingerprint-mismatch:model'],
+    ['new labels', { labelsSha256: 'd'.repeat(64) }, 'labels-mismatch'],
+    ['few labels', { n: 3 }, 'below-min-labels'],
+    ['a low kappa', { kappa: 0.4 }, 'below-threshold:kappa'],
+  ])('is untrusted for %s', async (_name, overrides, reason) => {
+    writeAgreementFile(dir, 'x-judged', agreementFor(judgedSuite(), overrides));
+    const { h } = l1Harness();
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(0);
+    expect(readRun(runDirs()[0]!).judgeTrust).toMatchObject({ trusted: false, reason });
+  });
+
+  it('hashes the labels on disk: calibrated for matching labels, labels-mismatch after they change', async () => {
+    const labels = [label({ criterionId: 'Z-01.C1', status: 'PASS' })];
+    writeLabelsFile(dir, 'x-judged', { schemaVersion: 1, labels });
+    writeAgreementFile(dir, 'x-judged', agreementFor(judgedSuite(), { labelsSha256: labelsSha256(labels) }));
+    const { h } = l1Harness();
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(0);
+    expect(readRun(runDirs()[0]!).judgeTrust).toMatchObject({ trusted: true, reason: 'calibrated' });
+
+    writeLabelsFile(dir, 'x-judged', { schemaVersion: 1, labels: [...labels, label({ criterionId: 'Z-01.C2', status: 'FAIL' })] });
+    h.setNow('2026-10-25T10:05:00.000Z');
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(0);
+    const latest = runDirs().find((id) => id.startsWith('2026-10-25T10-05'))!;
+    expect(readRun(latest).judgeTrust).toMatchObject({ trusted: false, reason: 'labels-mismatch' });
+  });
+
+  it('is untrusted fingerprint-mismatch:guidanceSha256 after guidance was edited', async () => {
+    writeAgreementFile(dir, 'x-judged', agreementFor(judgedSuite()));
+    const { h, setSuite } = l1Harness();
+    setSuite(judgedSuite({ guidance: 'Edited guidance.' }));
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(0);
+    expect(readRun(runDirs()[0]!).judgeTrust).toMatchObject({ trusted: false, reason: 'fingerprint-mismatch:guidanceSha256' });
+  });
+
+  it('refuses a SIM_JUDGE_MODEL override without --allow-unpinned-judge, writing nothing and never printing the value', async () => {
+    const { h, configs } = l1Harness({ env: { SIM_JUDGE_MODEL: OTHER_MODEL } });
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(1);
+    expect(h.err).toEqual([
+      '[suite] SIM_JUDGE_MODEL differs from the pinned judge model gpt-4o; pass --allow-unpinned-judge for an untrusted run',
+    ]);
+    expect(configs).toEqual([]);
+    expect(runDirs()).toEqual([]);
+    expect([...h.out, ...h.err].join('\n')).not.toContain(OTHER_MODEL);
+  });
+
+  it('runs an unpinned judge with --allow-unpinned-judge: untrusted, records the model called, keeps the pin', async () => {
+    writeAgreementFile(dir, 'x-judged', agreementFor(judgedSuite()));
+    const { h, configs } = l1Harness({ env: { SIM_JUDGE_MODEL: OTHER_MODEL } });
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1', '--allow-unpinned-judge'], h.deps)).toBe(0);
+    const report = readRun(runDirs()[0]!);
+    expect(report.judgeTrust).toMatchObject({ trusted: false, reason: 'unpinned-judge' });
+    expect(report.judgeTrust.pin!.model).toBe('gpt-4o');
+    expect(report.models.judge).toBe(OTHER_MODEL);
+    expect(configs).toEqual([{ ...RUNNER_CONFIG.judge, model: OTHER_MODEL }]);
+  });
+
+  it.each([undefined, '', 'gpt-4o'])('treats SIM_JUDGE_MODEL %j as the pin', async (value) => {
+    const { h, configs } = l1Harness({ env: { SIM_JUDGE_MODEL: value } });
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(0);
+    expect(readRun(runDirs()[0]!).judgeTrust.reason).toBe('no-agreement');
+    expect(configs).toEqual([RUNNER_CONFIG.judge]);
+  });
+
+  it('ignores SIM_JUDGE_MODEL and the flag at L0 and prints the fingerprint none line', async () => {
+    const h = harness({ env: { SIM_JUDGE_MODEL: OTHER_MODEL } });
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0', '--allow-unpinned-judge'], h.deps)).toBe(0);
+    const [runId] = runDirs();
+    const report = readRun(runId!);
+    expect(report.judgeTrust).toEqual({ trusted: false, reason: 'no-judge-at-level', pin: null, agreement: null });
+    expect(report.models.judge).toBeNull();
+    expect(report.qaReview).toEqual([]);
+    const markdown = readMarkdown(runId!);
+    expect(markdown).toContain('- Judge fingerprint: none (no judge at L0)');
+    expect(markdown).toContain('## QA review\n\nNone.');
+    expect(h.out).toContain('[suite] meaning checks: advisory (uncalibrated) (no-judge-at-level)');
+    expect(h.out.some((line) => line.includes('QA review'))).toBe(false);
+  });
+
+  it('refuses an L1 run when no judge is wired, writing nothing', async () => {
+    const { h } = l1Harness({ judge: false });
+    expect(await main(['run', '--suite', 'x-judged', '--level', 'L1'], h.deps)).toBe(1);
+    expect(h.err).toEqual(['[suite] L1 run needs a judge; this entry wires none (lands with the L1 executor, Story 13.4)']);
+    expect(runDirs()).toEqual([]);
+  });
+
+  it('the default entry still refuses L1 with the executor message and builds no judge', async () => {
+    const { h, configs } = l1Harness();
+    h.deps.createExecutor = defaultDeps().createExecutor;
+    expect(await main(['run', '--suite', 'smoke-v1', '--level', 'L1'], h.deps)).toBe(1);
+    expect(h.err).toEqual(['[suite] L1 executor lands in Epic 13']);
+    expect(configs).toEqual([]);
+    expect(runDirs()).toEqual([]);
+    expect(defaultDeps().createRunJudge).toBeUndefined();
+  });
+
+  it('parses --allow-unpinned-judge and polices the judge model', () => {
+    expect(parseArgs(['run', '--suite', 'p-v1', '--level', 'L1', '--allow-unpinned-judge'])).toEqual({
+      command: 'run',
+      suite: 'p-v1',
+      level: 'L1',
+      runs: 1,
+      allowUnpinnedJudge: true,
+    });
+    expect(judgeModelToCall('gpt-4o', undefined, false)).toEqual({ model: 'gpt-4o', unpinned: false });
+    expect(judgeModelToCall('gpt-4o', 'x', true)).toEqual({ model: 'x', unpinned: true });
+    expect(() => judgeModelToCall('gpt-4o', 'x', false)).toThrow(/differs from the pinned judge model gpt-4o/);
+    expect(judgeModelToCall('gpt-4o', ' gpt-4o', false)).toEqual({ model: 'gpt-4o', unpinned: false });
+    expect(judgeModelToCall('gpt-4o', 'gpt-4o\n', false)).toEqual({ model: 'gpt-4o', unpinned: false });
+    expect(judgeModelToCall('gpt-4o', '   ', false)).toEqual({ model: 'gpt-4o', unpinned: false });
+    expect(judgeModelToCall('gpt-4o', ' other \n', true)).toEqual({ model: 'other', unpinned: true });
+  });
+
+  describe('suite:baseline:accept of an L1 run', () => {
+    async function l1Run(h: Harness, extra: string[] = []): Promise<string> {
+      const before = new Set(runDirs());
+      expect(await main(['run', '--suite', 'x-judged', '--level', 'L1', '--runs', '5', ...extra], h.deps)).toBe(0);
+      return runDirs().find((id) => !before.has(id))!;
+    }
+    const baselineFile = () => join(dir, 'baselines', 'x-judged', 'L1.json');
+
+    it('accepts a run whose pin matches the current fingerprint and records it', async () => {
+      const { h } = l1Harness({ decide: () => 'PASS' });
+      const runId = await l1Run(h);
+      expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(0);
+      const baseline = BaselineSchema.parse(JSON.parse(readFileSync(baselineFile(), 'utf8')));
+      expect(baseline.judge).toEqual({ fingerprint: computeJudgeFingerprint(RUNNER_CONFIG.judge, judgedSuite()), agreement: null });
+    });
+
+    it('accepts a calibrated run with its agreement, and the diff against that baseline is not baseline-invalid', async () => {
+      const agreement = agreementFor(judgedSuite());
+      writeAgreementFile(dir, 'x-judged', agreement);
+      const { h } = l1Harness({ decide: () => 'PASS' });
+      const runId = await l1Run(h);
+      expect(readRun(runId).judgeTrust).toMatchObject({ trusted: true, reason: 'calibrated' });
+      expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(0);
+      const baseline = BaselineSchema.parse(JSON.parse(readFileSync(baselineFile(), 'utf8')));
+      expect(baseline.judge.agreement).toEqual(agreement);
+      expect(await main(['diff', '--run', runId], h.deps)).toBe(0);
+      expect(readRun(runId).diff!.outcome).not.toBe('baseline-invalid');
+    });
+
+    it('refuses a run whose pin differs from the current fingerprint (edited guidance)', async () => {
+      const { h, setSuite } = l1Harness({ decide: () => 'PASS' });
+      const runId = await l1Run(h);
+      setSuite(judgedSuite({ guidance: 'Edited guidance.' }));
+      expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(1);
+      expect(h.err).toEqual([`[suite] baseline:accept refused run ${runId}:`, '[suite]   - judge fingerprint of the run differs from the current one']);
+      expect(existsSync(baselineFile())).toBe(false);
+    });
+
+    it('refuses an unpinned run: the called model is not the pin', async () => {
+      const { h } = l1Harness({ env: { SIM_JUDGE_MODEL: OTHER_MODEL }, decide: () => 'PASS' });
+      const runId = await l1Run(h, ['--allow-unpinned-judge']);
+      expect(await main(['baseline:accept', '--run', runId], h.deps)).toBe(1);
+      expect(h.err).toContain(`[suite]   - run called judge model ${OTHER_MODEL}, not the pinned gpt-4o`);
+      expect(existsSync(baselineFile())).toBe(false);
+    });
   });
 });
 

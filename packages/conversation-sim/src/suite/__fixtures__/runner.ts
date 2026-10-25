@@ -1,7 +1,9 @@
 import type { SuiteExecutor } from '../executors/types';
 import { validateSuite } from '../loader';
 import { TEST_RULES, validModules } from './suite';
-import type { CaseRun, ExecutionError, LoadedSuite, LoadedTest, SuiteConfig } from '../schema';
+import type { AgreementFile, CaseRun, ExecutionError, Level, LoadedSuite, LoadedTest, SuiteConfig } from '../schema';
+import { labelsSha256 } from '../judge/calibrate';
+import { computeJudgeFingerprint } from '../judge/fingerprint';
 
 /** Synthetic suites, a config and fake executors shared by runner, baseline and CLI tests. */
 
@@ -162,5 +164,117 @@ export function fakeExecutor(behavior: FakeBehavior = (test, attempt) => cleanRu
       calls.push(`${test.id}#${options.attempt}`);
       return behavior(test, options.attempt);
     },
+  };
+}
+
+/**
+ * `Z-01.A1` (atomic, L1 only): C1 (P) and C2 (D, with guidance) meaning-only, C3 (S) rule
+ * `reply-present`, C4 (C) rule `too-many-questions` plus meaning. `guidance` changes C2's
+ * guidance (and so the fingerprint's `guidanceSha256`).
+ */
+export function judgedSuite(options: { guidance?: string } = {}): LoadedSuite {
+  const sources = [
+    {
+      id: 'Z-01',
+      requirement: ['REQ-9'],
+      kind: 'conversation',
+      expectedBehavior: 'The coach asks one focused question about priorities.',
+      criteria: [
+        { id: 'Z-01.C1', layer: 'P', passCondition: 'The reply asks about priorities.' },
+        { id: 'Z-01.C2', layer: 'D', passCondition: 'The reply names a deadline.' },
+        { id: 'Z-01.C3', layer: 'S', passCondition: 'The coach replies.' },
+        { id: 'Z-01.C4', layer: 'C', passCondition: 'The reply asks one warm question.' },
+      ],
+    },
+  ];
+  const tests = [
+    {
+      id: 'Z-01.A1',
+      sourceCase: 'Z-01',
+      requirement: ['REQ-9'],
+      kind: 'atomic',
+      levels: ['L1'],
+      runProfile: 'isolated',
+      setup: [],
+      seed: { history: [{ role: 'coach', text: 'Morning. How is the week?', atOffsetMs: 60_000 }] },
+      preconditions: [],
+      steps: [{ text: 'Two releases this week.' }],
+      criteria: [
+        { id: 'Z-01.C1', evaluatedAt: 'reply:1', checks: [{ type: 'meaning' }] },
+        {
+          id: 'Z-01.C2',
+          evaluatedAt: 'reply:1',
+          checks: [{ type: 'meaning' }],
+          judgeGuidance: options.guidance ?? 'Any named release date counts as a deadline.',
+        },
+        { id: 'Z-01.C3', evaluatedAt: 'reply:1', checks: [{ type: 'rule', rule: 'reply-present' }] },
+        { id: 'Z-01.C4', evaluatedAt: 'reply:1', checks: [{ type: 'rule', rule: 'too-many-questions' }, { type: 'meaning' }] },
+      ],
+    },
+  ];
+  return validateSuite('x-judged', { sources, tests }, TEST_RULES);
+}
+
+/** A valid run whose steps all reply `reply` (or stay silent when null). */
+export function replyRun(test: LoadedTest, attempt: number, reply: string | null, level: Level = 'L1'): CaseRun {
+  return {
+    testId: test.id,
+    level,
+    attempt,
+    subject: { externalUserId: `fake-${test.id}` },
+    observed: ['events', 'reply.messages', 'reply.text'],
+    preconditions: [],
+    steps: test.steps.map((step, position) => ({
+      index: position + 1,
+      userText: step.text,
+      traceId: `trace-${position + 1}`,
+      gapMs: 0,
+      reply:
+        reply === null
+          ? null
+          : { messages: [{ id: `m-${position + 1}`, text: reply, occurredAt: '2026-10-25T10:00:00.000Z', metadata: {} }], text: reply },
+      unsolicited: [],
+    })),
+    state: { before: {}, after: {}, afterStep: {} },
+    errors: [],
+    events: [],
+  };
+}
+
+/** A fake executor of `level` answering every test step with `reply(test, attempt)`. */
+export function fakeReplyExecutor(
+  reply: (test: LoadedTest, attempt: number) => string | null,
+  level: Level = 'L1',
+): SuiteExecutor & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    level,
+    calls,
+    supports: () => true,
+    observes: () => ['events', 'reply.messages', 'reply.text'],
+    async run(test, options) {
+      calls.push(`${test.id}#${options.attempt}`);
+      return replyRun(test, options.attempt, reply(test, options.attempt), level);
+    },
+  };
+}
+
+/** A synthetic agreement file for `suite` under `config.judge`, calibrated unless overridden. */
+export function agreementFor(
+  suite: Pick<LoadedSuite, 'tests'>,
+  overrides: Partial<AgreementFile> = {},
+  judge: SuiteConfig['judge'] = RUNNER_CONFIG.judge,
+): AgreementFile {
+  const stats = { n: 10, overall: 0.9, kappa: 0.7 };
+  return {
+    schemaVersion: 1,
+    fingerprint: computeJudgeFingerprint(judge, suite),
+    labelsSha256: labelsSha256([]),
+    n: 40,
+    overall: 0.9,
+    kappa: 0.7,
+    perLayer: { P: stats, D: stats, C: stats, S: stats },
+    computedAt: '2026-10-24T09:00:00.000Z',
+    ...overrides,
   };
 }

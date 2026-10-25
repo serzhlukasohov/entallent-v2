@@ -634,11 +634,13 @@ export const JudgeTrustSchema = z
   .object({
     trusted: z.boolean(),
     reason: z.string().min(1),
-    pin: z.unknown().nullable(),
-    agreement: z.unknown().nullable(),
+    /** The configured judge fingerprint (AD-8); `null` at L0. Kept the pin even for an unpinned run. */
+    pin: z.lazy(() => JudgeFingerprintSchema).nullable(),
+    /** The agreement file the decision was made against; `null` when absent (or at L0). */
+    agreement: z.lazy(() => AgreementFileSchema).nullable(),
   })
   .strict();
-export type JudgeTrust = z.infer<typeof JudgeTrustSchema> & { pin: unknown; agreement: unknown };
+export type JudgeTrust = z.infer<typeof JudgeTrustSchema>;
 
 // ---------------------------------------------------------------------------
 // Scoring and reports (AD-9, AD-11)
@@ -748,6 +750,26 @@ export const JudgeErrorSchema = z
 export type JudgeError = z.infer<typeof JudgeErrorSchema>;
 
 export const UsageSchema = z.record(z.number().nonnegative());
+
+/**
+ * One meaning-based FAIL sample for QA review (AD-8): an in-scope FAIL decided by the judge
+ * (or `no-reply`), with the evaluated reply texts and the judge reason. Rule FAILs are
+ * never listed. `replies` is empty for `no-reply`.
+ */
+export const QaReviewEntrySchema = z
+  .object({
+    key: z.string().min(1),
+    testId: z.string().min(1),
+    sourceCase: z.string().regex(SOURCE_CASE_ID),
+    criterionId: z.string().regex(CRITERION_ID),
+    layer: LayerSchema,
+    sample: z.number().int().min(1),
+    advisory: z.boolean(),
+    replies: z.array(z.string()),
+    reason: z.string().min(1),
+  })
+  .strict();
+export type QaReviewEntry = z.infer<typeof QaReviewEntrySchema>;
 export type Usage = z.infer<typeof UsageSchema>;
 
 /** Provenance of an accepted baseline (AD-11); shared by `Baseline` and `SuiteDiff`. */
@@ -863,6 +885,8 @@ export const SuiteRunReportSchema = z
     coverage: CoverageSchema,
     journeys: JourneySectionSchema,
     judgeErrors: z.array(JudgeErrorSchema),
+    /** Every meaning FAIL for QA review; optional only so pre-13.3 reports parse (always written since). */
+    qaReview: z.array(QaReviewEntrySchema).optional(),
     usage: UsageSchema,
     /** Present when `--case` narrowed the run; such runs are never accepted as baselines. */
     selection: z.object({ case: z.string().min(1) }).strict().optional(),
@@ -1074,7 +1098,7 @@ export const BaselineSchema = z
     suiteId: z.string().min(1),
     level: LevelSchema,
     /** Both `null` at L0 (no judge). */
-    judge: z.object({ fingerprint: JudgeFingerprintSchema.nullable(), agreement: z.unknown().nullable() }).strict(),
+    judge: z.object({ fingerprint: JudgeFingerprintSchema.nullable(), agreement: AgreementFileSchema.nullable() }).strict(),
     coach: z.object({ model: z.string().nullable() }).strict(),
     acceptedFrom: AcceptedFromSchema,
     acceptedAt: IsoTimestampSchema,
@@ -1084,7 +1108,7 @@ export const BaselineSchema = z
     results: z.record(BaselineResultSchema),
   })
   .strict();
-export type Baseline = z.infer<typeof BaselineSchema> & { judge: { agreement: unknown } };
+export type Baseline = z.infer<typeof BaselineSchema>;
 
 /** Output of `score`; a plain in-memory value, not a persisted artifact. */
 export interface SuiteScore {

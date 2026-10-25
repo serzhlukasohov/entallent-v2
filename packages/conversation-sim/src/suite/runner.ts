@@ -2,10 +2,13 @@ import { isTransportFailureMessage } from '../gate/failure-kind';
 import { evaluate } from './evaluate';
 import type { SuiteExecutor } from './executors/types';
 import { SuiteExecutionError } from './executors/types';
-import { buildSuiteReport, collectJudgeErrors, judgeUsageTotals } from './report';
+import type { CriterionJudge } from './judge/criterion-judge';
+import { decideJudgeTrust, type JudgeTrustInputs } from './judge/trust';
+import { buildSuiteReport, collectJudgeErrors, collectQaReview, judgeUsageTotals } from './report';
 import { RULES, type RuleRegistry } from './rules/registry';
 import {
   CaseRunSchema,
+  type AgreementFile,
   type CaseRun,
   type CriterionResult,
   type ExecutionError,
@@ -13,6 +16,7 @@ import {
   type Level,
   type LoadedSuite,
   type LoadedTest,
+  type QaReviewEntry,
   type SuiteConfig,
   type SuiteRunReport,
 } from './schema';
@@ -26,10 +30,14 @@ import { score, testCriterionKey } from './score';
 
 export type FailureKind = 'none' | 'product' | 'infrastructure';
 
-/** Computed once per run (AD-8). L0 has no judge; L1/L2 trust lands with the judge in Epic 13. */
-export function computeJudgeTrust(level: Level): JudgeTrust {
+/**
+ * Computed once per run (AD-8). L0 has no judge; L1/L2 need the trust inputs and delegate
+ * to `judge/trust.ts`, the single trust decision.
+ */
+export function computeJudgeTrust(level: Level, inputs?: JudgeTrustInputs): JudgeTrust {
   if (level === 'L0') return { trusted: false, reason: 'no-judge-at-level', pin: null, agreement: null };
-  throw new Error(`[suite] judge trust for ${level} lands in Epic 13`);
+  if (inputs === undefined) throw new Error(`[suite] judge trust for ${level} needs the judge config, suite, agreement and labels hash`);
+  return decideJudgeTrust(inputs);
 }
 
 /**
@@ -63,6 +71,19 @@ export interface RunSuiteInput {
   rules?: RuleRegistry;
   /** One `[suite]` line per case per sample; never transcript text. */
   log?: (line: string) => void;
+  /** Required at L1/L2, rejected at L0: the judge to call and the trust inputs (AD-8). */
+  judging?: RunJudging;
+}
+
+export interface RunJudging {
+  judge: CriterionJudge;
+  /** The judge model actually called (recorded as `models.judge`). */
+  model: string;
+  /** True when `model` differs from the pin (`--allow-unpinned-judge`). */
+  unpinned: boolean;
+  agreement: AgreementFile | null;
+  /** `labelsSha256` of the suite's current labels. */
+  labelsSha256: string;
 }
 
 export interface CaseRunRecord {
@@ -91,6 +112,9 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
   if (executor.level !== level) {
     throw new SuiteRunError(`[suite] executor is ${executor.level}, run level is ${level}`);
   }
+  const judging = input.judging;
+  if (level === 'L0' && judging !== undefined) throw new SuiteRunError('[suite] L0 runs have no judge; judging must not be given');
+  if (level !== 'L0' && judging === undefined) throw new SuiteRunError(`[suite] ${level} run needs judging (a judge and its trust inputs)`);
 
   const selected = selectTests(suite, input.caseFilter);
   const scoredSuite: LoadedSuite =
@@ -103,8 +127,19 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
         };
   if (suite.tests.length === 0) log(`[suite] ${suite.id} has no tests`);
 
-  const trust = computeJudgeTrust(level);
+  // Trust is decided once, before the first sample (AD-8); evaluate/score/report copy it.
+  const trust =
+    judging === undefined
+      ? computeJudgeTrust(level)
+      : computeJudgeTrust(level, {
+          judge: config.judge,
+          suite,
+          agreement: judging.agreement,
+          labelsSha256: judging.labelsSha256,
+          unpinned: judging.unpinned,
+        });
   const results: CriterionResult[] = [];
+  const qaReview: QaReviewEntry[] = [];
   const caseRuns: CaseRunRecord[] = [];
   let caseAttempts = 0;
   let infrastructureRetries = 0;
@@ -133,9 +168,10 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
         caseRuns.push({ sample, run });
       }
 
-      const evaluated = evaluate(test, run, null, trust, rules);
+      const evaluated = judging === undefined ? evaluate(test, run, null, trust, rules) : await evaluate(test, run, judging.judge, trust, rules);
       assertOneResultPerCriterion(test, evaluated);
       results.push(...evaluated);
+      qaReview.push(...collectQaReview(test, run, sample, evaluated));
       if (test.levels.includes(level)) log(statusLine(level, sample, n, test, run, evaluated));
     }
   }
@@ -157,9 +193,10 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
       level,
       n,
       git: input.git,
-      models: { coach: null, judge: null },
+      models: { coach: null, judge: judging?.model ?? null },
       judgeTrust: trust,
       judgeErrors: collectJudgeErrors(results),
+      qaReview,
       usage: { coachModelCalls: 0, ...judgeUsageTotals(results), caseAttempts, infrastructureRetries },
       ...(input.caseFilter !== undefined ? { selection: { case: input.caseFilter } } : {}),
     },

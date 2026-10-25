@@ -18,6 +18,8 @@ import {
   calibrationLines,
   importQaExport,
   labelsPath,
+  labelsSha256,
+  readAgreementFile,
   readLabelsFile,
   writeAgreementFile,
   writeLabelsFile,
@@ -27,7 +29,7 @@ import type { SuiteExecutor } from './executors/types';
 import { loadSuite } from './loader';
 import { renderCiSummary, writeSuiteReport } from './report';
 import type { RuleRegistry } from './rules/registry';
-import { runSuite } from './runner';
+import { runSuite, type RunJudging } from './runner';
 import {
   LevelSchema,
   type Baseline,
@@ -76,6 +78,11 @@ export interface CliDeps {
   mergeBase?: (packageRelativePath: string) => MergeBaseFile;
   /** The judge `suite:calibrate` judges labels with; absent in the default entry (no model egress). */
   createCalibrationJudge?: (judge: SuiteConfig['judge']) => CriterionJudge;
+  /**
+   * The judge an L1/L2 `suite:run` calls, built with the model actually called; absent in
+   * the default entry (no model egress; lands with the L1 executor, Story 13.4).
+   */
+  createRunJudge?: (judge: SuiteConfig['judge']) => CriterionJudge;
 }
 
 export interface MergeBaseFile {
@@ -90,9 +97,12 @@ export interface MergeBaseFile {
 const PACKAGE_DIR = resolve(__dirname, '..', '..');
 
 export const HELP = `Usage:
-  suite:run --suite <id> --level L0 [--runs N] [--case <id>]
+  suite:run --suite <id> --level L0 [--runs N] [--case <id>] [--allow-unpinned-judge]
       Runs a suite and writes runs/suites/<runId>/report.{json,md} and case-runs.json.
-      Only L0 runs today (L1 lands in Epic 13, L2 in Epic 14).
+      Only L0 runs from this entry today (the L1 executor lands in Story 13.4, L2 in Epic 14).
+      At L1/L2 SIM_JUDGE_MODEL must be unset or equal the pinned judge model; with
+      --allow-unpinned-judge a different model is called and the run is untrusted
+      (unpinned-judge). Meaning checks count only when the judge is calibrated.
   suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
       Writes baselines/<suiteId>/<level>.json from a run report.
   suite:diff --run <runId> [--baseline <path> | --merge-base]
@@ -120,7 +130,7 @@ Exit codes (calibrate): 0 import done or agreement file written; 1 usage, config
 
 export type ParsedCommand =
   | { command: 'help' }
-  | { command: 'run'; suite: string; level: Level; runs: number; case?: string }
+  | { command: 'run'; suite: string; level: Level; runs: number; case?: string; allowUnpinnedJudge?: true }
   | { command: 'baseline:accept'; run: string; allowIncomplete: boolean; allowDirty: boolean; ciRunUrl?: string }
   | { command: 'diff'; run: string; baseline?: string; mergeBase: boolean }
   | { command: 'ci'; level: Level; summary?: string }
@@ -149,6 +159,7 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
           level: { type: 'string' },
           runs: { type: 'string' },
           case: { type: 'string' },
+          'allow-unpinned-judge': { type: 'boolean' },
           help: { type: 'boolean', short: 'h' },
         },
       });
@@ -162,7 +173,14 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
         throw new CliUsageError(`[suite] run: --runs must be a positive integer, got ${values.runs}`);
       }
       if (values.case !== undefined && values.case.trim() === '') throw new CliUsageError('[suite] run: --case must not be empty');
-      return { command: 'run', suite: values.suite, level: level.data, runs, ...(values.case !== undefined ? { case: values.case } : {}) };
+      return {
+        command: 'run',
+        suite: values.suite,
+        level: level.data,
+        runs,
+        ...(values.case !== undefined ? { case: values.case } : {}),
+        ...(values['allow-unpinned-judge'] === true ? { allowUnpinnedJudge: true as const } : {}),
+      };
     }
     if (command === 'baseline:accept') {
       const { values } = parseNodeArgs({
@@ -334,7 +352,6 @@ async function performRun(
   overrides: RunOverrides = {},
 ): Promise<string> {
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
-  if (parsed.level !== 'L0') throw new Error(unsupportedLevel(parsed.level));
   if (!config.suites.includes(parsed.suite)) {
     throw new Error(`[suite] unknown suite ${parsed.suite}; known suites: ${config.suites.join(', ')}`);
   }
@@ -342,11 +359,32 @@ async function performRun(
     throw new Error(`[suite] level ${parsed.level} is not enabled in suite.config.json`);
   }
 
-  const removed = scrubModelCredentials(deps.env);
-  if (removed.length > 0) deps.log(`[suite] L0: removed model credentials from the environment (${removed.join(', ')})`);
+  let calledModel: { model: string; unpinned: boolean } | null = null;
+  if (parsed.level === 'L0') {
+    const removed = scrubModelCredentials(deps.env);
+    if (removed.length > 0) deps.log(`[suite] L0: removed model credentials from the environment (${removed.join(', ')})`);
+  } else {
+    calledModel = judgeModelToCall(config.judge.model, deps.env.SIM_JUDGE_MODEL, parsed.allowUnpinnedJudge === true);
+  }
 
   const suite = overrides.suite ?? deps.loadSuite(parsed.suite);
   const executor = deps.createExecutor(parsed.level);
+  let judging: RunJudging | undefined;
+  if (calledModel !== null) {
+    if (!deps.createRunJudge) {
+      throw new Error(`[suite] ${parsed.level} run needs a judge; this entry wires none (lands with the L1 executor, Story 13.4)`);
+    }
+    const labels = readLabelsFile(deps.packageDir, suite.id);
+    const agreement = readAgreementFile(deps.packageDir, suite.id);
+    judging = {
+      judge: deps.createRunJudge({ ...config.judge, model: calledModel.model }),
+      model: calledModel.model,
+      unpinned: calledModel.unpinned,
+      agreement,
+      labelsSha256: labelsSha256(labels.labels),
+    };
+    if (calledModel.unpinned) deps.log(`[suite] judge model differs from the pin ${config.judge.model}; this run is untrusted (unpinned-judge)`);
+  }
   const git = deps.git();
   const runId = overrides.runId ? overrides.runId(git.shortSha) : runIdFor(deps.now(), git.shortSha);
   deps.log(`[suite] run ${runId}: ${suite.id} ${parsed.level} n=${parsed.runs}${parsed.case ? ` case=${parsed.case}` : ''}`);
@@ -361,6 +399,7 @@ async function performRun(
     git: { sha: git.sha, dirty: git.dirty },
     ...(parsed.case !== undefined ? { caseFilter: parsed.case } : {}),
     ...(deps.rules ? { rules: deps.rules } : {}),
+    ...(judging !== undefined ? { judging } : {}),
     log: deps.log,
   });
 
@@ -373,6 +412,23 @@ async function performRun(
   deps.log(`[suite] report: ${relative(deps.packageDir, paths.markdown)}`);
   deps.log(`[suite] case runs: ${relative(deps.packageDir, caseRunsPath)}`);
   return report.runId;
+}
+
+/**
+ * The judge model an L1/L2 run calls (AD-8): the pin unless `SIM_JUDGE_MODEL` names another
+ * model, which is refused without `--allow-unpinned-judge`. Never prints the env value.
+ */
+export function judgeModelToCall(
+  pinned: string,
+  override: string | undefined,
+  allowUnpinned: boolean,
+): { model: string; unpinned: boolean } {
+  const model = override?.trim() ?? '';
+  if (model === '' || model === pinned) return { model: pinned, unpinned: false };
+  if (!allowUnpinned) {
+    throw new Error(`[suite] SIM_JUDGE_MODEL differs from the pinned judge model ${pinned}; pass --allow-unpinned-judge for an untrusted run`);
+  }
+  return { model, unpinned: true };
 }
 
 export interface CiSuiteOutcome {
@@ -553,7 +609,7 @@ function acceptCommand(parsed: Extract<ParsedCommand, { command: 'baseline:accep
   const refusals: string[] = [];
   let currentFingerprint: ReturnType<typeof currentJudgeFingerprint> = null;
   try {
-    currentFingerprint = currentJudgeFingerprint(report.level);
+    currentFingerprint = currentJudgeFingerprint(report.level, config, report.level === 'L0' ? null : deps.loadSuite(report.suiteId));
   } catch (error) {
     refusals.push((error as Error).message.replace(/^\[suite\] /, ''));
   }
@@ -674,6 +730,10 @@ export function summaryLines(report: SuiteRunReport): string[] {
     `[suite] verdict: ${report.verdict}${report.provisional ? ' (provisional)' : ''} · ${report.complete ? 'COMPLETE' : 'INCOMPLETE'}`,
   );
   if (report.provisionalReason) lines.push(`[suite] provisional: ${report.provisionalReason}`);
+  const trust = report.judgeTrust;
+  lines.push(`[suite] meaning checks: ${trust.trusted ? 'trusted' : 'advisory (uncalibrated)'} (${trust.reason})`);
+  const qa = report.qaReview?.length ?? 0;
+  if (qa > 0) lines.push(`[suite] QA review: ${qa} meaning FAIL(s) listed in report.md`);
   return lines;
 }
 

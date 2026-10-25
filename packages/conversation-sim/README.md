@@ -240,14 +240,15 @@ the scenario gate above (`ScenarioRunReport`, `gate.config.json` and `run-gate.t
 untouched). Suites are registered in `suite.config.json`; `p-v1` and `smoke-v1` are
 registered and empty today. L0 is the offline deterministic level: no Postgres, Redis or
 model credentials, and the CLI removes `OPENAI_API_KEY` and `AZURE_OPENAI_*` from its
-environment before running. L1 lands in Epic 13, L2 in Epic 14.
+environment before running. The default entry still refuses L1 until the L1 executor lands
+(Story 13.4); L2 lands in Epic 14.
 
 ### Commands
 
 Root aliases delegate to this package and pass flags through.
 
 ```bash
-pnpm suite:run --suite smoke-v1 --level L0 [--runs N] [--case <id>]
+pnpm suite:run --suite smoke-v1 --level L0 [--runs N] [--case <id>] [--allow-unpinned-judge]
 pnpm suite:diff --run <runId> [--baseline <path> | --merge-base]
 pnpm suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
 pnpm suite:ci --level L0 [--summary <path>]
@@ -257,14 +258,20 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
 ```
 
 - `suite:run` writes `runs/suites/<runId>/report.json`, `report.md` and `case-runs.json`
-  (gitignored). The run id is `<ISO timestamp>-<short sha>`.
+  (gitignored). The run id is `<ISO timestamp>-<short sha>`. At L1/L2 the judge model is
+  the pin in `suite.config.json`; `SIM_JUDGE_MODEL` is honored only when unset, empty or
+  equal to the pin, otherwise the run is refused (exit 1, nothing written) unless
+  `--allow-unpinned-judge` is passed, which calls that model and makes the run untrusted
+  (`unpinned-judge`). At L0 neither has any effect.
 - `suite:diff` compares a run with a baseline and writes the diff into the same report.
   Without a flag it reads the working-tree `baselines/<suite>/<level>.json`; `--merge-base`
   reads that file at `git merge-base HEAD origin/main` (what CI uses), never the checkout.
 - `suite:baseline:accept` writes `baselines/<suite>/<level>.json` from a run. It refuses a
   run below `baseline.minSamples`, an INCOMPLETE run (unless `--allow-incomplete`, recorded
-  as provisional), a dirty tree (unless `--allow-dirty`), a `--case` run, or a run with a
-  different judge fingerprint. No baseline is committed yet.
+  as provisional), a dirty tree (unless `--allow-dirty`), a `--case` run, a run with a
+  different judge fingerprint (at L1/L2 the current one is computed from `suite.config.json`
+  and the suite's guidance), or a run whose called judge model is not the pin. No baseline
+  is committed yet.
 - `suite:ci` runs every registered suite that has tests through `suite:run` (n = 1) and
   `suite:diff --merge-base`, logs `[suite] ci: <id> skipped (no tests)` for the others, and
   appends a Markdown step summary to `--summary` (relative paths resolve against the
@@ -329,6 +336,26 @@ any S FAIL is NOT ADEQUATE; otherwise a combined P+D+C pass rate of at least 0.9
 ADEQUATE, 0.75 to 0.89 is ACCEPTABLE WITH ISSUES, lower is NOT ADEQUATE. A run is COMPLETE
 when every in-scope status is PASS, FAIL or a declared NOT_TESTABLE; an INCOMPLETE run
 carries a provisional verdict with its reason.
+
+### Judge trust and the QA review list
+
+At L1/L2 the runner decides judge trust once per run (`judge/trust.ts`, AD-8) from the
+configured judge, the run-time fingerprint, the current labels hash and
+`calibration/<suite>/agreement.json`. The first failing check names the reason:
+`unpinned-judge`, `no-agreement` (today's normal state: no labels or agreement exist yet),
+`fingerprint-mismatch:<field>` (provider, model, decoding, promptSha256, schemaSha256,
+guidanceSha256, in that order), `labels-mismatch`, `below-min-labels`,
+`below-threshold:overall`, `below-threshold:kappa` (a null `overall` or `kappa` counts as
+below the threshold);
+otherwise the judge is trusted (`calibrated`). Until then every meaning-decided result is
+advisory: it is reported but excluded from layer pass rates and the verdict, and diffs mark
+it `inconclusive`. At L0 there is no judge (`no-judge-at-level`).
+
+`report.md` prints `Meaning checks: trusted` or `advisory (uncalibrated)` with the reason,
+the effective judge fingerprint (`none` at L0), and a `## QA review` section listing every
+meaning-based FAIL (judge FAIL or `no-reply`) per sample with its case, test, criterion,
+reply text and judge reason. Rule FAILs are not listed. The console prints only the trust
+line and the QA review count, and the CI step summary carries no QA review or reply text.
 
 ### Reading a diff
 

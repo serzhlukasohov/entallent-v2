@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { RUNNER_CONFIG, fakeExecutor, fakeSuite } from './__fixtures__/runner';
+import { RUNNER_CONFIG, fakeExecutor, fakeReplyExecutor, fakeSuite, judgedSuite } from './__fixtures__/runner';
+import { fakeJudge } from './judge/__fixtures__/calibration';
+import { labelsSha256 } from './judge/calibrate';
 import { result } from './__fixtures__/evaluation';
 import { TEST_RULES, validModules } from './__fixtures__/suite';
 import { buildBaseline } from './baseline';
@@ -461,5 +463,39 @@ describe('diffRun: rule FAIL on a rule-plus-meaning criterion (Story 13.1, settl
     const diff = diffRun(run, baseline({ [key]: { status: 'PASS', n: 2, checkKind: 'meaning' } }, { level: 'L1' }), RUNNER_CONFIG, SOURCE);
     expect(only(diff, key)).toMatchObject({ category: 'regressed', gating: true, checkKind: 'rule' });
     expect(diff).toMatchObject({ outcome: 'failed', exitCode: 1 });
+  });
+});
+
+describe('diffRun: an untrusted L1 judge never regresses a meaning criterion (Story 13.3)', () => {
+  async function l1Run(decide: 'PASS' | 'FAIL', runId: string): Promise<SuiteRunReport> {
+    const { report } = await runSuite({
+      suite: judgedSuite(),
+      level: 'L1',
+      n: 3,
+      executor: fakeReplyExecutor(() => 'Which release deadline comes first?'),
+      config: RUNNER_CONFIG,
+      runId,
+      git: { sha: 'abc1234def5678', dirty: false },
+      rules: TEST_RULES,
+      judging: { judge: fakeJudge(() => decide).judge, model: 'gpt-4o', unpinned: false, agreement: null, labelsSha256: labelsSha256([]) },
+    });
+    return report;
+  }
+
+  it('makes the advisory meaning criteria inconclusive and keeps the rule criterion gating', async () => {
+    const accepted = await l1Run('PASS', '2026-10-25T10-00-00-000Z-abc1234');
+    const baseline = buildBaseline(accepted, { acceptedAt: '2026-10-25T11:00:00.000Z' });
+    const current = await l1Run('FAIL', '2026-10-25T12-00-00-000Z-abc1234');
+    expect(current.judgeTrust).toMatchObject({ trusted: false, reason: 'no-agreement' });
+    expect(current.results['Z-01.A1/Z-01.C1']).toMatchObject({ status: 'FAIL', passCount: 0, n: 3, advisory: true });
+
+    const diff = diffRun(current, baseline, RUNNER_CONFIG, { ...SOURCE, path: 'baselines/x-judged/L1.json' }, []);
+    const entry = (key: string) => diff.tests.entries.find((candidate) => candidate.key === key)!;
+    for (const key of ['Z-01.A1/Z-01.C1', 'Z-01.A1/Z-01.C2', 'Z-01.A1/Z-01.C4']) {
+      expect(entry(key), key).toMatchObject({ category: 'inconclusive', gating: false });
+    }
+    expect(diff.tests.counts.regressed ?? 0).toBe(0);
+    expect(entry('Z-01.A1/Z-01.C3')).toMatchObject({ category: 'unchanged' });
+    expect(diff.exitCode).toBe(0);
   });
 });

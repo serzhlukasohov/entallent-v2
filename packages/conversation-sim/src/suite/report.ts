@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildJudgeInput } from './judge/judge-input';
 import { testCriterionKey } from './score';
 import {
   DiffCategorySchema,
@@ -8,10 +9,14 @@ import {
   type SuiteDiff,
   type Coverage,
   type CoverageRow,
+  type CaseRun,
   type CriterionResult,
   type JudgeError,
+  type JudgeFingerprint,
   type JudgeTrust,
   type Level,
+  type LoadedTest,
+  type QaReviewEntry,
   type ScoredCriterion,
   type SuiteRunReport,
   type SuiteScore,
@@ -29,6 +34,8 @@ export interface SuiteReportMeta {
   /** Copied verbatim; never recomputed here (AD-8). */
   judgeTrust: JudgeTrust;
   judgeErrors: JudgeError[];
+  /** Meaning FAILs for QA review, in sample, test, criterion order (`collectQaReview`). */
+  qaReview: QaReviewEntry[];
   usage: Usage;
   /** `--case` narrowing, recorded so a partial run is never accepted as a baseline. */
   selection?: { case: string };
@@ -48,6 +55,38 @@ export function collectJudgeErrors(results: readonly CriterionResult[]): JudgeEr
       reason: result.reason!,
       ...(result.evidence !== undefined ? { message: result.evidence } : {}),
     }));
+}
+
+/**
+ * QA review entries for one evaluated test sample (AD-8): every in-scope FAIL a meaning
+ * check decided (it carries `judgeUsage`: a judge FAIL or `no-reply`), in criterion order.
+ * Rule FAILs, including `meaningSkipped` ones, are never listed. Pure.
+ */
+export function collectQaReview(
+  test: LoadedTest,
+  run: CaseRun,
+  sample: number,
+  results: readonly CriterionResult[],
+): QaReviewEntry[] {
+  const entries: QaReviewEntry[] = [];
+  for (const result of results) {
+    if (!result.inScope || result.status !== 'FAIL' || result.judgeUsage === undefined) continue;
+    const criterion = test.criteria.find((entry) => entry.id === result.criterionId);
+    if (criterion === undefined) throw new Error(`[suite] QA review: ${test.id} has no criterion ${result.criterionId}`);
+    const replies = buildJudgeInput(test, run, criterion).replyTexts;
+    entries.push({
+      key: testCriterionKey(result.testId, result.criterionId),
+      testId: result.testId,
+      sourceCase: result.sourceCase,
+      criterionId: result.criterionId,
+      layer: result.layer,
+      sample,
+      advisory: result.advisory,
+      replies,
+      reason: replies.length === 0 ? 'no-reply' : result.reason || 'no reason given',
+    });
+  }
+  return entries;
 }
 
 /** Judge calls and tokens summed from every result's `judgeUsage` (zeros at L0). */
@@ -96,6 +135,7 @@ export function buildSuiteReport(score: SuiteScore, meta: SuiteReportMeta): Suit
     coverage: coverage(score),
     journeys: score.journeys,
     judgeErrors: meta.judgeErrors,
+    qaReview: meta.qaReview,
     usage: meta.usage,
     ...(meta.selection !== undefined ? { selection: meta.selection } : {}),
   };
@@ -157,7 +197,10 @@ function coverage(score: SuiteScore): Coverage {
   return { rows, notTestable, judgeOnly, unobservable };
 }
 
-/** Human-readable rendering of a report; contains no transcript text beyond rule evidence. */
+/**
+ * Human-readable rendering of a report. Transcript text appears only as rule evidence and
+ * in the QA review section (the evaluated replies of meaning FAILs); never in CI output.
+ */
 export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   const lines: string[] = [];
   const results = Object.entries(report.results);
@@ -174,6 +217,7 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   lines.push(`- Models: coach ${report.models.coach ?? 'n/a'}, judge ${report.models.judge ?? 'n/a'}`);
   lines.push(
     `- Meaning checks: ${report.judgeTrust.trusted ? 'trusted' : 'advisory (uncalibrated)'} (${report.judgeTrust.reason})`,
+    fingerprintLine(report),
     '',
   );
 
@@ -211,6 +255,7 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   pushList(lines, report.coverage.unobservable.map((entry) => `${entry.key}: ${entry.field}`));
   lines.push('## Judge errors', '');
   pushList(lines, report.judgeErrors.map((error) => `${error.key}: ${error.reason}`));
+  pushQaReview(lines, report.qaReview ?? []);
   lines.push('## Usage', '');
   pushList(lines, Object.entries(report.usage).map(([name, value]) => `${name}: ${value}`));
   if (report.diff) pushDiff(lines, report.diff);
@@ -230,7 +275,7 @@ export function renderCiSummary(report: SuiteRunReport): string {
     `- Verdict: **${report.verdict}**${report.provisional ? ' (provisional)' : ''} · ${report.complete ? 'COMPLETE' : 'INCOMPLETE'}`,
   );
   lines.push(`- Samples: n = ${report.n}`);
-  lines.push(`- Meaning checks: ${report.judgeTrust.trusted ? 'trusted' : 'advisory (uncalibrated)'}`, '');
+  lines.push(`- Meaning checks: ${report.judgeTrust.trusted ? 'trusted' : 'advisory (uncalibrated)'}`, fingerprintLine(report), '');
   if (report.layers) {
     lines.push('| Layer | PASS | FAIL | Pass rate |', '| --- | --- | --- | --- |');
     for (const row of report.layers.rows) lines.push(`| ${row.layer} | ${row.pass} | ${row.fail} | ${rate(row.passRate)} |`);
@@ -323,6 +368,38 @@ function pushDiff(lines: string[], diff: SuiteDiff): void {
   }
 }
 
+/** `- Judge fingerprint: ...`, the effective (configured) judge fingerprint of the run (AD-8). */
+export function fingerprintLine(report: Pick<SuiteRunReport, 'level' | 'judgeTrust'>): string {
+  const pin: JudgeFingerprint | null = report.judgeTrust.pin;
+  if (pin === null) return `- Judge fingerprint: none (no judge at ${report.level})`;
+  const { temperature, reasoningEffort, maxOutputTokens } = pin.decoding;
+  return `- Judge fingerprint: ${pin.provider} ${pin.model} · temperature ${temperature} · reasoningEffort ${reasoningEffort ?? 'null'} · maxOutputTokens ${maxOutputTokens} · prompt ${pin.promptSha256} · schema ${pin.schemaSha256} · guidance ${pin.guidanceSha256}`;
+}
+
+/** `## QA review` (AD-8): every meaning FAIL with its case, criterion, reply and judge reason. */
+function pushQaReview(lines: string[], entries: readonly QaReviewEntry[]): void {
+  lines.push('## QA review', '');
+  if (entries.length === 0) {
+    lines.push('None.', '');
+    return;
+  }
+  lines.push('| Case | Test | Criterion | Layer | Sample | Advisory | Reply | Judge reason |', '| --- | --- | --- | --- | --- | --- | --- | --- |');
+  for (const entry of entries) {
+    const cells = [
+      entry.sourceCase,
+      entry.testId,
+      entry.criterionId,
+      entry.layer,
+      String(entry.sample),
+      entry.advisory ? 'yes' : 'no',
+      entry.replies.join(' // '),
+      entry.reason,
+    ];
+    lines.push(`| ${cells.map(cell).join(' | ')} |`);
+  }
+  lines.push('');
+}
+
 function pushResultTable(lines: string[], results: ReadonlyArray<[string, ScoredCriterion]>): void {
   if (results.length === 0) {
     lines.push('No results.', '');
@@ -349,5 +426,5 @@ function rate(value: number | null): string {
 }
 
 function cell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, ' ');
 }
