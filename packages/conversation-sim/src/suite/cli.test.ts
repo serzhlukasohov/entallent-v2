@@ -4,11 +4,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RUNNER_CONFIG, cleanRun, fakeExecutor, fakeSuite, liveSuite } from './__fixtures__/runner';
-import { TEST_RULES } from './__fixtures__/suite';
-import { ciRunUrlFromEnv, main, parseArgs, runIdFor, scrubModelCredentials, type CliDeps, type GitState } from './cli';
+import { TEST_RULES, validModules } from './__fixtures__/suite';
+import {
+  aggregateCiExitCode,
+  ciRunUrlFromEnv,
+  main,
+  parseArgs,
+  readMergeBaseFile,
+  runIdFor,
+  scrubModelCredentials,
+  type CliDeps,
+  type GitState,
+} from './cli';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import type { SuiteExecutor } from './executors/types';
-import { loadSuite } from './loader';
+import { loadSuite, validateSuite } from './loader';
 import { BaselineSchema, SuiteRunReportSchema, type LoadedSuite } from './schema';
 
 const SECRET = 'sk-test-not-a-real-key-123';
@@ -84,6 +94,10 @@ describe('parseArgs', () => {
     expect(parseArgs(['diff', '--run', 'r1'])).toEqual({ command: 'diff', run: 'r1', mergeBase: false });
     expect(parseArgs(['diff', '--run', 'r1', '--baseline', 'b.json'])).toEqual({ command: 'diff', run: 'r1', baseline: 'b.json', mergeBase: false });
     expect(parseArgs(['diff', '--run', 'r1', '--merge-base'])).toEqual({ command: 'diff', run: 'r1', mergeBase: true });
+    expect(parseArgs(['ci', '--level', 'L0'])).toEqual({ command: 'ci', level: 'L0' });
+    expect(parseArgs(['ci', '--', '--level', 'L0', '--summary', 's.md'])).toEqual({ command: 'ci', level: 'L0', summary: 's.md' });
+    expect(parseArgs(['calibrate'])).toEqual({ command: 'calibrate' });
+    expect(parseArgs(['calibrate', '--suite', 'p-v1'])).toEqual({ command: 'calibrate' });
     expect(parseArgs([])).toEqual({ command: 'help' });
     expect(parseArgs(['run', '--help'])).toEqual({ command: 'help' });
   });
@@ -102,7 +116,11 @@ describe('parseArgs', () => {
     [['diff'], /\[suite\] diff: --run <runId> is required/],
     [['diff', '--run', 'r1', '--baseline', 'b.json', '--merge-base'], /either --baseline <path> or --merge-base, not both/],
     [['diff', '--run', 'r1', '--baseline', ''], /--baseline must not be empty/],
-    [['deploy'], /unknown command deploy/],
+    [['ci'], /\[suite\] ci: --level <L0\|L1\|L2> is required/],
+    [['ci', '--level', 'L7'], /--level must be L0, L1 or L2/],
+    [['ci', '--level', 'L0', '--summary', ''], /--summary must not be empty/],
+    [['ci', '--level', 'L0', '--suite', 'p-v1'], /Unknown option/],
+    [['deploy'], /unknown command deploy; expected run, baseline:accept, diff, ci or calibrate/],
   ])('rejects %j', (argv, message) => {
     expect(() => parseArgs(argv)).toThrow(message);
   });
@@ -560,5 +578,234 @@ describe('suite:diff --merge-base in a real git repo', () => {
     const diff = SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8'))).diff!;
     expect(diff.outcome).toBe('baseline-invalid');
     expect(diff.reasons.some((reason) => reason.includes('git merge-base HEAD origin/main failed'))).toBe(true);
+  });
+});
+
+describe('suite:calibrate', () => {
+  it('exits 1 with the Epic 13 message', async () => {
+    const h = harness();
+    expect(await main(['calibrate'], h.deps)).toBe(1);
+    expect(h.err).toEqual(['[suite] calibrate lands in Epic 13']);
+    expect(runDirs()).toEqual([]);
+  });
+});
+
+describe('suite:ci', () => {
+  const summaryFile = () => join(dir, 'out', 'summary.md');
+  const writeConfig = (suites: string[]) => writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites }));
+  const xTwo = () => validateSuite('x-two', validModules(), TEST_RULES);
+
+  /** Harness whose loader also knows `x-two` and whose merge-base reader serves `files[suiteId]`. */
+  function ciHarness(files: Record<string, string | null> = {}, executor?: () => SuiteExecutor): Harness {
+    const h = harness(executor ? { executor } : {});
+    const load = h.deps.loadSuite;
+    h.deps.loadSuite = (id) => (id === 'x-two' ? xTwo() : load(id));
+    h.deps.mergeBase = (path) => {
+      const suiteId = path.split(/[\\/]/)[1]!;
+      return { ref: 'base0000', path: `packages/conversation-sim/${path}`, text: files[suiteId] ?? null };
+    };
+    return h;
+  }
+
+  it('aggregates exit codes by precedence 2 > 3 > 4 > 1', () => {
+    expect(aggregateCiExitCode([])).toBe(0);
+    expect(aggregateCiExitCode([0, 0])).toBe(0);
+    expect(aggregateCiExitCode([1, 4])).toBe(4);
+    expect(aggregateCiExitCode([1, 4, 3])).toBe(3);
+    expect(aggregateCiExitCode([3, 1, 2, 4])).toBe(2);
+    expect(aggregateCiExitCode([0, 1])).toBe(1);
+  });
+
+  it('skips every empty registered suite, writes the summary and exits 0 with no run folder', async () => {
+    writeConfig(['p-v1', 'smoke-v1']);
+    const h = ciHarness();
+    expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+    expect(h.out).toEqual([
+      '[suite] ci: p-v1 skipped (no tests)',
+      '[suite] ci: smoke-v1 skipped (no tests)',
+      '[suite] ci: no registered suite has tests; L0 gate passes with nothing to check',
+      '[suite] ci: L0 gate exit 0',
+    ]);
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('No registered suite has tests; L0 gate passes with nothing to check.');
+    expect(summary).toContain('- p-v1: skipped (no tests)');
+    expect(summary).toContain('- smoke-v1: skipped (no tests)');
+    expect(runDirs()).toEqual([]);
+
+    // Appends, never truncates.
+    expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(0);
+    expect(readFileSync(summaryFile(), 'utf8')).toBe(summary + summary);
+  });
+
+  it('runs and merge-base-diffs a suite with tests and summarizes layers, verdict and diff', async () => {
+    writeConfig(['p-v1', 'smoke-v1', 'x-suite']);
+    const h = ciHarness();
+    expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+    const [runId] = runDirs();
+    expect(runDirs()).toHaveLength(1);
+    const report = SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId!, 'report.json'), 'utf8')));
+    expect(report.diff).toMatchObject({ outcome: 'no-baseline', exitCode: 0, baseline: { kind: 'merge-base', ref: 'base0000', missing: true } });
+    expect(h.out).toContain('[suite] ci: x-suite exit 0');
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).not.toContain('nothing to check');
+    expect(summary).toContain(`- x-suite: ran (exit 0), run ${runId}`);
+    expect(summary).toContain(`### x-suite L0 — ${runId}`);
+    expect(summary).toContain('| P+D+C |');
+    expect(summary).toMatch(/- Verdict: \*\*[A-Z ]+\*\*/);
+    expect(summary).toContain('- Diff: **no-baseline** (exit 0)');
+    expect(summary).toContain('- Baseline: merge-base packages/conversation-sim/baselines/x-suite/L0.json at base0000 (missing)');
+    expect(summary).toMatch(/\*\*Tests:\*\* lost-coverage 0 · regressed 0 · fixed 0 · gained-coverage 0 · new \d+/);
+    expect(summary).toContain('| new | X-01.A1/X-01.C1 |');
+  });
+
+  it('exits 1 on a regression and lists the gating entry, and keeps run ids unique', async () => {
+    writeConfig(['p-v1', 'smoke-v1', 'x-suite']);
+    let failing = false;
+    const executor = () =>
+      fakeExecutor((test, attempt) =>
+        cleanRun(test, attempt, failing && test.id === 'X-02' ? [{ kind: 'product', step: 0, reason: 'scripted-output-missing:1', message: '' }] : []),
+      );
+    const seed = harness({ executor });
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0'], seed.deps)).toBe(0);
+    const seedRun = runDirs()[0]!;
+    expect(await main(['baseline:accept', '--run', seedRun], seed.deps)).toBe(0);
+    const baseline = readFileSync(join(dir, 'baselines', 'x-suite', 'L0.json'), 'utf8');
+
+    failing = true;
+    const h = ciHarness({ 'x-suite': baseline }, executor);
+    expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(1);
+    const runs = runDirs();
+    expect(runs).toHaveLength(2);
+    expect(new Set(runs).size).toBe(2);
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('- Diff: **failed** (exit 1)');
+    expect(summary).toContain('| lost-coverage | X-02/X-02.C1 | P | rule | yes |');
+    expect(summary).toContain('Gate exit code: **1**');
+  });
+
+  it('attempts every suite and exits with the highest-precedence code (1 and 2 -> 2)', async () => {
+    writeConfig(['x-suite', 'x-two']);
+    const seed = harness();
+    expect(await main(['run', '--suite', 'x-suite', '--level', 'L0'], seed.deps)).toBe(0);
+    expect(await main(['baseline:accept', '--run', runDirs()[0]!], seed.deps)).toBe(0);
+    const baseline = readFileSync(join(dir, 'baselines', 'x-suite', 'L0.json'), 'utf8');
+
+    // x-suite loses coverage of X-02 (exit 1); x-two's merge-base baseline is not JSON (exit 2).
+    const executor = () =>
+      fakeExecutor((test, attempt) =>
+        cleanRun(test, attempt, test.id === 'X-02' ? [{ kind: 'product', step: 0, reason: 'scripted-output-missing:1', message: '' }] : []),
+      );
+    const h = ciHarness({ 'x-suite': baseline, 'x-two': '{ not json' }, executor);
+    expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(2);
+    expect(h.out).toContain('[suite] ci: x-suite exit 1');
+    expect(h.out).toContain('[suite] ci: x-two exit 2');
+    expect(h.out.at(-1)).toBe('[suite] ci: L0 gate exit 2');
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('- x-suite: ran (exit 1)');
+    expect(summary).toContain('- x-two: ran (exit 2)');
+    expect(summary).toContain('- Diff: **baseline-invalid** (exit 2)');
+  });
+
+  it('continues after a load failure and a run failure, counting each as 1', async () => {
+    writeConfig(['p-v1', 'x-suite', 'x-two', 'smoke-v1']);
+    const h = ciHarness();
+    const load = h.deps.loadSuite;
+    h.deps.loadSuite = (id) => {
+      if (id === 'x-suite') throw new Error('[suite] x-suite: case X-01.A1 invalid at steps.0.text');
+      return load(id);
+    };
+    expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(1);
+    expect(h.err).toEqual(['[suite] ci: x-suite failed to load: [suite] x-suite: case X-01.A1 invalid at steps.0.text']);
+    expect(h.out).toContain('[suite] ci: x-two exit 0');
+    expect(h.out).toContain('[suite] ci: smoke-v1 skipped (no tests)');
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('- x-suite: failed (exit 1): [suite] x-suite: case X-01.A1 invalid at steps.0.text');
+    expect(summary).toContain('- x-two: ran (exit 0)');
+
+    const crashing = ciHarness({}, () => {
+      throw new Error('executor boom');
+    });
+    writeConfig(['x-suite', 'x-two']);
+    expect(await main(['ci', '--level', 'L0'], crashing.deps)).toBe(1);
+    expect(crashing.err).toEqual(['[suite] ci: x-suite failed: executor boom', '[suite] ci: x-two failed: executor boom']);
+  });
+
+  it('refuses a non-L0 level and a bad config, running nothing', async () => {
+    const h = ciHarness();
+    expect(await main(['ci', '--level', 'L1'], h.deps)).toBe(1);
+    expect(h.err).toEqual(['[suite] L1 executor lands in Epic 13']);
+    writeFileSync(join(dir, 'suite.config.json'), '{ not json');
+    expect(await main(['ci', '--level', 'L0'], h.deps)).toBe(1);
+    expect(h.err.at(-1)).toMatch(/^\[suite\] config: /);
+    expect(runDirs()).toEqual([]);
+  });
+
+  it('raises the exit code to 1 when the step summary cannot be appended', async () => {
+    writeConfig(['p-v1']);
+    writeFileSync(join(dir, 'plain-file'), 'x');
+    const h = ciHarness();
+    expect(await main(['ci', '--level', 'L0', '--summary', join(dir, 'plain-file', 'summary.md')], h.deps)).toBe(1);
+    expect(h.err).toHaveLength(1);
+    expect(h.err[0]).toMatch(/^\[suite\] ci: could not append the step summary: /);
+    expect(h.out.at(-1)).toBe('[suite] ci: L0 gate exit 1');
+  });
+
+  it('resolves a relative --summary against INIT_CWD', async () => {
+    writeConfig(['p-v1']);
+    const h = ciHarness();
+    h.deps.env.INIT_CWD = join(dir, 'root');
+    expect(await main(['ci', '--level', 'L0', '--summary', 'nested/summary.md'], h.deps)).toBe(0);
+    expect(readFileSync(join(dir, 'root', 'nested', 'summary.md'), 'utf8')).toContain('nothing to check');
+  });
+});
+
+describe('readMergeBaseFile under a detached-HEAD full clone', () => {
+  let root: string;
+  const gitIn = (cwd: string, ...args: string[]) => {
+    const result = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], {
+      cwd,
+      encoding: 'utf8',
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+    });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'suite-clone-'));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('reads the baseline at the base-branch tip the PR merge commit merges into', () => {
+    const origin = join(root, 'origin');
+    const pkg = join(origin, 'packages', 'conversation-sim');
+    const baselineFile = join(pkg, 'baselines', 'smoke-v1', 'L0.json');
+    mkdirSync(join(pkg, 'baselines', 'smoke-v1'), { recursive: true });
+    writeFileSync(baselineFile, '{"version":"A"}\n');
+    gitIn(origin, 'init', '-q', '-b', 'main');
+    gitIn(origin, 'add', '.');
+    gitIn(origin, 'commit', '-q', '-m', 'A');
+    gitIn(origin, 'checkout', '-q', '-b', 'feature');
+    writeFileSync(join(pkg, 'feature.txt'), 'feature\n');
+    writeFileSync(baselineFile, '{"version":"PR"}\n');
+    gitIn(origin, 'add', '.');
+    gitIn(origin, 'commit', '-q', '-m', 'feature');
+    gitIn(origin, 'checkout', '-q', 'main');
+    writeFileSync(baselineFile, '{"version":"B"}\n');
+    gitIn(origin, 'commit', '-q', '-am', 'B');
+    const mainTip = gitIn(origin, 'rev-parse', 'HEAD');
+
+    const clone = join(root, 'clone');
+    gitIn(root, 'clone', '-q', '--no-local', origin, clone);
+    gitIn(clone, 'checkout', '-q', '--detach', 'origin/main');
+    // The PR merge commit, as actions/checkout checks out refs/pull/N/merge; keep the PR side of the conflict.
+    gitIn(clone, 'merge', '-q', '--no-ff', '-X', 'theirs', 'origin/feature', '-m', 'merge');
+    expect(spawnSync('git', ['symbolic-ref', '-q', 'HEAD'], { cwd: clone }).status).not.toBe(0);
+    expect(readFileSync(join(clone, 'packages', 'conversation-sim', 'baselines', 'smoke-v1', 'L0.json'), 'utf8')).toContain('PR');
+
+    const file = readMergeBaseFile(join(clone, 'packages', 'conversation-sim'), 'baselines/smoke-v1/L0.json');
+    expect(file).toEqual({ ref: mainTip, path: 'packages/conversation-sim/baselines/smoke-v1/L0.json', text: '{"version":"B"}\n' });
   });
 });

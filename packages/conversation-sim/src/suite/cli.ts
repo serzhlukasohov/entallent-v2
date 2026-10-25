@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs as parseNodeArgs } from 'node:util';
 import {
   baselinePath,
@@ -15,7 +15,7 @@ import { diffRun, diffSummaryLines, parseBaselineJson } from './diff';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import type { SuiteExecutor } from './executors/types';
 import { loadSuite } from './loader';
-import { writeSuiteReport } from './report';
+import { renderCiSummary, writeSuiteReport } from './report';
 import type { RuleRegistry } from './rules/registry';
 import { runSuite } from './runner';
 import {
@@ -28,12 +28,15 @@ import {
 } from './schema';
 
 /**
- * `suite:run`, `suite:baseline:accept` and `suite:diff` (architecture AD-11, AD-13, AD-14).
+ * `suite:run`, `suite:baseline:accept`, `suite:diff`, `suite:ci` and the `suite:calibrate`
+ * stub (architecture AD-11, AD-13, AD-14, AD-15).
  * `run` and `baseline:accept` exit 0 when a report (or baseline) was written, whatever the
  * verdict, and 1 on usage, config, load or refusal errors. `diff` exits 0 clean, 1 gating
  * entry, 2 baseline-invalid, 3 judge infrastructure, 4 budget exceeded; usage errors and an
- * unreadable run report are 1 and write nothing. This CLI never loads `.env` and never
- * prints environment values.
+ * unreadable run report are 1 and write nothing. `ci` runs and merge-base-diffs every
+ * registered suite that has tests and exits with the first code present by precedence
+ * 2 > 3 > 4 > 1 over all suites (a load or run failure counts as 1), else 0. `calibrate`
+ * exits 1 until Epic 13. This CLI never loads `.env` and never prints environment values.
  */
 
 export interface GitState {
@@ -78,16 +81,27 @@ export const HELP = `Usage:
   suite:diff --run <runId> [--baseline <path> | --merge-base]
       Diffs a run against a baseline (default: working-tree baselines/<suite>/<level>.json;
       --merge-base: the file at git merge-base HEAD origin/main) and writes it into the report.
+  suite:ci --level L0 [--summary <path>]
+      For every suite in suite.config.json that has tests: suite:run (n=1) then
+      suite:diff --merge-base. Suites without tests are skipped. --summary appends a
+      Markdown step summary (no evidence or transcript text) to <path>.
+  suite:calibrate
+      Lands in Epic 13; exits 1.
 
 Exit codes (run, baseline:accept): 0 report or baseline written; 1 usage, config, load or refusal error.
 Exit codes (diff): 0 clean or no baseline; 1 gating regression or lost coverage (also usage errors
-  and an unreadable run report); 2 baseline invalid; 3 judge infrastructure; 4 budget exceeded.`;
+  and an unreadable run report); 2 baseline invalid; 3 judge infrastructure; 4 budget exceeded.
+Exit code (ci): the first present over all suites by precedence 2 > 3 > 4 > 1 (a load or run
+  failure counts as 1); 0 when every suite is clean, has no baseline, or is skipped.
+Exit code (calibrate): 1.`;
 
 export type ParsedCommand =
   | { command: 'help' }
   | { command: 'run'; suite: string; level: Level; runs: number; case?: string }
   | { command: 'baseline:accept'; run: string; allowIncomplete: boolean; allowDirty: boolean; ciRunUrl?: string }
-  | { command: 'diff'; run: string; baseline?: string; mergeBase: boolean };
+  | { command: 'diff'; run: string; baseline?: string; mergeBase: boolean }
+  | { command: 'ci'; level: Level; summary?: string }
+  | { command: 'calibrate' };
 
 export class CliUsageError extends Error {
   constructor(message: string) {
@@ -181,11 +195,30 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
         mergeBase: values['merge-base'] === true,
       };
     }
+    if (command === 'ci') {
+      const { values } = parseNodeArgs({
+        args: tail,
+        strict: true,
+        allowPositionals: false,
+        options: {
+          level: { type: 'string' },
+          summary: { type: 'string' },
+          help: { type: 'boolean', short: 'h' },
+        },
+      });
+      if (values.help) return { command: 'help' };
+      if (!values.level) throw new CliUsageError('[suite] ci: --level <L0|L1|L2> is required');
+      const level = LevelSchema.safeParse(values.level);
+      if (!level.success) throw new CliUsageError(`[suite] ci: --level must be L0, L1 or L2, got ${values.level}`);
+      if (values.summary !== undefined && values.summary.trim() === '') throw new CliUsageError('[suite] ci: --summary must not be empty');
+      return { command: 'ci', level: level.data, ...(values.summary !== undefined ? { summary: values.summary } : {}) };
+    }
+    if (command === 'calibrate') return { command: 'calibrate' };
   } catch (error) {
     if (error instanceof CliUsageError) throw error;
     throw new CliUsageError(`[suite] ${command}: ${(error as Error).message}`);
   }
-  throw new CliUsageError(`[suite] unknown command ${command}; expected run, baseline:accept or diff`);
+  throw new CliUsageError(`[suite] unknown command ${command}; expected run, baseline:accept, diff, ci or calibrate`);
 }
 
 /** Model credentials removed before an L0 run; returns the removed key names (never values). */
@@ -234,6 +267,11 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps(
     }
     if (parsed.command === 'run') return await runCommand(parsed, deps);
     if (parsed.command === 'diff') return diffCommand(parsed, deps);
+    if (parsed.command === 'ci') return await ciCommand(parsed, deps);
+    if (parsed.command === 'calibrate') {
+      deps.error('[suite] calibrate lands in Epic 13');
+      return 1;
+    }
     return acceptCommand(parsed, deps);
   } catch (error) {
     deps.error(error instanceof Error ? error.message : String(error));
@@ -243,6 +281,23 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps(
 }
 
 async function runCommand(parsed: Extract<ParsedCommand, { command: 'run' }>, deps: CliDeps): Promise<number> {
+  await performRun(parsed, deps);
+  return 0;
+}
+
+interface RunOverrides {
+  /** An already loaded suite (`ci` loads first to skip empty suites). */
+  suite?: LoadedSuite;
+  /** Picks the run id; `ci` uses it to keep run ids unique within one invocation. */
+  runId?: (shortSha: string | null) => string;
+}
+
+/** The `suite:run` path; returns the written report's run id. */
+async function performRun(
+  parsed: Extract<ParsedCommand, { command: 'run' }>,
+  deps: CliDeps,
+  overrides: RunOverrides = {},
+): Promise<string> {
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
   if (parsed.level !== 'L0') throw new Error(unsupportedLevel(parsed.level));
   if (!config.suites.includes(parsed.suite)) {
@@ -255,10 +310,10 @@ async function runCommand(parsed: Extract<ParsedCommand, { command: 'run' }>, de
   const removed = scrubModelCredentials(deps.env);
   if (removed.length > 0) deps.log(`[suite] L0: removed model credentials from the environment (${removed.join(', ')})`);
 
-  const suite = deps.loadSuite(parsed.suite);
+  const suite = overrides.suite ?? deps.loadSuite(parsed.suite);
   const executor = deps.createExecutor(parsed.level);
   const git = deps.git();
-  const runId = runIdFor(deps.now(), git.shortSha);
+  const runId = overrides.runId ? overrides.runId(git.shortSha) : runIdFor(deps.now(), git.shortSha);
   deps.log(`[suite] run ${runId}: ${suite.id} ${parsed.level} n=${parsed.runs}${parsed.case ? ` case=${parsed.case}` : ''}`);
 
   const { report, caseRuns } = await runSuite({
@@ -282,7 +337,121 @@ async function runCommand(parsed: Extract<ParsedCommand, { command: 'run' }>, de
   deps.log(`[suite] report: ${relative(deps.packageDir, paths.json)}`);
   deps.log(`[suite] report: ${relative(deps.packageDir, paths.markdown)}`);
   deps.log(`[suite] case runs: ${relative(deps.packageDir, caseRunsPath)}`);
+  return report.runId;
+}
+
+export interface CiSuiteOutcome {
+  suiteId: string;
+  status: 'skipped' | 'ran' | 'failed';
+  exitCode: number;
+  runId?: string;
+  /** Load or run failure message (never environment values). */
+  error?: string;
+}
+
+/** Exit-code precedence of `suite:ci` over all suites: 2 > 3 > 4 > 1, else 0. */
+export function aggregateCiExitCode(codes: readonly number[]): number {
+  for (const code of [2, 3, 4, 1]) if (codes.includes(code)) return code;
   return 0;
+}
+
+/**
+ * `suite:ci` (AD-15): exactly `suite:run --suite <id> --level <L> --runs 1` then
+ * `suite:diff --run <runId> --merge-base` per registered suite that has tests, in config
+ * order, attempting every suite even after a failure.
+ */
+async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps: CliDeps): Promise<number> {
+  const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
+  if (parsed.level !== 'L0') throw new Error(unsupportedLevel(parsed.level));
+  if (!config.levels.includes(parsed.level)) {
+    throw new Error(`[suite] level ${parsed.level} is not enabled in suite.config.json`);
+  }
+
+  const outcomes: CiSuiteOutcome[] = [];
+  const reports: SuiteRunReport[] = [];
+  const usedRunIds = new Set<string>();
+  const uniqueRunId = (shortSha: string | null) => {
+    const start = deps.now().getTime();
+    for (let offset = 0; ; offset += 1) {
+      const id = runIdFor(new Date(start + offset), shortSha);
+      if (!usedRunIds.has(id) && !existsSync(join(deps.packageDir, 'runs', 'suites', id))) {
+        usedRunIds.add(id);
+        return id;
+      }
+    }
+  };
+
+  for (const suiteId of config.suites) {
+    let suite: LoadedSuite;
+    try {
+      suite = deps.loadSuite(suiteId);
+    } catch (error) {
+      const message = errorMessage(error);
+      deps.error(`[suite] ci: ${suiteId} failed to load: ${message}`);
+      outcomes.push({ suiteId, status: 'failed', exitCode: 1, error: message });
+      continue;
+    }
+    if (suite.tests.length === 0) {
+      deps.log(`[suite] ci: ${suiteId} skipped (no tests)`);
+      outcomes.push({ suiteId, status: 'skipped', exitCode: 0 });
+      continue;
+    }
+    let runId: string | undefined;
+    try {
+      runId = await performRun({ command: 'run', suite: suiteId, level: parsed.level, runs: 1 }, deps, { suite, runId: uniqueRunId });
+      const exitCode = diffCommand({ command: 'diff', run: runId, mergeBase: true }, deps);
+      // A failed re-read only drops this suite's summary section; the diff exit code stands.
+      try {
+        reports.push(readRunReport(deps.packageDir, runId));
+      } catch (error) {
+        deps.error(`[suite] ci: ${suiteId}: could not re-read run ${runId} for the summary: ${errorMessage(error)}`);
+      }
+      outcomes.push({ suiteId, status: 'ran', exitCode, runId });
+      deps.log(`[suite] ci: ${suiteId} exit ${exitCode}`);
+    } catch (error) {
+      const message = errorMessage(error);
+      deps.error(`[suite] ci: ${suiteId} failed: ${message}`);
+      outcomes.push({ suiteId, status: 'failed', exitCode: 1, ...(runId !== undefined ? { runId } : {}), error: message });
+    }
+  }
+
+  let exitCode = aggregateCiExitCode(outcomes.map((outcome) => outcome.exitCode));
+  const nothingToCheck = !outcomes.some((outcome) => outcome.status !== 'skipped');
+  if (nothingToCheck) deps.log(`[suite] ci: no registered suite has tests; ${parsed.level} gate passes with nothing to check`);
+
+  if (parsed.summary !== undefined) {
+    const path = resolve(deps.env.INIT_CWD ?? process.cwd(), parsed.summary);
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      appendFileSync(path, ciSummaryMarkdown(parsed.level, outcomes, reports, exitCode));
+    } catch (error) {
+      deps.error(`[suite] ci: could not append the step summary: ${errorMessage(error)}`);
+      exitCode = aggregateCiExitCode([exitCode, 1]);
+    }
+  }
+  deps.log(`[suite] ci: ${parsed.level} gate exit ${exitCode}`);
+  return exitCode;
+}
+
+function ciSummaryMarkdown(level: Level, outcomes: readonly CiSuiteOutcome[], reports: readonly SuiteRunReport[], exitCode: number): string {
+  const lines = [`## Suite ${level} gate`, ''];
+  if (!outcomes.some((outcome) => outcome.status !== 'skipped')) {
+    lines.push(`No registered suite has tests; ${level} gate passes with nothing to check.`, '');
+  }
+  lines.push(`Gate exit code: **${exitCode}**`, '');
+  for (const outcome of outcomes) {
+    if (outcome.status === 'skipped') lines.push(`- ${outcome.suiteId}: skipped (no tests)`);
+    else if (outcome.status === 'failed') {
+      lines.push(`- ${outcome.suiteId}: failed (exit 1): ${firstLine(outcome.error).replace(/\|/g, '\\|')}`);
+    } else lines.push(`- ${outcome.suiteId}: ran (exit ${outcome.exitCode}), run ${outcome.runId}`);
+  }
+  lines.push('');
+  const body = reports.map((report) => renderCiSummary(report)).join('\n');
+  return `${lines.join('\n')}${body ? `\n${body}` : ''}\n`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function acceptCommand(parsed: Extract<ParsedCommand, { command: 'baseline:accept' }>, deps: CliDeps): number {

@@ -3274,3 +3274,12 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Add `setupFiles: [<abs path>/src/harness/vitest-setup.ts]` to the generated fixture configs in `failure-classifier.test.ts` and `coach-harness.test.ts`, then remove the `__vitest_index__` fallback from `test-failure-hook.ts`.
 - Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/gate/failure-classifier.test.ts src/harness/coach-harness.test.ts src/harness/test-failure-hook.test.ts` passes with the fallback removed.
 - Status: open
+
+## 2026-10-25: pnpm script relay broke a multi-line workflow argument
+
+- Symptom: The Story 12.10 governance workflow passed `toJSON(github.event.pull_request.labels.*.name)` (pretty-printed over several lines) through `pnpm --filter ... suite:baseline:guard --labels "$PR_LABELS"`; pnpm 9.12 re-quoted the real newlines as literal `\n`, so every labeled PR would fail with "--labels is not valid JSON". Unit tests called the guard in-process and stayed green; review caught it.
+- Expected: Workflow steps that pass GitHub expression output as arguments are verified through the exact command line the workflow runs.
+- Root cause layer: verification
+- Harness fix: The workflow calls `node --import tsx src/suite/baseline-guard.ts` directly; `baseline-guard.test.ts` spawns that exact command with a multi-line labels argument.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/baseline-guard.test.ts`.
+- Status: fixed

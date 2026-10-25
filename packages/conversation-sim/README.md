@@ -232,3 +232,100 @@ scenarios for action discipline, reminder deduplication, delayed follow-up polic
 assessment preparation, goal state, memory extraction, memory correction, and
 casual conversation. These deterministic entries have `judgePasses: 0`; live
 judge thresholds remain on the live baseline scenarios.
+
+## Conversation suites (Framework v2.1.1, `src/suite/`)
+
+The suite framework scores Framework v2.1.1 test cases per criterion, independently of
+the scenario gate above (`ScenarioRunReport`, `gate.config.json` and `run-gate.ts` are
+untouched). Suites are registered in `suite.config.json`; `p-v1` and `smoke-v1` are
+registered and empty today. L0 is the offline deterministic level: no Postgres, Redis or
+model credentials, and the CLI removes `OPENAI_API_KEY` and `AZURE_OPENAI_*` from its
+environment before running. L1 lands in Epic 13, L2 in Epic 14.
+
+### Commands
+
+Root aliases delegate to this package and pass flags through.
+
+```bash
+pnpm suite:run --suite smoke-v1 --level L0 [--runs N] [--case <id>]
+pnpm suite:diff --run <runId> [--baseline <path> | --merge-base]
+pnpm suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
+pnpm suite:ci --level L0 [--summary <path>]
+pnpm suite:calibrate                     # lands in Epic 13; exits 1
+pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --head <rev> --labels '<json-array>'
+```
+
+- `suite:run` writes `runs/suites/<runId>/report.json`, `report.md` and `case-runs.json`
+  (gitignored). The run id is `<ISO timestamp>-<short sha>`.
+- `suite:diff` compares a run with a baseline and writes the diff into the same report.
+  Without a flag it reads the working-tree `baselines/<suite>/<level>.json`; `--merge-base`
+  reads that file at `git merge-base HEAD origin/main` (what CI uses), never the checkout.
+- `suite:baseline:accept` writes `baselines/<suite>/<level>.json` from a run. It refuses a
+  run below `baseline.minSamples`, an INCOMPLETE run (unless `--allow-incomplete`, recorded
+  as provisional), a dirty tree (unless `--allow-dirty`), a `--case` run, or a run with a
+  different judge fingerprint. No baseline is committed yet.
+- `suite:ci` runs every registered suite that has tests through `suite:run` (n = 1) and
+  `suite:diff --merge-base`, logs `[suite] ci: <id> skipped (no tests)` for the others, and
+  appends a Markdown step summary to `--summary` (relative paths resolve against the
+  directory you ran `pnpm` from). The summary has the layer table, verdict, diff outcome,
+  baseline source, category counts and every changed entry, and no evidence, reason or
+  transcript text. With no suite that has tests it passes with nothing to check.
+- `suite:baseline:guard` fails when `git diff <base>...<head>` touches
+  `packages/conversation-sim/baselines/` and the labels lack `baseline-change`.
+
+### Exit codes
+
+| Command | 0 | 1 | 2 | 3 | 4 |
+| --- | --- | --- | --- | --- | --- |
+| `run`, `baseline:accept` | report or baseline written (whatever the verdict) | usage, config, load or refusal error | | | |
+| `diff` | clean, or no baseline | gating regression or lost coverage; usage error; unreadable run | baseline invalid (provenance differs, unreadable, git cannot resolve the merge-base) | judge infrastructure | budget exceeded |
+| `ci` | every suite clean, without baseline, or skipped | a suite's diff exited 1, or a suite failed to load or run | any suite exited 2 | any 3 (no 2) | any 4 (no 2 or 3) |
+| `calibrate` | | always (Epic 13) | | | |
+| `baseline:guard` | no baseline changed, or labeled | baseline changed without the label; missing flags, bad labels or git failure (fails closed) | | | |
+
+`ci` attempts every suite and exits with the first code present by precedence 2 > 3 > 4 > 1.
+
+### Statuses and verdict
+
+Every in-scope criterion gets exactly one status, decided in this order:
+
+1. `NOT_TESTABLE` — the criterion carries a `not-testable` check (reason from the manifest).
+2. `INVALID` — a failed precondition or fixture verify, a failed checkpoint before the
+   criterion (`checkpoint:<k>`), or a change-type state criterion already satisfied before
+   the step (`precondition:already-satisfied`).
+3. `ERROR` — the executor or judge does not know what the product did at or before the step.
+4. `NOT_RUN` — the step was not reached, a fixture is unsupported, or a field is not
+   observable at the level (`unobservable:<field>@<level>`). Never `FAIL`.
+5. `PASS` / `FAIL` — any rule FAIL makes the criterion FAIL; meaning checks apply only when
+   no rule failed. Product silence is evaluated, not an error.
+
+Criteria a level cannot decide (`level-not-declared`, `no-judge-at-level`) are out of scope.
+Layer pass rate is PASS / (PASS + FAIL) over non-advisory results of atomic and observation
+tests; journeys are reported and diffed separately and never change the verdict. Verdict:
+any S FAIL is NOT ADEQUATE; otherwise a combined P+D+C pass rate of at least 0.90 is
+ADEQUATE, 0.75 to 0.89 is ACCEPTABLE WITH ISSUES, lower is NOT ADEQUATE. A run is COMPLETE
+when every in-scope status is PASS, FAIL or a declared NOT_TESTABLE; an INCOMPLETE run
+carries a provisional verdict with its reason.
+
+### Reading a diff
+
+Entries are keyed `<testId>/<criterionId>` and listed `lost-coverage` first, in the
+sections Tests (atomic and observation) and Journeys. Categories: `lost-coverage`
+(baseline PASS or FAIL, now NOT_RUN, ERROR, INVALID or missing), `regressed` (baseline
+PASS, now below `minPasses`: n/n for rules), `fixed`, `gained-coverage`, `new`, `retired`,
+`inconclusive` (meaning checks with too few samples or an untrusted judge), `unchanged`
+(counted only). An entry is **gating** when it is `regressed` or `lost-coverage` on an S or
+rule criterion (also in journeys), or `regressed` on a non-advisory meaning criterion outside
+journeys; any gating entry makes the diff exit 1. `inconclusive` and `new` never fail it. Without a baseline
+every pair is `new` and the diff exits 0 (`no-baseline`).
+
+### Baseline governance
+
+Baselines change only through `suite:baseline:accept`, in their own pull request. The CI
+job `Suite L0 gate` (`ci.yml`) runs `pnpm suite:ci --level L0` without secrets on pull requests
+to and pushes on `main` and `develop`, with full history so the merge-base resolves, and uploads
+`runs/suites/**`. The `Suite baseline governance` workflow fails a pull request that changes
+`baselines/**` without the `baseline-change` label and re-runs when labels change.
+`Suite L0 gate` and `Baseline change label` block merges only once they are required status
+checks in branch protection (a repository setting, pending approval, like the CODEOWNERS rule). A QA
+CODEOWNERS review for `baselines/**` is pending: the QA owner handle is not decided yet.

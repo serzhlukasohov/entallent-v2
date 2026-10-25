@@ -127,7 +127,8 @@ development_status:
   12-8-runner-suite-run-and-suite-baseline-accept: review
   # 12-9 done 2026-10-25 (bmad-build-auto): suite:diff proven on synthetic run/baseline pairs; no baseline committed (user decision)
   12-9-suite-diff-with-regression-categories: review
-  12-10-l0-gate-in-ci-and-baseline-governance: backlog
+  # 12-10 done 2026-10-25: suite:ci + suite-l0 job in ci.yml, baseline-change label guard workflow, root suite:* aliases, README; every suite empty so the gate passes with nothing to check; QA CODEOWNERS deferred (handle unknown)
+  12-10-l0-gate-in-ci-and-baseline-governance: review
   epic-12-retrospective: optional
 
   epic-13: backlog

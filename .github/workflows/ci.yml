@@ -132,3 +132,40 @@ jobs:
 
       - name: Integration tests
         run: pnpm test:integration
+
+  suite-l0:
+    name: Suite L0 gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # Full history so `git merge-base HEAD origin/main` resolves under the PR merge checkout.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build conversation-sim dependencies
+        run: pnpm turbo run build --filter=@entalent/conversation-sim^...
+
+      - name: Suite L0 run and merge-base diff
+        run: pnpm suite:ci --level L0 --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload suite runs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: suite-l0-runs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/conversation-sim/runs/suites/**
+          if-no-files-found: ignore
+          retention-days: 14

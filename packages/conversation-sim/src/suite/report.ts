@@ -183,6 +183,61 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
+/**
+ * GitHub step-summary section for one suite run (AD-15): layer table, verdict, diff outcome,
+ * baseline source, per-section category counts and every non-`unchanged` entry. Unlike
+ * `report.md` it carries no result reasons, rule evidence or transcript text.
+ */
+export function renderCiSummary(report: SuiteRunReport): string {
+  const lines: string[] = [];
+  lines.push(`### ${report.suiteId} ${report.level} — ${report.runId}`, '');
+  lines.push(
+    `- Verdict: **${report.verdict}**${report.provisional ? ' (provisional)' : ''} · ${report.complete ? 'COMPLETE' : 'INCOMPLETE'}`,
+  );
+  lines.push(`- Samples: n = ${report.n}`);
+  lines.push(`- Meaning checks: ${report.judgeTrust.trusted ? 'trusted' : 'advisory (uncalibrated)'}`, '');
+  if (report.layers) {
+    lines.push('| Layer | PASS | FAIL | Pass rate |', '| --- | --- | --- | --- |');
+    for (const row of report.layers.rows) lines.push(`| ${row.layer} | ${row.pass} | ${row.fail} | ${rate(row.passRate)} |`);
+    const pdc = report.layers.combinedPdc;
+    lines.push(`| P+D+C | ${pdc.pass} | ${pdc.fail} | ${rate(pdc.passRate)} |`);
+  } else {
+    lines.push('Layers: n/a (journeys only)');
+  }
+  lines.push('');
+
+  const diff = report.diff;
+  if (!diff) {
+    lines.push('- Diff: not run', '');
+    return `${lines.join('\n').trimEnd()}\n`;
+  }
+  const source = diff.baseline.ref ? `${diff.baseline.path} at ${diff.baseline.ref}` : diff.baseline.path;
+  lines.push(`- Diff: **${diff.outcome}** (exit ${diff.exitCode})`);
+  lines.push(`- Baseline: ${diff.baseline.kind} ${cell(source)}${diff.baseline.missing ? ' (missing)' : ''}`);
+  if (diff.acceptedFrom) {
+    lines.push(`- Accepted from: run ${diff.acceptedFrom.runId} (${diff.acceptedFrom.gitSha})${diff.provisional ? ', provisional' : ''}`);
+  }
+  lines.push('');
+  const sections: Array<[string, DiffSection]> = [
+    ['Tests', diff.tests],
+    ['Journeys', diff.journeys],
+  ];
+  for (const [title, section] of sections) {
+    lines.push(`**${title}:** ${DiffCategorySchema.options.map((category) => `${category} ${section.counts[category] ?? 0}`).join(' · ')}`, '');
+    const order = DiffCategorySchema.options;
+    const shown = section.entries
+      .filter((entry) => entry.category !== 'unchanged')
+      .sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category));
+    if (shown.length === 0) continue;
+    lines.push('| Category | Key | Layer | Check | Gating |', '| --- | --- | --- | --- | --- |');
+    for (const entry of shown) {
+      lines.push(`| ${entry.category} | ${cell(entry.key)} | ${entry.layer} | ${entry.checkKind ?? 'n/a'} | ${entry.gating ? 'yes' : 'no'} |`);
+    }
+    lines.push('');
+  }
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
 /** Writes `<baseDir>/runs/suites/<runId>/report.{json,md}`; the only I/O of the core. */
 export function writeSuiteReport(report: SuiteRunReport, baseDir: string): { json: string; markdown: string } {
   const parsed = SuiteRunReportSchema.parse(report) as SuiteRunReport;

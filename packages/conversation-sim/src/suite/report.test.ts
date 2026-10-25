@@ -6,7 +6,9 @@ import { EVAL_RULES, UNTRUSTED, runFor } from './__fixtures__/evaluation';
 import { TEST_RULES, validModules } from './__fixtures__/suite';
 import { evaluate } from './evaluate';
 import { validateSuite } from './loader';
-import { buildSuiteReport, renderSuiteReportMarkdown, writeSuiteReport, type SuiteReportMeta } from './report';
+import { RUNNER_CONFIG } from './__fixtures__/runner';
+import { diffRun } from './diff';
+import { buildSuiteReport, renderCiSummary, renderSuiteReportMarkdown, writeSuiteReport, type SuiteReportMeta } from './report';
 import { score } from './score';
 import { SuiteRunReportSchema, type CriterionResult, type SuiteRunReport } from './schema';
 
@@ -152,6 +154,35 @@ describe('renderSuiteReportMarkdown', () => {
     const report = buildSuiteReport(score({ suite, level: 'L0', n: 1, results: [] }), { ...meta, selection: { case: 'X-01' } });
     expect(report.selection).toEqual({ case: 'X-01' });
     expect(renderSuiteReportMarkdown(report)).toContain('- Selection: case X-01');
+  });
+});
+
+describe('renderCiSummary', () => {
+  it('renders layers, verdict and diff but no reason, evidence or transcript text', () => {
+    const report = l0Report();
+    const key = 'X-01.A1/X-01.C1';
+    const withEvidence: SuiteRunReport = {
+      ...report,
+      results: {
+        ...report.results,
+        [key]: { ...report.results[key]!, status: 'FAIL', reason: 'REASON-FROM-REPLY', evidence: 'turn 1 — Which deadline is first?' },
+      },
+    };
+    const diff = diffRun(withEvidence, null, RUNNER_CONFIG, { kind: 'merge-base', ref: 'abc', path: 'packages/conversation-sim/baselines/x-suite/L0.json', missing: true });
+    const summary = renderCiSummary({ ...withEvidence, diff });
+    expect(summary).toContain('### x-suite L0 — 2026-10-25T10-00-00-000Z-abc1234');
+    expect(summary).toContain('- Verdict: **');
+    expect(summary).toContain('| P+D+C |');
+    expect(summary).toContain('- Diff: **no-baseline** (exit 0)');
+    expect(summary).toContain('| new | X-01.A1/X-01.C1 | P |');
+    expect(summary).not.toContain('REASON-FROM-REPLY');
+    expect(summary).not.toContain('Which deadline is first?');
+    expect(summary).not.toContain('subjective opening');
+    expect(renderSuiteReportMarkdown({ ...withEvidence, diff })).toContain('Which deadline is first?');
+  });
+
+  it('says when no diff ran', () => {
+    expect(renderCiSummary(l0Report())).toContain('- Diff: not run');
   });
 });
 

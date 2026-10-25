@@ -1,0 +1,48 @@
+name: Suite baseline governance
+
+# A pull request that changes committed suite baselines must carry the `baseline-change`
+# label (architecture AD-13). Separate from ci.yml so adding or removing the label re-runs
+# only this check. The QA CODEOWNERS review is pending a QA owner handle.
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: suite-baseline-governance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  baseline-guard:
+    name: Baseline change label
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check baseline changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        # Called directly: pnpm re-quotes the multi-line toJSON labels argument.
+        working-directory: packages/conversation-sim
+        run: node --import tsx src/suite/baseline-guard.ts --base "$BASE_SHA" --head "$HEAD_SHA" --labels "$PR_LABELS"
