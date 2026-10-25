@@ -77,5 +77,14 @@ describe('production API route privacy boundary', () => {
     `);
     expect(routes.some((route) => /(?:conversation|messages|memory|insights|debug|reset-user)/i.test(route)))
       .toBe(false);
+    expect(routes.filter((route) => route.split(' ')[1]?.startsWith('dev/'))).toEqual([]);
   }, 15_000);
+
+  it('declares the development read routes on DevSimulateController', async () => {
+    const { DevSimulateController } = await import('./dev/dev-simulate.controller');
+    const routes = controllerRoutes(DevSimulateController as unknown as DecoratedClass);
+
+    expect(routes).toContain('GET dev/user/:userId/question-confirmation');
+    expect(routes).toContain('GET dev/conversation/:conversationId/messages');
+  });
 });
