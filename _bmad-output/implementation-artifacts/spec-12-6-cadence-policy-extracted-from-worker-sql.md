@@ -153,3 +153,5 @@ deferred:
 **Verification:** application 63 files / 1138 tests; worker 388 passed, 104 skipped (PostgreSQL suites: no local `DATABASE_URL`; migrating a fresh local DB was held by the Blast Radius hook); `pnpm typecheck`, `pnpm lint` 24/24; `pnpm harness:check -- --base 3af7d0ed02bbe34e7178f4be8755f56f373162c5` passed (receipt `runs/harness/receipt-1792922737099-8ec190d8.json`).
 
 **Residual risks:** the new SQL fact columns and their PostgreSQL tests first run in CI (`ci.yml` sets a local `DATABASE_URL`) or on a local DB; the deferred clock-skew item.
+
+**CI follow-up (2026-10-25):** CI run 40208790123 on d9dfed7, job "Lint, typecheck, test" (migrated PostgreSQL, `harness:check`): `proactive-scheduler.repository.test.ts` 5 tests passed, 0 skipped — the PostgreSQL fact assertions ran and passed.
