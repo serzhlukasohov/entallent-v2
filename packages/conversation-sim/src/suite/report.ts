@@ -8,6 +8,7 @@ import {
   type SuiteDiff,
   type Coverage,
   type CoverageRow,
+  type CriterionResult,
   type JudgeError,
   type JudgeTrust,
   type Level,
@@ -31,6 +32,40 @@ export interface SuiteReportMeta {
   usage: Usage;
   /** `--case` narrowing, recorded so a partial run is never accepted as a baseline. */
   selection?: { case: string };
+}
+
+const JUDGE_ERROR_REASONS = new Set(['judge-transport', 'judge-invalid-output']);
+
+/**
+ * Judge infrastructure errors (AD-7), listed separately in the report: one entry per
+ * in-scope result whose reason is `judge-transport` or `judge-invalid-output`.
+ */
+export function collectJudgeErrors(results: readonly CriterionResult[]): JudgeError[] {
+  return results
+    .filter((result) => result.inScope && result.reason !== undefined && JUDGE_ERROR_REASONS.has(result.reason))
+    .map((result) => ({
+      key: testCriterionKey(result.testId, result.criterionId),
+      reason: result.reason!,
+      ...(result.evidence !== undefined ? { message: result.evidence } : {}),
+    }));
+}
+
+/** Judge calls and tokens summed from every result's `judgeUsage` (zeros at L0). */
+export function judgeUsageTotals(results: readonly CriterionResult[]): {
+  judgeCalls: number;
+  judgeInputTokens: number;
+  judgeOutputTokens: number;
+} {
+  let judgeCalls = 0;
+  let judgeInputTokens = 0;
+  let judgeOutputTokens = 0;
+  for (const result of results) {
+    if (!result.judgeUsage) continue;
+    judgeCalls += result.judgeUsage.calls;
+    judgeInputTokens += result.judgeUsage.inputTokens;
+    judgeOutputTokens += result.judgeUsage.outputTokens;
+  }
+  return { judgeCalls, judgeInputTokens, judgeOutputTokens };
 }
 
 /** Assembles `SuiteRunReport` v1 (architecture AD-11) from a score; pure. */

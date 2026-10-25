@@ -2,7 +2,7 @@ import { isTransportFailureMessage } from '../gate/failure-kind';
 import { evaluate } from './evaluate';
 import type { SuiteExecutor } from './executors/types';
 import { SuiteExecutionError } from './executors/types';
-import { buildSuiteReport } from './report';
+import { buildSuiteReport, collectJudgeErrors, judgeUsageTotals } from './report';
 import { RULES, type RuleRegistry } from './rules/registry';
 import {
   CaseRunSchema,
@@ -159,8 +159,8 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
       git: input.git,
       models: { coach: null, judge: null },
       judgeTrust: trust,
-      judgeErrors: [],
-      usage: { coachModelCalls: 0, judgeCalls: 0, caseAttempts, infrastructureRetries },
+      judgeErrors: collectJudgeErrors(results),
+      usage: { coachModelCalls: 0, ...judgeUsageTotals(results), caseAttempts, infrastructureRetries },
       ...(input.caseFilter !== undefined ? { selection: { case: input.caseFilter } } : {}),
     },
   );

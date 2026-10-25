@@ -436,7 +436,8 @@ export type SuiteTest = z.infer<typeof SuiteTestSchema>;
 
 /** A test criterion after the loader joined `layer` and `passCondition` from the manifest. */
 export type LoadedCriterion = Criterion & Pick<SourceCriterion, 'layer' | 'passCondition' | 'stateEffect'>;
-export type LoadedTest = Omit<SuiteTest, 'criteria'> & { criteria: LoadedCriterion[] };
+/** `expectedBehavior` is joined from the source case at load (13.1); `evaluate` with a judge requires it. */
+export type LoadedTest = Omit<SuiteTest, 'criteria'> & { criteria: LoadedCriterion[]; expectedBehavior?: string };
 export interface LoadedSuite {
   id: string;
   sources: SourceCase[];
@@ -594,6 +595,12 @@ export type CaseRun = z.infer<typeof CaseRunSchema>;
 export const MethodSchema = z.enum(['observed', 'substituted', 'n/a']);
 export type Method = z.infer<typeof MethodSchema>;
 
+/** Judge usage summed over every judge call one result made (AD-7); missing token counts are 0. */
+export const JudgeUsageSchema = z
+  .object({ calls: nonNegativeInt, inputTokens: nonNegativeInt, outputTokens: nonNegativeInt, totalTokens: nonNegativeInt })
+  .strict();
+export type JudgeUsage = z.infer<typeof JudgeUsageSchema>;
+
 export const CriterionResultSchema = z
   .object({
     testId: z.string().min(1),
@@ -612,6 +619,8 @@ export const CriterionResultSchema = z
     reason: z.string().optional(),
     evidence: z.string().optional(),
     meaningSkipped: z.boolean().optional(),
+    /** Present on every meaning-decided result (judge PASS/FAIL/ERROR and `no-reply`). */
+    judgeUsage: JudgeUsageSchema.optional(),
   })
   .strict();
 export type CriterionResult = z.infer<typeof CriterionResultSchema>;

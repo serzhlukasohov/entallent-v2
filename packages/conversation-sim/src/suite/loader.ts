@@ -127,7 +127,7 @@ export function validateSuite(suiteId: string, modules: SuiteModules, rules: Rul
     checkRules(suiteId, test, rules);
     checkL0(suiteId, test, rules);
 
-    tests.push({ ...test, setup: withClockFixture(test), criteria });
+    tests.push({ ...test, setup: withClockFixture(test), criteria, expectedBehavior: source.expectedBehavior });
   });
 
   checkCoverage(suiteId, sources, tests);

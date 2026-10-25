@@ -11,6 +11,10 @@ import {
 } from './__fixtures__/evaluation';
 import { deepFreeze } from './__fixtures__/suite';
 import { evaluate } from './evaluate';
+import { createCriterionJudge } from './judge/criterion-judge';
+import { mockJudgeModel, promptOf, verdict, type MockStep } from './judge/__fixtures__/mock-model';
+import { buildJudgeInput } from './judge/judge-input';
+import { renderJudgePrompt } from './judge/prompt';
 import { RULES } from './rules/registry';
 import { CriterionResultSchema, type CaseRun, type CriterionResult, type LoadedCriterion, type LoadedTest } from './schema';
 
@@ -398,5 +402,268 @@ describe('evaluate: contract', () => {
       steps: [{ text: 'Hi.', checkpoint: { checks: [{ type: 'rule', rule: 'missing-rule' }], onFail: 'continue' } }],
     });
     expect(() => evaluate(withCheckpoint, runFor(withCheckpoint, ['a']), null, TRUSTED, RULES)).toThrow(/missing-rule/);
+  });
+});
+
+describe('evaluate: with a judge (Story 13.1)', () => {
+  const DECODING = { temperature: 0, reasoningEffort: null, maxOutputTokens: 1024 };
+  const MEANING = [{ type: 'meaning' as const }];
+  const REPLY = 'Which deadline matters most to you this week?';
+  const ONE_CALL = { calls: 1, inputTokens: 100, outputTokens: 20, totalTokens: 120 };
+
+  function meaningTest(criteria: LoadedCriterion[], overrides: Partial<LoadedTest> = {}): LoadedTest {
+    return atomic(criteria, { expectedBehavior: 'The coach asks one focused question.', ...overrides });
+  }
+
+  async function judged(test: LoadedTest, run: CaseRun, steps: MockStep[], trust = TRUSTED) {
+    const model = mockJudgeModel(steps);
+    const results = await evaluate(test, run, createCriterionJudge({ model, decoding: DECODING }), trust, EVAL_RULES);
+    for (const entry of results) expect(CriterionResultSchema.safeParse(entry).success).toBe(true);
+    return { model, results, byId: byId(results) };
+  }
+
+  it('puts a meaning-only criterion in scope and sends the judge the full input', async () => {
+    const c1 = criterion({ id: C1, checks: MEANING, layer: 'C', passCondition: 'Asks exactly one question.', judgeGuidance: 'Deadlines count.' });
+    const topics = [{ topic: 'workload', canonicalQuestions: ['How is your workload?'] }];
+    const test = meaningTest([c1], {
+      seed: { history: [{ role: 'coach', text: 'Seeded coach turn.', atOffsetMs: 60_000 }] },
+      setup: [{ name: 'pulseCycle', params: { uncoveredTopics: topics } }],
+    });
+    const run = runFor(test, [REPLY]);
+    const { model, byId: results } = await judged(test, run, [verdict('PASS', 'One question.', 'Which deadline matters most')]);
+    expect(results[C1]).toEqual({
+      testId: 'X-01.A1',
+      criterionId: C1,
+      sourceCase: 'X-01',
+      level: 'L0',
+      layer: 'C',
+      testKind: 'atomic',
+      inScope: true,
+      step: 1,
+      status: 'PASS',
+      advisory: false,
+      method: 'n/a',
+      reason: 'One question.',
+      evidence: 'Which deadline matters most',
+      judgeUsage: ONE_CALL,
+    });
+    expect(model.doGenerateCalls).toHaveLength(1);
+    const prompt = promptOf(model);
+    expect(prompt).toBe(renderJudgePrompt(buildJudgeInput(test, run, c1).input));
+    expect(prompt).toContain('<turn index="1" role="coach">\nSeeded coach turn.\n</turn>');
+    expect(prompt).toContain('<turn index="2" role="user">\nuser message 1\n</turn>');
+    expect(prompt).toContain(`<turn index="3" role="coach" evaluated="true">\n${REPLY}\n</turn>`);
+    expect(prompt).toContain('The coach asks one focused question.');
+    expect(prompt).toContain('Pass condition (verbatim suite text): Asks exactly one question.');
+    expect(prompt).toContain('Judge guidance: Deadlines count.');
+    expect(prompt).toContain('Layer: C');
+    expect(prompt).toContain('How is your workload?');
+  });
+
+  it('records a judge FAIL with its reason and no evidence when the judge gave none', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { byId: results } = await judged(test, runFor(test, [REPLY]), [verdict('FAIL', 'Asks two things.', null)]);
+    expect(results[C1]).toMatchObject({ status: 'FAIL', reason: 'Asks two things.', judgeUsage: ONE_CALL, inScope: true });
+    expect(results[C1]).not.toHaveProperty('evidence');
+  });
+
+  it('FAILs a null reply with evidence no-reply and never calls the model', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { model, byId: results } = await judged(test, runFor(test, [null]), [verdict('PASS', 'x', 'x')], UNTRUSTED);
+    expect(results[C1]).toMatchObject({
+      status: 'FAIL',
+      evidence: 'no-reply',
+      advisory: true,
+      judgeUsage: { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    });
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  it('FAILs a conversation criterion with no coach reply as no-reply', async () => {
+    const test = journey(2, [criterion({ id: C1, evaluatedAt: 'conversation', checks: MEANING })], { expectedBehavior: 'E.' });
+    const { model, byId: results } = await judged(test, runFor(test, [null, null]), [verdict('PASS', 'x', 'x')]);
+    expect(results[C1]).toMatchObject({ status: 'FAIL', evidence: 'no-reply' });
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  it('accepts conversation evidence from any run coach reply', async () => {
+    const test = journey(2, [criterion({ id: C1, evaluatedAt: 'conversation', checks: MEANING })], { expectedBehavior: 'E.' });
+    const { byId: results } = await judged(test, runFor(test, ['First reply.', REPLY]), [verdict('PASS', 'ok', 'First reply')]);
+    expect(results[C1]).toMatchObject({ status: 'PASS', evidence: 'First reply', judgeUsage: ONE_CALL });
+  });
+
+  it('is ERROR judge-invalid-output on schema-invalid output, without a retry', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { model, byId: results } = await judged(test, runFor(test, [REPLY]), ['not json', verdict('PASS', 'x', REPLY)]);
+    expect(results[C1]).toMatchObject({ status: 'ERROR', reason: 'judge-invalid-output', judgeUsage: ONE_CALL, inScope: true });
+    expect(results[C1]!.evidence).toMatch(/NoObjectGeneratedError/);
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
+
+  it('is ERROR judge-invalid-output on a null status', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { byId: results } = await judged(test, runFor(test, [REPLY]), [verdict(null, 'unsure', null)]);
+    expect(results[C1]).toMatchObject({ status: 'ERROR', reason: 'judge-invalid-output', evidence: 'judge returned null status' });
+  });
+
+  it('re-asks once on PASS without evidence, then records ERROR judge-invalid-output with two calls', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { model, byId: results } = await judged(test, runFor(test, [REPLY]), [verdict('PASS', 'ok', null), verdict('PASS', 'ok', null)]);
+    expect(results[C1]).toMatchObject({
+      status: 'ERROR',
+      reason: 'judge-invalid-output',
+      evidence: 'PASS evidence is missing or is not a verbatim fragment of the evaluated reply',
+      judgeUsage: { calls: 2, inputTokens: 200, outputTokens: 40, totalTokens: 240 },
+    });
+    expect(model.doGenerateCalls).toHaveLength(2);
+    expect(promptOf(model, 0)).not.toContain('Reminder:');
+    expect(promptOf(model, 1)).toContain('Reminder: your previous answer was PASS');
+  });
+
+  it('PASSes after a re-ask fixes a non-matching fragment, summing usage', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { byId: results } = await judged(test, runFor(test, [REPLY]), [
+      verdict('PASS', 'ok', 'Which project matters'),
+      verdict('PASS', 'ok again', '  Which deadline\n matters  most '),
+    ]);
+    expect(results[C1]).toMatchObject({
+      status: 'PASS',
+      reason: 'ok again',
+      judgeUsage: { calls: 2, inputTokens: 200, outputTokens: 40, totalTokens: 240 },
+    });
+  });
+
+  it('records FAIL evidence only when it is a verbatim fragment of the reply', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING }), criterion({ id: C2, checks: MEANING })]);
+    const { byId: results } = await judged(test, runFor(test, [REPLY]), [
+      verdict('FAIL', 'Invented quote.', 'Tell me about your weekend'),
+      verdict('FAIL', 'Real quote.', 'Which  deadline'),
+    ]);
+    expect(results[C1]).toMatchObject({ status: 'FAIL', reason: 'Invented quote.' });
+    expect(results[C1]).not.toHaveProperty('evidence');
+    expect(results[C2]).toMatchObject({ status: 'FAIL', reason: 'Real quote.', evidence: 'Which  deadline' });
+  });
+
+  it('accepts a FAIL from the re-ask after a PASS without evidence', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { byId: results } = await judged(test, runFor(test, [REPLY]), [verdict('PASS', 'ok', null), verdict('FAIL', 'no', null)]);
+    expect(results[C1]).toMatchObject({ status: 'FAIL', reason: 'no' });
+    expect(results[C1]).not.toHaveProperty('evidence');
+    expect(results[C1]!.judgeUsage!.calls).toBe(2);
+  });
+
+  it('records ERROR judge-transport when the re-ask fails twice, summing calls', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const { byId: results } = await judged(test, runFor(test, [REPLY]), [
+      verdict('PASS', 'ok', null),
+      new Error('ECONNRESET'),
+      new Error('ETIMEDOUT'),
+    ]);
+    expect(results[C1]).toMatchObject({ status: 'ERROR', reason: 'judge-transport', evidence: 'Error: ETIMEDOUT' });
+    expect(results[C1]!.judgeUsage).toEqual({ calls: 3, inputTokens: 100, outputTokens: 20, totalTokens: 120 });
+  });
+
+  it('isolates a transport failure to its criterion; other criteria of the test are unaffected', async () => {
+    const test = meaningTest([
+      criterion({ id: C1, checks: MEANING }),
+      criterion({ id: C2 }),
+      criterion({ id: C3, checks: MEANING }),
+    ]);
+    const { model, byId: results } = await judged(test, runFor(test, [REPLY]), [
+      new Error('ECONNRESET'),
+      new Error('ETIMEDOUT'),
+      verdict('PASS', 'ok', 'Which deadline'),
+    ]);
+    expect(results[C1]).toMatchObject({
+      status: 'ERROR',
+      reason: 'judge-transport',
+      evidence: 'Error: ETIMEDOUT',
+      judgeUsage: { calls: 2, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    });
+    expect(results[C2]).toMatchObject({ status: 'PASS' });
+    expect(results[C2]).not.toHaveProperty('judgeUsage');
+    expect(results[C3]).toMatchObject({ status: 'PASS', judgeUsage: ONE_CALL });
+    expect(model.doGenerateCalls).toHaveLength(3);
+  });
+
+  it('makes a rejecting CriterionJudge ERROR judge-transport', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const judge = () => Promise.reject(new Error('boom'));
+    const results = byId(await evaluate(test, runFor(test, [REPLY]), judge, TRUSTED, EVAL_RULES));
+    expect(results[C1]).toMatchObject({ status: 'ERROR', reason: 'judge-transport', evidence: 'Error: boom', judgeUsage: { calls: 0 } });
+  });
+
+  it('decides a rule FAIL without a judge call (meaningSkipped) and judges only after every rule PASSed', async () => {
+    const test = meaningTest([
+      criterion({ id: C1, checks: [{ type: 'rule', rule: 'always-fail' }, { type: 'meaning' }] }),
+      criterion({ id: C2, checks: [{ type: 'rule', rule: 'always-pass' }, { type: 'meaning' }] }),
+    ]);
+    const { model, byId: results } = await judged(test, runFor(test, [REPLY]), [verdict('FAIL', 'Judge says no.', null)], UNTRUSTED);
+    expect(results[C1]).toMatchObject({ status: 'FAIL', meaningSkipped: true, advisory: false, evidence: 'turn 1 — always fails' });
+    expect(results[C1]).not.toHaveProperty('judgeUsage');
+    expect(results[C2]).toMatchObject({ status: 'FAIL', reason: 'Judge says no.', advisory: true, judgeUsage: ONE_CALL });
+    expect(results[C2]).not.toHaveProperty('meaningSkipped');
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
+
+  it('sets advisory from trust on every meaning-decided result', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const steps = [verdict('PASS', 'ok', 'Which deadline')];
+    expect((await judged(test, runFor(test, [REPLY]), steps, TRUSTED)).byId[C1]!.advisory).toBe(false);
+    expect((await judged(test, runFor(test, [REPLY]), steps, UNTRUSTED)).byId[C1]!.advisory).toBe(true);
+    const errored = await judged(test, runFor(test, [REPLY]), ['not json'], UNTRUSTED);
+    expect(errored.byId[C1]).toMatchObject({ status: 'ERROR', advisory: true });
+  });
+
+  it('keeps the earlier precedence ahead of the judge (INVALID, ERROR, NOT_RUN) without calls', async () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING })]);
+    const invalid = await judged(test, runFor(test, [REPLY], { preconditions: [{ source: 'fixture', name: 'clock', satisfied: false }] }), [verdict('PASS', 'x', REPLY)]);
+    expect(invalid.byId[C1]).toMatchObject({ status: 'INVALID', reason: 'precondition:clock' });
+    const errored = await judged(
+      test,
+      runFor(test, [REPLY], { errors: [{ kind: 'product', step: 1, reason: 'orchestrator-exception', message: 'x' }] }),
+      [verdict('PASS', 'x', REPLY)],
+    );
+    expect(errored.byId[C1]).toMatchObject({ status: 'ERROR', reason: 'orchestrator-exception' });
+    expect(invalid.model.doGenerateCalls.length + errored.model.doGenerateCalls.length).toBe(0);
+  });
+
+  it('makes state and observation-window meaning criteria NOT_RUN judge-unsupported, in scope', async () => {
+    const state = criterion({
+      id: C1,
+      evaluatedAt: 'state',
+      stateQuery: { name: 'stagedBundleCount', at: 'after', kind: 'invariant' },
+      checks: MEANING,
+    });
+    const test = meaningTest([state]);
+    const { model, byId: results } = await judged(test, runFor(test, [REPLY]), [verdict('PASS', 'x', REPLY)]);
+    expect(results[C1]).toMatchObject({ status: 'NOT_RUN', reason: 'judge-unsupported:state', inScope: true });
+
+    const observation = {
+      ...meaningTest([criterion({ id: C2, evaluatedAt: 'observation-window', checks: MEANING })]),
+      id: 'X-02',
+      kind: 'observation' as const,
+      steps: [],
+      seed: undefined,
+      observationWindow: { durationMs: 1000, scanEveryMs: 100 },
+    };
+    const observed = await judged(observation, runFor(observation, []), [verdict('PASS', 'x', REPLY)]);
+    expect(observed.byId[C2]).toMatchObject({ status: 'NOT_RUN', reason: 'judge-unsupported:observation-window' });
+    expect(model.doGenerateCalls.length + observed.model.doGenerateCalls.length).toBe(0);
+  });
+
+  it('rejects with [suite] when the test carries no expectedBehavior', async () => {
+    const test = atomic([criterion({ id: C1, checks: MEANING })]);
+    const judge = createCriterionJudge({ model: mockJudgeModel([verdict('PASS', 'x', REPLY)]), decoding: DECODING });
+    await expect(evaluate(test, runFor(test, [REPLY]), judge, TRUSTED, EVAL_RULES)).rejects.toThrow(/^\[suite\] evaluate: .*expectedBehavior/);
+  });
+
+  it('keeps judge null synchronous and unchanged for meaning criteria', () => {
+    const test = meaningTest([criterion({ id: C1, checks: MEANING }), criterion({ id: C2, checks: [{ type: 'rule', rule: 'always-pass' }, { type: 'meaning' }] })]);
+    const results = evaluate(test, runFor(test, [REPLY]), null, UNTRUSTED, EVAL_RULES);
+    expect(Array.isArray(results)).toBe(true);
+    expect(byId(results)[C1]).toMatchObject({ status: 'NOT_RUN', reason: 'no-judge-at-level', inScope: false });
+    expect(byId(results)[C2]).toMatchObject({ status: 'PASS', meaningSkipped: true });
+    expect(byId(results)[C2]).not.toHaveProperty('judgeUsage');
   });
 });

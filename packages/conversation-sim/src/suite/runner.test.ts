@@ -92,7 +92,15 @@ describe('runSuite: happy path with the real L0 executor', () => {
     expect(report.complete).toBe(true);
     expect(report.layers).not.toBeNull();
     expect(report.verdict).toBe('ADEQUATE');
-    expect(report.usage).toEqual({ coachModelCalls: 0, judgeCalls: 0, caseAttempts: 6, infrastructureRetries: 0 });
+    expect(report.usage).toEqual({
+      coachModelCalls: 0,
+      judgeCalls: 0,
+      judgeInputTokens: 0,
+      judgeOutputTokens: 0,
+      caseAttempts: 6,
+      infrastructureRetries: 0,
+    });
+    expect(report.judgeErrors).toEqual([]);
     expect(caseRuns).toHaveLength(6);
     expect(caseRuns.every((record) => record.run.attempt === 1)).toBe(true);
 

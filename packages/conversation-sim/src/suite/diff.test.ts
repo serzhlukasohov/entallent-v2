@@ -1,11 +1,13 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { RUNNER_CONFIG, fakeExecutor, fakeSuite } from './__fixtures__/runner';
-import { TEST_RULES } from './__fixtures__/suite';
+import { result } from './__fixtures__/evaluation';
+import { TEST_RULES, validModules } from './__fixtures__/suite';
 import { buildBaseline } from './baseline';
 import { DIFF_CATEGORIES, baselineInvalidReasons, diffRun, diffSummaryLines, parseBaselineJson } from './diff';
 import { renderSuiteReportMarkdown } from './report';
 import { runSuite } from './runner';
-import { minPasses } from './score';
+import { validateSuite } from './loader';
+import { minPasses, score } from './score';
 import {
   SuiteDiffSchema,
   SuiteRunReportSchema,
@@ -439,5 +441,25 @@ describe('diff output', () => {
     expect(journeys).toBeGreaterThan(tests);
     expect(markdown.indexOf(`| lost-coverage | ${J}`)).toBeGreaterThan(journeys);
     expect(markdown.indexOf('| regressed | X-01.A1/X-01.C1')).toBeLessThan(markdown.indexOf('| new | X-01.A3/X-01.C1'));
+  });
+});
+
+describe('diffRun: rule FAIL on a rule-plus-meaning criterion (Story 13.1, settles the 12.9 deferred item)', () => {
+  it('gates as regressed under an untrusted judge when one sample failed its rule', () => {
+    const suite = validateSuite('x-suite', validModules(), TEST_RULES);
+    const key = 'X-01.A1/X-01.C2';
+    const sample = { testId: 'X-01.A1', criterionId: 'X-01.C2', level: 'L1' as const, layer: 'P' as const };
+    const scoredRun = score({
+      suite,
+      level: 'L1',
+      n: 2,
+      results: [result({ ...sample, status: 'PASS', advisory: true }), result({ ...sample, status: 'FAIL', meaningSkipped: true })],
+    });
+    const criterion = scoredRun.results.find((entry) => `${entry.testId}/${entry.criterionId}` === key)!;
+    expect(criterion).toMatchObject({ checkKind: 'rule', advisory: false, minPasses: 2 });
+    const run = SuiteRunReportSchema.parse({ ...real, level: 'L1', n: 2, results: { [key]: criterion } }) as SuiteRunReport;
+    const diff = diffRun(run, baseline({ [key]: { status: 'PASS', n: 2, checkKind: 'meaning' } }, { level: 'L1' }), RUNNER_CONFIG, SOURCE);
+    expect(only(diff, key)).toMatchObject({ category: 'regressed', gating: true, checkKind: 'rule' });
+    expect(diff).toMatchObject({ outcome: 'failed', exitCode: 1 });
   });
 });

@@ -123,8 +123,12 @@ function aggregate(input: ScoreInput): ScoredCriterion[] {
     }
     const first = samples[0]!;
     const passCount = samples.filter((sample) => sample.status === 'PASS').length;
-    // Meaning applied when the criterion has a meaning check that was not skipped.
-    const meaningDecided = meaningCriteria.has(key) && samples.some((sample) => sample.meaningSkipped !== true);
+    // Meaning applied when the criterion has a meaning check that was not skipped. A rule-FAIL
+    // sample (FAIL with meaningSkipped) makes the criterion rule-decided: rule statuses are
+    // never overridden by judge statuses (AD-10), so it needs n/n and is not advisory.
+    const ruleFailed = samples.some((sample) => sample.status === 'FAIL' && sample.meaningSkipped === true);
+    const meaningDecided =
+      meaningCriteria.has(key) && !ruleFailed && samples.some((sample) => sample.meaningSkipped !== true);
     const needed = minPasses(input.n, meaningDecided);
     const undecided = UNDECIDED_PRECEDENCE.map((status) => samples.find((sample) => sample.status === status)).find(
       (sample) => sample !== undefined,
@@ -149,7 +153,7 @@ function aggregate(input: ScoreInput): ScoredCriterion[] {
       n: input.n,
       minPasses: needed,
       checkKind: meaningDecided ? ('meaning' as const) : ('rule' as const),
-      advisory: samples.some((sample) => sample.advisory),
+      advisory: !ruleFailed && samples.some((sample) => sample.advisory),
       method: first.method,
       ...optional('reason', status === 'PASS' ? undefined : (shortReason ?? representative.reason)),
       ...optional('evidence', status === 'PASS' || shortReason ? undefined : representative.evidence),

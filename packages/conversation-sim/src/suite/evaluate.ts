@@ -1,3 +1,13 @@
+import {
+  addJudgeUsage,
+  emptyJudgeUsage,
+  evidenceMatches,
+  type CriterionJudge,
+  type JudgeInput,
+  type JudgeUsage,
+  type MeaningOutcome,
+} from './judge/criterion-judge';
+import { buildJudgeInput } from './judge/judge-input';
 import { RULES, type RuleContext, type RuleOutcome, type RuleRegistry } from './rules/registry';
 import { missingField } from './rules/reply-selection';
 import {
@@ -23,24 +33,137 @@ import {
  * 2. ERROR: an executor error at or before the criterion's step;
  * 3. NOT_RUN: an unsupported fixture, the step not reached, an undeclared required field
  *    (`unobservable:<field>@<level>`) or a rule that could not observe its input;
- * 4. FAIL if any rule check FAILs, otherwise PASS.
+ * 4. FAIL if any rule check FAILs (with `meaningSkipped: true` when the criterion has a
+ *    meaning check, AD-10); otherwise the meaning checks decide when a judge is given,
+ *    or PASS.
  *
- * `judge` is typed `null` until Epic 13: a meaning-only criterion is NOT_RUN
+ * `judge: null` (L0) is synchronous: a meaning-only criterion is NOT_RUN
  * `no-judge-at-level` and out of scope; a rule-plus-meaning criterion is decided by its
  * rules with `meaningSkipped: true`.
+ *
+ * With a judge (AD-7) the result is a promise: meaning-only criteria are in scope, and a
+ * criterion that reached the meaning step costs one judge call per criterion (plus at
+ * most one re-ask; a `conversation` criterion covers every reply in that one call), made
+ * sequentially in criterion order. A null reply is FAIL
+ * `no-reply` without a call; a PASS whose evidence is not a verbatim fragment of the
+ * evaluated reply is re-asked once, then ERROR `judge-invalid-output`; a rejecting judge
+ * is ERROR `judge-transport`. Every meaning-decided result is `advisory: !trust.trusted`
+ * and carries `judgeUsage`. `state` and `observation-window` criteria are NOT_RUN
+ * `judge-unsupported:<kind>`.
  */
+export function evaluate(test: LoadedTest, run: CaseRun, judge: null, trust: JudgeTrust, rules?: RuleRegistry): CriterionResult[];
 export function evaluate(
   test: LoadedTest,
   run: CaseRun,
-  judge: null,
+  judge: CriterionJudge,
+  trust: JudgeTrust,
+  rules?: RuleRegistry,
+): Promise<CriterionResult[]>;
+export function evaluate(
+  test: LoadedTest,
+  run: CaseRun,
+  judge: CriterionJudge | null,
   trust: JudgeTrust,
   rules: RuleRegistry = RULES,
-): CriterionResult[] {
+): CriterionResult[] | Promise<CriterionResult[]> {
+  if (judge === null) {
+    return rulePhase(test, run, false, trust, rules).map((slot) => {
+      if ('pending' in slot) throw new Error(`[suite] evaluate: ${test.id}/${slot.criterion.id} needs a judge`);
+      return slot;
+    });
+  }
+  return evaluateWithJudge(test, run, judge, trust, rules);
+}
+
+async function evaluateWithJudge(
+  test: LoadedTest,
+  run: CaseRun,
+  judge: CriterionJudge,
+  trust: JudgeTrust,
+  rules: RuleRegistry,
+): Promise<CriterionResult[]> {
+  if (test.expectedBehavior === undefined) {
+    throw new Error(`[suite] evaluate: ${test.id} has no expectedBehavior; a judge needs the source case's expected behavior`);
+  }
+  const slots = rulePhase(test, run, true, trust, rules);
+  const results: CriterionResult[] = [];
+  // Sequential, in criterion order, so judge calls are deterministic.
+  for (const slot of slots) {
+    results.push('pending' in slot ? await meaningPhase(test, run, slot, judge, trust) : slot);
+  }
+  return results;
+}
+
+/** A criterion whose rule checks all PASSed and whose meaning checks await the judge. */
+interface PendingMeaning {
+  pending: true;
+  criterion: LoadedCriterion;
+  partial: CriterionResult;
+}
+
+function rulePhase(
+  test: LoadedTest,
+  run: CaseRun,
+  withJudge: boolean,
+  trust: JudgeTrust,
+  rules: RuleRegistry,
+): Array<CriterionResult | PendingMeaning> {
   assertRun(test, run);
   assertRules(test, run, rules);
   const context: RuleContext = { seedHistory: test.seed?.history ?? [] };
   const checkpoint = failedCheckpoint(test, run, rules, context);
-  return test.criteria.map((criterion) => evaluateCriterion(test, run, criterion, judge, trust, rules, context, checkpoint));
+  return test.criteria.map((criterion) => evaluateCriterion(test, run, criterion, withJudge, trust, rules, context, checkpoint));
+}
+
+const INVALID_EVIDENCE = 'PASS evidence is missing or is not a verbatim fragment of the evaluated reply';
+
+async function meaningPhase(
+  test: LoadedTest,
+  run: CaseRun,
+  slot: PendingMeaning,
+  judge: CriterionJudge,
+  trust: JudgeTrust,
+): Promise<CriterionResult> {
+  const { input, replyTexts } = buildJudgeInput(test, run, slot.criterion);
+  const meaning = { ...slot.partial, advisory: !trust.trusted };
+  if (replyTexts.length === 0) {
+    return { ...meaning, status: 'FAIL', evidence: 'no-reply', judgeUsage: emptyJudgeUsage() };
+  }
+
+  let outcome = await callJudge(judge, input, false);
+  let usage = outcome.usage;
+  if (outcome.status === 'PASS' && !evidenceMatches(outcome.evidence, replyTexts)) {
+    outcome = await callJudge(judge, input, true);
+    usage = addJudgeUsage(usage, outcome.usage);
+    if (outcome.status === 'PASS' && !evidenceMatches(outcome.evidence, replyTexts)) {
+      outcome = { status: 'ERROR', reason: 'judge-invalid-output', message: INVALID_EVIDENCE, usage };
+    }
+  }
+
+  if (outcome.status === 'ERROR') {
+    return { ...meaning, status: 'ERROR', reason: outcome.reason, evidence: outcome.message, judgeUsage: usage };
+  }
+  // PASS evidence was verified above; FAIL evidence is kept only when it is a verbatim
+  // fragment, so an invented quote is never recorded as what the coach said.
+  const verified = outcome.status === 'PASS' || evidenceMatches(outcome.evidence, replyTexts);
+  return {
+    ...meaning,
+    status: outcome.status,
+    reason: outcome.reason,
+    ...(verified && outcome.evidence !== null ? { evidence: outcome.evidence } : {}),
+    judgeUsage: usage,
+  };
+}
+
+/** A rejecting `CriterionJudge` is a transport failure of that criterion only. */
+async function callJudge(judge: CriterionJudge, input: JudgeInput, reask: boolean): Promise<MeaningOutcome> {
+  try {
+    return await judge(input, reask ? { reask: true } : undefined);
+  } catch (error) {
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    const usage: JudgeUsage = emptyJudgeUsage();
+    return { status: 'ERROR', reason: 'judge-transport', message, usage };
+  }
 }
 
 const EFFECT_COUNT = 'effect-count';
@@ -122,12 +245,12 @@ function evaluateCriterion(
   test: LoadedTest,
   run: CaseRun,
   criterion: LoadedCriterion,
-  judge: null,
+  withJudge: boolean,
   trust: JudgeTrust,
   rules: RuleRegistry,
   context: RuleContext,
   checkpoint: number | null,
-): CriterionResult {
+): CriterionResult | PendingMeaning {
   const step = criterionStep(test, criterion);
   const base = {
     testId: test.id,
@@ -155,7 +278,7 @@ function evaluateCriterion(
   }
   const hasRules = criterion.checks.some((check) => check.type === 'rule');
   const hasMeaning = criterion.checks.some((check) => check.type === 'meaning');
-  if (!hasRules && judge === null) {
+  if (!hasRules && !withJudge) {
     // Meaning-derived: advisory until the judge is trusted (AD-8).
     return { ...base, inScope: false, status: 'NOT_RUN', advisory: !trust.trusted, reason: 'no-judge-at-level' };
   }
@@ -182,7 +305,7 @@ function evaluateCriterion(
   }
 
   // Rule checks; NOT_RUN outranks a FAIL from another check of the same criterion.
-  const meaningSkipped = hasMeaning && judge === null ? { meaningSkipped: true } : {};
+  const meaningSkipped = hasMeaning && !withJudge ? { meaningSkipped: true } : {};
   const outcomes = ruleChecks(criterion, run, step).map((check) => ({
     check,
     outcome: runCheck(run, criterion, check, rules, context),
@@ -197,7 +320,15 @@ function evaluateCriterion(
   const failed = outcomes.filter(({ outcome }) => outcome.status === 'FAIL');
   if (failed.length > 0) {
     const evidence = failed.map(({ check, outcome }) => outcome.evidence ?? `${check.rule}: FAIL`).join('\n');
-    return decided('FAIL', { evidence, ...meaningSkipped });
+    // AD-10: a rule FAIL is never overridden; meaning is not applied (and no judge call).
+    return decided('FAIL', { evidence, ...(hasMeaning ? { meaningSkipped: true } : {}) });
+  }
+  if (hasMeaning && withJudge) {
+    const at = parseEvaluatedAt(criterion.evaluatedAt);
+    if (at.kind === 'state' || at.kind === 'observation-window') {
+      return decided('NOT_RUN', { reason: `judge-unsupported:${at.kind}` });
+    }
+    return { pending: true, criterion, partial: decided('PASS') };
   }
   return decided('PASS', meaningSkipped);
 }

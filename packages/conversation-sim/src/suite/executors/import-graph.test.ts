@@ -9,7 +9,9 @@ import { describe, expect, it } from 'vitest';
  * executor's static relative imports transitively; `import type` (and all-`type`
  * specifier lists, which TypeScript elides) are skipped because they vanish at runtime.
  * The executor, runner and CLI also never import `vitest` at runtime (Story 12.8), so
- * they load in plain Node/tsx.
+ * they load in plain Node/tsx. Model egress is a human boundary (Story 13.1): they never
+ * reach the live judge adapter `suite/judge/live-judge-model.ts` or value-import any
+ * `@ai-sdk/*` provider package.
  */
 const SRC = resolve(__dirname, '..', '..');
 const PACKAGE_DIR = resolve(SRC, '..');
@@ -93,6 +95,9 @@ function forbiddenImports(entry: string, read: ReadSource = readFromDisk, root =
         // A namespace, default, star or dynamic import reaches OpenAiProvider without naming it.
         violations.push({ file: at, specifier: statement.specifier, reason: 'whole-module import of @entalent/ai-openai' });
       }
+      if (/^@ai-sdk\//.test(statement.specifier) && (statement.whole || statement.names.length > 0)) {
+        violations.push({ file: at, specifier: statement.specifier, reason: 'value import of @ai-sdk provider' });
+      }
       if (/^vitest(?:\/|$)/.test(statement.specifier)) {
         violations.push({ file: at, specifier: statement.specifier, reason: 'value import of vitest' });
       }
@@ -105,6 +110,9 @@ function forbiddenImports(entry: string, read: ReadSource = readFromDisk, root =
       }
       if (targetPath === join('harness', 'live-provider.ts')) {
         violations.push({ file: at, specifier: statement.specifier, reason: 'value import of live-provider' });
+      }
+      if (targetPath === join('suite', 'judge', 'live-judge-model.ts')) {
+        violations.push({ file: at, specifier: statement.specifier, reason: 'value import of live-judge-model' });
       }
       queue.push(target);
     }
@@ -122,7 +130,7 @@ describe('L0 executor import graph', () => {
 
   it.each([
     ['executor', EXECUTOR, join('harness', 'report.ts')],
-    ['runner', RUNNER, join('gate', 'failure-kind.ts')],
+    ['runner', RUNNER, join('suite', 'judge', 'criterion-judge.ts')],
     ['cli', CLI, join('harness', 'report.ts')],
   ])('the %s reaches no forbidden module and no vitest', (_name, entry, reached) => {
     const { visited, violations } = forbiddenImports(entry);
@@ -208,6 +216,28 @@ describe('L0 executor import graph', () => {
     expect(violations.map((violation) => `${violation.file}: ${violation.reason}`)).toEqual([
       `${join('suite', 'executors', 'helper.ts')}: value import of OpenAiProvider`,
       `${join('suite', 'executors', 'helper.ts')}: value import of live-provider`,
+    ]);
+  });
+
+  it('flags the live judge adapter and value imports of @ai-sdk providers, not type-only ones', () => {
+    const files: Record<string, string> = {
+      [RUNNER]: [
+        "import type { createOpenAI } from '@ai-sdk/openai';",
+        "import { judge } from './judge/wiring';",
+      ].join('\n'),
+      [join(SRC, 'suite', 'judge', 'wiring.ts')]: [
+        "import { createLiveJudgeModel } from './live-judge-model';",
+        "import * as azure from '@ai-sdk/azure';",
+        "import { createOpenAI } from '@ai-sdk/openai';",
+        'export const judge = [createLiveJudgeModel, azure, createOpenAI];',
+      ].join('\n'),
+      [join(SRC, 'suite', 'judge', 'live-judge-model.ts')]: 'export const createLiveJudgeModel = 1;\n',
+    };
+    const { violations } = forbiddenImports(RUNNER, (file) => files[file] ?? null);
+    expect(violations.map((violation) => `${violation.specifier}: ${violation.reason}`)).toEqual([
+      './live-judge-model: value import of live-judge-model',
+      '@ai-sdk/azure: value import of @ai-sdk provider',
+      '@ai-sdk/openai: value import of @ai-sdk provider',
     ]);
   });
 

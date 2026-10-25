@@ -8,7 +8,17 @@ import { evaluate } from './evaluate';
 import { validateSuite } from './loader';
 import { RUNNER_CONFIG } from './__fixtures__/runner';
 import { diffRun } from './diff';
-import { buildSuiteReport, renderCiSummary, renderSuiteReportMarkdown, writeSuiteReport, type SuiteReportMeta } from './report';
+import { createCriterionJudge } from './judge/criterion-judge';
+import { mockJudgeModel } from './judge/__fixtures__/mock-model';
+import {
+  buildSuiteReport,
+  collectJudgeErrors,
+  judgeUsageTotals,
+  renderCiSummary,
+  renderSuiteReportMarkdown,
+  writeSuiteReport,
+  type SuiteReportMeta,
+} from './report';
 import { score } from './score';
 import { SuiteRunReportSchema, type CriterionResult, type SuiteRunReport } from './schema';
 
@@ -207,3 +217,63 @@ describe('writeSuiteReport', () => {
     expect(() => writeSuiteReport({ ...l0Report(), runId: '.' }, tmpdir())).toThrow(/unsafe run id/);
   });
 });
+
+describe('judge errors in the report (Story 13.1)', () => {
+  it('lists judge ERRORs separately, keeps other criteria decided and makes the run INCOMPLETE', async () => {
+    const rules = { ...TEST_RULES, ...EVAL_RULES };
+    const judge = createCriterionJudge({
+      model: mockJudgeModel(['not json']),
+      decoding: { temperature: 0, reasoningEffort: null, maxOutputTokens: 64 },
+    });
+    const results: CriterionResult[] = [];
+    for (const test of suite.tests) {
+      expect(test.expectedBehavior).toBeDefined();
+      const run = runFor(test, test.steps.map(() => 'Which deadline is first?'), {
+        level: 'L1',
+        observed: ['reply.text', 'reply.messages', 'events'],
+      });
+      results.push(...(await evaluate(test, run, judge, UNTRUSTED, rules)));
+    }
+    const judgeErrors = collectJudgeErrors(results);
+    expect(judgeErrors).toEqual([
+      { key: 'X-01.J/X-01.C1', reason: 'judge-invalid-output', message: expect.stringMatching(/NoObjectGeneratedError/) },
+    ]);
+    const report = buildSuiteReport(score({ suite, level: 'L1', n: 1, results }), {
+      ...meta,
+      level: 'L1',
+      judgeErrors,
+      usage: { ...judgeUsageTotals(results) },
+    });
+    expect(report.results['X-01.J/X-01.C1']).toMatchObject({ status: 'ERROR', reason: 'judge-invalid-output', checkKind: 'meaning' });
+    expect(['PASS', 'FAIL']).toContain(report.results['X-01.J/X-01.C2']!.status);
+    expect(['PASS', 'FAIL']).toContain(report.results['X-01.A1/X-01.C1']!.status);
+    expect(report.complete).toBe(false);
+    expect(report.provisional).toBe(true);
+    expect(report.usage).toEqual({ judgeCalls: 1, judgeInputTokens: 100, judgeOutputTokens: 20 });
+    const markdown = renderSuiteReportMarkdown(report);
+    expect(markdown).toContain('## Judge errors\n\n- X-01.J/X-01.C1: judge-invalid-output');
+  });
+
+  it('ignores out-of-scope results and other reasons, and sums zero usage at L0', () => {
+    const results: CriterionResult[] = [
+      { ...baseResult, reason: 'judge-transport', evidence: 'Error: x' },
+      { ...baseResult, criterionId: 'X-01.C2', reason: 'orchestrator-exception' },
+      { ...baseResult, criterionId: 'X-01.C3', inScope: false, reason: 'judge-transport' },
+    ];
+    expect(collectJudgeErrors(results)).toEqual([{ key: 'X-01.A1/X-01.C1', reason: 'judge-transport', message: 'Error: x' }]);
+    expect(judgeUsageTotals(results)).toEqual({ judgeCalls: 0, judgeInputTokens: 0, judgeOutputTokens: 0 });
+  });
+});
+
+const baseResult: CriterionResult = {
+  testId: 'X-01.A1',
+  criterionId: 'X-01.C1',
+  sourceCase: 'X-01',
+  level: 'L1',
+  layer: 'P',
+  testKind: 'atomic',
+  inScope: true,
+  status: 'ERROR',
+  advisory: true,
+  method: 'n/a',
+};

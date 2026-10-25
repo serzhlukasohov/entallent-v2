@@ -198,3 +198,27 @@ describe('score: rows', () => {
     expect(() => run([], 0)).toThrow(/positive integer/);
   });
 });
+
+describe('score: rule FAIL among judged samples (AD-10, Story 13.1)', () => {
+  const key = { testId: 'X-01.A1', criterionId: 'X-01.C2' } as const;
+
+  it('makes the criterion rule-decided, n/n and not advisory when any sample is a rule FAIL', () => {
+    const scored = run(
+      [
+        result({ ...key, status: 'PASS', advisory: true }),
+        result({ ...key, status: 'PASS', advisory: true }),
+        result({ ...key, status: 'FAIL', meaningSkipped: true }),
+      ],
+      3,
+    );
+    expect(scored.results[0]).toMatchObject({ status: 'FAIL', passCount: 2, minPasses: 3, checkKind: 'rule', advisory: false });
+  });
+
+  it('keeps all-judged samples meaning-decided and advisory under an untrusted judge', () => {
+    const scored = run(
+      [result({ ...key, status: 'PASS', advisory: true }), result({ ...key, status: 'FAIL', advisory: true })],
+      2,
+    );
+    expect(scored.results[0]).toMatchObject({ checkKind: 'meaning', minPasses: 2, advisory: true });
+  });
+});
