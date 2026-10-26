@@ -135,6 +135,12 @@ export const L2_FIXTURES: L2FixtureRegistry = Object.freeze({
 
 export interface L2ExecutorOptions {
   client: DevApiClient;
+  /**
+   * `suite.config.json` `l2.workerEnv` (Story 14.3): the env the stack's worker was started
+   * with, which switches proactive scheduling off (`PROACTIVE_SCAN_ENABLED=false`) so no
+   * check-in lands in a case. Required and non-empty; the executor refuses to start without it.
+   */
+  workerEnv: Readonly<Record<string, string>>;
   /** Real waits (step gaps, poll interval); injected in tests. */
   sleep?: (ms: number) => Promise<void>;
   /** Epoch milliseconds; injected in tests. */
@@ -164,8 +170,16 @@ export class L2ApplicationExecutor implements SuiteExecutor {
   private readonly pollIntervalMs: number;
   private readonly replyTimeoutMs: number;
   private readonly fixtures: L2FixtureRegistry;
+  /** The worker env this run relies on (`suite.config.json` `l2.workerEnv`). */
+  readonly workerEnv: Readonly<Record<string, string>>;
 
   constructor(options: L2ExecutorOptions) {
+    // Untyped callers (and a config without `l2`) must not get a run whose worker may schedule check-ins.
+    const workerEnv = (options as Partial<L2ExecutorOptions>).workerEnv;
+    if (workerEnv === undefined || workerEnv === null || Object.keys(workerEnv).length === 0) {
+      throw new Error('[suite] L2ApplicationExecutor refuses: workerEnv (suite.config.json l2.workerEnv) is missing or empty');
+    }
+    this.workerEnv = Object.freeze({ ...workerEnv });
     this.client = options.client;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = options.now ?? (() => Date.now());
@@ -292,7 +306,15 @@ export class L2ApplicationExecutor implements SuiteExecutor {
   private async isolate(externalUserId: string, record: (subject: L2Subject) => void): Promise<L2Subject> {
     const userName = `Suite ${externalUserId}`;
     const first = await this.client.findConversation(externalUserId, userName);
-    await this.client.resetUser(first.userId);
+    try {
+      await this.client.resetUser(first.userId);
+    } catch (error) {
+      // reset-user deep-resets in its own statement, then restarts onboarding, which answers 404
+      // for a dev-only user without a `people` row (always the case for a find-conversation
+      // persona). The persona was just created, so a missing user is impossible: 404 is a
+      // completed reset. The find-conversation and empty check below stay the isolation guard.
+      if (!(error instanceof DevApiError && error.status === 404)) throw error;
+    }
     const fresh = await this.client.findConversation(externalUserId, userName);
     const subject: L2Subject = { externalUserId, userId: fresh.userId, conversationId: fresh.conversationId, tenantId: this.client.tenantId };
     // Recorded before the empty check, so an errored run still names its persona.

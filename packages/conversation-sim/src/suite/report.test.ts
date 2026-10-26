@@ -200,6 +200,38 @@ describe('renderCiSummary', () => {
   it('says when no diff ran', () => {
     expect(renderCiSummary(l0Report())).toContain('- Diff: not run');
   });
+
+  it('at L2 adds journey result counts and a key/status table after the layers line, without reasons or text', () => {
+    const base = l0Report();
+    const key1 = 'X-10.J/X-10.C1';
+    const key2 = 'X-10.J/X-10.C2';
+    const template = Object.values(base.results)[0]!;
+    const l2: SuiteRunReport = {
+      ...base,
+      level: 'L2',
+      layers: null,
+      verdict: 'n/a (journeys only)',
+      results: {
+        ...base.results,
+        [key1]: { ...template, testId: 'X-10.J', criterionId: 'X-10.C1', status: 'PASS' },
+        [key2]: { ...template, testId: 'X-10.J', criterionId: 'X-10.C2', status: 'FAIL', reason: 'REASON-FROM-REPLY', evidence: 'turn 2 — SECRET-REPLY-TEXT' },
+      },
+      journeys: { keys: [key1, key2], counts: { PASS: 1, FAIL: 1 } },
+    };
+    const summary = renderCiSummary(l2);
+    expect(summary).toContain(
+      ['Layers: n/a (journeys only)', '', '**Journey results:** PASS 1 · FAIL 1', '', '| Key | Status |', '| --- | --- |', `| ${key1} | PASS |`, `| ${key2} | FAIL |`].join('\n'),
+    );
+    expect(summary).not.toContain('REASON-FROM-REPLY');
+    expect(summary).not.toContain('SECRET-REPLY-TEXT');
+    expect(renderCiSummary({ ...l2, journeys: { keys: [], counts: {} } })).toContain('**Journey results:** none');
+    expect(renderCiSummary({ ...l2, journeys: { keys: [], counts: {} } })).not.toContain('| Key | Status |');
+
+    // L0 and L1 summaries never carry the journey section, whatever the journeys hold.
+    expect(renderCiSummary({ ...base, journeys: l2.journeys })).toBe(renderCiSummary(base));
+    expect(renderCiSummary(base)).not.toContain('Journey results');
+    expect(renderCiSummary({ ...l2, level: 'L1' })).not.toContain('Journey results');
+  });
 });
 
 describe('writeSuiteReport', () => {

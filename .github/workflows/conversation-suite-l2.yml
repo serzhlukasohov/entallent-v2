@@ -1,0 +1,169 @@
+name: Conversation suite L2
+
+# Weekly L2 run of the conversation suites (Epic 14, Story 14.3): builds a disposable local
+# stack inside the job (Postgres and Redis services, migrations and seed, api and worker from
+# the checkout) and drives every suite's L2 journeys through it with
+# `run-live.ts ci --level L2 --runs 3 --include-unbaselined --live-app`, then diffs each run
+# against the L2 baseline at the merge-base. Opt-in and inert by default: the job runs only
+# when the repository variable CONVERSATION_SUITE_L2_ENABLED is `true` (separate from the L1
+# variables). No pull_request or push trigger, so it never runs for forks. The stack is
+# localhost only, NODE_ENV=test (dev routes mount) and the worker runs with
+# suite.config.json l2.workerEnv (proactive scheduling off). Model egress is a human boundary.
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conversation-suite-l2
+  cancel-in-progress: false
+
+jobs:
+  suite-l2:
+    name: Suite L2 weekly run
+    if: vars.CONVERSATION_SUITE_L2_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: entalent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/entalent_test
+      REDIS_URL: redis://localhost:6379
+      FIELD_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      NODE_ENV: test
+      API_PORT: '3000'
+      WORKER_PORT: '3001'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build api, worker and conversation-sim dependencies
+        run: pnpm turbo run build --filter=@entalent/api... --filter=@entalent/worker... --filter=@entalent/conversation-sim^...
+
+      # An opted-in run that could never judge or coach fails visibly before the stack is built.
+      - name: Check L2 credentials
+        working-directory: packages/conversation-sim
+        env:
+          HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+          HAS_AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT != '' }}
+          HAS_AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY != '' }}
+          HAS_AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION != '' }}
+          HAS_AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT != '' }}
+        run: |
+          if ! node --import tsx src/suite/l1-gate.ts credentials; then
+            echo '::error::Weekly L2 run is opted in but model credentials are missing; configure the secrets or unset CONVERSATION_SUITE_L2_ENABLED.'
+            exit 1
+          fi
+
+      - name: Create the stack log folder
+        run: mkdir -p packages/conversation-sim/runs/l2-stack
+
+      # The seed is not idempotent (a new tenant per run); the fresh service database gets it once.
+      - name: Migrate and seed the stack database
+        id: tenant
+        run: |
+          pnpm db:migrate
+          pnpm db:seed > packages/conversation-sim/runs/l2-stack/seed.log 2>&1
+          tenant_id="$(cd packages/conversation-sim && node --import tsx src/suite/l2-stack.ts tenant-from-seed runs/l2-stack/seed.log)"
+          echo "tenant_id=$tenant_id" >> "$GITHUB_OUTPUT"
+
+      - name: Generate the stack admin key
+        run: |
+          admin_key="$(openssl rand -hex 32)"
+          echo "::add-mask::$admin_key"
+          echo "ADMIN_API_KEY=$admin_key" >> "$GITHUB_ENV"
+
+      # The api calls no model; the placeholder only satisfies env validation.
+      - name: Start the api
+        env:
+          OPENAI_API_KEY: sk-test-placeholder
+        run: nohup pnpm --filter @entalent/api start > packages/conversation-sim/runs/l2-stack/api.log 2>&1 &
+
+      # The worker env comes from suite.config.json l2.workerEnv (single source with run-live.ts).
+      - name: Start the worker
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          OPENAI_MODEL_BALANCED: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+        run: |
+          (cd packages/conversation-sim && node --import tsx src/suite/l2-stack.ts worker-env --output "$RUNNER_TEMP/l2-worker.env")
+          set -a
+          . "$RUNNER_TEMP/l2-worker.env"
+          set +a
+          nohup pnpm --filter @entalent/worker start > packages/conversation-sim/runs/l2-stack/worker.log 2>&1 &
+
+      - name: Wait for the stack
+        run: |
+          curl -fsS --retry 90 --retry-delay 2 --retry-all-errors http://127.0.0.1:3000/api/v1/health/ready
+          curl -fsS --retry 90 --retry-delay 2 --retry-all-errors http://127.0.0.1:3001/health/ready
+
+      - name: Suite L2 weekly run and merge-base diff
+        working-directory: packages/conversation-sim
+        env:
+          SUITE_L2_API_BASE: http://127.0.0.1:3000
+          SUITE_L2_TENANT_ID: ${{ steps.tenant.outputs.tenant_id }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          LANGWATCH_API_KEY: ''
+        run: node --import tsx src/suite/run-live.ts ci --level L2 --runs 3 --include-unbaselined --live-model --live-app --summary "$GITHUB_STEP_SUMMARY"
+
+      # Reports, case-runs.json (transcripts) and the stack logs for QA review; never in logs.
+      - name: Upload suite runs and stack logs
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: suite-l2-weekly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            packages/conversation-sim/runs/suites/**
+            packages/conversation-sim/runs/l2-stack/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Link suite runs
+        if: always() && steps.upload.outputs.artifact-url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          echo "Suite L2 weekly runs and stack logs: $ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

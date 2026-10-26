@@ -980,6 +980,22 @@ export const SuiteConfigSchema = z
         minLabels: positiveInt,
       })
       .strict(),
+    /**
+     * L2 stack settings (Story 14.3). `workerEnv` is the env the stack's worker must be started
+     * with (proactive scheduling off); the L2 workflow writes it with `l2-stack.ts worker-env`,
+     * and `run-live.ts` refuses L2 without it.
+     */
+    l2: z
+      .object({
+        workerEnv: z
+          .record(
+            z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'worker env names are upper snake case'),
+            z.string().regex(/^[A-Za-z0-9._:/-]+$/, 'worker env values are plain tokens'),
+          )
+          .refine((env) => Object.keys(env).length >= 1, { message: 'l2.workerEnv needs at least one variable' }),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type SuiteConfig = z.infer<typeof SuiteConfigSchema>;

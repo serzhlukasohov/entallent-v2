@@ -53,7 +53,9 @@ import {
  * an injected run judge (only `run-live.ts` wires one) and runs only suites with L1 tests and
  * an L1 baseline at the merge-base, `diff.minSamples.L1` samples each; the scheduled run adds
  * `--runs N` (overrides `diff.minSamples.L1`) and `--include-unbaselined` (also runs suites
- * with L1 tests but no merge-base baseline; their diff reports no baseline). `calibrate`
+ * with L1 tests but no merge-base baseline; their diff reports no baseline). L2 behaves the
+ * same with L2 tests, L2 baselines and `diff.minSamples.L2` (Story 14.3: the weekly L2 workflow
+ * runs it through `run-live.ts` with `--live-app`; this entry refuses it). `calibrate`
  * exits 0 when the import or agreement file was written, 1 on usage, config, load, label
  * or export errors (and without a judge unless `--import` is given), 3 when any label was
  * judged ERROR (the file is still written). This entry wires no judge and no L1 executor:
@@ -127,8 +129,8 @@ export const HELP = `Usage:
   suite:run:live --suite <id> --level L2 --live-model --live-app [--runs N] [--case <id>]
       L2 drives journey tests through a running local API, queue, worker and Postgres over the
       /api/v1/dev endpoints (SUITE_L2_API_BASE must be a localhost URL, SUITE_L2_TENANT_ID a
-      UUID, ADMIN_API_KEY set); the stack's worker calls its own coach model. ci --level L2 is
-      not wired yet.
+      UUID, ADMIN_API_KEY set); the stack's worker calls its own coach model and must run with
+      suite.config.json l2.workerEnv (PROACTIVE_SCAN_ENABLED=false), without which L2 refuses.
   suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
       Writes baselines/<suiteId>/<level>.json from a run report. An L1/L2 run from an untrusted
       judge is accepted with its meaning results marked advisory; they diff as inconclusive until
@@ -149,6 +151,11 @@ export const HELP = `Usage:
       below diff.minSamples.L1 meaning criteria diff as inconclusive. --include-unbaselined
       (L1/L2 only) also runs suites with L1 tests but no merge-base baseline (the diff reports
       no baseline). This entry refuses ci --level L1 (no judge).
+  node --import tsx src/suite/run-live.ts ci --level L2 --live-model --live-app [--runs N] [--include-unbaselined] [--summary <path>]
+      The weekly L2 run (opt-in conversation-suite-l2.yml, against a disposable local stack built
+      in the job): the same per-suite loop with L2 tests, L2 baselines at the merge-base and
+      --runs defaulting to diff.minSamples.L2; the summary lists journey results. This entry
+      refuses ci --level L2 (no judge, no stack).
   suite:calibrate --suite <id> [--import <qa-export.json>]
       --import appends the QA export's labels to calibration/<id>/labels.json (deduplicated on
       criterion and transcript hash; any invalid entry rejects the whole import). Without a
@@ -518,11 +525,12 @@ export const CI_ADVISORY_LINE =
  * merge-base, with `--runs diff.minSamples.L1`; a run without a baseline could gate nothing.
  * The scheduled run passes `--runs N` and `--include-unbaselined`: it also runs suites without
  * a merge-base baseline, because drift monitoring and the first `baseline:accept` need reports.
+ * L2 (the weekly L2 workflow, Story 14.3) follows the same rules with L2 tests, L2 baselines
+ * and `diff.minSamples.L2`.
  */
 async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps: CliDeps): Promise<number> {
   const config = loadSuiteConfig(join(deps.packageDir, 'suite.config.json'));
-  if (parsed.level === 'L2') throw new Error('[suite] ci --level L2 is not wired yet (Story 14.3 owns the L2 workflow)');
-  if (parsed.level === 'L1' && !deps.createRunJudge) throw new Error(unsupportedLevel(parsed.level));
+  if (parsed.level !== 'L0' && !deps.createRunJudge) throw new Error(unsupportedLevel(parsed.level));
   if (!config.levels.includes(parsed.level)) {
     throw new Error(`[suite] level ${parsed.level} is not enabled in suite.config.json`);
   }
@@ -625,7 +633,7 @@ async function ciCommand(parsed: Extract<ParsedCommand, { command: 'ci' }>, deps
 }
 
 /**
- * At L0 the historical wording; at L1 a suite also needs L1 tests and a merge-base baseline,
+ * At L0 the historical wording; at L1/L2 a suite also needs tests at the level and a merge-base baseline,
  * unless `--include-unbaselined` (the scheduled run) runs suites without one.
  */
 function nothingToCheckText(parsed: Extract<ParsedCommand, { command: 'ci' }>): string {

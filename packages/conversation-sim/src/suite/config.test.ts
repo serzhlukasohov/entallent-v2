@@ -28,6 +28,23 @@ describe('loadSuiteConfig', () => {
       agreementThreshold: { overall: 0.85, kappa: 0.6 },
       minLabels: 40,
     });
+    expect(config.l2).toEqual({ workerEnv: { PROACTIVE_SCAN_ENABLED: 'false' } });
+  });
+
+  it('accepts a config without l2 and validates l2.workerEnv names, values and size', () => {
+    const valid = JSON.parse(readFileSync(PACKAGE_CONFIG, 'utf8'));
+    const withoutL2 = { ...valid };
+    delete withoutL2.l2;
+    expect(loadSuiteConfig(write(JSON.stringify(withoutL2))).l2).toBeUndefined();
+    const cases: Array<[unknown, RegExp]> = [
+      [{ ...valid, l2: { workerEnv: {} } }, /: l2\.workerEnv: l2\.workerEnv needs at least one variable/],
+      [{ ...valid, l2: { workerEnv: { proactive: 'false' } } }, /worker env names are upper snake case/],
+      [{ ...valid, l2: { workerEnv: { PROACTIVE_SCAN_ENABLED: 'false; rm' } } }, /worker env values are plain tokens/],
+      [{ ...valid, l2: { workerEnv: { PROACTIVE_SCAN_ENABLED: '' } } }, /worker env values are plain tokens/],
+      [{ ...valid, l2: { workerEnv: { PROACTIVE_SCAN_ENABLED: 'false' }, extra: 1 } }, /Unrecognized key/],
+      [{ ...valid, l2: {} }, /: l2\.workerEnv: /],
+    ];
+    for (const [config, message] of cases) expect(() => loadSuiteConfig(write(JSON.stringify(config)))).toThrow(message);
   });
 
   function write(content: string): string {

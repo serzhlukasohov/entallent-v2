@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ScriptedAiProvider } from '../fakes/scripted-ai';
 import { RUNNER_CONFIG } from './__fixtures__/runner';
@@ -9,12 +12,18 @@ import { mockJudgeModel, stallingJudgeModel, verdict } from './judge/__fixtures_
 import { liveCoachModel, runLive } from './run-live';
 import type { LoadedTest } from './schema';
 
+/** The package dir, so L2 reads the committed suite.config.json (with `l2.workerEnv`). */
+const PACKAGE_DIR = resolve(__dirname, '..', '..');
+
 /** No provider or model is ever built here: the factories count calls and throw, and `run` is a stub. */
-function stubs(env: Record<string, string | undefined> = { OPENAI_API_KEY: 'sk-test-fake', LANGWATCH_API_KEY: 'lw-test-fake' }) {
+function stubs(
+  env: Record<string, string | undefined> = { OPENAI_API_KEY: 'sk-test-fake', LANGWATCH_API_KEY: 'lw-test-fake' },
+  packageDir = PACKAGE_DIR,
+) {
   const errors: string[] = [];
   const runs: Array<{ argv: readonly string[]; deps: CliDeps }> = [];
   const built = { providers: 0, models: 0 };
-  const cliDeps = { env } as unknown as CliDeps;
+  const cliDeps = { env, packageDir } as unknown as CliDeps;
   return {
     errors,
     runs,
@@ -39,7 +48,6 @@ function stubs(env: Record<string, string | undefined> = { OPENAI_API_KEY: 'sk-t
 }
 
 const L2_NO_APP = '[suite] run:live --level L2 refuses without --live-app: it drives a running local API, queue and worker (and their coach model)';
-const L2_CI = '[suite] run:live ci --level L2 is not wired yet (Story 14.3 owns the L2 workflow); use run --level L2';
 const L2_ENV = {
   SUITE_L2_API_BASE: 'http://localhost:3000',
   SUITE_L2_TENANT_ID: '00000000-0000-4000-8000-000000000001',
@@ -66,8 +74,8 @@ describe('runLive', () => {
     [['run', '--suite', 'smoke-v1', '--live-model'], '[suite] run: --level <L0|L1|L2> is required'],
     [['ci', '--level', 'L0', '--live-model'], '[suite] run:live runs only --level L1 or L2, got L0'],
     [['ci', '--level', 'L1', '--live-model', '--live-app'], '[suite] run:live accepts --live-app only with --level L2'],
-    [['ci', '--level', 'L2', '--live-model'], L2_CI],
-    [['ci', '--level', 'L2', '--live-model', '--live-app'], L2_CI],
+    [['ci', '--level', 'L2', '--live-model'], L2_NO_APP],
+    [['ci', '--level', 'L2', '--runs', '3', '--include-unbaselined', '--live-model'], L2_NO_APP],
     [['diff', '--run', 'x', '--live-model'], '[suite] run:live runs only the run and ci commands, got diff'],
     [['baseline:accept', '--run', 'x', '--live-model'], '[suite] run:live runs only the run and ci commands, got baseline:accept'],
   ])('runs only the run and ci commands at L1: %j', async (argv, message) => {
@@ -265,6 +273,126 @@ describe('runLive', () => {
     expect(s.runs).toEqual([]);
     expect(transports).toBe(0);
     expect(s.built).toEqual({ providers: 0, models: 0 });
+  });
+
+  it('with --live-app, runs ci --level L2 through main with the L2 executor carrying l2.workerEnv', async () => {
+    const s = stubs(L2_ENV);
+    let transports = 0;
+    const overrides = {
+      ...s.overrides,
+      createDevApiTransport: () => {
+        transports += 1;
+        return async () => ({ status: 500, body: {} });
+      },
+    };
+    const argv = ['ci', '--level', 'L2', '--runs', '3', '--include-unbaselined', '--live-model', '--live-app', '--summary', 'summary.md'];
+    expect(await runLive(argv, overrides)).toBe(0);
+    expect(s.errors).toEqual([]);
+    expect(s.runs[0]!.argv).toEqual(['ci', '--level', 'L2', '--runs', '3', '--include-unbaselined', '--summary', 'summary.md']);
+    const executor = s.runs[0]!.deps.createExecutor('L2') as L2ApplicationExecutor;
+    expect(executor).toBeInstanceOf(L2ApplicationExecutor);
+    expect(executor.workerEnv).toEqual({ PROACTIVE_SCAN_ENABLED: 'false' });
+    expect(transports).toBe(1);
+    expect(typeof s.runs[0]!.deps.createRunJudge).toBe('function');
+    expect(s.built).toEqual({ providers: 0, models: 0 });
+  });
+
+  describe('suite.config.json l2.workerEnv', () => {
+    function configDir(mutate: (config: Record<string, unknown>) => void): string {
+      const dir = mkdtempSync(join(tmpdir(), 'suite-run-live-'));
+      const config = JSON.parse(readFileSync(join(PACKAGE_DIR, 'suite.config.json'), 'utf8')) as Record<string, unknown>;
+      mutate(config);
+      writeFileSync(join(dir, 'suite.config.json'), JSON.stringify(config));
+      return dir;
+    }
+
+    it.each([
+      [['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model', '--live-app']],
+      [['ci', '--level', 'L2', '--runs', '3', '--include-unbaselined', '--live-model', '--live-app']],
+    ])('refuses L2 without l2.workerEnv before building anything: %j', async (argv) => {
+      const dir = configDir((config) => delete config.l2);
+      try {
+        // A bad env too: the workerEnv refusal comes first and is the only line.
+        const s = stubs({ ...L2_ENV, SUITE_L2_API_BASE: 'https://api.example.com' }, dir);
+        let transports = 0;
+        const overrides = { ...s.overrides, createDevApiTransport: () => { transports += 1; throw new Error('no transport'); } };
+        expect(await runLive(argv, overrides)).toBe(1);
+        expect(s.errors).toEqual([
+          "[suite] run:live --level L2 refuses: suite.config.json l2.workerEnv is absent (the env the stack's worker runs with, e.g. PROACTIVE_SCAN_ENABLED=false, so proactive check-ins cannot land in a case)",
+        ]);
+        expect(s.runs).toEqual([]);
+        expect(transports).toBe(0);
+        expect(s.built).toEqual({ providers: 0, models: 0 });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('an invalid config is a one-line refusal; L1 never reads l2', async () => {
+      const dir = configDir((config) => (config.l2 = { workerEnv: {} }));
+      try {
+        const s = stubs(L2_ENV, dir);
+        expect(await runLive(['run', '--suite', 'smoke-v1', '--level', 'L2', '--live-model', '--live-app'], s.overrides)).toBe(1);
+        expect(s.errors).toHaveLength(1);
+        expect(s.errors[0]).toMatch(/^\[suite\] config: .*l2\.workerEnv/);
+        expect(s.runs).toEqual([]);
+        const l1 = stubs(undefined, dir);
+        expect(await runLive(['run', '--suite', 'smoke-v1', '--level', 'L1', '--live-model'], l1.overrides)).toBe(0);
+        expect(l1.errors).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('empty suites: real ci --level L2 --runs 3 --include-unbaselined skips both, nothing to check, exit 0, nothing built', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'suite-run-live-ci-'));
+    try {
+      writeFileSync(join(dir, 'suite.config.json'), readFileSync(join(PACKAGE_DIR, 'suite.config.json')));
+      const out: string[] = [];
+      const errors: string[] = [];
+      let transports = 0;
+      const cliDeps: CliDeps = {
+        env: { ...L2_ENV },
+        packageDir: dir,
+        now: () => new Date('2026-10-26T10:00:00.000Z'),
+        git: () => ({ sha: 'abc1234def', shortSha: 'abc1234', dirty: false }),
+        log: (line) => out.push(line),
+        error: (line) => errors.push(line),
+        loadSuite: (id) => ({ id, sources: [], tests: [] }) as never,
+        createExecutor: () => {
+          throw new Error('the default executor is never used');
+        },
+        mergeBase: () => {
+          throw new Error('no merge-base read for empty suites');
+        },
+      };
+      const code = await runLive(['ci', '--level', 'L2', '--runs', '3', '--include-unbaselined', '--live-model', '--live-app'], {
+        cliDeps: () => cliDeps,
+        createProvider: () => {
+          throw new Error('no provider');
+        },
+        createJudgeModel: () => {
+          throw new Error('no judge');
+        },
+        createDevApiTransport: () => {
+          transports += 1;
+          throw new Error('no transport');
+        },
+        error: (line) => errors.push(line),
+      });
+      expect(code).toBe(0);
+      expect(errors).toEqual([]);
+      expect(out).toEqual([
+        '[suite] ci: p-v1 skipped (no L2 tests)',
+        '[suite] ci: smoke-v1 skipped (no L2 tests)',
+        '[suite] ci: no registered suite has L2 tests; L2 run passes with nothing to check',
+        '[suite] ci: L2 gate exit 0',
+      ]);
+      expect(transports).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('refuses L2 without --live-model even with --live-app', async () => {

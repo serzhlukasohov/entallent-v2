@@ -17,7 +17,8 @@ import { describe, expect, it } from 'vitest';
  * and runner never reach the L1 executor or the live run entry `suite/run-live.ts`, and
  * `run-live.ts` is the only entry that reaches `live-provider` and `live-judge-model`.
  * Story 14.2: the CLI and runner never reach the L2 executor or its dev API client (the only
- * code that may touch the network to a local stack); `run-live.ts` does.
+ * code that may touch the network to a local stack); `run-live.ts` does. Story 14.3: the L2
+ * workflow helper `suite/l2-stack.ts` reaches no executor.
  */
 const SRC = resolve(__dirname, '..', '..');
 const PACKAGE_DIR = resolve(SRC, '..');
@@ -175,6 +176,13 @@ describe('L0 executor import graph', () => {
   ])('the %s never reaches the L2 executor or the dev API client', (_name, entry) => {
     const { visited } = forbiddenImports(entry);
     for (const module of L2_MODULES) expect(visited).not.toContain(module);
+  });
+
+  it('l2-stack (the L2 workflow helper) reaches no executor, dev API client or live module', () => {
+    const { visited, violations } = forbiddenImports(join(SRC, 'suite', 'l2-stack.ts'));
+    expect(visited).toContain(join('suite', 'config.ts'));
+    expect(visited.filter((file) => file.startsWith(join('suite', 'executors')))).toEqual([]);
+    expect(violations).toEqual([]);
   });
 
   it('run-live reaches the L2 executor and the dev API client', () => {

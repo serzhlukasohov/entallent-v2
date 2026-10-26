@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { buildJudgeInput } from './judge/judge-input';
 import { testCriterionKey } from './score';
 import {
+  CriterionStatusSchema,
   DiffCategorySchema,
   SuiteRunReportSchema,
   type DiffSection,
@@ -297,6 +298,18 @@ export function renderCiSummary(report: SuiteRunReport): string {
     lines.push('Layers: n/a (journeys only)');
   }
   lines.push('');
+  // L2 runs journeys only (Story 14.3): counts and a key/status table, never reasons or text.
+  if (report.level === 'L2') {
+    const counts = CriterionStatusSchema.options
+      .filter((status) => (report.journeys.counts[status] ?? 0) > 0)
+      .map((status) => `${status} ${report.journeys.counts[status]}`);
+    lines.push(`**Journey results:** ${counts.length > 0 ? counts.join(' · ') : 'none'}`, '');
+    if (report.journeys.keys.length > 0) {
+      lines.push('| Key | Status |', '| --- | --- |');
+      for (const key of report.journeys.keys) lines.push(`| ${cell(key)} | ${report.results[key]?.status ?? 'n/a'} |`);
+      lines.push('');
+    }
+  }
 
   const diff = report.diff;
   if (!diff) {

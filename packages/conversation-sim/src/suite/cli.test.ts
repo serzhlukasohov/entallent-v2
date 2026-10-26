@@ -29,6 +29,7 @@ import {
   type CliDeps,
   type GitState,
 } from './cli';
+import { FakeStack, l2JourneySuite } from './executors/__fixtures__/fake-dev-stack';
 import { L0DeterministicExecutor } from './executors/l0-deterministic-executor';
 import { L1OrchestratorExecutor } from './executors/l1-orchestrator-executor';
 import { ScriptedAiProvider } from '../fakes/scripted-ai';
@@ -45,6 +46,7 @@ import { AgreementFileSchema, BaselineSchema, LabelsFileSchema, SuiteRunReportSc
 
 const SECRET = 'sk-test-not-a-real-key-123';
 const L1_REFUSAL = '[suite] L1 runs call live models; run suite:run:live with --live-model (model egress and cost are a human boundary)';
+const L2_REFUSAL = '[suite] L2 runs drive a running local stack and call live models; run suite:run:live --suite <id> --level L2 --live-model --live-app';
 
 interface Harness {
   deps: CliDeps;
@@ -1565,12 +1567,6 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
     expect(existsSync(summaryFile())).toBe(false);
   });
 
-  it('still refuses L2, even with a judge', async () => {
-    const { h } = l1Ci();
-    expect(await main(['ci', '--level', 'L2'], h.deps)).toBe(1);
-    expect(h.err).toEqual(['[suite] ci --level L2 is not wired yet (Story 14.3 owns the L2 workflow)']);
-  });
-
   it('skips empty suites as "no L1 tests" and passes with nothing to check, writing no run folder', async () => {
     writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1'] }));
     const { h, executor, mergeBaseReads } = l1Ci();
@@ -1888,5 +1884,134 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
       expect(executor.calls).toEqual([]);
       expect(runDirs()).toEqual([]);
     });
+  });
+});
+
+describe('suite:ci --level L2 with a fake-transport L2 executor and an injected judge (Story 14.3)', () => {
+  const WEEKLY = ['ci', '--level', 'L2', '--runs', '3', '--include-unbaselined'];
+  const KEYS = ['X-10.J/X-10.C1', 'X-10.J/X-10.C2', 'X-10.J/X-10.C3'];
+  const summaryFile = () => join(dir, 'out', 'summary.md');
+  const readRun = (runId: string) => SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8')));
+
+  beforeEach(() => {
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1', 'x-l2'] }));
+  });
+
+  /** Every step on the fake stack gets its own reply on the first poll; `files[suiteId]` is the merge-base baseline text. */
+  function l2Ci(files: Record<string, string | null> = {}) {
+    const stack = new FakeStack({ defaultStep: { polls: [[{ text: 'What happened this week?' }]] } });
+    const h = harness({ executor: () => stack.executor() });
+    const fallback = h.deps.loadSuite;
+    h.deps.loadSuite = (id) => (id === 'x-l2' ? l2JourneySuite() : fallback(id));
+    const judge = fakeJudge(() => 'PASS');
+    h.deps.createRunJudge = () => judge.judge;
+    let current = files;
+    const mergeBaseReads: string[] = [];
+    h.deps.mergeBase = (path) => {
+      mergeBaseReads.push(path);
+      const suiteId = path.split(/[\\/]/)[1]!;
+      return { ref: 'base0000', path: `packages/conversation-sim/${path}`, text: current[suiteId] ?? null };
+    };
+    return { h, stack, judge, mergeBaseReads, setFiles: (next: Record<string, string | null>) => (current = next) };
+  }
+
+  it('the default entry refuses ci --level L2 with the live-app message and runs nothing', async () => {
+    const h = harness();
+    expect(await main(['ci', '--level', 'L2'], h.deps)).toBe(1);
+    expect(await main([...WEEKLY, '--summary', summaryFile()], h.deps)).toBe(1);
+    expect(h.err).toEqual([L2_REFUSAL, L2_REFUSAL]);
+    expect(runDirs()).toEqual([]);
+    expect(existsSync(summaryFile())).toBe(false);
+  });
+
+  it('empty suites: both skipped "no L2 tests", the nothing-to-check line, exit 0, no run folder', async () => {
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1'] }));
+    const { h, stack, mergeBaseReads } = l2Ci();
+    expect(await main([...WEEKLY, '--summary', summaryFile()], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+    expect(h.out).toEqual([
+      '[suite] ci: p-v1 skipped (no L2 tests)',
+      '[suite] ci: smoke-v1 skipped (no L2 tests)',
+      '[suite] ci: no registered suite has L2 tests; L2 run passes with nothing to check',
+      '[suite] ci: L2 gate exit 0',
+    ]);
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('## Suite L2 gate');
+    expect(summary).toContain('No registered suite has L2 tests; L2 run passes with nothing to check.');
+    expect(summary).toContain('Samples per suite: n = 3');
+    expect(summary).not.toContain('below diff.minSamples');
+    expect(stack.requests).toEqual([]);
+    expect(mergeBaseReads).toEqual([]);
+    expect(runDirs()).toEqual([]);
+  });
+
+  it('unbaselined: runs n = 3 on the fake stack, the diff reports no baseline, the summary lists journey results (exit 0)', async () => {
+    const { h, stack, judge } = l2Ci();
+    expect(await main([...WEEKLY, '--summary', summaryFile()], h.deps)).toBe(0);
+    expect(h.err).toEqual([]);
+    expect(h.out).toContain('[suite] ci: x-l2 has no L2 baseline at merge-base base0000; running without a baseline (diff reports no baseline)');
+    const runId = runDirs()[0]!;
+    const report = readRun(runId);
+    expect(report).toMatchObject({ level: 'L2', n: 3, verdict: 'n/a (journeys only)', layers: null, complete: true });
+    expect(report.diff).toMatchObject({ outcome: 'no-baseline', exitCode: 0, baseline: { kind: 'merge-base', ref: 'base0000', missing: true } });
+    expect(report.journeys).toEqual({ keys: KEYS, counts: { PASS: 3 } });
+    expect(stack.routes().filter((route) => route === 'POST simulate-message')).toHaveLength(6);
+    expect(judge.inputs).toHaveLength(3);
+    const caseRuns = JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'case-runs.json'), 'utf8')) as { caseRuns: unknown[] };
+    expect(caseRuns.caseRuns).toHaveLength(3);
+    expect(h.out.at(-1)).toBe('[suite] ci: L2 gate exit 0');
+
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('## Suite L2 gate');
+    expect(summary).toContain(`- x-l2: ran (exit 0), run ${runId}`);
+    expect(summary).toContain(`### x-l2 L2 — ${runId}`);
+    expect(summary).toContain('Layers: n/a (journeys only)');
+    expect(summary).toContain('**Journey results:** PASS 3');
+    expect(summary).toContain('| X-10.J/X-10.C2 | PASS |');
+    expect(summary).toContain('- Diff: **no-baseline** (exit 0)');
+    expect(summary).not.toContain('What happened this week?');
+  });
+
+  it('without --runs, samples diff.minSamples.L2', async () => {
+    const { h } = l2Ci();
+    expect(await main(['ci', '--level', 'L2', '--include-unbaselined'], h.deps)).toBe(0);
+    expect(readRun(runDirs()[0]!).n).toBe(RUNNER_CONFIG.diff.minSamples.L2);
+  });
+
+  it('accept + diff: the n = 3 run becomes baselines/x-l2/L2.json and the next ci diffs its journeys; n = 2 is refused', async () => {
+    const ci = l2Ci();
+    expect(await main(WEEKLY, ci.h.deps)).toBe(0);
+    const firstRun = runDirs()[0]!;
+    expect(await main(['baseline:accept', '--run', firstRun], ci.h.deps)).toBe(0);
+    const path = join(dir, 'baselines', 'x-l2', 'L2.json');
+    const baseline = BaselineSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+    expect(baseline).toMatchObject({ suiteId: 'x-l2', level: 'L2' });
+    expect(Object.keys(baseline.results)).toEqual(KEYS);
+    expect(baseline.results['X-10.J/X-10.C1']).toMatchObject({ status: 'PASS', passCount: 3, n: 3, testKind: 'journey' });
+    const text = readFileSync(path, 'utf8');
+    rmSync(path);
+
+    ci.setFiles({ 'x-l2': text });
+    ci.h.setNow('2026-10-25T12:00:00.000Z');
+    expect(await main([...WEEKLY, '--summary', summaryFile()], ci.h.deps)).toBe(0);
+    expect(ci.h.err).toEqual([]);
+    const secondRun = runDirs().find((id) => id !== firstRun)!;
+    const report = readRun(secondRun);
+    expect(report.diff).toMatchObject({ exitCode: 0, baseline: { kind: 'merge-base', ref: 'base0000', missing: false } });
+    // The untrusted judge's meaning result (advisory in the baseline) diffs as inconclusive; rules are unchanged.
+    const categories = Object.fromEntries(report.diff!.journeys.entries.map((entry) => [entry.key, entry.category]));
+    expect(categories).toEqual({ 'X-10.J/X-10.C1': 'unchanged', 'X-10.J/X-10.C2': 'inconclusive', 'X-10.J/X-10.C3': 'unchanged' });
+    const summary = readFileSync(summaryFile(), 'utf8');
+    expect(summary).toContain('- Baseline: merge-base packages/conversation-sim/baselines/x-l2/L2.json at base0000');
+    expect(summary).toMatch(/\*\*Journeys:\*\* .*unchanged 2/);
+    expect(summary).toContain('| inconclusive | X-10.J/X-10.C2 |');
+
+    ci.h.out.length = 0;
+    ci.h.setNow('2026-10-25T13:00:00.000Z');
+    expect(await main(['run', '--suite', 'x-l2', '--level', 'L2', '--runs', '2'], ci.h.deps)).toBe(0);
+    const twoSamples = runDirs().find((id) => readRun(id).n === 2)!;
+    expect(await main(['baseline:accept', '--run', twoSamples], ci.h.deps)).toBe(1);
+    expect(ci.h.err).toContain('[suite]   - n 2 is below baseline.minSamples.L2 3');
+    expect(existsSync(path)).toBe(false);
   });
 });

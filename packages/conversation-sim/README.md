@@ -261,6 +261,8 @@ pnpm suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>
 node --import tsx src/suite/run-live.ts ci --level L1 --live-model [--summary <path>]   # the opt-in L1 PR gate (from this package)
 node --import tsx src/suite/l1-gate.ts changes --base <sha> --head <sha> [--output <file>]   # L1 PR gate path filter
 node --import tsx src/suite/l1-gate.ts decide --changed <true|false> [--output <file>]     # L1 PR gate run decision
+node --import tsx src/suite/run-live.ts ci --level L2 --runs 3 --include-unbaselined --live-model --live-app [--summary <path>]   # the opt-in weekly L2 run
+node --import tsx src/suite/l2-stack.ts tenant-from-seed <seed-log> | worker-env --output <file>   # L2 workflow stack helpers
 pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --head <rev> --labels '<json-array>'
 ```
 
@@ -291,8 +293,10 @@ pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --hea
   transcript text. With no suite that has tests it passes with nothing to check.
   `--level L1` needs an injected judge, so the default entry refuses it (exit 1, the
   `suite:run:live` hint); only `run-live.ts ci --level L1 --live-model` runs it (see
-  [L1 pull-request gate](#l1-pull-request-gate)). `--level L2` is refused at every entry
-  (Story 14.3 owns the L2 workflow).
+  [L1 pull-request gate](#l1-pull-request-gate)). `--level L2` likewise needs a judge and a
+  running stack: the default entry refuses it naming `suite:run:live ... --live-app`, and only
+  `run-live.ts ci --level L2 --live-model --live-app` runs it (see [Weekly L2 run](#weekly-l2-run)).
+  At L2 the summary also lists the journey results (counts per status and a key/status table).
 - `suite:calibrate` manages judge calibration (AD-8). `--import` converts a QA session
   export (`{ schemaVersion: 1, sessions: [{ ref, labeler, labeledAt, dialogue, statuses:
   [{ criterionId, status, replyIndex }] }] }`; an assumed format until QA confirms theirs)
@@ -404,11 +408,18 @@ first uncovered topic, else the whole window; `stagedBundleCount`; `surveyEviden
 through the real local API, BullMQ queue, worker and Postgres over the development-only
 `/api/v1/dev` endpoints, using `DevApiClient` (`src/suite/executors/dev-api-client.ts`). Only
 `suite:run:live` reaches either module (`executors/import-graph.test.ts`); the default
-`suite:run` refuses `--level L2` naming the live entry, and `ci --level L2` stays refused.
+`suite:run` and `suite:ci` refuse `--level L2` naming the live entry.
 
-- **Gate:** `run-live.ts run --level L2` needs both `--live-model` (the run calls the live
-  pinned judge, and the stack's worker calls its own coach model) and `--live-app` (it drives
-  a running local stack). `--live-app` at any other level is refused.
+- **Gate:** `run-live.ts run --level L2` and `run-live.ts ci --level L2` need both
+  `--live-model` (the run calls the live pinned judge, and the stack's worker calls its own
+  coach model) and `--live-app` (it drives a running local stack). `--live-app` at any other
+  level is refused.
+- **Worker env:** `suite.config.json` `l2.workerEnv` (`{ "PROACTIVE_SCAN_ENABLED": "false" }`)
+  is the env the stack's worker must be started with, so the recurring proactive scan never
+  sends a check-in into a case. `run-live.ts` at L2 exits 1 with `suite.config.json
+  l2.workerEnv is absent` before building anything when it is missing, and the executor's
+  constructor refuses a missing or empty `workerEnv`. The suite cannot see the worker's env:
+  starting the worker with it is the operator's (or the workflow's) job.
 - **Environment** (validated before anything is built; a refusal names the variable and the
   rule, never the value): `SUITE_L2_API_BASE` is an `http:`/`https:` URL whose host is exactly
   `localhost`, `127.0.0.1` or `[::1]`, with path empty, `/` or `/api/v1` and no userinfo, query
@@ -421,7 +432,11 @@ through the real local API, BullMQ queue, worker and Postgres over the developme
   deep reset deleted the conversation), and the conversation must be empty (else
   `isolation-not-empty`, nothing sent). `CaseRun.subject` records the external user, user,
   conversation and tenant ids. A reset that queues an onboarding intro shows up as a foreign
-  outbound (see below).
+  outbound (see below). A `404` from `reset-user` counts as a completed reset: the deep reset
+  commits first, then the onboarding restart answers 404 for a dev-only user without a
+  `people` row, which is always the case for a `find-conversation` persona; the second
+  `find-conversation` and the empty check stay the isolation guard. Any other non-2xx is
+  `dev-api:resetUser`.
 - **Steps and attribution:** before every step after the first the executor waits
   `interMessageGapMs` (plus `advanceClock`) for real and records it as `gapMs`, then sends
   `simulate-message`. It polls `messages?after=<inbound id>` every 500 ms for up to 60 s:
@@ -453,8 +468,9 @@ through the real local API, BullMQ queue, worker and Postgres over the developme
   replays the journey with a fresh persona). The judge budget applies unchanged. An L2 run reports
   the verdict `n/a (journeys only)`.
 
-To run it by hand against a local stack (not run in CI yet): start Postgres and Redis, the API
-with `NODE_ENV=test` and `ADMIN_API_KEY`, and the worker, then
+To run it by hand against a local stack (the weekly CI run is [Weekly L2 run](#weekly-l2-run)):
+start Postgres and Redis, the API with `NODE_ENV=test` and `ADMIN_API_KEY`, and the worker
+with `PROACTIVE_SCAN_ENABLED=false` (`l2.workerEnv`), then
 
 ```sh
 SUITE_L2_API_BASE=http://localhost:3000 SUITE_L2_TENANT_ID=<uuid> \
@@ -626,3 +642,54 @@ and needs a re-accepted baseline. It reuses the workflow's `authorize` job uncha
 - **Budgets.** Unchanged at 600 coach and 150 judge calls per suite run: weekly n = 5 is the
   size of the baseline run the budgets already bound. The worst case per scheduled run is
   (suites with L1 tests) x the per-run budgets.
+
+### Weekly L2 run
+
+`.github/workflows/conversation-suite-l2.yml` (`Conversation suite L2`, job `Suite L2 weekly
+run`) runs every suite's L2 journeys against a disposable stack built inside the job, weekly
+(`41 4 * * 1`) and on `workflow_dispatch` (no inputs). It has no `pull_request` or `push`
+trigger, so forks never reach it.
+
+- **Opt-in.** The job runs only when the repository variable `CONVERSATION_SUITE_L2_ENABLED` is
+  `true`, for both the schedule and a manual dispatch (Settings, Secrets and variables, Actions,
+  Variables). It is separate from the L1 variables: enabling nightly L1 never enables L2.
+- **Credentials** (existing secret names; no new secret): `OPENAI_API_KEY`,
+  `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`,
+  `AZURE_OPENAI_TESTING_DEPLOYMENT` (also the worker's `OPENAI_MODEL_BALANCED`). The
+  `l1-gate.ts credentials` presence check fails the job with `::error::` before the stack is
+  built. Only the worker start step and the run step receive secret values.
+- **The stack.** Services `pgvector/pgvector:pg16` and `redis:7-alpine` (as in `ci.yml`), job env
+  `NODE_ENV=test` (the dev routes mount), local `DATABASE_URL`/`REDIS_URL` and the all-zero
+  `FIELD_ENCRYPTION_KEY`. The job migrates and seeds the fresh database (the seed is not
+  idempotent: one new tenant per run), reads the tenant with `l2-stack.ts tenant-from-seed`,
+  generates a masked `ADMIN_API_KEY`, starts the api (placeholder model key; it calls no
+  model) and the worker from the checkout, the worker with the env `l2-stack.ts worker-env`
+  writes from `l2.workerEnv`, and waits for both ready routes. Every URL is `127.0.0.1` or
+  `localhost`. With `PROACTIVE_SCAN_ENABLED=false` the worker ignores every `scan` job, including
+  one enqueued by `POST /dev/simulate-proactive-scan`, so the onboarding dispatch, lost-reminder
+  sweep and role reconcile that a scan carries stop too; `onboarding-only` jobs still run.
+- **Command.** `run-live.ts ci --level L2 --runs 3 --include-unbaselined --live-model --live-app
+  --summary "$GITHUB_STEP_SUMMARY"` with `SUITE_L2_API_BASE=http://127.0.0.1:3000` and the seeded
+  tenant. It reuses `ci`: per-suite loop, `no L2 tests` skips, `--include-unbaselined` (a suite
+  without a merge-base `L2.json` runs and its diff reports no baseline), the exit precedence
+  2 > 3 > 4 > 1 and the step summary with journey results. Today both suites have no L2 tests,
+  so an enabled run boots the stack and passes with nothing to check (a smoke test of the boot).
+- **Artifacts.** `runs/suites/**` (reports and `case-runs.json` with transcripts) and the stack
+  logs `runs/l2-stack/{seed,api,worker}.log`, uploaded as `suite-l2-weekly-<run id>-<attempt>`
+  for 14 days and linked from the step summary.
+- **Budgets.** Only the judge budget (`maxJudgeCallsPerRun`) applies; coach calls run inside
+  the stack's worker and are not counted (see [L2 executor](#l2-executor)).
+- **Known limits.** The fixtures `pulseCycle` and `disclosureDelivered` cannot be satisfied on
+  a deep-reset persona (L2 writes nothing), so their criteria are `INVALID`; L2 journeys must
+  avoid them for now. An onboarding intro queued by the reset would end a case
+  `unsolicited-outbound`, and a `question-cutoff` send (the five-minute survey cutoff, which
+  stays on because it is not proactive scheduling) carries its own trace and is filed
+  `unsolicited`. Either one, seen in a run's case runs, is a finding to triage, not a reason
+  to change product behavior.
+- **The first L2 baseline (human).** No L2 baseline is committed. Once `smoke-v1` has L2
+  journeys, enable the variable (or dispatch with it set), download the `suite-l2-weekly-*`
+  artifact within 14 days, unpack the run folder to `packages/conversation-sim/runs/suites/<runId>/`
+  on a checkout of the run's commit, run `pnpm suite:baseline:accept --run <runId> --ci-run-url
+  <workflow run url>` and commit `baselines/<suite>/L2.json` in a pull request with the
+  `baseline-change` label. Accept needs n >= `baseline.minSamples.L2` (3) and refuses the same
+  cases as at L1 (INCOMPLETE, dirty, `--case`, unpinned or changed judge fingerprint).

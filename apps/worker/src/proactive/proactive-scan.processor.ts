@@ -33,8 +33,16 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
     super();
   }
 
+  private scanEnabled(): boolean {
+    return this.config.get('PROACTIVE_SCAN_ENABLED', { infer: true });
+  }
+
   /** Register the recurring scan once on boot. Fixed jobId keeps it idempotent across restarts. */
   async onModuleInit(): Promise<void> {
+    if (!this.scanEnabled()) {
+      this.logger.log('Proactive scan disabled (PROACTIVE_SCAN_ENABLED=false)');
+      return;
+    }
     const intervalMin = this.config.get('PROACTIVE_SCAN_INTERVAL_MIN', { infer: true });
     await this.queue.add(
       'scan',
@@ -56,6 +64,11 @@ export class ProactiveScanProcessor extends WorkerHost implements OnModuleInit {
       this.logger.log(
         `Onboarding-only job=${job.id} — queued=${onboarding.queued} failed=${onboarding.failed}`,
       );
+      return;
+    }
+    // A stale repeatable in a reused Redis can still deliver `scan` after the toggle is turned off.
+    if (!this.scanEnabled()) {
+      this.logger.log(`Proactive scan job=${job.id} name=${job.name} ignored (PROACTIVE_SCAN_ENABLED=false)`);
       return;
     }
     const onboarding = await this.onboarding.dispatchPending(job.data.tenantId);
