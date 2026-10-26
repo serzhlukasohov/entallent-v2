@@ -2,6 +2,7 @@ import { agent as agentTurn, judge, judgeAgent, run, user, userSimulatorAgent } 
 import { isBundleShownIn, type QuestionConfirmationPort, type ReadyQuestionBundle } from '@entalent/application';
 import { describe, expect, it, vi } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
+import { expectJudgeVerdict } from '../harness/judge-verdict';
 import { reportRun } from '../harness/report';
 import { judgeModel, SET_ID, simulatorModel } from './config';
 
@@ -144,6 +145,6 @@ describe('CAP-4 answer before the confirmation bundle', () => {
       expect(reply.indexOf(statement)).toBeGreaterThanOrEqual(answer.length + 2);
     }
 
-    expect(result.success, result.reasoning ?? 'judge did not pass').toBe(true);
+    expectJudgeVerdict(result, 'answer-then-bundle');
   });
 });

@@ -1,6 +1,7 @@
 import { agent as agentTurn, judge, judgeAgent, run, user, userSimulatorAgent } from '@langwatch/scenario';
 import { describe, expect, it } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
+import { expectJudgeVerdict } from '../harness/judge-verdict';
 import { reportRun } from '../harness/report';
 import { judgeModel, SET_ID, simulatorModel } from './config';
 
@@ -43,6 +44,6 @@ describe('CAP-7 capability limits', () => {
     const reply = harness.replies[0] ?? '';
     expect(harness.turns[0]?.outcome, `reply was not generated: ${reply}`).toBeUndefined();
     expect(reply).not.toMatch(/https?:\/\//i);
-    expect(result.success, result.reasoning ?? 'judge did not pass').toBe(true);
+    expectJudgeVerdict(result, 'capability-link-request');
   });
 });

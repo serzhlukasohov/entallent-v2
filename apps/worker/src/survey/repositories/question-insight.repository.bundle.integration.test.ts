@@ -820,6 +820,41 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
     })).rejects.toThrow('v2_corrected_statement_reject_unmapped');
   });
 
+  // GC retro A1: a group whose composition keeps failing is skipped for the next ready group.
+  it('skips the given groups of this window and returns the next ready group', async () => {
+    if (!client || !repository) return;
+    const otherUser = randomUUID();
+    const windowId = randomUUID();
+    await client`insert into survey_windows (id, tenant_id, user_id, survey_definition_id, status, period_end)
+      values (${windowId}, ${tenantId}, ${otherUser}, ${definitionId}, 'active', ${activePeriodEnd})`;
+    await client`insert into survey_window_scoring_policies values (${windowId}, ${tenantId}, ${policyId})`;
+    for (const groupIndex of [0, 1]) {
+      for (const [index, id] of secondaryIds(groupIndex).entries()) {
+        await client`insert into survey_question_working_insights (
+          tenant_id, user_id, survey_window_id, survey_question_id, question_version,
+          working_summary, source_message_ids, ready_for_confirmation)
+          values (${tenantId}, ${otherUser}, ${windowId}, ${id}, 'v2', ${`Meaning ${groupIndex}-${index}.`}, array[${id}]::uuid[], true)`;
+      }
+    }
+    const scope = { tenantId, userId: otherUser };
+
+    expect(await repository.findReadyQuestionBundle(scope)).toMatchObject({ questionGroup: 'growth' });
+    const next = await repository.findReadyQuestionBundle({
+      ...scope, skipGroups: [{ surveyWindowId: windowId, questionGroup: 'growth' }],
+    });
+    expect(next).toMatchObject({ surveyWindowId: windowId, questionGroup: 'purpose' });
+    expect(next).not.toHaveProperty('skipGroups');
+    // A failure recorded in another window does not skip the group in this one.
+    expect(await repository.findReadyQuestionBundle({
+      ...scope, skipGroups: [{ surveyWindowId: randomUUID(), questionGroup: 'growth' }],
+    })).toMatchObject({ questionGroup: 'growth' });
+    expect(await repository.findReadyQuestionBundle({
+      ...scope, skipGroups: ['growth', 'purpose'].map((questionGroup) => ({ surveyWindowId: windowId, questionGroup })),
+    })).toBeNull();
+    // Disclosure readiness is not a composition attempt and ignores the backoff.
+    expect(await repository.hasReadyQuestionBundle(scope)).toBe(true);
+  });
+
   it.each([true, false])(
     'accepts an in-period confirmation after cutoff when delivery activation completed=%s',
     async (activationCompleted) => {

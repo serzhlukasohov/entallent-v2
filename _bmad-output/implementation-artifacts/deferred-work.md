@@ -274,3 +274,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
   summary: Topic selection issues one idempotent `markDone` update per settled V2 question on every lookup; batch it or read backlog statuses first.
   evidence: S5 Blind Hunter finding 10; correct but adds writes on the conversation path (lookups now run only when the cadence and cap allow).
+- source_spec: none
+  summary: GC round 3 retro A2 - make `run-gate.ts` separate judge misses from deterministic failures so `judgePasses` tolerance actually applies, then re-baseline the affected live scenarios.
+  evidence: Split on 2026-10-26 from the retro bug-fix intent (A1/A4/A5 first); harness-only change in different files, scheduled as the next spec in the same session.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a2-gate-judge-tolerance.md`
+  summary: Add a gate-level fixture test that spawns Vitest with gate env on a stubbed judge miss and asserts `hardPassed: true`, `judgePassed: false` and no `test-failure` violation.
+  evidence: Blind Hunter review of A2 (2026-10-26); only the helper is unit-tested, the gate outcome relies on reading `run-gate.ts`.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a1-a4-a5-topic-bundle-fallbacks.md`
+  summary: Make the bundle composition backoff durable per survey window and alert on a group that stays uncomposable, instead of the 20-message metadata window that decays and retries the broken group about every ten turns.
+  evidence: Blind Hunter review 2026-10-26; `readBundleCompositionBackoff` reads only the loaded message window.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a1-a4-a5-topic-bundle-fallbacks.md`
+  summary: The A5 retried reply is validated only for bundle-reply rules, not for the presence of the required not-collected or completion sentence; unverified, medium if true; settle by sampling `retried_answer_then_bundle` replies in a live sim or adding a classifier check.
+  evidence: Edge Case Hunter review 2026-10-26.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a1-a4-a5-topic-bundle-fallbacks.md`
+  summary: An ordinary (non-topic) numeric survey probe that breaks its contract still fails the whole turn; extend the A10 fallback or record why it stays fail-closed.
+  evidence: Blind Hunter review 2026-10-26; `generateWithNumericTopicProbe` runs only for a due topic probe.

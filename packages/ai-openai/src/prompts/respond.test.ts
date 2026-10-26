@@ -1453,6 +1453,53 @@ describe('buildRespondSystemPrompt topic question contract', () => {
     expect(prompt).toMatch(/applies to "replyText" only/);
   });
 
+  // GC retro A4: the topic block forbids a question in "replyText", so no rule may also ask the
+  // reply to end with a follow-up question.
+  type TopicPlan = NonNullable<ResponseContext['replyPlan']>;
+  const topicPlan = (overrides: Partial<TopicPlan> = {}): TopicPlan => ({
+    dialogueAct: 'new_substance',
+    latestUserSubstance: 'deadline moved again',
+    topicAnchor: null,
+    memoryAnchors: [],
+    responseMove: 'address_new_substance',
+    mayInferFromBrevity: true,
+    questionPolicy: { maxQuestions: 1, reason: 'topic_question' },
+    requiredGrounding: [],
+    forbiddenMoves: ['unsupported_interpretation'],
+    ...overrides,
+  });
+  const endWithQuestionRules = [
+    /Default to ending with one genuine follow-up question/,
+    /You end with one sharp question/,
+    /end with one specific question that advances understanding/,
+    /Question policy: end with one specific question/,
+    /end with exactly one specific follow-up question/,
+    /one easy, low-pressure opener/,
+    /return the check-in once/,
+  ];
+
+  it('renders no rule that asks the reply to end with a question on a topic turn', () => {
+    for (const plan of [
+      topicPlan(),
+      topicPlan({ dialogueAct: 'acknowledgement', responseMove: 'close_or_pause', latestUserSubstance: null }),
+      topicPlan({ responseMove: 'social_greeting' }),
+      topicPlan({ responseMove: 'social_reply' }),
+    ]) {
+      const prompt = buildRespondSystemPrompt(normal, context({ userName: 'Test', topicQuestion, replyPlan: plan }));
+      for (const rule of endWithQuestionRules) expect(prompt).not.toMatch(rule);
+      expect(prompt).toMatch(/The only question of this turn is the topic question in "topicQuestion"/);
+    }
+  });
+
+  it('keeps the end-with-a-question rules on an ordinary turn', () => {
+    const prompt = buildRespondSystemPrompt(normal, context({
+      userName: 'Test',
+      replyPlan: topicPlan({ questionPolicy: { maxQuestions: 1, reason: 'new_substance_allows_question' } }),
+    }));
+    for (const rule of endWithQuestionRules.slice(0, 4)) expect(prompt).toMatch(rule);
+    expect(prompt).not.toMatch(/The only question of this turn is the topic question/);
+  });
+
   it('keeps the optional hint outside a topic turn', () => {
     const prompt = buildRespondSystemPrompt(normal, context({
       userName: 'Test',

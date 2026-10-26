@@ -2,6 +2,7 @@ import { agent as agentTurn, judge, judgeAgent, run, user, userSimulatorAgent } 
 import type { QuestionConfirmationPort } from '@entalent/application';
 import { describe, expect, it } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
+import { expectJudgeVerdict } from '../harness/judge-verdict';
 import { reportRun } from '../harness/report';
 import { judgeModel, SET_ID, simulatorModel } from './config';
 
@@ -136,6 +137,6 @@ describe('CAP-1/CAP-2 topic steering inside an open pulse cycle', () => {
     expect((reply.match(/\?/g) ?? []).length, reply).toBe(1);
     expect(reply.trim().endsWith('?'), reply).toBe(true);
 
-    expect(result.success, result.reasoning ?? 'judge did not pass').toBe(true);
+    expectJudgeVerdict(result, 'topic-steering');
   });
 });

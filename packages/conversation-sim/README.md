@@ -107,10 +107,15 @@ Every scenario records three independent layers:
    learned, whether remembered facts made it back into replies, which mode each turn
    resolved to, which style profile was passed into reply generation, and which
    structured `replyPlan` conditioned the prompt.
-3. **Judge verdict** — the subjective criteria that no regex can express. This is
-   advisory in these tests: a single judge miss is printed and written to the report,
-   not used to turn Vitest green or red in the advisory scenarios. The existing
-   resolved-detail regression asserts judge success directly.
+3. **Judge verdict** — the subjective criteria that no regex can express. Three groups:
+   - Advisory (`burnout`, `memory-recall`, `terse-user`, `annna-intent-fidelity`): a judge
+     miss is printed and written to the report, never failing Vitest.
+   - Gate-tolerant (the scenarios that call `expectJudgeVerdict` from
+     `src/harness/judge-verdict.ts`): a standalone run fails on a judge miss; inside
+     `sim:gate` the sample stays green and the gate's `judgePasses` rate decides. A failed
+     result with no judged criteria still fails the test.
+   - Strict (`resolved-detail-question-planning`): asserts judge success directly, so a
+     judge miss is also counted as a hard failure; its gate requires 5/5 judge passes anyway.
 
 `reportRun` records all three, so a red run says *why* rather than just *no*.
 

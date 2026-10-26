@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { NumericProbeInvalidError } from '@entalent/application';
 import {
   ConversationProcessor,
   type CheckInJob,
@@ -195,6 +196,26 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       status: 'success', errorCode: 'conversation_v2_bundle_composition_invalid:question_count',
     }));
   });
+
+  it.each(['bundle_without_reply', 'retried_answer_then_bundle'])(
+    'warns with the two-part fallback reason when the bundle reply is %s (GC retro A5)',
+    async (bundleReply) => {
+      const orchestrator = {
+        orchestrate: vi.fn(async () => ({ ...runtimeResult, bundleReply, bundleReplyFallbackReason: 'reply_question' })),
+      };
+      const { processor } = createProcessor({ orchestrator });
+      const warned = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        await processor.process({
+          id: 'fallback-job', name: 'process', attemptsMade: 0,
+          opts: { delay: 2_000 }, data: conversationJob,
+        } as Job<ConversationJob>);
+        expect(warned).toHaveBeenCalledWith(expect.stringContaining(`bundleReply=${bundleReply} reason=reply_question`));
+      } finally {
+        warned.mockRestore();
+      }
+    },
+  );
 
   it('records the provider filter categories in the llm_runs error code of a committed input-filtered turn (GC round 3 CAP-11)', async () => {
     const orchestrator = {
@@ -537,6 +558,8 @@ describe('ConversationProcessor TypeScript-only routing', () => {
       [new Error('v2_confirmation_bundle_stale'), 'conversation_app_v2_confirmation_bundle_stale'],
       [new Error('Generated response exceeds the question limit after one corrective attempt'), 'conversation_reply_question_limit'],
       [new Error('OpenAI returned a noncompliant numeric survey probe after retry'), 'conversation_reply_numeric_probe_invalid'],
+      // GC retro A10: the typed error keeps the same code wherever it still reaches the worker.
+      [new NumericProbeInvalidError(), 'conversation_reply_numeric_probe_invalid'],
       [new Error('Circuit OPEN — provider temporarily unavailable'), 'conversation_provider_circuit_open'],
       [Object.assign(new Error('Provider filtered output'), { name: 'ProviderContentFilterError', direction: 'output' }), 'conversation_provider_content_filter_output'],
       [new Error('private employee meaning about Project Atlas'), 'conversation_unclassified_error'],
