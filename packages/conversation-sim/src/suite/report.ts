@@ -11,6 +11,7 @@ import {
   type Coverage,
   type CoverageRow,
   type CaseRun,
+  type ContextDigest,
   type CriterionResult,
   type JudgeError,
   type JudgeFingerprint,
@@ -23,6 +24,7 @@ import {
   type ScoredCriterion,
   type SuiteRunReport,
   type SuiteScore,
+  type TurnDecisionEntry,
   type Usage,
 } from './schema';
 
@@ -39,6 +41,8 @@ export interface SuiteReportMeta {
   judgeErrors: JudgeError[];
   /** Meaning FAILs for QA review, in sample, test, criterion order (`collectQaReview`). */
   qaReview: QaReviewEntry[];
+  /** Per-step orchestrator decisions of executed runs (`collectDecisions`). */
+  decisions?: TurnDecisionEntry[];
   usage: Usage;
   /** Call budgets and what was spent (AD-15). */
   budget?: RunBudgetReport;
@@ -96,6 +100,40 @@ export function collectQaReview(
   return entries;
 }
 
+/** Each executed step's orchestrator decisions and reply decision metadata, without any text. */
+export function collectDecisions(run: CaseRun, sample: number): TurnDecisionEntry[] {
+  return run.steps.map((step) => {
+    const context = run.events.filter((event) => event.stepIndex === step.index && event.context !== undefined).at(-1)?.context;
+    return {
+      testId: run.testId,
+      sample,
+      step: step.index,
+      turn: step.turn ?? {},
+      ...(context !== undefined ? { context } : {}),
+      replies: (step.reply?.messages ?? []).map((message) => replyDecision(message.metadata)),
+    };
+  });
+}
+
+function replyDecision(metadata: Record<string, unknown>): TurnDecisionEntry['replies'][number] {
+  const text = (value: unknown) => (typeof value === 'string' ? value : undefined);
+  const flag = (value: unknown) => (typeof value === 'boolean' ? value : undefined);
+  const continuity = metadata.continuityDecision as { action?: unknown } | undefined;
+  const memory = metadata.memoryGrounding as { used?: unknown } | undefined;
+  const entry: TurnDecisionEntry['replies'][number] = { bundle: metadata.v2ConfirmationBundle === true };
+  const messageType = text(metadata.messageType);
+  const responseMove = text(metadata.responseMove);
+  const containsSurveyProbe = flag(metadata.containsSurveyProbe);
+  const action = text(continuity?.action);
+  const memoryUsed = flag(memory?.used);
+  if (messageType !== undefined) entry.messageType = messageType;
+  if (responseMove !== undefined) entry.responseMove = responseMove;
+  if (containsSurveyProbe !== undefined) entry.containsSurveyProbe = containsSurveyProbe;
+  if (action !== undefined) entry.continuity = action;
+  if (memoryUsed !== undefined) entry.memoryUsed = memoryUsed;
+  return entry;
+}
+
 /** Judge calls and tokens summed from every result's `judgeUsage` (zeros at L0). */
 export function judgeUsageTotals(results: readonly CriterionResult[]): {
   judgeCalls: number;
@@ -143,6 +181,7 @@ export function buildSuiteReport(score: SuiteScore, meta: SuiteReportMeta): Suit
     journeys: score.journeys,
     judgeErrors: meta.judgeErrors,
     qaReview: meta.qaReview,
+    ...(meta.decisions !== undefined ? { decisions: meta.decisions } : {}),
     usage: meta.usage,
     ...(meta.budget !== undefined ? { budget: meta.budget } : {}),
     ...(meta.modelUsage !== undefined ? { modelUsage: meta.modelUsage } : {}),
@@ -232,10 +271,7 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
 
   lines.push('## Layers', '');
   if (report.layers) {
-    lines.push('| Layer | PASS | FAIL | Pass rate |', '| --- | --- | --- | --- |');
-    for (const row of report.layers.rows) lines.push(`| ${row.layer} | ${row.pass} | ${row.fail} | ${rate(row.passRate)} |`);
-    const pdc = report.layers.combinedPdc;
-    lines.push(`| P+D+C | ${pdc.pass} | ${pdc.fail} | ${rate(pdc.passRate)} |`);
+    pushLayerTable(lines, report.layers);
   } else {
     lines.push('n/a (journeys only)');
   }
@@ -248,13 +284,11 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   else pushResultTable(lines, journeys);
 
   lines.push('## Coverage', '');
-  lines.push('| Requirement | Source | Test | Criterion | Layer | Status |', '| --- | --- | --- | --- | --- | --- |');
-  for (const row of report.coverage.rows) {
-    lines.push(
-      `| ${cell(row.requirement.join(', '))} | ${row.sourceCase} | ${row.testId ?? '—'} | ${row.criterionId} | ${row.layer} | ${row.status ?? 'not evaluated'} |`,
-    );
-  }
-  lines.push('');
+  pushCoverageRows(lines, report.coverage.rows.filter((row) => row.layer !== 'E'));
+  lines.push('### Engineering effects (E)', '');
+  const effects = report.coverage.rows.filter((row) => row.layer === 'E');
+  if (effects.length === 0) lines.push('None.', '');
+  else pushCoverageRows(lines, effects);
 
   lines.push('### NOT TESTABLE', '');
   pushList(lines, report.coverage.notTestable.map((entry) => `${entry.key}: ${entry.reason}`));
@@ -265,6 +299,7 @@ export function renderSuiteReportMarkdown(report: SuiteRunReport): string {
   lines.push('## Judge errors', '');
   pushList(lines, report.judgeErrors.map((error) => `${error.key}: ${error.reason}`));
   pushQaReview(lines, report.qaReview ?? []);
+  if (report.decisions !== undefined) pushDecisions(lines, report.decisions, report.level);
   lines.push('## Usage', '');
   pushModelUsage(lines, report);
   pushList(lines, Object.entries(report.usage).map(([name, value]) => `${name}: ${value}`));
@@ -290,10 +325,7 @@ export function renderCiSummary(report: SuiteRunReport): string {
   for (const row of (report.modelUsage ?? []).filter((entry) => entry.calls > 0)) lines.push(usageLine(row));
   lines.push('');
   if (report.layers) {
-    lines.push('| Layer | PASS | FAIL | Pass rate |', '| --- | --- | --- | --- |');
-    for (const row of report.layers.rows) lines.push(`| ${row.layer} | ${row.pass} | ${row.fail} | ${rate(row.passRate)} |`);
-    const pdc = report.layers.combinedPdc;
-    lines.push(`| P+D+C | ${pdc.pass} | ${pdc.fail} | ${rate(pdc.passRate)} |`);
+    pushLayerTable(lines, report.layers);
   } else {
     lines.push('Layers: n/a (journeys only)');
   }
@@ -459,6 +491,96 @@ function pushQaReview(lines: string[], entries: readonly QaReviewEntry[]): void 
   lines.push('');
 }
 
+/**
+ * `## Turn decisions`: what the orchestrator decided on each executed step (intent, risk, mode,
+ * survey gating, how the reply went out). At L0 the intent and risk are the scripted outputs.
+ */
+function pushDecisions(lines: string[], entries: readonly TurnDecisionEntry[], level: Level): void {
+  lines.push('## Turn decisions', '');
+  if (level === 'L0') lines.push('L0: intent, classification and risk are the scripted model outputs, not product decisions.', '');
+  if (entries.length === 0) {
+    lines.push('None.', '');
+    return;
+  }
+  lines.push(
+    '| Test | Sample | Step | Context | Intent | Urgency | Survey allowed | Safety check | Risk | Mode | Outcome | Bundle reply | Replies |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+  );
+  for (const entry of entries) {
+    const { classification, risk } = entry.turn;
+    const intent = classification
+      ? [classification.primaryIntent, ...classification.secondaryIntents.map((value) => `+${value}`)].join(' ')
+        + (classification.cycleStatusQuestion ? ' (cycle status)' : '')
+      : entry.turn.intent ?? '';
+    const cells = [
+      entry.testId,
+      String(entry.sample),
+      String(entry.step),
+      entry.context ? contextCell(entry.context) : '',
+      intent,
+      classification?.urgency ?? '',
+      yesNo(classification?.surveyAllowed),
+      yesNo(classification?.requiresSafetyCheck),
+      risk ? riskCell(risk) : '',
+      entry.turn.mode ?? '',
+      entry.turn.outcome ?? '',
+      entry.turn.bundleReply ?? '',
+      entry.replies.length === 0 ? 'silence' : entry.replies.map(replyCell).join(' // '),
+    ];
+    lines.push(`| ${cells.map(cell).join(' | ')} |`);
+  }
+  lines.push('');
+}
+
+function contextCell(context: ContextDigest): string {
+  const { history, memory } = context;
+  const parts = [`history ${history.turns} (${history.user}u/${history.assistant}a)`, `memory ${memory.items}`];
+  if (memory.goals > 0) parts.push(`goals ${memory.goals}`);
+  if (context.sessionStart !== undefined) parts.push(context.sessionStart ? 'session start' : 'continuing');
+  if (context.localTime !== undefined) parts.push(`local ${context.localTime}`);
+  if (context.surveyQuestionId !== undefined) parts.push(`survey question ${context.surveyQuestionId}`);
+  parts.push(...context.sections);
+  return parts.join(', ');
+}
+
+function yesNo(value: boolean | undefined): string {
+  return value === undefined ? '' : value ? 'yes' : 'no';
+}
+
+function riskCell(risk: NonNullable<TurnDecisionEntry['turn']['risk']>): string {
+  const parts = [risk.assessed ? risk.severity : `unassessed (${risk.unassessedReason ?? 'unknown'})`];
+  if (risk.riskType) parts.push(risk.riskType);
+  if (risk.immediateResponseRequired) parts.push('immediate');
+  if (risk.escalationRecommended) parts.push('escalation');
+  if (risk.surveyMustBeBlocked) parts.push('survey blocked');
+  if (risk.tripwireRaised) parts.push('tripwire');
+  return parts.join(', ');
+}
+
+function replyCell(reply: TurnDecisionEntry['replies'][number]): string {
+  const parts = [reply.bundle ? 'summary' : reply.messageType ?? 'reply'];
+  if (reply.responseMove) parts.push(reply.responseMove);
+  if (reply.containsSurveyProbe) parts.push('survey question');
+  if (reply.continuity) parts.push(`continuity ${reply.continuity}`);
+  if (reply.memoryUsed) parts.push('memory');
+  return parts.join(', ');
+}
+
+/**
+ * Framework layers, the P+D+C row the verdict is decided on, then `E` (engineering effects)
+ * on its own row after it, so effects never read as part of the framework rate.
+ */
+function pushLayerTable(lines: string[], layers: NonNullable<SuiteRunReport['layers']>): void {
+  lines.push('| Layer | PASS | FAIL | Pass rate |', '| --- | --- | --- | --- |');
+  const framework = layers.rows.filter((row) => row.layer !== 'E');
+  for (const row of framework) lines.push(`| ${row.layer} | ${row.pass} | ${row.fail} | ${rate(row.passRate)} |`);
+  const pdc = layers.combinedPdc;
+  lines.push(`| P+D+C | ${pdc.pass} | ${pdc.fail} | ${rate(pdc.passRate)} |`);
+  for (const row of layers.rows.filter((entry) => entry.layer === 'E')) {
+    lines.push(`| E (effects, not in verdict) | ${row.pass} | ${row.fail} | ${rate(row.passRate)} |`);
+  }
+}
+
 function pushResultTable(lines: string[], results: ReadonlyArray<[string, ScoredCriterion]>): void {
   if (results.length === 0) {
     lines.push('No results.', '');
@@ -469,6 +591,16 @@ function pushResultTable(lines: string[], results: ReadonlyArray<[string, Scored
     const status = `${result.status}${result.inScope ? '' : ' (out of scope)'}${result.advisory ? ' (advisory)' : ''}`;
     lines.push(
       `| ${key} | ${result.layer} | ${status} | ${result.passCount}/${result.n} | ${result.method} | ${cell([result.reason, result.evidence].filter((part) => part !== undefined).join(' — '))} |`,
+    );
+  }
+  lines.push('');
+}
+
+function pushCoverageRows(lines: string[], rows: readonly CoverageRow[]): void {
+  lines.push('| Requirement | Source | Test | Criterion | Layer | Status |', '| --- | --- | --- | --- | --- | --- |');
+  for (const row of rows) {
+    lines.push(
+      `| ${cell(row.requirement.join(', '))} | ${row.sourceCase} | ${row.testId ?? '—'} | ${row.criterionId} | ${row.layer} | ${row.status ?? 'not evaluated'} |`,
     );
   }
   lines.push('');

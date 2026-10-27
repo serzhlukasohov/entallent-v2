@@ -8,8 +8,29 @@ import type {
   ReadyQuestionBundle,
 } from '@entalent/application';
 
-/** Per-question status in the simulated V2 window. `confirmed` is an applied, agreed verdict. */
-export type SimQuestionStatus = 'pending' | 'ready' | 'awaiting' | 'confirmed' | 'disputed' | 'declined';
+/**
+ * Per-question status in the simulated V2 window. `confirmed` is an applied, agreed verdict.
+ * `pending_clarification` is a statement disputed in a partial verdict (as in production);
+ * fixtures seed the same state as `disputed` plus a pending clarification.
+ */
+export type SimQuestionStatus =
+  | 'pending'
+  | 'ready'
+  | 'awaiting'
+  | 'confirmed'
+  | 'disputed'
+  | 'pending_clarification'
+  | 'declined';
+
+/** Closed statuses: a group whose questions are all ready, confirmed or declined can be shown. */
+const SHOWABLE_WITH_READY = new Set<SimQuestionStatus>(['ready', 'confirmed', 'declined']);
+
+/**
+ * The fake has no message store, so a staged or seeded clarification question counts as
+ * delivered before any later employee message (production reads the prompt's `sentAt`).
+ */
+export const CLARIFICATION_PROMPT_DELIVERED_AT = new Date(0);
+export const SEEDED_CLARIFICATION_PROMPT_ID = 'seeded-clarification-prompt';
 
 export interface SimQuestion {
   surveyQuestionId: string;
@@ -39,6 +60,8 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
   private readonly staged: StagedBundle[] = [];
   private readonly applied = new Map<string, AppliedQuestionVerdict>();
   private pending: PendingQuestionClarification | null = null;
+  /** Further disputed statements of the last partial verdict, asked after `pending` (production order). */
+  private readonly queuedClarifications: PendingQuestionClarification[] = [];
   private sequence = 0;
 
   // ---------------------------------------------------------------------------
@@ -51,8 +74,18 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
     this.questions.splice(0, this.questions.length, ...input.questions.map((question) => ({ ...question })));
   }
 
+  /**
+   * Seeds a disputed statement whose clarification question was already asked and delivered
+   * (the `confirmationState` fixture's "waiting for the employee's clarification"): a null
+   * prompt id or sent time is filled with the seeded prompt, so the next employee message is
+   * interpreted as the clarification, as in production.
+   */
   seedPendingClarification(clarification: PendingQuestionClarification): void {
-    this.pending = { ...clarification };
+    this.pending = {
+      ...clarification,
+      clarificationPromptMessageId: clarification.clarificationPromptMessageId ?? SEEDED_CLARIFICATION_PROMPT_ID,
+      clarificationPromptSentAt: clarification.clarificationPromptSentAt ?? CLARIFICATION_PROMPT_DELIVERED_AT,
+    };
   }
 
   /** Bundles staged so far, including corrected statements (answered or not). */
@@ -104,9 +137,53 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
       : null;
   }
 
+  /**
+   * Production (`question-insight.repository.ts` `previewPendingQuestionClarificationAfterBundleVerdict`):
+   * before a partial verdict is applied, the clarification the first disputed statement (in
+   * bundle order) will get, with no prompt yet. Null without disputed statements; a stale
+   * bundle or an id outside its components throws as in production.
+   */
+  async previewPendingQuestionClarificationAfterBundleVerdict(input: {
+    tenantId: string;
+    userId: string;
+    bundleId: string;
+    disputedQuestionIds: string[];
+  }): Promise<PendingQuestionClarification | null> {
+    if (input.disputedQuestionIds.length === 0) return null;
+    const awaiting = await this.findAwaitingQuestionBundle(input);
+    if (!awaiting || awaiting.id !== input.bundleId) throw new Error('v2_clarification_preview_bundle_stale');
+    const disputed = new Set(input.disputedQuestionIds);
+    if (
+      disputed.size !== input.disputedQuestionIds.length ||
+      input.disputedQuestionIds.some((id) => !awaiting.components.some((component) => component.surveyQuestionId === id))
+    ) {
+      throw new Error('v2_clarification_preview_mapping_invalid');
+    }
+    const first = awaiting.components.find((component) => disputed.has(component.surveyQuestionId))!;
+    return this.clarificationFor(awaiting, first);
+  }
+
+  /**
+   * Production (`previewPendingQuestionClarificationAfterVerdict`): after the current
+   * clarification is resolved, the next disputed statement of the same bundle, or null.
+   */
+  async previewPendingQuestionClarificationAfterVerdict(input: {
+    workingInsightId: string;
+  }): Promise<PendingQuestionClarification | null> {
+    if (!this.pending || this.pending.workingInsightId !== input.workingInsightId) {
+      throw new Error('v2_clarification_preview_scope_mismatch');
+    }
+    const next = this.queuedClarifications[0];
+    return next ? { ...next } : null;
+  }
+
   async stageQuestionClarificationPrompt(input: { workingInsightId: string; promptMessageId: string }): Promise<boolean> {
     if (!this.pending || this.pending.workingInsightId !== input.workingInsightId) return false;
-    this.pending = { ...this.pending, clarificationPromptMessageId: input.promptMessageId };
+    this.pending = {
+      ...this.pending,
+      clarificationPromptMessageId: input.promptMessageId,
+      clarificationPromptSentAt: CLARIFICATION_PROMPT_DELIVERED_AT,
+    };
     return true;
   }
 
@@ -127,7 +204,7 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
       questionGroup: this.pending.questionGroup,
       ...(input.verdict.kind === 'declined' ? { questionNotCollected: true } : {}),
     });
-    this.pending = null;
+    this.pending = this.queuedClarifications.shift() ?? null;
     return true;
   }
 
@@ -164,11 +241,21 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
       if (input.verdict.kind === 'reject') return 'disputed';
       if (input.verdict.acceptedQuestionIds.includes(id)) return 'confirmed';
       if (input.verdict.declinedQuestionIds.includes(id)) return 'declined';
-      return 'disputed';
+      return 'pending_clarification';
     };
     for (const id of ids) {
       const question = this.question(id);
       if (question) question.status = statusOf(id);
+    }
+    // Production: every disputed statement waits for a clarification, asked one at a time
+    // in bundle order; the first one is pending now.
+    if (input.verdict.kind === 'partial') {
+      const disputed = new Set(input.verdict.disputedQuestionIds);
+      const clarifications = bundle.components
+        .filter((component) => disputed.has(component.surveyQuestionId))
+        .map((component) => this.clarificationFor(bundle, component));
+      this.pending = clarifications.shift() ?? null;
+      this.queuedClarifications.splice(0, this.queuedClarifications.length, ...clarifications);
     }
     this.applied.set(input.inboundMessageId, {
       kind: 'bundle',
@@ -178,24 +265,33 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
     return true;
   }
 
+  /**
+   * Production (`findReadyQuestionBundle`): nothing while a shown bundle awaits its verdict or a
+   * clarification is pending; otherwise the first group (in window order) with at least one
+   * ready question whose every question is ready or already closed (confirmed or declined).
+   * A group with a question still collecting evidence is not ready.
+   */
   async findReadyQuestionBundle(input: { tenantId: string; userId: string }): Promise<ReadyQuestionBundle | null> {
     if (!this.inScope(input)) return null;
-    const ready = this.questions.filter((question) => question.status === 'ready');
-    if (ready.length === 0) return null;
-    const questionGroup = ready[0]!.questionGroup;
-    return {
-      tenantId: this.window!.tenantId,
-      userId: this.window!.userId,
-      surveyWindowId: this.window!.surveyWindowId,
-      questionGroup,
-      questions: ready
-        .filter((question) => question.questionGroup === questionGroup)
-        .map((question) => ({
+    if (this.staged.some((bundle) => bundle.answeredBy === null) || this.pending !== null) return null;
+    const groups = [...new Set(this.questions.map((question) => question.questionGroup))];
+    for (const questionGroup of groups) {
+      const questions = this.questions.filter((question) => question.questionGroup === questionGroup);
+      const ready = questions.filter((question) => question.status === 'ready');
+      if (ready.length === 0 || !questions.every((question) => SHOWABLE_WITH_READY.has(question.status))) continue;
+      return {
+        tenantId: this.window!.tenantId,
+        userId: this.window!.userId,
+        surveyWindowId: this.window!.surveyWindowId,
+        questionGroup,
+        questions: ready.map((question) => ({
           surveyQuestionId: question.surveyQuestionId,
           questionVersion: question.questionVersion,
           workingSummary: question.workingSummary,
         })),
-    };
+      };
+    }
+    return null;
   }
 
   async hasReadyQuestionBundle(input: { tenantId: string; userId: string }): Promise<boolean> {
@@ -274,6 +370,26 @@ export class InMemoryQuestionConfirmationRepository implements QuestionConfirmat
       if (question) question.status = 'awaiting';
     }
     return id;
+  }
+
+  private clarificationFor(
+    bundle: Pick<AwaitingQuestionBundle, 'tenantId' | 'userId' | 'surveyWindowId' | 'questionGroup'>,
+    component: { surveyQuestionId: string; questionVersion: string; statement: string },
+  ): PendingQuestionClarification {
+    const question = this.question(component.surveyQuestionId);
+    return {
+      workingInsightId: `working-insight-${component.surveyQuestionId}`,
+      tenantId: bundle.tenantId,
+      userId: bundle.userId,
+      surveyWindowId: bundle.surveyWindowId,
+      surveyQuestionId: component.surveyQuestionId,
+      questionVersion: component.questionVersion,
+      questionGroup: bundle.questionGroup,
+      workingSummary: question?.workingSummary ?? component.statement,
+      disputedStatement: component.statement,
+      clarificationPromptMessageId: null,
+      clarificationPromptSentAt: null,
+    };
   }
 
   private question(surveyQuestionId: string): SimQuestion | undefined {

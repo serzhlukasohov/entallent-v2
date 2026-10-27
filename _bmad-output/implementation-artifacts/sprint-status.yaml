@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-10-24T00:00:00+02:00
+# last_updated: 2026-10-27T21:00:00+02:00
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -42,7 +42,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-10-25T12:00:00+02:00
+last_updated: 2026-10-27T21:00:00+02:00
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -117,8 +117,8 @@ development_status:
   # 12-3 split 2026-10-25: 12-3 = 12.3a (params validation, reply/turn rules); 12-3b = proactive, clock and state/event rules
   12-3-suite-rule-implementations: review
   12-3b-proactive-state-and-clock-rules: review
-  # 12-4 blocked 2026-10-25 (bmad-build-auto): needs verbatim Confluence texts and QA-approved seeds; see bmad-build-auto-result-12-4-*.md
-  12-4-p-suite-atomic-tests-and-smoke-journeys: backlog
+  # 12-4 unblocked 2026-10-27: Confluence v3 texts via connector, seeds approved by Illia
+  12-4-p-suite-atomic-tests-and-smoke-journeys: review
   12-5-clockport-in-the-application-layer: review
   # 12-6 unblocked 2026-10-25: user chose option (a) (SQL prefilter kept, policy on top; QA cohort membership is a per-user fact)
   12-6-cadence-policy-extracted-from-worker-sql: review

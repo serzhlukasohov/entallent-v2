@@ -32,7 +32,9 @@ export const ACCEPTABLE_THRESHOLD = 0.75;
 /** Meaning-decided criteria pass with ceil(0.8 n) passes; rule-decided ones need n/n. */
 export const MEANING_PASS_RATIO = 0.8;
 
-const LAYERS: readonly Layer[] = ['P', 'D', 'C', 'S'];
+/** Framework layers first, then `E` (engineering effects, Story 12.4), reported on their own row. */
+const LAYERS: readonly Layer[] = ['P', 'D', 'C', 'S', 'E'];
+const PDC: ReadonlySet<Layer> = new Set(['P', 'D', 'C']);
 const UNDECIDED_PRECEDENCE: readonly CriterionStatus[] = ['NOT_TESTABLE', 'INVALID', 'ERROR', 'NOT_RUN'];
 
 export function testCriterionKey(testId: string, criterionId: string): string {
@@ -200,7 +202,8 @@ function layerTable(counted: readonly ScoredCriterion[]): LayerTable {
     const inLayer = counted.filter((result) => result.layer === layer);
     return row(layer, inLayer);
   });
-  const pdc = row('P', counted.filter((result) => result.layer !== 'S'));
+  // `E` criteria are engineering checks, not framework layers: never part of the verdict rate.
+  const pdc = row('P', counted.filter((result) => PDC.has(result.layer)));
   return { rows, combinedPdc: { pass: pdc.pass, fail: pdc.fail, passRate: pdc.passRate } };
 }
 

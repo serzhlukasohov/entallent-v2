@@ -22,6 +22,7 @@ import type { CaseRun, ExecutionError, FixtureName, LoadedTest, ObservationField
 import { FixedClock } from './clock';
 import { createL0ScriptedModel, type L0ScriptedModel } from './l0-scripted';
 import { createProactiveWorld, driveObservationWindow, type ProactiveWorld } from './proactive-l0';
+import { contextDigest } from './context-digest';
 import { createEventSink, record } from './recording-proxy';
 import {
   applyFixtures,
@@ -47,8 +48,10 @@ export const DEFAULT_L0_CLOCK_START = new Date('2026-01-05T08:00:00.000Z');
 
 /**
  * Fields an L0 run fills (AD-14, AD-17). Never `reply.text` (L0 does not evaluate reply
- * text the test scripted), `turn.replyPlan` (not on `OrchestrateResult`) or
- * `state.surveyEvidenceCount` (the inline outbox records no survey evidence).
+ * text the test scripted), `turn.replyPlan` (not on `OrchestrateResult`),
+ * `turn.classification` / `turn.risk` (recorded, but they are the test's scripted model
+ * outputs, so no rule may decide on them) or `state.surveyEvidenceCount` (the inline outbox
+ * records no survey evidence).
  */
 const CONVERSATION_FIELDS: ObservationField[] = [
   'reply.messages',
@@ -276,7 +279,7 @@ export function createL0World(test: LoadedTest, start: Date, timezone?: string):
   // Observation tests drive the check-in generation with the scripted model's default text
   // (C4-C5 are L1); conversation tests must script every model output they need.
   const scripted = test.kind === 'observation' ? null : createL0ScriptedModel(test.scripted ?? []);
-  const aiProvider = record<AiProviderPort>(scripted?.provider ?? new ScriptedAiProvider(), 'aiProvider', sink);
+  const aiProvider = record<AiProviderPort>(scripted?.provider ?? new ScriptedAiProvider(), 'aiProvider', sink, undefined, contextDigest);
   const conversationRepo = record(conversationState, 'conversationRepo', sink);
   const memoryRepo = record(memoryState, 'memoryRepo', sink);
   const goalRepo = record(goalState, 'goalRepo', sink);

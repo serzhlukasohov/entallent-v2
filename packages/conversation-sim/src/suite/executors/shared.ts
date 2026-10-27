@@ -15,6 +15,8 @@ import {
   type ReplyMessage,
   type RuleCheck,
   type StepObservation,
+  type TurnClassification,
+  type TurnRisk,
   type TurnTrace,
 } from '../schema';
 import type { ControlledClock } from './clock';
@@ -207,7 +209,40 @@ export function turnTrace(result: OrchestrateResult): TurnTrace {
   if (result.classification?.primaryIntent !== undefined) trace.intent = result.classification.primaryIntent;
   if (result.outcome !== undefined) trace.outcome = result.outcome;
   if (result.bundleReply !== undefined) trace.bundleReply = result.bundleReply;
+  if (result.classification !== undefined) trace.classification = turnClassification(result.classification);
+  if (result.risk !== undefined) trace.risk = turnRisk(result.risk);
   return trace;
+}
+
+function turnClassification(classification: OrchestrateResult['classification']): TurnClassification {
+  return {
+    primaryIntent: classification.primaryIntent,
+    secondaryIntents: [...classification.secondaryIntents],
+    urgency: classification.urgency,
+    requiresSafetyCheck: classification.requiresSafetyCheck,
+    surveyAllowed: classification.surveyAllowed,
+    ...(classification.dialogueAct !== undefined ? { dialogueAct: classification.dialogueAct } : {}),
+    ...(classification.cycleStatusQuestion !== undefined ? { cycleStatusQuestion: classification.cycleStatusQuestion } : {}),
+    ...(classification.acceptsPriorOffer !== undefined ? { acceptsPriorOffer: classification.acceptsPriorOffer } : {}),
+    ...(classification.formatRequest !== undefined ? { formatRequest: classification.formatRequest } : {}),
+  };
+}
+
+function turnRisk(risk: OrchestrateResult['risk']): TurnRisk {
+  const common = {
+    assessed: risk.assessed,
+    severity: risk.severity,
+    riskType: risk.riskType,
+    immediateResponseRequired: risk.immediateResponseRequired,
+    tripwireRaised: risk.tripwireRaised,
+  };
+  if (!risk.assessed) return { ...common, unassessedReason: risk.reason };
+  return {
+    ...common,
+    escalationRecommended: risk.escalationRecommended,
+    surveyMustBeBlocked: risk.surveyMustBeBlocked,
+    proactiveMessagesMustBePaused: risk.proactiveMessagesMustBePaused,
+  };
 }
 
 /** `from`: the earliest instant the run stamped (seed included); `to`: the clock at the end. */

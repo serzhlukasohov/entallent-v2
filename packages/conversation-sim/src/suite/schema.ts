@@ -12,7 +12,16 @@ import { z } from 'zod';
 export const LevelSchema = z.enum(['L0', 'L1', 'L2']);
 export type Level = z.infer<typeof LevelSchema>;
 
-export const LayerSchema = z.enum(['P', 'D', 'C', 'S']);
+/** Framework v2.1.1 layers: the Confluence criteria, judged and scored toward the verdict. */
+export const FrameworkLayerSchema = z.enum(['P', 'D', 'C', 'S']);
+export type FrameworkLayer = z.infer<typeof FrameworkLayerSchema>;
+
+/**
+ * Suite layers: the framework layers plus `E`, engineering effect criteria (Story 12.4) that
+ * never come from Confluence. `E` criteria are rule-only, reported and diff-gated like rule
+ * criteria, shown as their own row, and never counted toward the P+D+C verdict.
+ */
+export const LayerSchema = z.enum(['P', 'D', 'C', 'S', 'E']);
 export type Layer = z.infer<typeof LayerSchema>;
 
 export const CriterionStatusSchema = z.enum(['PASS', 'FAIL', 'NOT_TESTABLE', 'INVALID', 'ERROR', 'NOT_RUN']);
@@ -33,6 +42,7 @@ export const FixtureNameSchema = z.enum([
   'freshPersona',
   'disclosureDelivered',
   'proactiveUsers',
+  'memoryItems',
 ]);
 export type FixtureName = z.infer<typeof FixtureNameSchema>;
 
@@ -91,6 +101,8 @@ export const OBSERVATION_FIELD_LITERALS = [
   'turn.outcome',
   'turn.bundleReply',
   'turn.replyPlan',
+  'turn.classification',
+  'turn.risk',
   'state.questionProgress',
   'state.stagedBundleCount',
   'state.surveyEvidenceCount',
@@ -129,7 +141,10 @@ export function fieldObserved(field: ObservationField, observed: readonly Observ
 // ---------------------------------------------------------------------------
 
 const SOURCE_CASE_ID = /^[A-Z][A-Z0-9]*-\d+$/;
-const CRITERION_ID = /^[A-Z][A-Z0-9]*-\d+\.C[1-9]\d*$/;
+/** `<sourceCase>.C<n>` (Confluence) or `<sourceCase>.E<n>` (engineering effect). */
+const CRITERION_ID = /^[A-Z][A-Z0-9]*-\d+\.[CE][1-9]\d*$/;
+/** Confluence criteria only: calibration labels and QA exports never carry `E` criteria. */
+const CONFLUENCE_CRITERION_ID = /^[A-Z][A-Z0-9]*-\d+\.C[1-9]\d*$/;
 const KEBAB = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const EVALUATED_AT = /^(?:reply:[1-9]\d*|after-step:[1-9]\d*|conversation|observation-window|state)$/;
 const STATE_AT = /^(?:before|after|after-step:[1-9]\d*)$/;
@@ -244,9 +259,9 @@ export type StateEffect = z.infer<typeof StateEffectSchema>;
 
 export const SourceCriterionSchema = z
   .object({
-    id: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
+    id: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n> or <sourceCase>.E<n>'),
     layer: LayerSchema,
-    /** Suite text, verbatim. */
+    /** Suite text, verbatim (an `E` criterion: the approved effect text). */
     passCondition: z.string().min(1),
     /** NOT TESTABLE and retirement (`retired: ...`) live only here. */
     notTestableReason: z.string().min(1).optional(),
@@ -267,11 +282,18 @@ export const SourceCaseSchema = z
   .superRefine((source, ctx) => {
     const seen = new Set<string>();
     source.criteria.forEach((criterion, index) => {
-      if (!criterion.id.startsWith(`${source.id}.C`)) {
+      const effect = criterion.id.startsWith(`${source.id}.E`);
+      if (!criterion.id.startsWith(`${source.id}.C`) && !effect) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['criteria', index, 'id'],
-          message: `criterion id must start with ${source.id}.C`,
+          message: `criterion id must start with ${source.id}.C or ${source.id}.E`,
+        });
+      } else if (effect !== (criterion.layer === 'E')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['criteria', index, 'layer'],
+          message: effect ? 'engineering effect criteria (.E<n>) have layer E' : 'layer E is only for engineering effect criteria (.E<n>)',
         });
       }
       if (seen.has(criterion.id)) {
@@ -302,13 +324,19 @@ export type StateQuery = z.infer<typeof StateQuerySchema>;
 export const CriterionSchema = z
   .object({
     /** A manifest criterion id; `layer` and `passCondition` are joined from the manifest at load. */
-    id: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
+    id: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n> or <sourceCase>.E<n>'),
     evaluatedAt: z.string().regex(EVALUATED_AT, 'expected reply:<n>, after-step:<n>, conversation, observation-window or state'),
     checks: z.array(CheckSchema).min(1),
     levels: z.array(LevelSchema).min(1).optional(),
     stateQuery: StateQuerySchema.optional(),
     independentOfCheckpoints: z.boolean().optional(),
     judgeGuidance: z.string().min(1).optional(),
+    /**
+     * Which bot-initiated messages of an observation window the judge reads: `first` (the
+     * first one, judged as the evaluated reply) or `all` (every one, like `conversation`).
+     * Only on `observation-window` criteria; defaults to `all`.
+     */
+    windowScope: z.enum(['first', 'all']).optional(),
   })
   .strict();
 export type Criterion = z.infer<typeof CriterionSchema>;
@@ -371,7 +399,7 @@ function refineSuiteTest(test: SuiteTestShape, ctx: z.RefinementCtx): void {
     if (test.seed) issue(['seed'], 'journey tests replay the sequence verbatim and carry no seed');
   } else {
     if (test.steps.length > 0) issue(['steps'], 'observation tests have no steps');
-    if (test.seed) issue(['seed'], 'observation tests carry no seed');
+    // A seed is history before the window (P-06.C4: an earlier conversation a check-in continues).
     if (!test.observationWindow) issue(['observationWindow'], 'observation tests declare an observationWindow');
     if (test.levels.includes('L2')) issue(['levels'], 'observation tests never declare L2 (deferred at L2)');
   }
@@ -409,6 +437,9 @@ function refineSuiteTest(test: SuiteTestShape, ctx: z.RefinementCtx): void {
     }
     if (at.kind === 'observation-window' && test.kind !== 'observation') {
       issue([...path, 'evaluatedAt'], 'observation-window criteria belong to observation tests');
+    }
+    if (criterion.windowScope !== undefined && at.kind !== 'observation-window') {
+      issue([...path, 'windowScope'], 'windowScope is allowed only on observation-window criteria');
     }
 
     if (at.kind === 'state' && !criterion.stateQuery) {
@@ -461,6 +492,43 @@ export const ReplyMessageSchema = z
   .strict();
 export type ReplyMessage = z.infer<typeof ReplyMessageSchema>;
 
+/**
+ * The classifier decisions the orchestrator branches on (survey gating, safety turn, mode,
+ * reply length, cycle-status grounding). Bounded values only: no reasoning or evidence text.
+ */
+export const TurnClassificationSchema = z
+  .object({
+    primaryIntent: z.string(),
+    secondaryIntents: z.array(z.string()),
+    urgency: z.string(),
+    requiresSafetyCheck: z.boolean(),
+    surveyAllowed: z.boolean(),
+    dialogueAct: z.string().optional(),
+    cycleStatusQuestion: z.boolean().optional(),
+    acceptsPriorOffer: z.boolean().optional(),
+    formatRequest: z.string().nullable().optional(),
+  })
+  .strict();
+export type TurnClassification = z.infer<typeof TurnClassificationSchema>;
+
+/** The risk assessment the orchestrator acted on (crisis/sensitive mode, escalation, survey block). */
+export const TurnRiskSchema = z
+  .object({
+    assessed: z.boolean(),
+    /** `unknown` only when not assessed. */
+    severity: z.string(),
+    riskType: z.string().nullable(),
+    immediateResponseRequired: z.boolean(),
+    tripwireRaised: z.boolean(),
+    escalationRecommended: z.boolean().optional(),
+    surveyMustBeBlocked: z.boolean().optional(),
+    proactiveMessagesMustBePaused: z.boolean().optional(),
+    /** Why the risk is unassessed. */
+    unassessedReason: z.string().optional(),
+  })
+  .strict();
+export type TurnRisk = z.infer<typeof TurnRiskSchema>;
+
 /** Orchestrator decisions; values stay plain strings as `OrchestrateResult` produces them. */
 export const TurnTraceSchema = z
   .object({
@@ -469,6 +537,8 @@ export const TurnTraceSchema = z
     outcome: z.string().optional(),
     bundleReply: z.string().optional(),
     replyPlan: ParamsSchema.optional(),
+    classification: TurnClassificationSchema.optional(),
+    risk: TurnRiskSchema.optional(),
   })
   .strict();
 export type TurnTrace = z.infer<typeof TurnTraceSchema>;
@@ -499,6 +569,35 @@ export const StepObservationSchema = z
   .strict();
 export type StepObservation = z.infer<typeof StepObservationSchema>;
 
+/**
+ * What the product put in front of the reply model on one `generateResponse` call: counts,
+ * flags and ids only, never message or memory text. Built by the real code at every level,
+ * so it is deterministic at L0.
+ */
+export const ContextDigestSchema = z
+  .object({
+    history: z
+      .object({
+        turns: nonNegativeInt,
+        user: nonNegativeInt,
+        assistant: nonNegativeInt,
+        lastRole: z.enum(['user', 'assistant']).nullable(),
+      })
+      .strict(),
+    memory: z.object({ items: nonNegativeInt, categories: z.array(z.string()), goals: nonNegativeInt }).strict(),
+    /** The reply strategy mode the call was made with. */
+    mode: z.string().optional(),
+    sessionStart: z.boolean().optional(),
+    localTime: z.string().optional(),
+    responseLanguage: z.string().optional(),
+    /** The survey question the reply may ask: the probe hint, or the V2 topic question. */
+    surveyQuestionId: z.string().optional(),
+    /** Names of the optional context sections present, sorted (e.g. `cycleProgress`, `trailingBundle`). */
+    sections: z.array(z.string()),
+  })
+  .strict();
+export type ContextDigest = z.infer<typeof ContextDigestSchema>;
+
 export const RunEventSchema = z
   .object({
     /** 0 covers fixtures and seed. */
@@ -514,6 +613,8 @@ export const RunEventSchema = z
       .object({ name: z.string().min(1), settings: ParamsSchema, request: z.unknown(), response: z.unknown() })
       .strict()
       .optional(),
+    /** Set on reply-model calls (`aiProvider.generateResponse`). */
+    context: ContextDigestSchema.optional(),
   })
   .strict();
 export type RunEvent = z.infer<typeof RunEventSchema>;
@@ -706,7 +807,7 @@ export type LayerRow = z.infer<typeof LayerRowSchema>;
 export const LayerTableSchema = z
   .object({
     rows: z.array(LayerRowSchema),
-    /** Combined P+D+C pass rate the verdict is decided on. */
+    /** Combined P+D+C pass rate the verdict is decided on (never `E`). */
     combinedPdc: LayerRowSchema.omit({ layer: true }),
   })
   .strict();
@@ -801,6 +902,34 @@ export const QaReviewEntrySchema = z
   })
   .strict();
 export type QaReviewEntry = z.infer<typeof QaReviewEntrySchema>;
+
+/**
+ * One executed step's decisions for the report: the turn trace plus the decision metadata of
+ * each reply message. Never carries user or reply text.
+ */
+export const TurnDecisionEntrySchema = z
+  .object({
+    testId: z.string().min(1),
+    sample: z.number().int().min(1),
+    step: z.number().int().min(1),
+    turn: TurnTraceSchema,
+    /** The context of the step's last reply-model call; absent when the step made none. */
+    context: ContextDigestSchema.optional(),
+    replies: z.array(
+      z
+        .object({
+          messageType: z.string().optional(),
+          responseMove: z.string().optional(),
+          bundle: z.boolean(),
+          containsSurveyProbe: z.boolean().optional(),
+          continuity: z.string().optional(),
+          memoryUsed: z.boolean().optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type TurnDecisionEntry = z.infer<typeof TurnDecisionEntrySchema>;
 export type Usage = z.infer<typeof UsageSchema>;
 
 /** Provenance of an accepted baseline (AD-11); shared by `Baseline` and `SuiteDiff`. */
@@ -918,6 +1047,8 @@ export const SuiteRunReportSchema = z
     judgeErrors: z.array(JudgeErrorSchema),
     /** Every meaning FAIL for QA review; optional only so pre-13.3 reports parse (always written since). */
     qaReview: z.array(QaReviewEntrySchema).optional(),
+    /** Per-step orchestrator decisions of executed runs; optional so earlier reports parse. */
+    decisions: z.array(TurnDecisionEntrySchema).optional(),
     usage: UsageSchema,
     /** Call budgets of the invocation; optional only so pre-13.5 reports parse. */
     budget: RunBudgetReportSchema.optional(),
@@ -1059,7 +1190,7 @@ export type LabelTranscript = z.infer<typeof LabelTranscriptSchema>;
 
 export const LabelSchema = z
   .object({
-    criterionId: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
+    criterionId: z.string().regex(CONFLUENCE_CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
     status: LabelStatusSchema,
     transcript: LabelTranscriptSchema,
     /** Provenance only; never read for judging. */
@@ -1092,7 +1223,7 @@ export const QaSessionExportSchema = z
             .array(
               z
                 .object({
-                  criterionId: z.string().regex(CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
+                  criterionId: z.string().regex(CONFLUENCE_CRITERION_ID, 'criterion ids are <sourceCase>.C<n>'),
                   status: LabelStatusSchema,
                   replyIndex: nonNegativeInt.nullable(),
                 })

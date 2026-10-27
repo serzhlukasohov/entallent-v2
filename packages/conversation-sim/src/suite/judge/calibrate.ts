@@ -5,7 +5,7 @@ import {
   AgreementFileSchema,
   LabelSchema,
   LabelsFileSchema,
-  LayerSchema,
+  FrameworkLayerSchema,
   QaSessionExportSchema,
   parseEvaluatedAt,
   type AgreementFile,
@@ -439,7 +439,7 @@ export function calibrationLines(result: CalibrationResult, minLabels: number): 
   const row = (label: string, stats: AgreementStats) =>
     `[suite] ${label.padEnd(5)}  ${String(stats.n).padStart(4)}  ${percent(stats.overall).padStart(6)}  ${kappaText(stats.kappa).padStart(6)}`;
   const lines = [`[suite] ${'layer'.padEnd(5)}  ${'n'.padStart(4)}  ${'agree'.padStart(6)}  ${'kappa'.padStart(6)}`];
-  for (const layer of LayerSchema.options) lines.push(row(layer, agreement.perLayer[layer]));
+  for (const layer of FrameworkLayerSchema.options) lines.push(row(layer, agreement.perLayer[layer]));
   lines.push(row('all', agreement));
   for (const outcome of result.outcomes) {
     if (outcome.agrees) continue;

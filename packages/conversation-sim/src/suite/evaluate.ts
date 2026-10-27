@@ -41,8 +41,8 @@ import {
  * `no-reply` without a call; a PASS whose evidence is not a verbatim fragment of the
  * evaluated reply is re-asked once, then ERROR `judge-invalid-output`; a rejecting judge
  * is ERROR `judge-transport`. Every meaning-decided result is `advisory: !trust.trusted`
- * and carries `judgeUsage`. `state` and `observation-window` criteria are NOT_RUN
- * `judge-unsupported:<kind>`.
+ * and carries `judgeUsage`. `state` criteria are NOT_RUN `judge-unsupported:state`; an
+ * `observation-window` criterion is judged on the window's bot-initiated messages.
  */
 export function evaluate(test: LoadedTest, run: CaseRun, judge: null, trust: JudgeTrust, rules?: RuleRegistry): CriterionResult[];
 export function evaluate(
@@ -301,9 +301,7 @@ function evaluateCriterion(
   }
   if (hasMeaning && withJudge) {
     const at = parseEvaluatedAt(criterion.evaluatedAt);
-    if (at.kind === 'state' || at.kind === 'observation-window') {
-      return decided('NOT_RUN', { reason: `judge-unsupported:${at.kind}` });
-    }
+    if (at.kind === 'state') return decided('NOT_RUN', { reason: `judge-unsupported:${at.kind}` });
     return { pending: true, criterion, partial: decided('PASS') };
   }
   return decided('PASS', meaningSkipped);

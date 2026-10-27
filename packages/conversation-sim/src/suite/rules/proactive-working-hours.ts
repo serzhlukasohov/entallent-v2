@@ -4,13 +4,14 @@ import { PROACTIVE_REQUIRES, initiations } from './proactive';
 import { outbound, windowRun } from './synthetic-run';
 
 /**
- * Suite text, literally: 09:00-18:00 local, any day, start inclusive, end exclusive.
- * Weekends are Confluence open item 2. This is a known red against the product's
- * 22-08 quiet hours and is recorded as FAIL; the product rule is deliberately not
- * imported or mirrored here.
+ * Default window, the suite text literally: 09:00-18:00 local, any day, start inclusive,
+ * end exclusive. Weekends are Confluence open item 2. P-06 passes `startHour: 8, endHour: 20`
+ * (Illia, 2026-10-26, the only allowed deviation from the Confluence v3 snapshot). The product
+ * sends until its 22:00 quiet-hours start, so a 20:00-22:00 send is a known red recorded as
+ * FAIL; the product rule is deliberately not imported or mirrored here.
  */
-const START_MINUTE = 9 * 60;
-const END_MINUTE = 18 * 60;
+const DEFAULT_START_HOUR = 9;
+const DEFAULT_END_HOUR = 18;
 
 /** `UTC`, `Etc/UTC` or an `Area/Location` name; fixed offsets and abbreviations ignore DST. */
 const IANA_NAME = /^(?:UTC|Etc\/UTC|[A-Za-z][A-Za-z_]*(?:\/[A-Za-z0-9_+-]+)+)$/;
@@ -25,9 +26,18 @@ function validTimeZone(timeZone: string): boolean {
   }
 }
 
+const hour = z.number().int().min(0).max(24);
+
 const params = z
-  .object({ timezone: z.string().min(1).refine(validTimeZone, { message: 'unknown IANA time zone' }) })
-  .strict();
+  .object({
+    timezone: z.string().min(1).refine(validTimeZone, { message: 'unknown IANA time zone' }),
+    /** First local hour of the window, inclusive (default 9). */
+    startHour: hour.default(DEFAULT_START_HOUR),
+    /** Local hour the window ends, exclusive (default 18); 24 is midnight. */
+    endHour: hour.default(DEFAULT_END_HOUR),
+  })
+  .strict()
+  .refine((value) => value.startHour < value.endHour, { message: 'startHour must be before endHour', path: ['endHour'] });
 
 /** Local `HH:MM` of an instant in `timeZone`; throws if the formatter omits a part. */
 export function localTime(occurredAt: string, timeZone: string): string {
@@ -45,12 +55,14 @@ export function localTime(occurredAt: string, timeZone: string): string {
   return `${part('hour')}:${part('minute')}`;
 }
 
-/** P-06 working hours: every bot-initiated message lands within 09:00-18:00 local. */
+/** P-06 working hours: every bot-initiated message lands within `startHour`-`endHour` local (default 09:00-18:00). */
 export const proactiveWorkingHours: RuleEntry = {
   requires: PROACTIVE_REQUIRES,
   params,
   run(run, _criterion, raw) {
-    const { timezone } = params.parse(raw ?? {});
+    const { timezone, startHour, endHour } = params.parse(raw ?? {});
+    const startMinute = startHour * 60;
+    const endMinute = endHour * 60;
     const selected = initiations(run);
     if (selected.kind === 'outcome') return selected.outcome;
     if (selected.messages.length === 0) return { status: 'NOT_OBSERVABLE', evidence: 'no-initiations' };
@@ -58,7 +70,7 @@ export const proactiveWorkingHours: RuleEntry = {
       const local = localTime(message.occurredAt, timezone);
       const [hour, minute] = local.split(':').map(Number) as [number, number];
       const minuteOfDay = hour * 60 + minute;
-      return minuteOfDay >= START_MINUTE && minuteOfDay < END_MINUTE
+      return minuteOfDay >= startMinute && minuteOfDay < endMinute
         ? []
         : [`${message.occurredAt} (local ${local} ${timezone})`];
     });

@@ -78,3 +78,49 @@ Amended 2026-10-24 by `planning-artifacts/sprint-change-proposal-2026-10-24.md`.
   - `evaluate` synthesizes the `effect-count` pairing from `stateEffect` where events are observed.
   - Journeys are reported and diffed separately and do not count toward the verdict.
 - The per-case decomposition table (source case, test id, seed summary, evaluated turn, criteria, levels) is produced by Story 12.4 and replaces this paragraph's proposal once QA confirms.
+
+### 5.1 Decomposition of suite p-v1 (Story 12.4, 2026-10-27)
+
+Source of the texts: Confluence 189333505 v3 snapshot (`p-suite-v1-confluence-v3.md`). Cases: `packages/conversation-sim/src/suite/cases/p-v1/`. User texts are verbatim; seeded coach texts, working summaries and the three authored P-09 user turns are listed in `cases/p-v1/texts.ts`. Product divergences: `p-v1-product-findings.md`. Criteria in parentheses carry `levels: ['L1']` inside an L0 test (no L0-capable rule, or the L0 scripted model cannot produce the verdict they need). P-07 stays L1 only (`pulseCycle` is unsupported at L0); P-09.A3 and P-09.A4 are L1 only (nothing in them is decidable without an interpreted verdict). E criteria are the approved engineering effects (`p-v1-effects-draft.md`), rule-only.
+
+| Source case | Test id | Seed summary | Seed approved | Evaluated turn | Criteria | Levels |
+| --- | --- | --- | --- | --- | --- | --- |
+| P-01 | P-01.A1 | empty; clock 10:00 at UTC+01:00 (clock offset; persona timezone not set) | approved: Illia, 2026-10-26 | step 1 | (C1), C2, E1, E2 | L0, L1 |
+| P-02 | P-02.A1 | empty; clock 22:30 at UTC+01:00 (clock offset; persona timezone not set) | approved: Illia, 2026-10-26 | step 1 | (C1), (C2), E1 | L0, L1 |
+| P-03 | P-03.A1 | pending bot question (`proactive_check_in`, 1 h before) | approved: Illia, 2026-10-26 | step 1 | (C1), (C2), (C3), E1, E2 | L0, L1 |
+| P-04 | P-04.A1 | U step 1, B reminder draft; reply 1 3 min before | approved: Illia, 2026-10-26 | step 2 | (C1), (C2), E1 | L0, L1 |
+| P-05 | P-05.A1 | empty; freshPersona | approved: Illia, 2026-10-26 | step 1 | (C1), E1, E2 (C2 NOT TESTABLE) | L0, L1 |
+| P-06 | P-06 | observation: 7 days from Mon 08:00 UTC, scan 15 min, UTC user, quiet 22-08, gap 2 d (effect P-06.E2), silence 3 d (product default) | n/a (no seed) | window | C1, C2, C3 (08:00-20:00), (C4), (C5), E1, E2 | L0, L1 |
+| P-07 | P-07.A1 | empty; pulseCycle (Autonomy uncovered), disclosure delivered | approved: Illia, 2026-10-26 | step 1 | C4, C5, E1 | L1 |
+| P-07 | P-07.A2 | U1, B1 (neutral) | approved: Illia, 2026-10-26 | step 2 | C1, C4, C5, E1 | L1 |
+| P-07 | P-07.A3 | U1, B1, U2, B2 | approved: Illia, 2026-10-26 | step 3 | C2, C3, C4, C5, E1, E2 | L1 |
+| P-08 | P-08.A1 | empty | approved: Illia, 2026-10-26 | step 1 | (C1), (C4), E1 | L0, L1 |
+| P-08 | P-08.A2 | U1, B1 (asks for the cause) | approved: Illia, 2026-10-26 | step 2 | (C4), E1 | L0, L1 |
+| P-08 | P-08.A3 | U1, B1, U2, B2 (no question) | approved: Illia, 2026-10-26 | step 3 | (C2, conversation), (C3), (C4), E1 | L0, L1 |
+| P-09 | P-09.A1 | U1, B1, U2, B2; confirmationState q1, q2 ready, q3 pending; disclosure | approved: Illia, 2026-10-27 | step 3 | E1 | L0, L1 |
+| P-09 | P-09.A2 | U1..U3, B1..B3 (B3 not a summary); q1-q3 ready | approved: Illia, 2026-10-27 | authored "that's pretty much it on my side" | C1, (C2), E2, E3 | L0, L1 |
+| P-09 | P-09.A3 | ... + authored turn, B summary (`v2ConfirmationBundle`); bundle q1-q3 staged | approved: Illia, 2026-10-27 | step 4 | E4, E5, E6 | L1 |
+| P-09 | P-09.A4 | ... + U step 4, B clarification prompt; q1, q3 confirmed, q2 disputed with a delivered clarification question | approved: Illia, 2026-10-27 | authored clarification | C3, E7 | L1 |
+| P-09 | P-09.A5 | ... + authored clarification, B corrected statement; q2 corrected statement staged | approved: Illia, 2026-10-27 | authored "yes, that's right" | (C4), (C5), C6, (E8) | L0, L1 |
+| P-09 | P-09.A6 | ... + authored confirmation, B "that part is complete"; q1-q3 confirmed | approved: Illia, 2026-10-27 | step 5 | (C7), (C8), E9 (C9 NOT TESTABLE) | L0, L1 |
+| P-10 | P-10.A1 | U1, B1, U2, B2; confirmationState Belonging q1, q2, q3 ready; disclosure | approved: Illia, 2026-10-26 (q3 summary 2026-10-27) | step 3 | (C1), C2, (C3), E1, E2 | L0, L1 |
+| P-09 | P-09.J | journey: pulseCycle (Autonomy), disclosure; steps 1-3, authored summary turn (checkpoint `bundle-staged`, stop), step 4, authored clarification, authored confirmation, step 5 | approved: Illia, 2026-10-27 | steps 1-8 | C1, C2 (reply 4), C3 (reply 6, meaning), C4 (reply 7), C5 (questionProgress after step 7), C6 (invariant, max 2), C7, C8 (reply 8) | L1, L2 |
+| P-10 | P-10.J | journey: pulseCycle (Belonging), disclosure; steps 1-3 | n/a | steps 1-3 | C1, C2, C3 (reply 3) | L1, L2 |
+
+Notes:
+
+- Journeys carry no `freshPersona`: it verifies an empty question window, which `pulseCycle` opens. Isolation comes from the run profile.
+- Every atomic test seeds with `TURN_GAP_MS` (60 s) between turns; the disclosure is delivered 1 h before the evaluated turn.
+- P-06.C4 and P-06.C5 are meaning checks on the observation window; at L1 `evaluate` reports them NOT_RUN `judge-unsupported:observation-window` (existing framework behavior).
+
+Engineering effect ids: the draft numbers effects per test; the manifest numbers them per source case.
+
+| Draft row | Manifest id |
+| --- | --- |
+| P-01.A1 E1, E2; P-02.A1 E1; P-03.A1 E1, E2; P-04.A1 E1; P-05.A1 E1, E2; P-06 E1, E2; P-07 E1, E2; P-08 E1; P-10.A1 E1, E2 | same number under the source case (`P-01.E1`, ...) |
+| P-09.A1 E1 | P-09.E1 |
+| P-09.A2 E1, E2 | P-09.E2, P-09.E3 |
+| P-09.A3 E1, E2, E3 | P-09.E4, P-09.E5, P-09.E6 |
+| P-09.A4 E1 | P-09.E7 |
+| P-09.A5 E1 | P-09.E8 |
+| P-09.A6 E1 | P-09.E9 |

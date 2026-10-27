@@ -210,7 +210,7 @@ describe('suite:run', () => {
     expect(h.out).toContain(`[suite] report: ${join('runs', 'suites', runId, 'report.json')}`);
   });
 
-  it.each(['smoke-v1', 'p-v1'])('runs the empty registered suite %s and exits 0 with an INCOMPLETE report', async (id) => {
+  it.each(['smoke-v1'])('runs the empty registered suite %s and exits 0 with an INCOMPLETE report', async (id) => {
     const h = harness();
     expect(await main(['run', '--suite', id, '--level', 'L0'], h.deps)).toBe(0);
     expect(h.out).toContain(`[suite] ${id} has no tests`);
@@ -1132,19 +1132,17 @@ describe('suite:ci', () => {
   });
 
   it('skips every empty registered suite, writes the summary and exits 0 with no run folder', async () => {
-    writeConfig(['p-v1', 'smoke-v1']);
+    writeConfig(['smoke-v1']);
     const h = ciHarness();
     expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(0);
     expect(h.err).toEqual([]);
     expect(h.out).toEqual([
-      '[suite] ci: p-v1 skipped (no tests)',
       '[suite] ci: smoke-v1 skipped (no tests)',
       '[suite] ci: no registered suite has tests; L0 gate passes with nothing to check',
       '[suite] ci: L0 gate exit 0',
     ]);
     const summary = readFileSync(summaryFile(), 'utf8');
     expect(summary).toContain('No registered suite has tests; L0 gate passes with nothing to check.');
-    expect(summary).toContain('- p-v1: skipped (no tests)');
     expect(summary).toContain('- smoke-v1: skipped (no tests)');
     expect(runDirs()).toEqual([]);
 
@@ -1154,7 +1152,7 @@ describe('suite:ci', () => {
   });
 
   it('runs and merge-base-diffs a suite with tests and summarizes layers, verdict and diff', async () => {
-    writeConfig(['p-v1', 'smoke-v1', 'x-suite']);
+    writeConfig(['smoke-v1', 'x-suite']);
     const h = ciHarness();
     expect(await main(['ci', '--level', 'L0', '--summary', summaryFile()], h.deps)).toBe(0);
     expect(h.err).toEqual([]);
@@ -1176,7 +1174,7 @@ describe('suite:ci', () => {
   });
 
   it('exits 1 on a regression and lists the gating entry, and keeps run ids unique', async () => {
-    writeConfig(['p-v1', 'smoke-v1', 'x-suite']);
+    writeConfig(['smoke-v1', 'x-suite']);
     let failing = false;
     const executor = () =>
       fakeExecutor((test, attempt) =>
@@ -1224,7 +1222,7 @@ describe('suite:ci', () => {
   });
 
   it('continues after a load failure and a run failure, counting each as 1', async () => {
-    writeConfig(['p-v1', 'x-suite', 'x-two', 'smoke-v1']);
+    writeConfig(['x-suite', 'x-two', 'smoke-v1']);
     const h = ciHarness();
     const load = h.deps.loadSuite;
     h.deps.loadSuite = (id) => {
@@ -1258,7 +1256,7 @@ describe('suite:ci', () => {
   });
 
   it('raises the exit code to 1 when the step summary cannot be appended', async () => {
-    writeConfig(['p-v1']);
+    writeConfig(['smoke-v1']);
     writeFileSync(join(dir, 'plain-file'), 'x');
     const h = ciHarness();
     expect(await main(['ci', '--level', 'L0', '--summary', join(dir, 'plain-file', 'summary.md')], h.deps)).toBe(1);
@@ -1268,7 +1266,7 @@ describe('suite:ci', () => {
   });
 
   it('resolves a relative --summary against INIT_CWD', async () => {
-    writeConfig(['p-v1']);
+    writeConfig(['smoke-v1']);
     const h = ciHarness();
     h.deps.env.INIT_CWD = join(dir, 'root');
     expect(await main(['ci', '--level', 'L0', '--summary', 'nested/summary.md'], h.deps)).toBe(0);
@@ -1515,7 +1513,7 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
   const readRun = (runId: string) => SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8')));
 
   beforeEach(() => {
-    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1', 'x-judged'] }));
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['smoke-v1', 'x-judged'] }));
   });
 
   /** `reply` drives the executor; `judge` decides meaning checks; `files[suiteId]` is the merge-base baseline text. */
@@ -1568,12 +1566,11 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
   });
 
   it('skips empty suites as "no L1 tests" and passes with nothing to check, writing no run folder', async () => {
-    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1'] }));
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['smoke-v1'] }));
     const { h, executor, mergeBaseReads } = l1Ci();
     expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], h.deps)).toBe(0);
     expect(h.err).toEqual([]);
     expect(h.out).toEqual([
-      '[suite] ci: p-v1 skipped (no L1 tests)',
       '[suite] ci: smoke-v1 skipped (no L1 tests)',
       `[suite] ci: ${NOTHING}`,
       '[suite] ci: L1 gate exit 0',
@@ -1581,7 +1578,7 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
     const summary = readFileSync(summaryFile(), 'utf8');
     expect(summary).toContain('## Suite L1 gate');
     expect(summary).toContain('No registered suite has L1 tests and an L1 baseline at the merge-base; L1 gate passes with nothing to check.');
-    expect(summary).toContain('- p-v1: skipped (no L1 tests)');
+    expect(summary).toContain('- smoke-v1: skipped (no L1 tests)');
     expect(summary).not.toContain(ADVISORY);
     expect(runDirs()).toEqual([]);
     expect(executor.calls).toEqual([]);
@@ -1721,13 +1718,12 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
     });
 
     it('empty suites: both skipped "no L1 tests", the scheduled nothing-to-check line, exit 0, no run folder', async () => {
-      writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1'] }));
+      writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['smoke-v1'] }));
       const { h, executor, mergeBaseReads } = l1Ci();
       expect(await main([...NIGHTLY, '--summary', summaryFile()], h.deps)).toBe(0);
       expect(h.err).toEqual([]);
       expect(h.out).toEqual([
         `[suite] ci: ${INCONCLUSIVE_1}`,
-        '[suite] ci: p-v1 skipped (no L1 tests)',
         '[suite] ci: smoke-v1 skipped (no L1 tests)',
         `[suite] ci: ${NOTHING_SCHEDULED}`,
         '[suite] ci: L1 gate exit 0',
@@ -1854,7 +1850,6 @@ describe('suite:ci --level L1 with an injected executor and judge (Story 13.6)',
       const { h, executor } = l1Ci();
       expect(await main(['ci', '--level', 'L1', '--summary', summaryFile()], h.deps)).toBe(0);
       expect(h.out).toEqual([
-        '[suite] ci: p-v1 skipped (no L1 tests)',
         '[suite] ci: smoke-v1 skipped (no L1 tests)',
         '[suite] ci: x-judged skipped (no L1 baseline at merge-base base0000)',
         `[suite] ci: ${NOTHING}`,
@@ -1894,7 +1889,7 @@ describe('suite:ci --level L2 with a fake-transport L2 executor and an injected 
   const readRun = (runId: string) => SuiteRunReportSchema.parse(JSON.parse(readFileSync(join(dir, 'runs', 'suites', runId, 'report.json'), 'utf8')));
 
   beforeEach(() => {
-    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1', 'x-l2'] }));
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['smoke-v1', 'x-l2'] }));
   });
 
   /** Every step on the fake stack gets its own reply on the first poll; `files[suiteId]` is the merge-base baseline text. */
@@ -1925,12 +1920,11 @@ describe('suite:ci --level L2 with a fake-transport L2 executor and an injected 
   });
 
   it('empty suites: both skipped "no L2 tests", the nothing-to-check line, exit 0, no run folder', async () => {
-    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['p-v1', 'smoke-v1'] }));
+    writeFileSync(join(dir, 'suite.config.json'), JSON.stringify({ ...RUNNER_CONFIG, suites: ['smoke-v1'] }));
     const { h, stack, mergeBaseReads } = l2Ci();
     expect(await main([...WEEKLY, '--summary', summaryFile()], h.deps)).toBe(0);
     expect(h.err).toEqual([]);
     expect(h.out).toEqual([
-      '[suite] ci: p-v1 skipped (no L2 tests)',
       '[suite] ci: smoke-v1 skipped (no L2 tests)',
       '[suite] ci: no registered suite has L2 tests; L2 run passes with nothing to check',
       '[suite] ci: L2 gate exit 0',

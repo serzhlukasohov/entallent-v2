@@ -3,6 +3,7 @@ import { clockFixture } from './clock';
 import { confirmationStateFixture } from './confirmation-state';
 import { disclosureDeliveredFixture } from './disclosure-delivered';
 import { freshPersonaFixture } from './fresh-persona';
+import { memoryItemsFixture } from './memory-items';
 import { pendingBotQuestionFixture } from './pending-bot-question';
 import { proactiveUsersFixture } from './proactive-users';
 import { pulseCycleFixture } from './pulse-cycle';
@@ -21,6 +22,7 @@ export const L0_FIXTURES: Readonly<Partial<Record<FixtureName, FixtureModule<unk
   pendingBotQuestion: pendingBotQuestionFixture,
   disclosureDelivered: disclosureDeliveredFixture,
   proactiveUsers: proactiveUsersFixture,
+  memoryItems: memoryItemsFixture,
 });
 
 /**

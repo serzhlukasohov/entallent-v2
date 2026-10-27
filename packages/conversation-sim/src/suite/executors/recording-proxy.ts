@@ -1,4 +1,4 @@
-import type { RunEvent } from '../schema';
+import type { ContextDigest, RunEvent } from '../schema';
 
 /** Where recording proxies append events; the executor moves `stepIndex` between steps. */
 export interface EventSink {
@@ -27,16 +27,20 @@ export function record<T extends object>(
   label: string,
   sink: EventSink & { readonly peek: () => Date },
   model?: ModelInfo,
+  digest?: ContextDigester,
 ): T {
   return new Proxy(port, {
     get(target, property) {
       const value: unknown = Reflect.get(target, property, target);
       if (typeof value !== 'function' || typeof property === 'symbol' || property === 'constructor') return value;
       const method = value as (...args: unknown[]) => unknown;
-      return (...args: unknown[]) => invoke(sink, label, property, args, () => method.apply(target, args), model);
+      return (...args: unknown[]) => invoke(sink, label, property, args, () => method.apply(target, args), model, digest);
     },
   });
 }
+
+/** Builds `RunEvent.context` from a call's method and arguments; `undefined` leaves it unset. */
+export type ContextDigester = (method: string, args: readonly unknown[]) => ContextDigest | undefined;
 
 /**
  * The model behind a recorded port (AD-3, AD-17). With it every event of that port also
@@ -55,7 +59,9 @@ function invoke(
   args: unknown[],
   call: () => unknown,
   model?: ModelInfo,
+  digest?: ContextDigester,
 ): unknown {
+  const context = digest?.(method, args);
   const event: RunEvent = {
     stepIndex: sink.stepIndex,
     seq: sink.events.length,
@@ -66,6 +72,7 @@ function invoke(
     resultSummary: '',
     durationMs: 0,
     ...(model ? { model: { name: model.name, settings: { ...(model.settings ?? {}) }, request: plain(args), response: null } } : {}),
+    ...(context !== undefined ? { context } : {}),
   };
   sink.events.push(event);
   const started = sink.peek().getTime();

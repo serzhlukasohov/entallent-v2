@@ -53,7 +53,7 @@ describe('pulseCycle fixture', () => {
     expect(L1_FIXTURES.pulseCycle).toBe(pulseCycleFixture);
     expect(L0_FIXTURES.pulseCycle).toBeUndefined();
     expect(Object.keys(L1_FIXTURES).sort()).toEqual(
-      ['clock', 'confirmationState', 'disclosureDelivered', 'freshPersona', 'pendingBotQuestion', 'proactiveUsers', 'pulseCycle', 'seededHistory'],
+      ['clock', 'confirmationState', 'disclosureDelivered', 'freshPersona', 'memoryItems', 'pendingBotQuestion', 'proactiveUsers', 'pulseCycle', 'seededHistory'],
     );
   });
 

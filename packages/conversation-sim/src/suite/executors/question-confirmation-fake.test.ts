@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { InMemoryQuestionConfirmationRepository, type SimQuestion } from '../../fakes/question-confirmation';
+import {
+  CLARIFICATION_PROMPT_DELIVERED_AT,
+  InMemoryQuestionConfirmationRepository,
+  SEEDED_CLARIFICATION_PROMPT_ID,
+  type SimQuestion,
+} from '../../fakes/question-confirmation';
 
 const SCOPE = { tenantId: 't', userId: 'u', conversationId: 'c' };
 
@@ -55,7 +60,7 @@ describe('InMemoryQuestionConfirmationRepository', () => {
     expect(await statuses(repo)).toEqual({ q1: 'disputed', q2: 'disputed' });
   });
 
-  it('partial confirms accepted, disputes disputed and declines declined questions', async () => {
+  it('partial confirms accepted, sends disputed to pending_clarification and declines declined questions', async () => {
     const { repo, bundleId } = await withStagedBundle(['q1', 'q2', 'q3']);
     await repo.applyQuestionBundleVerdict({
       inboundMessageId: 'in-1',
@@ -63,7 +68,105 @@ describe('InMemoryQuestionConfirmationRepository', () => {
       verdict: { kind: 'partial', acceptedQuestionIds: ['q1'], disputedQuestionIds: ['q2'], declinedQuestionIds: ['q3'] },
     });
     expect(repo.questionProgress()).toEqual({ answered: 1, total: 3 });
-    expect(await statuses(repo)).toEqual({ q1: 'confirmed', q2: 'disputed', q3: 'declined' });
+    expect(await statuses(repo)).toEqual({ q1: 'confirmed', q2: 'pending_clarification', q3: 'declined' });
+  });
+
+  it('partial: the first disputed statement gets a pending clarification with no prompt yet, as in production', async () => {
+    const { repo, bundleId } = await withStagedBundle(['q1', 'q2', 'q3']);
+    const verdict = { kind: 'partial' as const, acceptedQuestionIds: ['q1'], disputedQuestionIds: ['q3', 'q2'], declinedQuestionIds: [] };
+    const preview = await repo.previewPendingQuestionClarificationAfterBundleVerdict({
+      tenantId: 't', userId: 'u', bundleId, disputedQuestionIds: verdict.disputedQuestionIds,
+    });
+    const expected = {
+      workingInsightId: 'working-insight-q2', tenantId: 't', userId: 'u', surveyWindowId: 'w', surveyQuestionId: 'q2',
+      questionVersion: 'v1', questionGroup: 'autonomy', workingSummary: 'Summary q2.', disputedStatement: 'Summary q2.',
+      clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+    };
+    // Bundle order decides, not the order the ids were given in.
+    expect(preview).toEqual(expected);
+    // A preview writes nothing.
+    expect(repo.pendingClarification()).toBeNull();
+
+    await repo.applyQuestionBundleVerdict({ inboundMessageId: 'in-1', bundleId, verdict });
+    expect(repo.pendingClarification()).toEqual(expected);
+    expect(await repo.findPendingQuestionClarification({ tenantId: 't', userId: 'u' })).toEqual(expected);
+    expect(await repo.previewPendingQuestionClarificationAfterVerdict({ workingInsightId: 'working-insight-q2' })).toMatchObject({
+      workingInsightId: 'working-insight-q3', surveyQuestionId: 'q3', clarificationPromptMessageId: null,
+    });
+
+    // Staging the question marks it delivered; resolving it moves on to the next disputed statement.
+    expect(await repo.stageQuestionClarificationPrompt({ workingInsightId: 'working-insight-q2', promptMessageId: 'p-1' })).toBe(true);
+    expect(repo.pendingClarification()).toMatchObject({
+      clarificationPromptMessageId: 'p-1', clarificationPromptSentAt: CLARIFICATION_PROMPT_DELIVERED_AT,
+    });
+    await repo.applyQuestionClarificationVerdict({
+      workingInsightId: 'working-insight-q2', inboundMessageId: 'in-2', verdict: { kind: 'clarified', correctedSummary: 'Corrected q2.' },
+    });
+    expect(repo.pendingClarification()).toMatchObject({ workingInsightId: 'working-insight-q3' });
+    expect(await repo.previewPendingQuestionClarificationAfterVerdict({ workingInsightId: 'working-insight-q3' })).toBeNull();
+  });
+
+  it('preview: null without disputed statements, throws on a stale bundle or an unknown id', async () => {
+    const { repo, bundleId } = await withStagedBundle(['q1', 'q2']);
+    const scope = { tenantId: 't', userId: 'u' };
+    expect(await repo.previewPendingQuestionClarificationAfterBundleVerdict({ ...scope, bundleId, disputedQuestionIds: [] })).toBeNull();
+    await expect(
+      repo.previewPendingQuestionClarificationAfterBundleVerdict({ ...scope, bundleId: 'other', disputedQuestionIds: ['q1'] }),
+    ).rejects.toThrow('v2_clarification_preview_bundle_stale');
+    await expect(
+      repo.previewPendingQuestionClarificationAfterBundleVerdict({ ...scope, bundleId, disputedQuestionIds: ['q9'] }),
+    ).rejects.toThrow('v2_clarification_preview_mapping_invalid');
+    await expect(
+      repo.previewPendingQuestionClarificationAfterBundleVerdict({ ...scope, bundleId, disputedQuestionIds: ['q1', 'q1'] }),
+    ).rejects.toThrow('v2_clarification_preview_mapping_invalid');
+    await expect(repo.previewPendingQuestionClarificationAfterVerdict({ workingInsightId: 'none' })).rejects.toThrow(
+      'v2_clarification_preview_scope_mismatch',
+    );
+  });
+
+  it('ready bundle: needs every question of the group ready or closed, and nothing awaiting or pending (production rule)', async () => {
+    const repo = new InMemoryQuestionConfirmationRepository();
+    const scope = { tenantId: 't', userId: 'u' };
+    repo.seedWindow({ tenantId: 't', userId: 'u', surveyWindowId: 'w', questions: [question('q1'), question('q2'), question('q3', 'pending')] });
+    expect(await repo.findReadyQuestionBundle(scope)).toBeNull();
+    expect(await repo.hasReadyQuestionBundle(scope)).toBe(false);
+
+    repo.seedWindow({ tenantId: 't', userId: 'u', surveyWindowId: 'w', questions: [question('q1'), question('q2', 'confirmed'), question('q3')] });
+    expect((await repo.findReadyQuestionBundle(scope))?.questions.map((entry) => entry.surveyQuestionId)).toEqual(['q1', 'q3']);
+
+    // A later group qualifies when the first one does not.
+    repo.seedWindow({
+      tenantId: 't', userId: 'u', surveyWindowId: 'w',
+      questions: [question('q1'), question('q2', 'pending'), { ...question('b1'), questionGroup: 'belonging' }],
+    });
+    expect(await repo.findReadyQuestionBundle(scope)).toMatchObject({ questionGroup: 'belonging', questions: [{ surveyQuestionId: 'b1' }] });
+
+    repo.seedPendingClarification({
+      workingInsightId: 'wi-1', tenantId: 't', userId: 'u', surveyWindowId: 'w', surveyQuestionId: 'q2', questionVersion: 'v1',
+      questionGroup: 'autonomy', workingSummary: 'Summary q2.', disputedStatement: 'Summary q2.',
+      clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+    });
+    expect(await repo.findReadyQuestionBundle(scope)).toBeNull();
+  });
+
+  it('ready bundle: none while a staged bundle awaits its verdict', async () => {
+    const { repo } = await withStagedBundle(['q1']);
+    repo.seedWindow({ tenantId: 't', userId: 'u', surveyWindowId: 'w', questions: [question('q1'), question('q2')] });
+    expect(await repo.findReadyQuestionBundle({ tenantId: 't', userId: 'u' })).toBeNull();
+  });
+
+  it('a seeded pending clarification was already asked and delivered', () => {
+    const repo = new InMemoryQuestionConfirmationRepository();
+    repo.seedWindow({ tenantId: 't', userId: 'u', surveyWindowId: 'w', questions: [question('q1', 'disputed')] });
+    repo.seedPendingClarification({
+      workingInsightId: 'wi-1', tenantId: 't', userId: 'u', surveyWindowId: 'w', surveyQuestionId: 'q1', questionVersion: 'v1',
+      questionGroup: 'autonomy', workingSummary: 'Summary q1.', disputedStatement: 'Summary q1.',
+      clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+    });
+    expect(repo.pendingClarification()).toMatchObject({
+      clarificationPromptMessageId: SEEDED_CLARIFICATION_PROMPT_ID,
+      clarificationPromptSentAt: CLARIFICATION_PROMPT_DELIVERED_AT,
+    });
   });
 
   function withPending(): InMemoryQuestionConfirmationRepository {

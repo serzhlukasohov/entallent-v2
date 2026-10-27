@@ -3301,3 +3301,30 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Parse every new or edited workflow with `yaml.safe_load` before finishing; multi-word shell lines go in `run: |` block scalars; `l1-gate-workflow.test.ts` asserts the workflow structure.
 - Regression check: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/conversation-suite-l1-pr.yml'))"` plus `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/l1-gate-workflow.test.ts`.
 - Status: fixed
+
+## 2026-10-27: P-suite effect criteria missed the decisions the orchestrator branches on
+
+- Symptom: The approved P-suite engineering effects (Story 12.4) checked only visible side effects (sends, staged summaries, verdict writes). The turn trace recorded mode, primary intent, outcome and `bundleReply`, but not the risk assessment (severity, type, escalation, survey block) or the rest of the classification (`surveyAllowed`, urgency, safety check, cycle-status question), although these gate every survey branch, crisis/sensitive mode and escalation in `conversation-orchestrator.ts`. A live run could not tell why a summary or survey question was missing, and no criterion checked any of these decisions.
+- Expected: The suite records every decision the orchestrator branches on and proposes effect criteria for the expected decisions of each case.
+- Root cause layer: verification
+- Harness fix: `turnTrace` records `turn.classification` and `turn.risk` (bounded values, no reasoning text); L1 declares both observation fields, L0 records but does not declare them (scripted outputs); `report.md` has a `## Turn decisions` table per executed step. Decision effect criteria are drafted in `p-v1-effects-draft.md` and wait for approval.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/report.test.ts src/suite/runner.test.ts` ("turn decisions" and the p-v1 L0 decisions assertions).
+- Status: fixed (decision criteria approved and implemented as `turn-decision`, 2026-10-27)
+
+## 2026-10-27: P-suite never checks the context the model receives, and P-06.C4 has nothing to refer to
+
+- Symptom: The orchestrator builds a response context on every turn (transcript, memory items and goals, session start, local time, survey question, cycle progress, trailing summary, disclosure). The suite records it only as a truncated `argsSummary` (L0) or the raw model request (L1) and no rule checks it, so a turn answered without its history or memory passes every L0 check. P-06 seeds no earlier conversation, memory or follow-up, so P-06.C4 ("a bot-initiated message that continues an earlier conversation restates what it refers to") can never meet its own premise; Story 12.4 mapped it to a meaning check without flagging that. Memory is always empty in P-suite runs (L0 extraction proposes nothing; no memory fixture).
+- Expected: Context-dependent cases assert the context the product built (deterministic, so at L0), a memory fixture seeds what a case needs, and a criterion whose premise the setup cannot produce is flagged instead of mapped.
+- Root cause layer: verification
+- Harness fix: every `aiProvider.generateResponse` event carries a context digest (`RunEvent.context`, counts and flags only), shown per step in `report.md` "Turn decisions"; `memoryItems` fixture seeds active memory. Pending approval: a context rule with per-case checks and the P-06 setup with an earlier conversation for C4 (`p-v1-effects-draft.md`).
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/executors/context-digest.test.ts src/suite/executors/l0-deterministic-executor.test.ts src/suite/fixtures/fixtures.test.ts` (digest, seeded history and memory reach the model, memory fixture).
+- Status: fixed for context (`model-context` criteria and the P-06 earlier-conversation setup, 2026-10-27); P-06.C4 judging is tracked in the next entry
+
+## 2026-10-27: P-06 meaning criteria are never judged, and the walkthrough said they were
+
+- Symptom: `evaluate.ts` returns NOT_RUN `judge-unsupported:observation-window` for every meaning check on an observation window, so P-06.C4 and P-06.C5 can never be judged at any level. Story 12.4 mapped both to meaning checks, and the per-test walkthrough told Illia the judge evaluates them.
+- Expected: A criterion mapped to a check the evaluator cannot run is flagged at mapping time (NOT_RUN by construction), never presented as covered.
+- Root cause layer: verification
+- Harness fix: `buildJudgeInput` supports `observation-window` (seed history, then the window's bot-initiated messages; criterion `windowScope: first | all`), `evaluate` no longer returns `judge-unsupported:observation-window`; P-06.C4 uses `first`, C5 `all`. Only `state` meaning criteria remain unjudged.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/evaluate.test.ts src/suite/executors/l1-orchestrator-executor.test.ts` ("observation windows" and "p-v1 P-06" L1 judging).
+- Status: fixed (offline, mock judge; no live judge run yet)

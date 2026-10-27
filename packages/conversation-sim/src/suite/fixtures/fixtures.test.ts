@@ -48,7 +48,7 @@ async function applyAndVerify(built: Built): Promise<ReturnType<FixtureInstance[
 describe('L0 fixtures', () => {
   it('registers every L0 fixture and leaves pulseCycle out', () => {
     expect(Object.keys(L0_FIXTURES).sort()).toEqual(
-      ['clock', 'confirmationState', 'disclosureDelivered', 'freshPersona', 'pendingBotQuestion', 'proactiveUsers', 'seededHistory'],
+      ['clock', 'confirmationState', 'disclosureDelivered', 'freshPersona', 'memoryItems', 'pendingBotQuestion', 'proactiveUsers', 'seededHistory'],
     );
     for (const [name, module] of Object.entries(L0_FIXTURES)) expect(module!.name).toBe(name);
   });
@@ -140,6 +140,23 @@ describe('L0 fixtures', () => {
       sourceMessageIds: [],
     });
     expect(await built.instance.verify()).toMatchObject({ satisfied: false, detail: 'memory:1' });
+  });
+
+  it('memoryItems: writes active memory items the product reads back, and fails when one is missing', async () => {
+    const items = [
+      { category: 'commitment', content: 'Will ask the team lead on Monday about the release date.', importance: 0.9 },
+      { category: 'project_context', content: 'Works on the payments migration.' },
+    ];
+    const built = build('memoryItems', { items });
+    expect(await applyAndVerify(built)).toEqual({ source: 'fixture', name: 'memoryItems', satisfied: true });
+    const active = await built.world.state.memoryRepo.findActiveByUser(SIM_USER_ID, SIM_TENANT_ID);
+    expect(active.map((item) => item.content)).toEqual([items[0]!.content, items[1]!.content]);
+    expect(active[1]).toMatchObject({ importance: 0.7, status: 'active', sensitivity: 'normal' });
+    expect(built.world.sink.events).toEqual([]);
+
+    const missing = build('memoryItems', { items });
+    expect(await missing.instance.verify()).toMatchObject({ satisfied: false, detail: 'missing 2 of 2 items' });
+    expect(() => L0_FIXTURES.memoryItems!.params.parse({ items: [{ category: 'secret', content: 'x' }] })).toThrow();
   });
 
   it('pendingBotQuestion: the last message is an unanswered outbound bot question', async () => {

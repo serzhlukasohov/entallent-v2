@@ -653,7 +653,7 @@ describe('evaluate: with a judge (Story 13.1)', () => {
     expect(invalid.model.doGenerateCalls.length + errored.model.doGenerateCalls.length).toBe(0);
   });
 
-  it('makes state and observation-window meaning criteria NOT_RUN judge-unsupported, in scope', async () => {
+  it('makes state meaning criteria NOT_RUN judge-unsupported, in scope', async () => {
     const state = criterion({
       id: C1,
       evaluatedAt: 'state',
@@ -663,18 +663,70 @@ describe('evaluate: with a judge (Story 13.1)', () => {
     const test = meaningTest([state]);
     const { model, byId: results } = await judged(test, runFor(test, [REPLY]), [verdict('PASS', 'x', REPLY)]);
     expect(results[C1]).toMatchObject({ status: 'NOT_RUN', reason: 'judge-unsupported:state', inScope: true });
+    expect(model.doGenerateCalls.length).toBe(0);
+  });
 
-    const observation = {
-      ...meaningTest([criterion({ id: C2, evaluatedAt: 'observation-window', checks: MEANING })]),
-      id: 'X-02',
-      kind: 'observation' as const,
-      steps: [],
-      seed: undefined,
-      observationWindow: { durationMs: 1000, scanEveryMs: 100 },
-    };
-    const observed = await judged(observation, runFor(observation, []), [verdict('PASS', 'x', REPLY)]);
-    expect(observed.byId[C2]).toMatchObject({ status: 'NOT_RUN', reason: 'judge-unsupported:observation-window' });
-    expect(model.doGenerateCalls.length + observed.model.doGenerateCalls.length).toBe(0);
+  describe('observation windows (P-06.C4 on the first check-in, C5 on all)', () => {
+    const FIRST = 'On Friday you said you would ask your lead. How did it go?';
+    const SECOND = 'Hope the week is going well. Anything on your mind?';
+    const EARLIER = 'I will ask my lead on Monday.';
+
+    function windowTest(scope?: 'first' | 'all'): LoadedTest {
+      return {
+        ...meaningTest([criterion({ id: C2, evaluatedAt: 'observation-window', checks: MEANING, ...(scope ? { windowScope: scope } : {}) })]),
+        id: 'X-02',
+        kind: 'observation' as const,
+        steps: [],
+        seed: { history: [{ role: 'user', text: EARLIER, atOffsetMs: 200_000 }] },
+        observationWindow: { durationMs: 1000, scanEveryMs: 100 },
+      };
+    }
+
+    function windowRun(test: LoadedTest, texts: string[]): CaseRun {
+      const message = (text: string, index: number, messageType: string) => ({
+        id: `m${index}`,
+        text,
+        occurredAt: new Date(Date.UTC(2026, 0, 5 + index, 16)).toISOString(),
+        metadata: { messageType },
+      });
+      return {
+        ...runFor(test, [], { observed: ['window.outbound'] }),
+        window: {
+          from: '2026-01-05T08:00:00.000Z',
+          to: '2026-01-12T08:00:00.000Z',
+          // Newest first and with a non-initiated message: the judge sees initiations only, oldest first.
+          outbound: [...texts.map((text, index) => message(text, index, 'proactive_check_in')).reverse(), message('A reply.', 9, 'normal')],
+        },
+      };
+    }
+
+    it('first: judges the first check-in as the evaluated reply, after the earlier conversation', async () => {
+      const test = windowTest('first');
+      const { model, byId: results } = await judged(test, windowRun(test, [FIRST, SECOND]), [verdict('PASS', 'Restates it.', 'On Friday you said')]);
+      expect(results[C2]).toMatchObject({ status: 'PASS', evidence: 'On Friday you said', inScope: true });
+      expect(buildJudgeInput(test, windowRun(test, [FIRST, SECOND]), test.criteria[0]!)).toMatchObject({
+        input: { transcript: { turns: [{ role: 'user', text: EARLIER }, { role: 'coach', text: FIRST }], evaluatedReplyIndex: 1 } },
+        replyTexts: [FIRST],
+      });
+      expect(promptOf(model)).not.toContain(SECOND);
+    });
+
+    it('all (the default): judges every check-in, and evidence may come from any of them', async () => {
+      const test = windowTest();
+      const { byId: results } = await judged(test, windowRun(test, [FIRST, SECOND]), [verdict('FAIL', 'Generic.', 'Anything on your mind?')]);
+      expect(results[C2]).toMatchObject({ status: 'FAIL', reason: 'Generic.' });
+      expect(buildJudgeInput(test, windowRun(test, [FIRST, SECOND]), test.criteria[0]!)).toMatchObject({
+        input: { transcript: { evaluatedReplyIndex: null } },
+        replyTexts: [FIRST, SECOND],
+      });
+    });
+
+    it('a window without check-ins FAILs no-reply without a judge call', async () => {
+      const test = windowTest('first');
+      const { model, byId: results } = await judged(test, windowRun(test, []), [verdict('PASS', 'x', 'x')]);
+      expect(results[C2]).toMatchObject({ status: 'FAIL', evidence: 'no-reply' });
+      expect(model.doGenerateCalls.length).toBe(0);
+    });
   });
 
   it('rejects with [suite] when the test carries no expectedBehavior', async () => {

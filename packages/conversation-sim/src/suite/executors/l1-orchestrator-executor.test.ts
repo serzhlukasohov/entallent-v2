@@ -7,6 +7,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { InMemoryConversationRepository } from '../../fakes/repositories';
 import { ScriptedAiProvider, type ScriptedAiOptions } from '../../fakes/scripted-ai';
 import { evaluate } from '../evaluate';
+import { createCriterionJudge } from '../judge/criterion-judge';
+import { mockJudgeModel, promptOf, verdict } from '../judge/__fixtures__/mock-model';
+import { loadSuite } from '../loader';
 import { caseRunFailureKind } from '../runner';
 import { CaseRunSchema, type CaseRun, type LoadedCriterion, type LoadedTest } from '../schema';
 import { DEFAULT_L0_CLOCK_START } from './l0-deterministic-executor';
@@ -131,7 +134,7 @@ describe('L1OrchestratorExecutor', () => {
     const l1 = executor();
     expect(l1.level).toBe('L1');
     expect(l1.coachModel).toBe(COACH);
-    for (const name of ['clock', 'seededHistory', 'confirmationState', 'pulseCycle', 'pendingBotQuestion', 'freshPersona', 'disclosureDelivered', 'proactiveUsers'] as const) {
+    for (const name of ['clock', 'seededHistory', 'confirmationState', 'pulseCycle', 'pendingBotQuestion', 'freshPersona', 'disclosureDelivered', 'proactiveUsers', 'memoryItems'] as const) {
       expect(l1.supports(name), name).toBe(true);
     }
     expect(l1.observes()).toEqual(
@@ -580,6 +583,23 @@ describe('L1OrchestratorExecutor: call budget and coach timeout (Story 13.5)', (
     expect(timedOut.outcome).toBe('error');
     expect(timedOut.resultSummary).toContain('request timed out');
     expect(caseRunFailureKind(run)).toBe('infrastructure');
+  });
+
+  it('p-v1 P-06: the first check-in sees Friday\'s conversation and memory, and the judge reads it for C4 and every check-in for C5', async () => {
+    const test = loadSuite('p-v1').tests.find((entry) => entry.id === 'P-06')!;
+    const l1 = new L1OrchestratorExecutor({ createAiProvider: () => new ScriptedAiProvider(), coachModel: COACH });
+    const run = await execute(test, l1);
+    expect(run.errors).toEqual([]);
+    const model = mockJudgeModel([verdict('PASS', 'Restates it.', 'proactive_follow_up'), verdict('PASS', 'No objectives.', 'proactive_follow_up')]);
+    const judge = createCriterionJudge({ model, decoding: { temperature: 0, reasoningEffort: null, maxOutputTokens: 1024 } });
+    const results = Object.fromEntries((await evaluate(test, run, judge, TRUST)).map((result) => [result.criterionId, result]));
+    expect(results['P-06.E3']).toMatchObject({ status: 'PASS' });
+    expect(results['P-06.C4']).toMatchObject({ status: 'PASS', inScope: true });
+    expect(results['P-06.C5']).toMatchObject({ status: 'PASS', inScope: true });
+    const c4 = promptOf(model, 0);
+    expect(c4).toContain("I'll ask my lead on Monday whether the release date can move.");
+    expect(c4.split('proactive_follow_up').length - 1).toBe(1);
+    expect(promptOf(model, 1).split('proactive_follow_up').length - 1).toBe(4);
   });
 
   it('a stalled check-in generation in the observation window is coach-timeout without a window', async () => {

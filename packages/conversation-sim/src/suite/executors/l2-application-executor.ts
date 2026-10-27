@@ -126,7 +126,7 @@ export const l2DisclosureDeliveredFixture: L2FixtureModule<z.infer<typeof disclo
     }),
 };
 
-/** Verify-only L2 fixtures; `seededHistory`, `confirmationState`, `clock`, `pendingBotQuestion` and `proactiveUsers` are unsupported. */
+/** Verify-only L2 fixtures; `seededHistory`, `confirmationState`, `clock`, `pendingBotQuestion`, `proactiveUsers` and `memoryItems` are unsupported. */
 export const L2_FIXTURES: L2FixtureRegistry = Object.freeze({
   freshPersona: l2FreshPersonaFixture,
   pulseCycle: l2PulseCycleFixture,

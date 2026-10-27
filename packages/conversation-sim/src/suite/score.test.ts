@@ -71,10 +71,22 @@ describe('score: layer table scope', () => {
       { layer: 'D', pass: 0, fail: 1, passRate: 0 },
       { layer: 'C', pass: 0, fail: 0, passRate: null },
       { layer: 'S', pass: 0, fail: 0, passRate: null },
+      { layer: 'E', pass: 0, fail: 0, passRate: null },
     ]);
     expect(scored.verdict).toBe('NOT ADEQUATE');
     expect(scored.complete).toBe(true);
     expect(scored.journeys).toEqual({ keys: ['X-01.J/X-01.C1'], counts: { FAIL: 1 } });
+  });
+
+  it('reports E (engineering effects) on its own row and keeps it out of P+D+C and the verdict (Story 12.4)', () => {
+    const scored = run([
+      result({ testId: 'X-01.A1', criterionId: 'X-01.C1', status: 'PASS' }),
+      result({ testId: 'X-01.A1', criterionId: 'X-01.E1', layer: 'E', status: 'FAIL' }),
+      result({ testId: 'X-01.A2', criterionId: 'X-01.E1', layer: 'E', status: 'FAIL' }),
+    ]);
+    expect(scored.layers!.rows.find((row) => row.layer === 'E')).toEqual({ layer: 'E', pass: 0, fail: 2, passRate: 0 });
+    expect(scored.layers!.combinedPdc).toEqual({ pass: 1, fail: 0, passRate: 1 });
+    expect(scored.verdict).toBe('ADEQUATE');
   });
 
   it('marks a non-empty run with no in-scope result INCOMPLETE, not journeys-only', () => {

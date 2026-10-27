@@ -131,7 +131,7 @@ describe('L0DeterministicExecutor', () => {
   it('declares L0, its fixtures and its observation fields', () => {
     const executor = new L0DeterministicExecutor();
     expect(executor.level).toBe('L0');
-    for (const name of ['clock', 'seededHistory', 'confirmationState', 'freshPersona', 'pendingBotQuestion', 'disclosureDelivered', 'proactiveUsers'] as const) {
+    for (const name of ['clock', 'seededHistory', 'confirmationState', 'freshPersona', 'pendingBotQuestion', 'disclosureDelivered', 'proactiveUsers', 'memoryItems'] as const) {
       expect(executor.supports(name)).toBe(true);
     }
     expect(executor.supports('pulseCycle')).toBe(false);
@@ -207,6 +207,26 @@ describe('L0DeterministicExecutor', () => {
     expect(run.state.afterStep['1']).toMatchObject({ outboundCount: 2 });
     expect(clockLeak(run)).toBe('PASS');
     expect(statuses(test, run)).toEqual({ 'X-01.C1': 'PASS', 'X-01.C2': 'PASS' });
+  });
+
+  it('records the reply-model context: seeded history and memory reach the model, as built by the product', async () => {
+    const run = await execute(
+      atomicTest({
+        setup: [{ name: 'memoryItems', params: { items: [{ category: 'commitment', content: 'Will ask the lead on Monday.' }] } }],
+        seed: { history: [
+          { role: 'user', text: 'Earlier question.', atOffsetMs: 120_000 },
+          { role: 'coach', text: 'Earlier answer.', atOffsetMs: 60_000 },
+        ] },
+      }),
+    );
+    const calls = run.events.filter((event) => event.method === 'generateResponse');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.context).toMatchObject({
+      history: { user: expect.any(Number), assistant: 1, lastRole: 'user' },
+      memory: { items: 1, categories: ['commitment'], goals: 0 },
+    });
+    expect(calls[0]!.context!.history.turns).toBeGreaterThanOrEqual(3);
+    expect(run.events.filter((event) => event.method !== 'generateResponse' && event.context !== undefined)).toEqual([]);
   });
 
   it('is deterministic: the same test yields the same run', async () => {

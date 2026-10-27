@@ -15,17 +15,20 @@ const PARAM_RULES = [
   'effect-count',
   'state-equals',
   'state-not-greater-than',
+  'turn-decision',
+  'model-context',
 ] as const satisfies readonly RuleName[];
 const REPLY_RULES = RULE_NAMES.filter((name) => !(PARAM_RULES as readonly string[]).includes(name));
 
 describe('rule registry', () => {
-  it('names the 3 wrapped legacy rules, the 8 reply/turn rules and the 7 param rules', () => {
+  it('names the 3 wrapped legacy rules, the 8 reply/turn rules and the 9 param rules', () => {
     expect([...RULE_NAMES].sort()).toEqual([
       'answer-then-bundle',
       'bundle-staged',
       'cause-question-present',
       'clock-leak',
       'effect-count',
+      'model-context',
       'no-greeting-restart',
       'no-internal-terms',
       'no-two-replies-without-cause-question',
@@ -39,8 +42,9 @@ describe('rule registry', () => {
       'state-equals',
       'state-not-greater-than',
       'too-many-questions',
+      'turn-decision',
     ]);
-    expect(RULE_NAMES).toHaveLength(18);
+    expect(RULE_NAMES).toHaveLength(20);
     expect(RuleNameSchema.safeParse('single-question').success).toBe(true);
     expect(RuleNameSchema.safeParse('effect-count').success).toBe(true);
   });

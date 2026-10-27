@@ -103,8 +103,96 @@ describe('validateSuite: valid suite', () => {
 });
 
 describe('loadSuite', () => {
-  it('loads the empty p-v1 suite', () => {
-    expect(loadSuite('p-v1')).toEqual({ id: 'p-v1', sources: [], tests: [] });
+  it('loads the populated p-v1 suite: 10 sources, 37 Confluence criteria, 2 NOT TESTABLE, atomic coverage (Story 12.4)', () => {
+    const suite = loadSuite('p-v1');
+    expect(suite.sources.map((source) => source.id)).toEqual([
+      'P-01', 'P-02', 'P-03', 'P-04', 'P-05', 'P-06', 'P-07', 'P-08', 'P-09', 'P-10',
+    ]);
+    const confluence = suite.sources.flatMap((source) => source.criteria.filter((criterion) => criterion.layer !== 'E'));
+    expect(confluence).toHaveLength(37);
+    expect(confluence.filter((criterion) => criterion.notTestableReason !== undefined).map((criterion) => criterion.id)).toEqual([
+      'P-05.C2',
+      'P-09.C9',
+    ]);
+    // Every testable criterion of a conversation case is in an atomic test; P-06 in its observation test.
+    for (const source of suite.sources) {
+      const kind = source.kind === 'observation' ? 'observation' : 'atomic';
+      const covered = new Set(
+        suite.tests.filter((test) => test.sourceCase === source.id && test.kind === kind).flatMap((test) => test.criteria.map((c) => c.id)),
+      );
+      const missing = source.criteria.filter((criterion) => criterion.notTestableReason === undefined && !covered.has(criterion.id));
+      expect(missing.map((criterion) => criterion.id)).toEqual([]);
+    }
+    expect(suite.tests.filter((test) => test.kind === 'journey').map((test) => test.id)).toEqual(['P-09.J', 'P-10.J']);
+    expect(suite.tests.filter((test) => test.kind === 'observation').map((test) => test.id)).toEqual(['P-06']);
+    // Engineering effects are rule-only.
+    const effects = suite.tests.flatMap((test) => test.criteria.filter((criterion) => criterion.layer === 'E'));
+    expect(effects.length).toBeGreaterThan(0);
+    expect(effects.every((criterion) => criterion.checks.every((check) => check.type === 'rule'))).toBe(true);
+    // L0 tests carry their scripted outputs. P-02 runs at L0 only for its engineering effect:
+    // reply-text and meaning criteria never run at L0.
+    for (const test of suite.tests.filter((entry) => entry.levels.includes('L0'))) expect(test.scripted, test.id).toBeDefined();
+    const p02 = suite.tests.find((test) => test.id === 'P-02.A1')!;
+    expect(p02.criteria.filter((criterion) => criterion.levels?.includes('L0') ?? true).map((criterion) => criterion.id)).toEqual(['P-02.E1', 'P-02.E3']);
+    // Decision criteria read scripted classification and risk at L0, so they are L1 only.
+    const decisions = suite.tests.flatMap((test) => test.criteria.filter((criterion) => criterion.checks.some((check) => check.type === 'rule' && check.rule === 'turn-decision')));
+    expect(decisions.length).toBeGreaterThan(0);
+    expect(decisions.every((criterion) => criterion.levels?.join() === 'L1')).toBe(true);
+    // Tests whose setup cannot run at L0 (pulseCycle) or that need an interpreted verdict stay L1.
+    expect(suite.tests.filter((test) => test.kind === 'atomic' && !test.levels.includes('L0')).map((test) => test.id)).toEqual([
+      'P-07.A1', 'P-07.A2', 'P-07.A3', 'P-09.A3', 'P-09.A4',
+    ]);
+  });
+
+  it('P-09.J: a rule-only bundle-staged stop checkpoint on the summary turn; questionProgress (change), the stagedBundleCount invariant, C3 judged on the corrected-statement reply', () => {
+    const journey = loadSuite('p-v1').tests.find((test) => test.id === 'P-09.J')!;
+    const checkpoints = journey.steps.flatMap((step, index) => (step.checkpoint ? [{ step: index + 1, ...step.checkpoint }] : []));
+    expect(checkpoints).toEqual([{ step: 4, checks: [{ type: 'rule', rule: 'bundle-staged' }], onFail: 'stop' }]);
+    expect(journey.steps[3]!.text).toBe("that's pretty much it on my side");
+    const state = journey.criteria.filter((criterion) => criterion.stateQuery);
+    expect(journey.criteria.find((criterion) => criterion.id === 'P-09.C3')).toMatchObject({
+      evaluatedAt: 'reply:6',
+      checks: [{ type: 'meaning' }],
+    });
+    expect(state.map((criterion) => [criterion.id, criterion.stateQuery!.name, criterion.stateQuery!.kind])).toEqual([
+      ['P-09.C5', 'questionProgress', 'change'],
+      ['P-09.C6', 'stagedBundleCount', 'invariant'],
+    ]);
+    // State rule params name the criterion's own query and snapshot.
+    for (const criterion of state) {
+      for (const check of criterion.checks) {
+        if (check.type !== 'rule') continue;
+        expect(check.params).toMatchObject({ query: criterion.stateQuery!.name, at: criterion.stateQuery!.at });
+      }
+    }
+  });
+
+  it('p-v1: state rule params equal the stateQuery, invariants are bounded, stateEffect methods exist on the fake', async () => {
+    const { InMemoryQuestionConfirmationRepository } = await import('../fakes/question-confirmation');
+    const suite = loadSuite('p-v1');
+    for (const test of suite.tests) {
+      for (const criterion of test.criteria) {
+        if (!criterion.stateQuery) continue;
+        const stateChecks = criterion.checks.filter((check) => check.type === 'rule' && check.rule.startsWith('state-'));
+        expect(stateChecks.length, `${test.id}/${criterion.id}`).toBeGreaterThan(0);
+        for (const check of stateChecks) {
+          expect(check.type === 'rule' && check.params, `${test.id}/${criterion.id}`).toMatchObject({
+            query: criterion.stateQuery.name,
+            at: criterion.stateQuery.at,
+          });
+          if (criterion.stateQuery.kind === 'invariant') {
+            expect(check.type === 'rule' && (check.params?.max !== undefined || check.params?.expected !== undefined)).toBe(true);
+          }
+        }
+      }
+    }
+    const fake = new InMemoryQuestionConfirmationRepository() as unknown as Record<string, unknown>;
+    const effects = suite.sources.flatMap((source) => source.criteria.flatMap((criterion) => (criterion.stateEffect ? [criterion.stateEffect] : [])));
+    expect(effects.length).toBeGreaterThan(0);
+    for (const effect of effects) {
+      expect(effect.port).toBe('questionConfirmationRepo');
+      expect(typeof fake[effect.method], effect.method).toBe('function');
+    }
   });
 
   it('rejects an unknown suite', () => {
@@ -202,18 +290,18 @@ describe('validateSuite: kind refinements', () => {
       ['observationWindow'],
     ],
     [
+      'windowScope outside an observation-window criterion',
+      (m: Modules & { tests: Rec[] }) => (journey(m).criteria[1].windowScope = 'first'),
+      'X-01.J',
+      ['criteria', 1, 'windowScope'],
+    ],
+    [
       'journey with an observation-window criterion',
       (m: Modules & { tests: Rec[] }) => (journey(m).criteria[1].evaluatedAt = 'observation-window'),
       'X-01.J',
       ['criteria', 1, 'evaluatedAt'],
     ],
     ['observation with steps', (m: Modules & { tests: Rec[] }) => (observation(m).steps = [{ text: 'hi' }]), 'X-02', ['steps']],
-    [
-      'observation with a seed',
-      (m: Modules & { tests: Rec[] }) => (observation(m).seed = { history: [] }),
-      'X-02',
-      ['seed'],
-    ],
     [
       'observation with a reply:<n> criterion',
       (m: Modules & { tests: Rec[] }) => (observation(m).criteria[0].evaluatedAt = 'reply:1'),
@@ -351,6 +439,44 @@ describe('validateSuite: manifest links', () => {
       testId: 'X-01.J',
       path: ['criteria', 0, 'id'],
     });
+  });
+});
+
+describe('validateSuite: engineering effect criteria (layer E, Story 12.4)', () => {
+  const effect = { id: 'X-01.E1', layer: 'E', passCondition: 'Exactly one reply is sent.' };
+  const effectCheck = { type: 'rule', rule: 'effect-count', params: { port: 'outbox', method: 'enqueueMessageSend', expected: 1, step: 1 } };
+
+  it('loads an E criterion and joins its layer like a Confluence criterion', () => {
+    const suite = load((m) => {
+      m.sources[0]!.criteria.push(effect);
+      atomic(m).criteria.push({ id: 'X-01.E1', evaluatedAt: 'reply:1', checks: [effectCheck] });
+    });
+    expect(suite.tests[0]!.criteria.find((criterion) => criterion.id === 'X-01.E1')).toMatchObject({
+      layer: 'E',
+      passCondition: 'Exactly one reply is sent.',
+    });
+  });
+
+  it('rejects an uncovered E criterion like any testable criterion', () => {
+    expectLoadError((m) => m.sources[0]!.criteria.push(effect), { code: 'uncovered-criterion', testId: 'X-01' });
+  });
+
+  it.each([
+    ['an .E id with a framework layer', { ...effect, layer: 'P' }, ['criteria', 3, 'layer']],
+    ['layer E on a .C id', { ...effect, id: 'X-01.C4' }, ['criteria', 3, 'layer']],
+    ['a foreign letter', { ...effect, id: 'X-01.F1' }, ['criteria', 3, 'id']],
+  ])('rejects %s in the manifest', (_label, criterion, path) => {
+    expectLoadError((m) => m.sources[0]!.criteria.push(criterion), { code: 'invalid-source', testId: 'X-01', path });
+  });
+
+  it('rejects a meaning check on an E criterion', () => {
+    expectLoadError(
+      (m) => {
+        m.sources[0]!.criteria.push(effect);
+        atomic(m).criteria.push({ id: 'X-01.E1', evaluatedAt: 'reply:1', checks: [effectCheck, { type: 'meaning' }] });
+      },
+      { code: 'invalid-test', testId: 'X-01.A1', path: ['criteria', 2, 'checks', 1] },
+    );
   });
 });
 

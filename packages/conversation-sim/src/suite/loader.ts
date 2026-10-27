@@ -196,6 +196,14 @@ function joinCriteria(suiteId: string, test: SuiteTest, source: SourceCase): Loa
         { testId: test.id, path },
       );
     }
+    // Engineering effects (layer E) are decided by rules alone; a judge never sees them.
+    const meaningIndex = criterion.checks.findIndex((check) => check.type === 'meaning');
+    if (entry.layer === 'E' && meaningIndex >= 0) {
+      throw new SuiteLoadError('invalid-test', suiteId, `${criterion.id} is an engineering effect (layer E) and takes rule checks only`, {
+        testId: test.id,
+        path: ['criteria', index, 'checks', meaningIndex],
+      });
+    }
     return { ...criterion, layer: entry.layer, passCondition: entry.passCondition, stateEffect: entry.stateEffect };
   });
 }

@@ -26,6 +26,7 @@ import { REPLY_MESSAGE_SEPARATOR, type CaseRun, type ExecutionError, type Fixtur
 import { FixedClock } from './clock';
 import { DEFAULT_L0_CLOCK_START } from './l0-deterministic-executor';
 import { createProactiveWorld, driveObservationWindow, type ProactiveWorld } from './proactive-l0';
+import { contextDigest } from './context-digest';
 import { createEventSink, record } from './recording-proxy';
 import {
   applyFixtures,
@@ -69,6 +70,8 @@ const CONVERSATION_FIELDS: ObservationField[] = [
   'turn.intent',
   'turn.outcome',
   'turn.bundleReply',
+  'turn.classification',
+  'turn.risk',
   'steps.gapMs',
   'state.questionProgress',
   'state.stagedBundleCount',
@@ -497,7 +500,7 @@ export function createL1World(start: Date, provider: AiProviderPort, coachModel:
   const questionState = new InMemoryQuestionConfirmationRepository();
   const surveyState = new InMemorySurveyRepository(clock);
 
-  const aiProvider = record<AiProviderPort>(provider, 'aiProvider', sink, { name: coachModel, settings: {} });
+  const aiProvider = record<AiProviderPort>(provider, 'aiProvider', sink, { name: coachModel, settings: {} }, contextDigest);
   const conversationRepo = record(conversationState, 'conversationRepo', sink);
   const memoryRepo = record(memoryState, 'memoryRepo', sink);
   const goalRepo = record(goalState, 'goalRepo', sink);

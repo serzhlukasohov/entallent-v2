@@ -5,6 +5,7 @@ import { bundleStaged } from './bundle-staged';
 import { causeQuestionPresent } from './cause-question-present';
 import { clockLeak } from './clock-leak';
 import { effectCount } from './effect-count';
+import { modelContext } from './model-context';
 import { noGreetingRestart } from './no-greeting-restart';
 import { noInternalTerms } from './no-internal-terms';
 import { noTwoRepliesWithoutCauseQuestion } from './no-two-replies-without-cause-question';
@@ -19,6 +20,7 @@ import { singleQuestion } from './single-question';
 import { stateEquals } from './state-equals';
 import { stateNotGreaterThan } from './state-not-greater-than';
 import { tooManyQuestions } from './too-many-questions';
+import { turnDecision } from './turn-decision';
 
 export type { RuleOutcome, RuleStatus } from './reply-selection';
 
@@ -72,6 +74,8 @@ export const RULES = Object.freeze({
   'effect-count': effectCount,
   'state-equals': stateEquals,
   'state-not-greater-than': stateNotGreaterThan,
+  'turn-decision': turnDecision,
+  'model-context': modelContext,
 } satisfies RuleRegistry);
 
 export type RuleName = keyof typeof RULES;

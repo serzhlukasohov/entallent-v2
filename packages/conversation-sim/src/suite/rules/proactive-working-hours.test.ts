@@ -63,7 +63,41 @@ describe('proactive-working-hours', () => {
     expect(schema.safeParse({ timezone: '+02:00' }).success).toBe(false);
     expect(schema.safeParse({ timezone: 'EST' }).success).toBe(false);
     expect(schema.safeParse(undefined).success).toBe(false);
-    expect(schema.safeParse({ timezone: 'UTC', startHour: 8 }).success).toBe(false);
+    expect(schema.safeParse({ timezone: 'UTC', other: 8 }).success).toBe(false);
+  });
+
+  it('takes optional startHour/endHour (0-24 integers, start before end) with defaults 9/18', () => {
+    const schema = proactiveWorkingHours.params!;
+    expect(schema.parse({ timezone: 'UTC' })).toEqual({ timezone: 'UTC', startHour: 9, endHour: 18 });
+    expect(schema.safeParse({ timezone: 'UTC', startHour: 8, endHour: 20 }).success).toBe(true);
+    expect(schema.safeParse({ timezone: 'UTC', startHour: 0, endHour: 24 }).success).toBe(true);
+    expect(schema.safeParse({ timezone: 'UTC', startHour: 8 }).success).toBe(true);
+    for (const bad of [
+      { startHour: 20, endHour: 8 },
+      { startHour: 9, endHour: 9 },
+      { startHour: -1 },
+      { endHour: 25 },
+      { startHour: 8.5 },
+      { startHour: 19 },
+    ]) {
+      expect(schema.safeParse({ timezone: 'UTC', ...bad }).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('applies the P-06 window 08:00-20:00 local: start inclusive, end exclusive', () => {
+    const p06 = { timezone: 'UTC', startHour: 8, endHour: 20 };
+    expect(proactiveWorkingHours.run(single('2026-01-06T08:00:00.000Z'), at, p06)).toEqual({ status: 'PASS' });
+    expect(proactiveWorkingHours.run(single('2026-01-06T19:59:00.000Z'), at, p06)).toEqual({ status: 'PASS' });
+    expect(proactiveWorkingHours.run(single('2026-01-06T07:59:00.000Z'), at, p06)).toEqual({
+      status: 'FAIL',
+      evidence: '2026-01-06T07:59:00.000Z (local 07:59 UTC)',
+    });
+    // The product sends until its 22:00 quiet hours start: a 20:00-22:00 send is a known red.
+    expect(proactiveWorkingHours.run(single('2026-01-06T20:00:00.000Z'), at, p06)).toEqual({
+      status: 'FAIL',
+      evidence: '2026-01-06T20:00:00.000Z (local 20:00 UTC)',
+    });
+    expect(proactiveWorkingHours.run(single('2026-01-06T21:30:00.000Z'), at, p06).status).toBe('FAIL');
   });
 
   it('follows the Europe/Kyiv DST shift (UTC+2 in winter, UTC+3 from 2026-03-29)', () => {

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { EVAL_RULES, UNTRUSTED, runFor } from './__fixtures__/evaluation';
+import { syntheticRun } from './rules/synthetic-run';
 import { TEST_RULES, validModules } from './__fixtures__/suite';
 import { evaluate } from './evaluate';
 import { validateSuite } from './loader';
@@ -15,6 +16,7 @@ import { computeJudgeFingerprint } from './judge/fingerprint';
 import {
   budgetLine,
   buildSuiteReport,
+  collectDecisions,
   collectJudgeErrors,
   collectQaReview,
   fingerprintLine,
@@ -119,6 +121,33 @@ describe('renderSuiteReportMarkdown', () => {
     expect(markdown).toContain('| REQ-2 | X-02 | X-02 | X-02.C1 | P | NOT_RUN |');
     expect(markdown).toContain('- X-01/X-01.C3: subjective opening');
     expect(markdown).toContain('- X-02/X-02.C1: events');
+  });
+
+  it('shows E (engineering effects) after P+D+C and in its own coverage section (Story 12.4)', () => {
+    const report = l0Report();
+    const withEffect: SuiteRunReport = {
+      ...report,
+      layers: {
+        ...report.layers!,
+        rows: report.layers!.rows.map((row) => (row.layer === 'E' ? { layer: 'E', pass: 1, fail: 1, passRate: 0.5 } : row)),
+      },
+      coverage: {
+        ...report.coverage,
+        rows: [
+          ...report.coverage.rows,
+          { requirement: ['REQ-1'], sourceCase: 'X-01', testId: 'X-01.A1', criterionId: 'X-01.E1', layer: 'E', status: 'FAIL' },
+        ],
+      },
+    };
+    const markdown = renderSuiteReportMarkdown(withEffect);
+    const pdc = markdown.indexOf('| P+D+C |');
+    const effects = markdown.indexOf('| E (effects, not in verdict) | 1 | 1 | 50.0% |');
+    expect(pdc).toBeGreaterThan(0);
+    expect(effects).toBeGreaterThan(pdc);
+    const section = markdown.slice(markdown.indexOf('### Engineering effects (E)'));
+    expect(section).toContain('| REQ-1 | X-01 | X-01.A1 | X-01.E1 | E | FAIL |');
+    expect(markdown.slice(0, markdown.indexOf('### Engineering effects (E)'))).not.toContain('X-01.E1');
+    expect(renderCiSummary(withEffect)).toContain('| E (effects, not in verdict) | 1 | 1 | 50.0% |');
   });
 
   it('shows FAIL evidence in the result table and keeps multi-line list items on one line', () => {
@@ -467,5 +496,111 @@ describe('usage per model and budgets (Story 13.5)', () => {
     expect(SuiteRunReportSchema.parse(legacy).modelUsage).toBeUndefined();
     expect(renderSuiteReportMarkdown(legacy)).not.toContain('- Budget:');
     expect(budgetLine(legacy)).toBeNull();
+  });
+});
+
+describe('turn decisions', () => {
+  const classification = {
+    primaryIntent: 'coaching',
+    secondaryIntents: ['feedback_request'],
+    urgency: 'low',
+    requiresSafetyCheck: false,
+    surveyAllowed: true,
+    cycleStatusQuestion: true,
+  };
+  const risk = {
+    assessed: true,
+    severity: 'medium',
+    riskType: 'conflict_with_manager',
+    immediateResponseRequired: false,
+    tripwireRaised: false,
+    escalationRecommended: true,
+    surveyMustBeBlocked: true,
+  };
+
+  function decidedRun() {
+    const base = syntheticRun('Z-01.A1', ['Answer text', 'Second answer'], ['reply.messages']);
+    const [first, second] = base.steps;
+    const context = {
+      history: { turns: 3, user: 2, assistant: 1, lastRole: 'user' as const },
+      memory: { items: 1, categories: ['commitment'], goals: 1 },
+      mode: 'coaching',
+      sessionStart: false,
+      localTime: '22:30',
+      surveyQuestionId: 'q1',
+      sections: ['cycleProgress', 'trailingBundle'],
+    };
+    const call = { stepIndex: 1, port: 'aiProvider', method: 'generateResponse', argsSummary: '', outcome: 'ok' as const, resultSummary: '', durationMs: 0 };
+    return {
+      ...base,
+      events: [
+        { ...call, seq: 0, context: { ...context, history: { ...context.history, turns: 1 } } },
+        { ...call, seq: 1, context },
+      ],
+      steps: [
+        {
+          ...first!,
+          turn: { mode: 'coaching', intent: 'coaching', bundleReply: 'answer_then_bundle', classification, risk },
+          reply: {
+            ...first!.reply!,
+            messages: [
+              {
+                ...first!.reply!.messages[0]!,
+                metadata: {
+                  responseMove: 'address_new_substance',
+                  containsSurveyProbe: true,
+                  continuityDecision: { action: 'replace' },
+                  memoryGrounding: { used: true, count: 1 },
+                  v2ConfirmationBundle: true,
+                },
+              },
+            ],
+          },
+        },
+        { ...second!, reply: null },
+      ],
+    };
+  }
+
+  it('collects each step\'s decisions and reply metadata, never any text', () => {
+    const entries = collectDecisions(decidedRun(), 2);
+    expect(entries).toEqual([
+      {
+        testId: 'Z-01.A1',
+        sample: 2,
+        step: 1,
+        turn: { mode: 'coaching', intent: 'coaching', bundleReply: 'answer_then_bundle', classification, risk },
+        context: expect.objectContaining({ history: { turns: 3, user: 2, assistant: 1, lastRole: 'user' } }),
+        replies: [
+          { bundle: true, responseMove: 'address_new_substance', containsSurveyProbe: true, continuity: 'replace', memoryUsed: true },
+        ],
+      },
+      { testId: 'Z-01.A1', sample: 2, step: 2, turn: {}, replies: [] },
+    ]);
+    expect(JSON.stringify(entries)).not.toContain('Answer text');
+  });
+
+  it('renders the section in report.md only when decisions were collected', () => {
+    const report = l0Report();
+    expect(renderSuiteReportMarkdown(report)).not.toContain('## Turn decisions');
+    const decided: SuiteRunReport = { ...report, decisions: collectDecisions(decidedRun(), 1) };
+    expect(SuiteRunReportSchema.parse(JSON.parse(JSON.stringify(decided)))).toEqual(decided);
+    const markdown = renderSuiteReportMarkdown(decided);
+    expect(markdown).toContain('L0: intent, classification and risk are the scripted model outputs, not product decisions.');
+    expect(markdown).toContain(
+      '| Z-01.A1 | 1 | 1 | history 3 (2u/1a), memory 1, goals 1, continuing, local 22:30, survey question q1, cycleProgress, trailingBundle | coaching +feedback_request (cycle status) | low | yes | no | medium, conflict_with_manager, escalation, survey blocked | coaching |  | answer_then_bundle | summary, address_new_substance, survey question, continuity replace, memory |',
+    );
+    expect(markdown).toContain('| Z-01.A1 | 1 | 2 |  |  |  |  |  |  |  |  |  | silence |');
+    expect(renderSuiteReportMarkdown({ ...decided, level: 'L1' })).not.toContain('scripted model outputs');
+    expect(renderCiSummary(decided)).not.toContain('Turn decisions');
+  });
+
+  it('shows an unassessed risk as unknown, never as safe', () => {
+    const run = decidedRun();
+    run.steps[0]!.turn = {
+      risk: { assessed: false, severity: 'unknown', riskType: null, immediateResponseRequired: false, tripwireRaised: false, unassessedReason: 'assessment_failed' },
+    };
+    const markdown = renderSuiteReportMarkdown({ ...l0Report(), decisions: collectDecisions(run, 1) });
+    expect(markdown).toContain('unassessed (assessment_failed)');
   });
 });

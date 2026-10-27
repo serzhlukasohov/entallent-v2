@@ -4,7 +4,7 @@ import type { CallBudget, ExecutorOptions, SuiteExecutor } from './executors/typ
 import { SuiteExecutionError } from './executors/types';
 import { emptyJudgeUsage, type CriterionJudge } from './judge/criterion-judge';
 import { decideJudgeTrust, type JudgeTrustInputs } from './judge/trust';
-import { buildSuiteReport, collectJudgeErrors, collectQaReview, judgeUsageTotals } from './report';
+import { buildSuiteReport, collectDecisions, collectJudgeErrors, collectQaReview, judgeUsageTotals } from './report';
 import { RULES, type RuleRegistry } from './rules/registry';
 import {
   CaseRunSchema,
@@ -19,6 +19,7 @@ import {
   type LoadedTest,
   type ModelUsageRow,
   type QaReviewEntry,
+  type TurnDecisionEntry,
   type RunBudgetReport,
   type SuiteConfig,
   type SuiteRunReport,
@@ -283,6 +284,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
   };
   const results: CriterionResult[] = [];
   const qaReview: QaReviewEntry[] = [];
+  const decisions: TurnDecisionEntry[] = [];
   const caseRuns: CaseRunRecord[] = [];
   let caseAttempts = 0;
   let infrastructureRetries = 0;
@@ -313,6 +315,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
           run = outcome.run;
         }
         caseRuns.push({ sample, run });
+        decisions.push(...collectDecisions(run, sample));
       }
 
       const evaluated = judge === null ? evaluate(test, run, null, trust, rules) : await evaluate(test, run, judge, trust, rules);
@@ -350,6 +353,7 @@ export async function runSuite(input: RunSuiteInput): Promise<RunSuiteOutput> {
       judgeTrust: trust,
       judgeErrors: collectJudgeErrors(results),
       qaReview,
+      decisions,
       usage: { coachModelCalls: budget.coachCalls, ...judgeUsageTotals(results), caseAttempts, infrastructureRetries },
       budget: budget.report(),
       modelUsage: budget.modelUsage(models),

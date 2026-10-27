@@ -303,15 +303,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
   summary: State rule params duplicate the criterion's `stateQuery` and the loader does not cross-check them; `alreadySatisfied` then marks a criterion INVALID when the rule reads a different snapshot, when `state-equals` reads `before` on a `change` criterion, and always for `state-not-greater-than` on a `change` criterion.
   evidence: Edge Case Hunter and Verification Gap (Story 12.3b review); `evaluate.ts:216-233`. 12.4 authors: put upper bounds on `invariant` criteria and keep params `query`/`at` equal to `stateQuery`; a loader cross-check is the durable fix. Severity medium.
+  resolution: Re-scoped in 12.4 (2026-10-27) — every p-v1 state criterion keeps rule params `query`/`at` equal to its `stateQuery`, every `invariant` carries a bound (`state-equals` or `state-not-greater-than` with `max`), and `loader.test.ts` asserts both for the suite. The loader cross-check stays the durable fix (open).
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
   summary: The 12.7 executor contract (copy the message column into `metadata.messageType` for `window.outbound`, `steps[].reply.messages` and `unsolicited`; emit only in-window messages in `window.outbound`) is asserted only rule-side; `initiations()` does not filter by `window.from`/`to`.
   evidence: Intent Alignment, Blind Hunter and Edge Case Hunter (Story 12.3b review). Settle in 12.7 with an executor test. Severity medium (unverified).
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
   summary: `evaluate.ruleChecks` synthesizes `effect-count` with `step: 0` for observation tests, which counts only seed and fixture events.
   evidence: Blind Hunter (Story 12.3b review); pre-existing 12.2 synthesis at `evaluate.ts:94`. Settle when the first observation test pairs a state effect (12.4). Severity medium (unverified).
+  resolution: Not applicable in 12.4 (2026-10-27) — P-06 pairs no `stateEffect`; its window events are recorded at `stepIndex` 0, and P-06.E1 states `step: 0` explicitly. Reopen if an observation test pairs a state effect.
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3b-proactive-state-and-clock-rules.md`
   summary: The P-09 bound `max: { repliesWithMetadata }` counts only `steps[].reply.messages`, not `unsolicited`; a summary sent unsolicited would raise the count without raising the bound.
   evidence: Blind Hunter (Story 12.3b review, loop 2). Settle in 12.4 by checking whether survey summaries can arrive unsolicited. Severity medium (unverified).
+  resolution: Resolved in 12.4 (2026-10-27) by reading the bundle path — the orchestrator stages a summary only in `persistPreparedTurn`, with `promptMessageId` = the turn's own outbound reply (`conversation-orchestrator.ts` near 1443), and proactive check-ins stage nothing (P-06.E1), so a summary never arrives unsolicited. Corrected statements are a separate gap (entry below).
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-3-suite-rule-implementations.md`
   summary: Resolved in 12.3b — rules with a params schema now parse raw params themselves in `run`, so defaults apply and synthesized `effect-count` params are validated; `evaluate` and `loader` unchanged.
   evidence: Story 12.3b (2026-10-25), `suite/rules/*.ts`.
@@ -331,3 +334,39 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-12-8-runner-suite-run-and-suite-baseline-accept.md`
   summary: `budgets.maxCoachCallsPerRun` / `maxJudgeCallsPerRun` are validated but not enforced by the runner.
   evidence: Story 12.8 review (Blind Hunter). No cost at L0; enforce `budget-exceeded` (AD-15) when the L1/L2 executors land. Severity medium (unverified).
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: `ScriptedStep` has no outputs for `interpretQuestionBundleResponse` or `interpretQuestionClarificationResponse`; the L0 scripted model always answers `unrelated`, so no verdict or clarification is applied at L0.
+  evidence: Story 12.4 (2026-10-27), `fakes/scripted-ai.ts`, `executors/l0-scripted.ts`. P-09.A3 (E4-E6) and P-09.A4 (C3, E7) are L1-only tests, and P-09.A5 (C4, C5, E8) carries `levels: ['L1']` inside its L0 test, against the approved effects draft (L0, L1). Add scripted verdict outputs to the schema and the L0 model, then widen those criteria to L0. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: `state-not-greater-than` `max: { repliesWithMetadata }` takes one metadata key; a corrected statement is staged (counted in `stagedBundleCount`) but carries `v2CorrectedStatement`, not `v2ConfirmationBundle`.
+  evidence: Story 12.4 (2026-10-27). P-09.J C6 therefore uses `max: 2` (one summary and one corrected statement in the authored flow); P-09.A5 keeps the metadata bound (delta 0). Accept several keys in the bound. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: `freshPersona` verifies that no question window exists, so it can never be satisfied together with `pulseCycle` (at L1 and at L2).
+  evidence: Story 12.4 (2026-10-27), `fixtures/fresh-persona.ts`, `executors/l2-application-executor.ts`. P-09.J and P-10.J omit `freshPersona` (the spec table lists it); isolation comes from the run profile. Make `freshPersona` ignore a window the same setup opens, or order its verify before `pulseCycle`. Severity low.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: `confirmationState` cannot say whether a pending clarification was already asked; the question-confirmation fake now treats every seeded clarification as asked and delivered (P-09.A4 needs that state).
+  evidence: Story 12.4 (2026-10-27), `fakes/question-confirmation.ts` `seedPendingClarification`. A fixture param (prompt shown or not) is the durable fix. Severity low.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: P-10.J cannot show a summary on reply 3 on live L1/L2 runs: it starts from pending Belonging questions and the third answer is extracted after the reply, so the production ready-group rule offers nothing yet and P-10.J C2 is expected red. P-10.A1 is fixed (third ready summary approved 2026-10-27).
+  evidence: Story 12.4 (2026-10-27); `p-v1-product-findings.md` F5. Add an authored user turn after step 3 (as in P-09.J) and move C2 there, after a Product/QA decision. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: The spec acceptance criterion puts the P-09.J `bundle-staged` stop checkpoint on step 3; the 2026-10-27 P-09 decision and the design table put it after the summary turn, which is what the suite does (journey step 4).
+  evidence: Story 12.4 (2026-10-27), `cases/p-v1/p-09-j.case.ts`, `loader.test.ts`. Reword the acceptance criterion on the next spec touch. Severity low.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: The `suite:run` console layer table prints the `E` row between S and P+D+C; `report.md` and the CI summary print it after P+D+C, marked "not in verdict".
+  evidence: Story 12.4 (2026-10-27), `cli.ts` (outside the story's allowed changes). Severity low.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: The question-confirmation fake mirrors production for partial verdicts and the ready-group rule only; a `reject` still marks questions `disputed` (production resets and purges them) and a clarified ready statement is not offered as `kind: 'corrected_statement'`.
+  evidence: Story 12.4 (2026-10-27), `fakes/question-confirmation.ts`; `question-insight.repository.ts:655-702, 805-830`. No p-v1 test reaches either path. Severity low.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: P-06 runs with a UTC user and every check-in lands at 08:00 UTC, so neither the 20:00-22:00 known red nor "in the employee's timezone" is exercised.
+  evidence: review 2026-10-27 (#10); add a non-UTC persona (e.g. Europe/Kyiv) or a window start that puts a scan in 20:00-22:00 local. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: Live P-09.J/P-10.J rely on the extractor mapping the suite answers to `q12_strengths_opportunity` (autonomy) and `wellbeing_at_work` (belonging); if it does not, the group never becomes ready.
+  evidence: review 2026-10-27 (#11), unverified, severity medium if true; settle with the first L1 run of the journeys or a QA check of the canonical questions.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: `confirmationState.stagedBundle` cannot seed a `kind: 'corrected_statement'` bundle, so P-09.A5 at L1 takes the regular-bundle verdict path.
+  evidence: review 2026-10-27 (#21); `suite/fixtures/confirmation-state.ts:90-109` calls `stageQuestionConfirmationBundle` without `kind`. Severity medium.
+- source_spec: `_bmad-output/implementation-artifacts/spec-12-4-p-suite-atomic-tests-and-smoke-journeys.md`
+  summary: Meaning criteria on `observation-window` are never judged (`evaluate.ts` returns NOT_RUN `judge-unsupported:observation-window`), so P-06.C4 (restates the earlier conversation) and P-06.C5 (no internal objectives) stay NOT_RUN even at L1, although the P-06.C4 setup now gives the first check-in an earlier conversation and memory.
+  evidence: Story 12.4 follow-up (2026-10-27). RESOLVED 2026-10-27: `observation-window` meaning criteria are judged on the window's bot-initiated messages (`windowScope: first` for C4, `all` for C5), with the seed history as the earlier conversation; judge prompt unchanged. Not yet run against a live judge.

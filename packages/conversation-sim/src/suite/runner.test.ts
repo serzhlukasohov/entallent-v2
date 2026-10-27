@@ -150,7 +150,7 @@ describe('runSuite: happy path with the real L0 executor', () => {
 });
 
 describe('runSuite: empty suites', () => {
-  it.each(['smoke-v1', 'p-v1'])('runs the registered empty suite %s as INCOMPLETE and provisional', async (id) => {
+  it.each(['smoke-v1'])('runs the registered empty suite %s as INCOMPLETE and provisional', async (id) => {
     const run = input(loadSuite(id));
     const { report, caseRuns } = await runSuite(run);
     expect(caseRuns).toEqual([]);
@@ -161,6 +161,94 @@ describe('runSuite: empty suites', () => {
     expect(report.provisionalReason).toContain('incomplete: no in-scope test criteria');
     expect(report.provisionalReason).toContain(`suite ${id} has no tests`);
     expect(run.lines).toContain(`[suite] ${id} has no tests`);
+  });
+});
+
+describe('runSuite: suite p-v1 at L0 (Story 12.4)', () => {
+  it('runs offline with the real L0 executor: every L0-scoped criterion is decided, with the coverage rows', async () => {
+    const suite = loadSuite('p-v1');
+    const run = input(suite, { executor: new L0DeterministicExecutor(), rules: undefined });
+    const { report, caseRuns } = await runSuite(run);
+
+    // L0 tests only; P-07 (pulseCycle), P-09.A3, P-09.A4 and the journeys do not declare L0.
+    expect(caseRuns.map((record) => record.run.testId)).toEqual([
+      'P-01.A1', 'P-02.A1', 'P-03.A1', 'P-04.A1', 'P-05.A1', 'P-06', 'P-08.A1', 'P-08.A2', 'P-08.A3',
+      'P-09.A1', 'P-09.A2', 'P-09.A5', 'P-09.A6', 'P-10.A1',
+    ]);
+    expect(caseRuns.flatMap((record) => record.run.errors)).toEqual([]);
+    const inScope = Object.entries(report.results).filter(([, result]) => result.inScope && result.testKind !== null);
+    expect(inScope.length).toBeGreaterThan(0);
+    for (const [key, result] of inScope) {
+      expect(['PASS', 'FAIL', 'INVALID'], key).toContain(result.status);
+      if (result.status !== 'PASS') expect(result.reason ?? result.evidence, key).toBeTruthy();
+    }
+    expect(report.complete).toBe(true);
+    // Meaning-only criteria are out of scope at L0, never silently passed.
+    expect(report.results['P-01.A1/P-01.C1']).toMatchObject({ inScope: false, status: 'NOT_RUN' });
+    // The full L0 status map: any flip of an in-scope key fails here.
+    expect(Object.fromEntries(inScope.map(([key, result]) => [key, result.status]))).toEqual({
+      'P-01.A1/P-01.C2': 'PASS',
+      'P-01.A1/P-01.E1': 'PASS',
+      'P-01.A1/P-01.E2': 'PASS',
+      'P-01.A1/P-01.E4': 'PASS',
+      'P-02.A1/P-02.E1': 'PASS',
+      'P-02.A1/P-02.E3': 'PASS',
+      'P-03.A1/P-03.E1': 'PASS',
+      'P-03.A1/P-03.E2': 'PASS',
+      'P-03.A1/P-03.E4': 'PASS',
+      'P-04.A1/P-04.E1': 'PASS',
+      'P-04.A1/P-04.E3': 'PASS',
+      'P-05.A1/P-05.E1': 'PASS',
+      'P-05.A1/P-05.E2': 'PASS',
+      'P-05.A1/P-05.E4': 'PASS',
+      'P-06/P-06.C1': 'PASS',
+      'P-06/P-06.C2': 'PASS',
+      'P-06/P-06.C3': 'PASS',
+      'P-06/P-06.E1': 'PASS',
+      'P-06/P-06.E2': 'PASS',
+      'P-06/P-06.E3': 'PASS',
+      'P-08.A1/P-08.E1': 'PASS',
+      'P-08.A2/P-08.E1': 'PASS',
+      'P-08.A2/P-08.E3': 'PASS',
+      'P-08.A3/P-08.E1': 'PASS',
+      'P-08.A3/P-08.E3': 'PASS',
+      'P-09.A1/P-09.E1': 'PASS',
+      'P-09.A2/P-09.C1': 'PASS',
+      'P-09.A2/P-09.E2': 'PASS',
+      'P-09.A2/P-09.E3': 'PASS',
+      'P-09.A2/P-09.E12': 'PASS',
+      'P-09.A5/P-09.C6': 'PASS',
+      'P-09.A6/P-09.E9': 'PASS',
+      'P-10.A1/P-10.C2': 'PASS',
+      'P-10.A1/P-10.E1': 'PASS',
+      'P-10.A1/P-10.E2': 'PASS',
+      'P-10.A1/P-10.E4': 'PASS',
+    });
+    // E rows are reported on their own row and never enter P+D+C.
+    const effects = report.layers!.rows.find((row) => row.layer === 'E')!;
+    expect(effects.pass + effects.fail).toBeGreaterThan(0);
+    const framework = report.layers!.rows.filter((row) => ['P', 'D', 'C'].includes(row.layer));
+    expect(report.layers!.combinedPdc.pass).toBe(framework.reduce((sum, row) => sum + row.pass, 0));
+    // No transcript text in the log lines.
+    expect(run.lines.join('\n')).not.toMatch(/prioritise|deadlines|Scripted L0 reply/);
+    // Every executed step records the classification and risk the orchestrator acted on.
+    const decision = report.decisions!.find((entry) => entry.testId === 'P-10.A1')!;
+    expect(decision.turn.classification).toMatchObject({ primaryIntent: expect.any(String), surveyAllowed: expect.any(Boolean) });
+    expect(decision.turn.risk).toMatchObject({ assessed: expect.any(Boolean), severity: expect.any(String) });
+    expect(decision.replies).toEqual([expect.objectContaining({ bundle: true })]);
+    expect(JSON.stringify(report.decisions)).not.toMatch(/meeting invite|Scripted L0 reply/);
+  });
+
+  it('lists CF-002, CF-003, CF-004, CF-005, CF-006 and CF-008 in the coverage table, with the two NOT TESTABLE rows', async () => {
+    const { report } = await runSuite(input(loadSuite('p-v1'), { executor: new L0DeterministicExecutor(), rules: undefined }));
+    const requirements = new Set(report.coverage.rows.flatMap((row) => row.requirement));
+    for (const id of ['CF-002', 'CF-003', 'CF-004', 'CF-005', 'CF-006', 'CF-008']) expect(requirements.has(id), id).toBe(true);
+    expect(report.coverage.notTestable.map((entry) => entry.key)).toEqual(['P-05/P-05.C2', 'P-09/P-09.C9']);
+    const confluence = report.coverage.rows.filter((row) => row.layer !== 'E');
+    expect(new Set(confluence.map((row) => row.criterionId)).size).toBe(37);
+    for (const row of confluence.filter((entry) => entry.testId !== null)) {
+      expect(row.sourceCase).toBe(row.criterionId.split('.')[0]);
+    }
   });
 });
 
