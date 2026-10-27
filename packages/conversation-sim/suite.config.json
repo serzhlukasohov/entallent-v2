@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "suites": ["p-v1", "smoke-v1"],
+  "levels": ["L0", "L1", "L2"],
+  "interMessageGapMs": 60000,
+  "baseline": { "minSamples": { "L0": 1, "L1": 5, "L2": 3 } },
+  "diff": { "minSamples": { "L1": 3, "L2": 3 } },
+  "retries": { "infrastructure": 1 },
+  "budgets": { "maxCoachCallsPerRun": 600, "maxJudgeCallsPerRun": 150, "coachCallTimeoutMs": 120000, "judgeCallTimeoutMs": 60000 },
+  "judge": {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "decoding": { "temperature": 0, "reasoningEffort": null, "maxOutputTokens": 1024 },
+    "agreementThreshold": { "overall": 0.85, "kappa": 0.6 },
+    "minLabels": 40
+  },
+  "l2": { "workerEnv": { "PROACTIVE_SCAN_ENABLED": "false" } }
+}

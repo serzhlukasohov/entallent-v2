@@ -58,6 +58,14 @@ const envSchema = z.object({
   PROACTIVE_MIN_SILENCE_DAYS: z.coerce.number().int().nonnegative().default(3), // silence before a check-in is considered; 0 = no silence gate (testing)
   PROACTIVE_MIN_GAP_DAYS: z.coerce.number().int().nonnegative().default(3), // min days between proactive contacts; 0 = check in every scan (testing)
   PROACTIVE_BATCH_LIMIT: z.coerce.number().int().positive().default(50), // max users contacted per scan
+  PROACTIVE_SCAN_ENABLED: z
+    .string()
+    .default('true')
+    // false disables the recurring proactive scan (L2 suite stack): the repeatable is not registered and
+    // every `scan` job is ignored, including one enqueued by POST /dev/simulate-proactive-scan. A scan also
+    // carries onboarding dispatch, the lost-reminder sweep and role reconcile, which stop too;
+    // `onboarding-only` jobs still run.
+    .transform((v) => v !== 'false' && v !== '0'),
   QUIET_HOURS_ENABLED: z
     .string()
     .default('true')

@@ -5,6 +5,10 @@ export type { AgentRuntimePort, ProcessMessageInput, ProcessMessageRequest, Proc
 export { AGENT_RUNTIME_PORT, isRuntimeBoundaryProcessMessageRequest, runtimeBoundaryProcessMessageRequestInvalidFields } from './ports/agent-runtime.port';
 export type { ConversationDispatchKind, ConversationRepositoryPort, SaveMessageParams } from './ports/conversation.repository.port';
 export type { ConversationUnitOfWorkPort } from './ports/conversation-unit-of-work.port';
+export type { ClockPort } from './ports/clock.port';
+export { systemClock } from './ports/clock.port';
+export { checkInCadencePolicy, DEFAULT_QA_CADENCE } from './policies/check-in-cadence';
+export type { CheckInCadenceFacts, CheckInCadenceConfig, QaCadenceConfig, CheckInCadenceDecision, CheckInCadenceIneligibleReason } from './policies/check-in-cadence';
 export type { IngestionRepositoryPort, WorkspaceIdentity, IngestMessageParams, IngestMessageResult } from './ports/ingestion.repository.port';
 export type { WorkspaceConnectionRepositoryPort } from './ports/workspace-connection.repository.port';
 export type { OutboxPort, MessageSendPayload, MemoryExtractionPayload, FollowUpExecutionPayload, SurveyEvidencePayload, GroupReportPayload, StyleAnalysisPayload, ProfileHydrationPayload } from './ports/outbox.port';

@@ -128,7 +128,7 @@ export function describeBaselineCoverageGaps(gaps: string[]): string {
  * content words so "how is the project going?" and "how's the project going?"
  * count as one repetition.
  */
-function findRepeatedQuestions(replies: string[]): Array<{ turn: number; question: string }> {
+export function findRepeatedQuestions(replies: string[]): Array<{ turn: number; question: string }> {
   const seen = new Map<string, number>();
   const repeats: Array<{ turn: number; question: string }> = [];
 
@@ -148,7 +148,7 @@ function findRepeatedQuestions(replies: string[]): Array<{ turn: number; questio
   return repeats;
 }
 
-function extractQuestions(text: string): string[] {
+export function extractQuestions(text: string): string[] {
   return text
     .split(/(?<=[?])/)
     .map((part) => part.trim())
@@ -166,6 +166,6 @@ function normalizeQuestion(question: string): string {
     .join(' ');
 }
 
-function firstSentence(text: string): string {
+export function firstSentence(text: string): string {
   return text.split(/(?<=[.!?])\s/)[0] ?? text;
 }

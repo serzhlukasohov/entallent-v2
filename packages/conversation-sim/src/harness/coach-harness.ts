@@ -1,5 +1,7 @@
 import {
   ConversationOrchestrator,
+  systemClock,
+  type ClockPort,
   type AiProviderPort,
   type ClassifyContext,
   type ConversationRecord,
@@ -38,7 +40,6 @@ import type {
   SituationClassification,
   SurveyEvidenceEvaluation,
 } from '@entalent/contracts';
-import { OpenAiProvider } from '@entalent/ai-openai';
 import {
   InMemoryConversationRepository,
   InMemoryGoalRepository,
@@ -48,9 +49,31 @@ import {
 import { InlineOutbox } from '../fakes/inline-outbox';
 import { registerFallbackReport } from './report';
 
-const TENANT_ID = 'sim-tenant';
-const USER_ID = 'sim-user';
-const CONVERSATION_ID = 'sim-conversation';
+export const SIM_TENANT_ID = 'sim-tenant';
+export const SIM_USER_ID = 'sim-user';
+export const SIM_CONVERSATION_ID = 'sim-conversation';
+const TENANT_ID = SIM_TENANT_ID;
+const USER_ID = SIM_USER_ID;
+const CONVERSATION_ID = SIM_CONVERSATION_ID;
+
+/** The single conversation every harness talks in; injected repositories are built around it. */
+export function createSimConversation(options: {
+  userName?: string;
+  timezone?: string;
+  clock?: ClockPort;
+} = {}): ConversationRecord {
+  return {
+    id: CONVERSATION_ID,
+    tenantId: TENANT_ID,
+    userId: USER_ID,
+    channelType: 'sim',
+    externalConversationId: 'sim-channel',
+    status: 'active',
+    userDisplayName: options.userName ?? 'Alex',
+    userTimezone: options.timezone ?? 'Europe/Berlin',
+    userTimezoneUpdatedAt: (options.clock ?? systemClock).now(),
+  };
+}
 
 export interface CoachHarnessOptions {
   userName?: string;
@@ -62,7 +85,27 @@ export interface CoachHarnessOptions {
   seedMemory?: Array<Pick<MemoryItemRecord, 'category' | 'content' | 'importance'>>;
   /** Style profile learned in a previous conversation. */
   seedStyleProfile?: StyleProfileRecord;
-  aiProvider?: AiProviderPort;
+  /**
+   * Required: the harness never builds a provider itself. Live call sites pass
+   * `createLiveProvider()` from `./live-provider`; offline ones a scripted provider.
+   */
+  aiProvider: AiProviderPort;
+  /**
+   * Injected ports (for example recording proxies). Each defaults to the in-memory
+   * implementation the harness builds itself. An injected `conversationRepo` must hold
+   * `createSimConversation(...)`, and `userName` / `timezone` are then ignored; an
+   * injected `styleRepo` ignores `seedStyleProfile`. An injected `outbox` is used as is,
+   * so `analyzeStyle` only applies to the default outbox.
+   */
+  conversationRepo?: InMemoryConversationRepository;
+  memoryRepo?: InMemoryMemoryRepository;
+  goalRepo?: InMemoryGoalRepository;
+  styleRepo?: InMemoryStyleProfileRepository;
+  outbox?: InlineOutbox;
+  /**
+   * Not built by the harness: when `clock` is set, construct it with the same clock
+   * (e.g. `new InMemoryScheduledActionRepository(clock)`) or its stamps use the system clock.
+   */
   scheduledActionRepo?: ScheduledActionRepositoryPort;
   surveyRepo?: SurveyRepositoryPort;
   onboardingTurn?: OnboardingTurnPort;
@@ -70,6 +113,18 @@ export interface CoachHarnessOptions {
   questionConfirmationRepo?: QuestionConfirmationPort;
   /** Topic selection for the pulse cycle (GC round 3 CAP-1); omitted means no topic questions. */
   pulseBacklogService?: Pick<PulseBacklogService, 'getNextProbeQuestion'>;
+  /** Business time for the orchestrator, in-memory repositories and outbox; defaults to the system clock. */
+  clock?: ClockPort;
+  /** Writes a scenario report when the enclosing Vitest test fails; defaults to true. */
+  fallbackReport?: boolean;
+}
+
+/** One delivered user message and what the orchestrator returned for it. */
+export interface HarnessTurn {
+  result: OrchestrateResult;
+  /** The traceId the turn ran under; outbound messages of this turn carry it. */
+  traceId: string;
+  inboundMessageId: string;
 }
 
 export interface GenerateResponseCall {
@@ -105,8 +160,9 @@ class RecordingEscalation implements EscalationPort {
  */
 export class CoachHarness {
   readonly conversationRepo: InMemoryConversationRepository;
-  readonly memoryRepo = new InMemoryMemoryRepository();
-  readonly goalRepo = new InMemoryGoalRepository();
+  readonly clock: ClockPort;
+  readonly memoryRepo: InMemoryMemoryRepository;
+  readonly goalRepo: InMemoryGoalRepository;
   readonly styleRepo: InMemoryStyleProfileRepository;
   readonly escalation = new RecordingEscalation();
   readonly outbox: InlineOutbox;
@@ -122,34 +178,27 @@ export class CoachHarness {
   readonly failures: AgentTurnFailure[] = [];
 
   private readonly orchestrator: ConversationOrchestrator;
+  /** Delivery attempts, including ones whose orchestration threw. */
+  private attempts = 0;
 
-  constructor(options: CoachHarnessOptions = {}) {
-    const conversation: ConversationRecord = {
-      id: CONVERSATION_ID,
-      tenantId: TENANT_ID,
-      userId: USER_ID,
-      channelType: 'sim',
-      externalConversationId: 'sim-channel',
-      status: 'active',
-      userDisplayName: options.userName ?? 'Alex',
-      userTimezone: options.timezone ?? 'Europe/Berlin',
-      userTimezoneUpdatedAt: new Date(),
-    };
-
-    this.conversationRepo = new InMemoryConversationRepository(conversation);
-    this.styleRepo = new InMemoryStyleProfileRepository(options.seedStyleProfile ?? null);
-
-    const ai = new RecordingAiProvider(
-      options.aiProvider ?? createLiveProvider(),
-      this.generateResponseCalls,
+  constructor(options: CoachHarnessOptions) {
+    this.clock = options.clock ?? systemClock;
+    this.memoryRepo = options.memoryRepo ?? new InMemoryMemoryRepository(this.clock);
+    this.goalRepo = options.goalRepo ?? new InMemoryGoalRepository(this.clock);
+    this.conversationRepo = options.conversationRepo ?? new InMemoryConversationRepository(
+      createSimConversation({ userName: options.userName, timezone: options.timezone, clock: this.clock }),
+      this.clock,
     );
-    this.outbox = new InlineOutbox(
+    this.styleRepo = options.styleRepo ?? new InMemoryStyleProfileRepository(options.seedStyleProfile ?? null);
+
+    const ai = new RecordingAiProvider(options.aiProvider, this.generateResponseCalls);
+    this.outbox = options.outbox ?? new InlineOutbox(
       ai,
       this.conversationRepo,
       this.memoryRepo,
       this.goalRepo,
       this.styleRepo,
-      { analyzeStyle: options.analyzeStyle },
+      { analyzeStyle: options.analyzeStyle, clock: this.clock },
     );
 
     for (const item of options.seedMemory ?? []) {
@@ -185,14 +234,22 @@ export class CoachHarness {
       options.questionConfirmationRepo,
       undefined,
       options.onboardingTurn,
+      undefined,
+      this.clock,
     );
 
     // A report must exist even when the scenario aborts before `reportRun` is reached.
-    registerFallbackReport(this);
+    if (options.fallbackReport !== false) registerFallbackReport(this);
   }
 
   /** Delivers one user message and returns the coach's reply. */
   async send(text: string): Promise<string> {
+    const { result } = await this.sendTurn(text);
+    return result.responseText;
+  }
+
+  /** Delivers one user message and returns the orchestrator result with the turn's ids. */
+  async sendTurn(text: string): Promise<HarnessTurn> {
     const generationStart = this.generateResponseCalls.length;
     const inbound = await this.conversationRepo.saveMessage({
       conversationId: CONVERSATION_ID,
@@ -202,7 +259,10 @@ export class CoachHarness {
       text,
     });
 
+    // `turn` keeps the `turns` position for failure reports; the trace number counts every
+    // attempt, so a turn after a throwing one never reuses a traceId under a fixed clock.
     const turn = this.turns.length + 1;
+    const traceId = `sim-turn-${++this.attempts}-${this.clock.now().getTime()}`;
     let result: OrchestrateResult;
     try {
       result = await this.orchestrator.orchestrate({
@@ -212,7 +272,7 @@ export class CoachHarness {
         tenantId: TENANT_ID,
         externalWorkspaceId: 'sim-workspace',
         externalConversationId: 'sim-channel',
-        traceId: `sim-turn-${turn}`,
+        traceId,
       });
     } catch (error) {
       this.failures.push(describeFailure(error, turn, this.generateResponseCalls.length - generationStart));
@@ -225,7 +285,7 @@ export class CoachHarness {
         : null,
     );
     this.turns.push(result);
-    return result.responseText;
+    return { result, traceId, inboundMessageId: inbound.id };
   }
 
   get replies(): string[] {
@@ -352,29 +412,4 @@ function describeFailure(error: unknown, turn: number, generationCalls: number):
     return { turn, name: error.name, message: error.message, stack: error.stack ?? null, generationCalls };
   }
   return { turn, name: typeof error, message: String(error), stack: null, generationCalls };
-}
-
-/** Mirrors `AiService` in the worker so simulations exercise the shipped provider setup. */
-export function createLiveProvider(): AiProviderPort {
-  const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  if (azureEndpoint) {
-    return new OpenAiProvider({
-      azure: true,
-      endpoint: azureEndpoint,
-      apiKey: requireEnv('AZURE_OPENAI_API_KEY'),
-      apiVersion: requireEnv('AZURE_OPENAI_API_VERSION'),
-      deploymentName: process.env.OPENAI_MODEL_BALANCED ?? 'gpt-4o',
-    });
-  }
-
-  return new OpenAiProvider({
-    apiKey: requireEnv('OPENAI_API_KEY'),
-    organizationId: process.env.OPENAI_ORG_ID || undefined,
-  });
-}
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required to run conversation simulations.`);
-  return value;
 }

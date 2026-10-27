@@ -453,6 +453,9 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.1)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   packages/crypto-utils:
     devDependencies:

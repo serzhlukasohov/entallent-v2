@@ -1,13 +1,16 @@
-import { BadRequestException, Controller, Post, Get, Body, Param, HttpCode, Logger, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, ConflictException, Controller, Post, Get, Body, Param, HttpCode, Logger, Query, UseGuards } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Queue, type JobType } from 'bullmq';
 import { randomUUID } from 'crypto';
-import { eq, and, desc, isNull, ne, asc, max as sqlMax } from 'drizzle-orm';
+import { eq, and, desc, isNull, ne, asc, inArray, or, max as sqlMax } from 'drizzle-orm';
 import { IngestionService } from '../channel/ingestion.service';
 import { DatabaseService } from '../database/database.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import { messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections } from '@entalent/database';
+import {
+  messages, memoryItems, scheduledActions, surveyEvidence, surveyWindows, pulseBacklog, surveyQuestions, conversations, workspaceConnections,
+  surveyQuestionWorkingInsights, surveyQuestionConfirmationBundles, surveyQuestionVerdictReceipts,
+} from '@entalent/database';
 import { UserResetService, type UserResetResult } from '../admin/user-reset.service';
 import { OnboardingRestartService } from '../onboarding/onboarding-restart.service';
 import type { ConversationJob, CheckInJob } from '../queue/queue.types';
@@ -31,6 +34,48 @@ export interface DevUserResetResult extends UserResetResult {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Newest jobs read per BullMQ state (each type of a group) when resolving `jobStatus`; older jobs resolve to `null`. */
+export const DEV_JOB_SCAN_LIMIT = 500;
+
+export type DevJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+// Scanned in lifecycle order so a job that moves state between two scans is still seen in the later one.
+const DEV_JOB_STATE_GROUPS: ReadonlyArray<{ status: DevJobStatus; types: JobType[] }> = [
+  { status: 'queued', types: ['waiting', 'delayed', 'prioritized', 'paused', 'waiting-children'] },
+  { status: 'processing', types: ['active'] },
+  { status: 'failed', types: ['failed'] },
+  { status: 'completed', types: ['completed'] },
+];
+
+// Across distinct jobs of one message, the highest-ranked status wins.
+const DEV_JOB_STATUS_PRECEDENCE: Record<DevJobStatus, number> = { processing: 3, queued: 2, failed: 1, completed: 0 };
+
+const DEV_V2_QUESTION_GROUPS = ['autonomy', 'growth', 'purpose', 'belonging'] as const;
+
+export interface DevMessageRow {
+  id: string;
+  direction: string;
+  text: string;
+  occurredAt: Date;
+  traceId: string | null;
+  messageType: string;
+  sentAt: Date | null;
+  metadata: unknown;
+  jobStatus: DevJobStatus | null;
+}
+
+export interface DevQuestionConfirmationState {
+  surveyWindowId: string | null;
+  group: string | null;
+  questions: Array<{ surveyQuestionId: string; stableKey: string; questionGroup: string; status: string }>;
+  progress: { answered: number; total: number };
+  appliedVerdicts: Array<{ inboundMessageId: string; questionGroup: string; verdictKind: string; appliedAt: Date }>;
+  stagedBundleCount: number;
+  pendingClarification: {
+    surveyQuestionId: string; questionGroup: string; clarificationAttempts: number; promptSent: boolean;
+  } | null;
+}
 
 // Only available in development — not imported in production AppModule.
 @Controller('dev')
@@ -178,13 +223,16 @@ export class DevSimulateController {
     return { conversationId, userId };
   }
 
-  /** Returns all messages in a conversation, newest last. */
+  /**
+   * Returns all messages in a conversation, newest last. Inbound rows carry the `jobStatus` of their
+   * conversation queue job; an `after` id that is not a message of this conversation is a 400.
+   */
   @Get('conversation/:conversationId/messages')
   async getMessages(
     @Param('conversationId') conversationId: string,
     @Query('after') afterMessageId?: string,
-  ) {
-    const rows = await this.db.client
+  ): Promise<DevMessageRow[]> {
+    const allRows = await this.db.client
       .select({
         id: messages.id,
         direction: messages.direction,
@@ -199,13 +247,192 @@ export class DevSimulateController {
       .where(eq(messages.conversationId, conversationId))
       .orderBy(messages.occurredAt);
 
-    // If caller provides afterMessageId, return only messages that came after it
+    let rows = allRows;
     if (afterMessageId) {
-      const idx = rows.findIndex(r => r.id === afterMessageId);
-      return idx >= 0 ? rows.slice(idx + 1) : rows;
+      const idx = allRows.findIndex(r => r.id === afterMessageId);
+      if (idx < 0) throw new BadRequestException('after message not found in conversation');
+      rows = allRows.slice(idx + 1);
     }
 
-    return rows;
+    const inboundIds = rows.filter((r) => r.direction === 'inbound').map((r) => r.id);
+    const statuses = inboundIds.length > 0
+      ? await this.resolveJobStatuses(conversationId, inboundIds)
+      : new Map<string, DevJobStatus>();
+    return rows.map((r) => ({
+      ...r,
+      jobStatus: r.direction === 'inbound' ? statuses.get(r.id) ?? null : null,
+    }));
+  }
+
+  /** Read-only, bounded scan of the conversation queue; a queue read error propagates. */
+  private async resolveJobStatuses(conversationId: string, messageIds: string[]): Promise<Map<string, DevJobStatus>> {
+    const wanted = new Set(messageIds);
+    // Per job id: the message it carries and the state of the latest group it was seen in.
+    const jobsById = new Map<string, { messageId: string; status: DevJobStatus }>();
+    for (const group of DEV_JOB_STATE_GROUPS) {
+      const jobs = await this.queue.getJobs(group.types, 0, DEV_JOB_SCAN_LIMIT - 1, false);
+      for (const job of jobs) {
+        const data = job?.data as Partial<ConversationJob> | undefined;
+        if (!data || data.conversationId !== conversationId || typeof data.messageId !== 'string') continue;
+        if (!wanted.has(data.messageId)) continue;
+        jobsById.set(String(job.id), { messageId: data.messageId, status: group.status });
+      }
+    }
+    const statuses = new Map<string, DevJobStatus>();
+    for (const { messageId, status } of jobsById.values()) {
+      const current = statuses.get(messageId);
+      if (current === undefined || DEV_JOB_STATUS_PRECEDENCE[status] > DEV_JOB_STATUS_PRECEDENCE[current]) {
+        statuses.set(messageId, status);
+      }
+    }
+    return statuses;
+  }
+
+  /**
+   * Raw V2 question-confirmation state of the user's active survey window: reads the same tables as the
+   * worker repository with the L1 fake's counting semantics. It skips the worker's v2-mode/policy checks,
+   * its periodEnd check, its three-questions-per-group rule and its pending-clarification prompt/summary
+   * checks, and returns no statement text.
+   */
+  @Get('user/:userId/question-confirmation')
+  async getQuestionConfirmation(
+    @Param('userId') userId: string,
+    @Query('tenantId') tenantIdInput?: string,
+    @Query('group') groupInput?: string,
+  ): Promise<DevQuestionConfirmationState> {
+    const tenantId = typeof tenantIdInput === 'string' ? tenantIdInput.trim() : '';
+    if (!tenantId) throw new BadRequestException('tenantId is required');
+    if (!UUID_PATTERN.test(tenantId)) throw new BadRequestException('tenantId must be a UUID');
+    if (typeof userId !== 'string' || !UUID_PATTERN.test(userId)) throw new BadRequestException('userId must be a UUID');
+    const group = typeof groupInput === 'string' && groupInput !== '' ? groupInput : null;
+    if (group !== null && !(DEV_V2_QUESTION_GROUPS as readonly string[]).includes(group)) {
+      throw new BadRequestException(`group must be one of ${DEV_V2_QUESTION_GROUPS.join('|')}`);
+    }
+
+    const windows = await this.db.client
+      .select({ id: surveyWindows.id, surveyDefinitionId: surveyWindows.surveyDefinitionId })
+      .from(surveyWindows)
+      .where(and(
+        eq(surveyWindows.tenantId, tenantId),
+        eq(surveyWindows.userId, userId),
+        eq(surveyWindows.status, 'active'),
+      ))
+      .limit(2);
+    if (windows.length === 0) {
+      return {
+        surveyWindowId: null, group, questions: [], progress: { answered: 0, total: 0 },
+        appliedVerdicts: [], stagedBundleCount: 0, pendingClarification: null,
+      };
+    }
+    if (windows.length > 1) throw new ConflictException('multiple active survey windows');
+    const window = windows[0]!;
+
+    const windowQuestions = await this.db.client
+      .select({
+        id: surveyQuestions.id,
+        stableKey: surveyQuestions.stableKey,
+        questionGroup: surveyQuestions.questionGroup,
+        displayOrder: surveyQuestions.displayOrder,
+      })
+      .from(surveyQuestions)
+      .innerJoin(surveyWindows, eq(surveyWindows.surveyDefinitionId, surveyQuestions.surveyDefinitionId))
+      .where(and(
+        eq(surveyWindows.id, window.id),
+        eq(surveyWindows.tenantId, tenantId),
+        eq(surveyWindows.userId, userId),
+        eq(surveyQuestions.responseType, 'open_ended'),
+        inArray(surveyQuestions.questionGroup, [...DEV_V2_QUESTION_GROUPS]),
+      ))
+      .orderBy(asc(surveyQuestions.displayOrder));
+
+    const working = await this.db.client
+      .select({
+        surveyQuestionId: surveyQuestionWorkingInsights.surveyQuestionId,
+        status: surveyQuestionWorkingInsights.status,
+        clarificationAttempts: surveyQuestionWorkingInsights.clarificationAttempts,
+        purgedAt: surveyQuestionWorkingInsights.purgedAt,
+        promptSentAt: messages.sentAt,
+      })
+      .from(surveyQuestionWorkingInsights)
+      .leftJoin(messages, and(
+        eq(messages.id, surveyQuestionWorkingInsights.clarificationPromptMessageId),
+        eq(messages.tenantId, tenantId),
+        eq(messages.userId, userId),
+      ))
+      .where(and(
+        eq(surveyQuestionWorkingInsights.tenantId, tenantId),
+        eq(surveyQuestionWorkingInsights.userId, userId),
+        eq(surveyQuestionWorkingInsights.surveyWindowId, window.id),
+      ));
+    const workingByQuestion = new Map(working.map((row) => [row.surveyQuestionId, row]));
+
+    const questions = windowQuestions
+      .filter((question) => group === null || question.questionGroup === group)
+      .map((question) => ({
+        surveyQuestionId: question.id,
+        stableKey: question.stableKey,
+        questionGroup: question.questionGroup,
+        status: workingByQuestion.get(question.id)?.status ?? 'no_data',
+      }));
+
+    const receipts = await this.db.client
+      .select({
+        inboundMessageId: surveyQuestionVerdictReceipts.inboundMessageId,
+        questionGroup: surveyQuestionVerdictReceipts.questionGroup,
+        verdictKind: surveyQuestionVerdictReceipts.verdictKind,
+        appliedAt: surveyQuestionVerdictReceipts.appliedAt,
+      })
+      .from(surveyQuestionVerdictReceipts)
+      .leftJoin(surveyQuestionConfirmationBundles,
+        eq(surveyQuestionConfirmationBundles.id, surveyQuestionVerdictReceipts.bundleId))
+      .leftJoin(surveyQuestionWorkingInsights,
+        eq(surveyQuestionWorkingInsights.id, surveyQuestionVerdictReceipts.workingInsightId))
+      .where(and(
+        eq(surveyQuestionVerdictReceipts.tenantId, tenantId),
+        eq(surveyQuestionVerdictReceipts.userId, userId),
+        group === null ? undefined : eq(surveyQuestionVerdictReceipts.questionGroup, group),
+        or(
+          eq(surveyQuestionConfirmationBundles.surveyWindowId, window.id),
+          eq(surveyQuestionWorkingInsights.surveyWindowId, window.id),
+        ),
+      ))
+      .orderBy(asc(surveyQuestionVerdictReceipts.appliedAt));
+
+    // Every bundle of the window in any status, regardless of `group` (the L1 fake's stagedBundleCount()).
+    const bundles = await this.db.client
+      .select({ id: surveyQuestionConfirmationBundles.id })
+      .from(surveyQuestionConfirmationBundles)
+      .where(and(
+        eq(surveyQuestionConfirmationBundles.tenantId, tenantId),
+        eq(surveyQuestionConfirmationBundles.userId, userId),
+        eq(surveyQuestionConfirmationBundles.surveyWindowId, window.id),
+      ));
+
+    const pendingQuestion = windowQuestions.find((question) => {
+      const row = workingByQuestion.get(question.id);
+      return row?.status === 'pending_clarification' && row.purgedAt === null;
+    });
+    const pendingRow = pendingQuestion ? workingByQuestion.get(pendingQuestion.id) : undefined;
+
+    return {
+      surveyWindowId: window.id,
+      group,
+      questions,
+      progress: {
+        answered: questions.filter((question) => question.status === 'confirmed').length,
+        total: questions.length,
+      },
+      appliedVerdicts: receipts,
+      stagedBundleCount: bundles.length,
+      pendingClarification: pendingQuestion && pendingRow
+        ? {
+            surveyQuestionId: pendingQuestion.id,
+            questionGroup: pendingQuestion.questionGroup,
+            clarificationAttempts: pendingRow.clarificationAttempts,
+            promptSent: pendingRow.promptSentAt !== null && pendingRow.promptSentAt !== undefined,
+          }
+        : null,
+    };
   }
 
   /** Returns active memory items for a user — what the AI remembers about them. */

@@ -1,5 +1,5 @@
 # generated: 2026-08-05T10:19:30Z
-# last_updated: 2026-08-09T18:55:00+02:00
+# last_updated: 2026-10-27T21:00:00+02:00
 # project: enTalentNew
 # project_key: NOKEY
 # tracking_system: file-system
@@ -42,7 +42,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-05T10:19:30Z
-last_updated: 2026-08-28T11:09:38+02:00
+last_updated: 2026-10-27T21:00:00+02:00
 project: enTalentNew
 project_key: NOKEY
 tracking_system: file-system
@@ -109,6 +109,43 @@ development_status:
   9-1-enable-fast-maf-primary-runtime-cutover: done
   9-2-run-full-app-primary-runtime-smoke: done
   epic-9-retrospective: done
+
+  epic-12: in-progress
+  # 12-1 regenerated as spec-12-1-case-schema-loader-and-rule-registry-contract.md (bmad-build, 2026-10-24)
+  12-1-case-schema-loader-and-rule-registry-contract: review
+  12-2-evaluation-scoring-and-report-core: review
+  # 12-3 split 2026-10-25: 12-3 = 12.3a (params validation, reply/turn rules); 12-3b = proactive, clock and state/event rules
+  12-3-suite-rule-implementations: review
+  12-3b-proactive-state-and-clock-rules: review
+  # 12-4 unblocked 2026-10-27: Confluence v3 texts via connector, seeds approved by Illia
+  12-4-p-suite-atomic-tests-and-smoke-journeys: review
+  12-5-clockport-in-the-application-layer: review
+  # 12-6 unblocked 2026-10-25: user chose option (a) (SQL prefilter kept, policy on top; QA cohort membership is a per-user fact)
+  12-6-cadence-policy-extracted-from-worker-sql: review
+  # 12-8 done 2026-10-25 (bmad-build-auto): runner + CLI proven on synthetic suites; p-v1 out of scope, smoke-v1 registered empty (user decision); no baseline committed yet
+  12-7-l0-deterministic-executor-and-fixtures: review
+  12-8-runner-suite-run-and-suite-baseline-accept: review
+  # 12-9 done 2026-10-25 (bmad-build-auto): suite:diff proven on synthetic run/baseline pairs; no baseline committed (user decision)
+  12-9-suite-diff-with-regression-categories: review
+  # 12-10 done 2026-10-25: suite:ci + suite-l0 job in ci.yml, baseline-change label guard workflow, root suite:* aliases, README; every suite empty so the gate passes with nothing to check; QA CODEOWNERS deferred (handle unknown)
+  12-10-l0-gate-in-ci-and-baseline-governance: review
+  epic-12-retrospective: optional
+
+  epic-13: backlog
+  13-1-per-criterion-structured-judge: backlog
+  13-2-calibration-labels-import-adapter-and-agreement-file: backlog
+  13-3-judge-trust-advisory-statuses-and-the-qa-review-list: backlog
+  13-4-l1-orchestrator-executor-live-fixtures-and-state-queries: backlog
+  13-5-live-run-budgets-usage-and-the-first-l1-baseline: backlog
+  13-6-pull-request-gate-for-prompt-and-orchestrator-changes: backlog
+  13-7-scheduled-nightly-and-weekly-l1-runs: backlog
+  epic-13-retrospective: optional
+
+  epic-14: backlog
+  14-1-additive-development-read-endpoints: backlog
+  14-2-l2-application-executor-with-isolation-and-reply-attribution: backlog
+  14-3-weekly-l2-workflow-and-the-first-l2-baseline: backlog
+  epic-14-retrospective: optional
 
 action_items:
   - epic: 1

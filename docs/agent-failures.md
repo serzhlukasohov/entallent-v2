@@ -3247,3 +3247,84 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Run DB-backed checks on a fresh local database (`create database <name>` + `pnpm --filter @entalent/database db:migrate` with an overridden `DATABASE_URL`); recreating the shared `entalent` DB needs user approval because it holds local dev data.
 - Regression check: compare `select max(created_at) from drizzle.__drizzle_migrations` with the journal `when` values; any unapplied entry older than the watermark means the DB must be rebuilt.
 - Status: open
+
+## 2026-10-25: bmad-build-auto planning rewrite dropped a requirement from a draft spec
+
+- Symptom: Planning Story 12.3b from a draft spec, the orchestrator rewrote the non-frozen Tasks section and silently dropped `max: { repliesWithMetadata: key }`, the only form that expresses P-09. The implementation followed the rewritten spec; three review layers caught it and the story needed a bad_spec loop (revert, amend, re-implement).
+- Expected: Re-planning a draft keeps every requirement the draft already stated unless the change is logged.
+- Root cause layer: workflow
+- Harness fix: When step-02 rewrites a draft's non-frozen sections, diff the old and new Tasks/AC text and carry over every param, field and form the old text named (or log the removal in the Spec Change Log).
+- Regression check: `git diff <baseline> -- <spec_file>` reviewed for removed task lines before marking a re-planned draft `ready-for-dev`.
+- Status: open
+
+## 2026-10-25: Conversation-sim harness cannot load outside Vitest
+
+- Symptom: Loading `CoachHarness` under tsx (the planned `suite:run` CLI, Story 12.8) crashes with "Vitest cannot be imported in a CommonJS module", because `harness/report.ts` imports `onTestFailed` from `vitest` at module load. Found while building the L0 executor (Story 12.7).
+- Expected: The L0 executor and everything it imports load in a plain Node/tsx process.
+- Root cause layer: architecture
+- Harness fix: Story 12.8 moved the failure-report hook behind the vitest-free `harness/test-failure-hook.ts` (installed by the `harness/vitest-setup.ts` setup file, with a fallback to the Vitest worker namespace for fixture configs), and `suite/executors/import-graph.test.ts` now forbids runtime `vitest` imports reachable from the executor, runner and CLI.
+- Regression check: `import-graph.test.ts` "loads the CLI in plain Node with tsx (no Vitest)" spawns `node --import tsx src/suite/cli.ts --help` and expects exit 0 (part of `pnpm --filter @entalent/conversation-sim test`).
+- Status: fixed
+
+## 2026-10-25: Fixture Vitest configs rely on an undocumented Vitest global for the failure hook
+
+- Symptom: `failure-classifier.test.ts` and `coach-harness.test.ts` spawn Vitest with generated configs that have no `setupFiles`, so `harness/vitest-setup.ts` never installs the failure hook there; `harness/test-failure-hook.ts` falls back to the undocumented `globalThis.__vitest_index__.onTestFailed` to keep those fixtures finalizing reports (Story 12.8).
+- Expected: Every Vitest config that loads the harness installs the hook through `vitest-setup.ts`, and the hook needs no Vitest internals.
+- Root cause layer: tooling
+- Harness fix: Add `setupFiles: [<abs path>/src/harness/vitest-setup.ts]` to the generated fixture configs in `failure-classifier.test.ts` and `coach-harness.test.ts`, then remove the `__vitest_index__` fallback from `test-failure-hook.ts`.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/gate/failure-classifier.test.ts src/harness/coach-harness.test.ts src/harness/test-failure-hook.test.ts` passes with the fallback removed.
+- Status: open
+
+## 2026-10-25: pnpm script relay broke a multi-line workflow argument
+
+- Symptom: The Story 12.10 governance workflow passed `toJSON(github.event.pull_request.labels.*.name)` (pretty-printed over several lines) through `pnpm --filter ... suite:baseline:guard --labels "$PR_LABELS"`; pnpm 9.12 re-quoted the real newlines as literal `\n`, so every labeled PR would fail with "--labels is not valid JSON". Unit tests called the guard in-process and stayed green; review caught it.
+- Expected: Workflow steps that pass GitHub expression output as arguments are verified through the exact command line the workflow runs.
+- Root cause layer: verification
+- Harness fix: The workflow calls `node --import tsx src/suite/baseline-guard.ts` directly; `baseline-guard.test.ts` spawns that exact command with a multi-line labels argument.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/baseline-guard.test.ts`.
+- Status: fixed
+
+## 2026-10-25: @langwatch/scenario 0.4.15 does not behave as the L1 spine assumed outside Vitest
+
+- Symptom: Building the L1 executor (Story 13.4) hit three Scenario 0.4.15 behaviors the architecture verification note did not record: (1) a static import crashes under plain Node with tsx (`fileURLToPath(import.meta.url)` in the CommonJS build), so `suite/run-live.ts` could not even load; (2) `user(text)` with fixed content still needs a User-role adapter in `agents`, so `agents: [coachAgent]` fails every step; (3) `EventBus.drain` leaves a five-minute referenced timer after each `run()`, so a plain-Node process idles after finishing.
+- Expected: The L1 executor loads and runs in plain Node and Vitest alike, drives fixed user texts without a user simulator, and the live entry exits when the run is done.
+- Root cause layer: context
+- Harness fix: The L1 executor loads `@langwatch/scenario` with a dynamic import (resolves the ES module build), passes a passive User-role adapter that throws if asked to generate, and `run-live.ts` forces exit after an unreferenced one-second grace timer. The README L1 section records the adapter.
+- Regression check: `import-graph.test.ts` "runs one scripted atomic L1 case through the L1 executor and Scenario in plain Node (no Vitest)" (spawns `node --import tsx src/suite/executors/__fixtures__/l1-plain-node-probe.ts` with PATH only and expects exit 0 and one recorded step), plus `l1-orchestrator-executor.test.ts` (real Scenario `run()` offline, agent roles asserted).
+- Status: fixed
+
+## 2026-10-25: L1 PR workflow draft was not valid YAML
+
+- Symptom: The first draft of `.github/workflows/conversation-suite-l1-pr.yml` (Story 13.6) failed `yaml.safe_load` ("mapping values are not allowed here") because a plain `run:` scalar contained `: ` (`echo "Suite L1 reports: $ARTIFACT_URL"`). The text-based workflow test passed anyway.
+- Expected: A workflow file parses as YAML before the task finishes.
+- Root cause layer: verification
+- Harness fix: Parse every new or edited workflow with `yaml.safe_load` before finishing; multi-word shell lines go in `run: |` block scalars; `l1-gate-workflow.test.ts` asserts the workflow structure.
+- Regression check: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/conversation-suite-l1-pr.yml'))"` plus `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/l1-gate-workflow.test.ts`.
+- Status: fixed
+
+## 2026-10-27: P-suite effect criteria missed the decisions the orchestrator branches on
+
+- Symptom: The approved P-suite engineering effects (Story 12.4) checked only visible side effects (sends, staged summaries, verdict writes). The turn trace recorded mode, primary intent, outcome and `bundleReply`, but not the risk assessment (severity, type, escalation, survey block) or the rest of the classification (`surveyAllowed`, urgency, safety check, cycle-status question), although these gate every survey branch, crisis/sensitive mode and escalation in `conversation-orchestrator.ts`. A live run could not tell why a summary or survey question was missing, and no criterion checked any of these decisions.
+- Expected: The suite records every decision the orchestrator branches on and proposes effect criteria for the expected decisions of each case.
+- Root cause layer: verification
+- Harness fix: `turnTrace` records `turn.classification` and `turn.risk` (bounded values, no reasoning text); L1 declares both observation fields, L0 records but does not declare them (scripted outputs); `report.md` has a `## Turn decisions` table per executed step. Decision effect criteria are drafted in `p-v1-effects-draft.md` and wait for approval.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/report.test.ts src/suite/runner.test.ts` ("turn decisions" and the p-v1 L0 decisions assertions).
+- Status: fixed (decision criteria approved and implemented as `turn-decision`, 2026-10-27)
+
+## 2026-10-27: P-suite never checks the context the model receives, and P-06.C4 has nothing to refer to
+
+- Symptom: The orchestrator builds a response context on every turn (transcript, memory items and goals, session start, local time, survey question, cycle progress, trailing summary, disclosure). The suite records it only as a truncated `argsSummary` (L0) or the raw model request (L1) and no rule checks it, so a turn answered without its history or memory passes every L0 check. P-06 seeds no earlier conversation, memory or follow-up, so P-06.C4 ("a bot-initiated message that continues an earlier conversation restates what it refers to") can never meet its own premise; Story 12.4 mapped it to a meaning check without flagging that. Memory is always empty in P-suite runs (L0 extraction proposes nothing; no memory fixture).
+- Expected: Context-dependent cases assert the context the product built (deterministic, so at L0), a memory fixture seeds what a case needs, and a criterion whose premise the setup cannot produce is flagged instead of mapped.
+- Root cause layer: verification
+- Harness fix: every `aiProvider.generateResponse` event carries a context digest (`RunEvent.context`, counts and flags only), shown per step in `report.md` "Turn decisions"; `memoryItems` fixture seeds active memory. Pending approval: a context rule with per-case checks and the P-06 setup with an earlier conversation for C4 (`p-v1-effects-draft.md`).
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/executors/context-digest.test.ts src/suite/executors/l0-deterministic-executor.test.ts src/suite/fixtures/fixtures.test.ts` (digest, seeded history and memory reach the model, memory fixture).
+- Status: fixed for context (`model-context` criteria and the P-06 earlier-conversation setup, 2026-10-27); P-06.C4 judging is tracked in the next entry
+
+## 2026-10-27: P-06 meaning criteria are never judged, and the walkthrough said they were
+
+- Symptom: `evaluate.ts` returns NOT_RUN `judge-unsupported:observation-window` for every meaning check on an observation window, so P-06.C4 and P-06.C5 can never be judged at any level. Story 12.4 mapped both to meaning checks, and the per-test walkthrough told Illia the judge evaluates them.
+- Expected: A criterion mapped to a check the evaluator cannot run is flagged at mapping time (NOT_RUN by construction), never presented as covered.
+- Root cause layer: verification
+- Harness fix: `buildJudgeInput` supports `observation-window` (seed history, then the window's bot-initiated messages; criterion `windowScope: first | all`), `evaluate` no longer returns `judge-unsupported:observation-window`; P-06.C4 uses `first`, C5 `all`. Only `state` meaning criteria remain unjudged.
+- Regression check: `pnpm --filter @entalent/conversation-sim exec vitest run src/suite/evaluate.test.ts src/suite/executors/l1-orchestrator-executor.test.ts` ("observation windows" and "p-v1 P-06" L1 judging).
+- Status: fixed (offline, mock judge; no live judge run yet)

@@ -115,3 +115,77 @@ jobs:
           path: packages/conversation-sim/runs/gates/
           if-no-files-found: warn
           retention-days: 14
+
+  # Scheduled L1 suite runs (architecture AD-15): nightly n = 1 (meaning criteria diff as
+  # inconclusive, below diff.minSamples.L1) and weekly n = 5 (authoritative meaning diff).
+  # Same opt-in as simulate (authorize); independent of the legacy gate's result.
+  suite-l1:
+    name: Suite L1 scheduled run
+    needs: authorize
+    if: needs.authorize.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build conversation-sim dependencies
+        run: pnpm turbo run build --filter=@entalent/conversation-sim^...
+
+      # The pinned judge needs OPENAI_API_KEY even when authorize accepted an Azure-only set:
+      # an opted-in schedule that could never judge fails visibly before any spend.
+      - name: Check L1 credentials
+        working-directory: packages/conversation-sim
+        env:
+          HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+          HAS_AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT != '' }}
+          HAS_AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY != '' }}
+          HAS_AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION != '' }}
+          HAS_AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT != '' }}
+        run: |
+          if ! node --import tsx src/suite/l1-gate.ts credentials; then
+            echo '::error::Scheduled L1 run is opted in but model credentials are missing; configure the secrets or unset CONVERSATION_SIM_SCHEDULED_ENABLED.'
+            exit 1
+          fi
+
+      - name: Suite L1 scheduled run and merge-base diff
+        working-directory: packages/conversation-sim
+        env:
+          RUNS: ${{ needs.authorize.outputs.runs }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          OPENAI_MODEL_BALANCED: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          LANGWATCH_API_KEY: ''
+        run: node --import tsx src/suite/run-live.ts ci --level L1 --runs "$RUNS" --include-unbaselined --live-model --summary "$GITHUB_STEP_SUMMARY"
+
+      # Reports and case-runs.json (transcripts and model events) for QA review; never in logs.
+      - name: Upload suite runs
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: suite-l1-scheduled-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/conversation-sim/runs/suites/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Link suite runs
+        if: always() && steps.upload.outputs.artifact-url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          echo "Suite L1 scheduled runs: $ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

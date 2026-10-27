@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
-import { ProactiveSchedulerUseCase } from '@entalent/application';
+import { ProactiveSchedulerUseCase, systemClock } from '@entalent/application';
 import type { Env } from '@entalent/config';
 import { ProactiveSchedulerRepository } from './proactive-scheduler.repository';
 import { CheckInEnqueueService } from './check-in-enqueue.service';
@@ -36,7 +36,7 @@ import { OnboardingModule } from '../onboarding/onboarding.module';
           minCheckInGapDays: config.get('PROACTIVE_MIN_GAP_DAYS', { infer: true }),
           batchLimit: config.get('PROACTIVE_BATCH_LIMIT', { infer: true }),
           quietHoursEnabled: config.get('QUIET_HOURS_ENABLED', { infer: true }),
-        }),
+        }, systemClock),
       inject: [ProactiveSchedulerRepository, CheckInEnqueueService, ConfigService],
     },
     ProactiveScanProcessor,

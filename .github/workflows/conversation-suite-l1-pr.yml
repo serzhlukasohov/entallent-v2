@@ -1,0 +1,195 @@
+name: Conversation suite L1 PR gate
+
+# Meaning-level L1 gate for pull requests that change prompts, the provider, the orchestrator,
+# proactive check-ins, policies, quiet hours or the suite (architecture AD-15). Opt-in and
+# inert by default: live models run only when the repository variable
+# CONVERSATION_SUITE_L1_PR_GATE_ENABLED is `true`. No `paths` filter, so `Suite L1 gate` always
+# reports and can be a required check; it passes with a notice when disabled, when no gated
+# path changed, for forks, or when no suite has an L1 baseline at the merge-base. All decision
+# logic lives in packages/conversation-sim/src/suite/l1-gate.ts (tested).
+on:
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: conversation-suite-l1-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  changes:
+    name: Suite L1 changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
+      decision: ${{ steps.decide.outputs.decision }}
+      message: ${{ steps.decide.outputs.message }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Detect gated changes
+        id: changes
+        working-directory: packages/conversation-sim
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node --import tsx src/suite/l1-gate.ts changes --base "$BASE_SHA" --head "$HEAD_SHA" --output "$GITHUB_OUTPUT"
+
+      - name: Decide
+        id: decide
+        working-directory: packages/conversation-sim
+        env:
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          L1_GATE_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          L1_GATE_ENABLED: ${{ vars.CONVERSATION_SUITE_L1_PR_GATE_ENABLED }}
+          # Presence booleans only; no secret value reaches this job.
+          HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+          HAS_AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT != '' }}
+          HAS_AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY != '' }}
+          HAS_AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION != '' }}
+          HAS_AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT != '' }}
+        # A written decision=error (exit 1) is reported by the `l1` job; any other failure fails here.
+        run: |
+          set +e
+          node --import tsx src/suite/l1-gate.ts decide --changed "$CHANGED" --output "$GITHUB_OUTPUT"
+          code=$?
+          if [ "$code" -ne 0 ] && ! grep -qx 'decision=error' "$GITHUB_OUTPUT"; then exit "$code"; fi
+          exit 0
+
+  l1:
+    name: Suite L1 gate
+    needs: changes
+    # Not always(): a run cancelled by concurrency must not post a failing check on the
+    # superseded commit; a failed changes job still runs this job and fails closed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Gate decision
+        id: gate
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DECISION: ${{ needs.changes.outputs.decision }}
+          MESSAGE: ${{ needs.changes.outputs.message }}
+        run: |
+          if [ "$CHANGES_RESULT" != 'success' ]; then
+            echo "::error::Suite L1 changes job did not succeed ($CHANGES_RESULT); the L1 gate fails closed."
+            exit 1
+          fi
+          case "$DECISION" in
+            skip)
+              echo "::notice::$MESSAGE"
+              echo "Suite L1 gate: $MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+              echo 'run=false' >> "$GITHUB_OUTPUT"
+              ;;
+            error)
+              echo "::error::$MESSAGE"
+              echo "Suite L1 gate: $MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+              ;;
+            run)
+              echo "$MESSAGE"
+              echo 'run=true' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Suite L1 changes produced no gate decision; the L1 gate fails closed."
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/checkout@v6
+        if: steps.gate.outputs.run == 'true'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        if: steps.gate.outputs.run == 'true'
+
+      - uses: actions/setup-node@v6
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build conversation-sim dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm turbo run build --filter=@entalent/conversation-sim^...
+
+      # Labels are read live, so re-running this job after adding `baseline-change` sees it.
+      - name: Baseline change guard
+        if: steps.gate.outputs.run == 'true'
+        working-directory: packages/conversation-sim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          labels=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')
+          node --import tsx src/suite/baseline-guard.ts --base "$BASE_SHA" --head "$HEAD_SHA" --labels "$labels"
+
+      - name: Suite L1 run and merge-base diff
+        if: steps.gate.outputs.run == 'true'
+        working-directory: packages/conversation-sim
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+          AZURE_OPENAI_TESTING_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          OPENAI_MODEL_BALANCED: ${{ secrets.AZURE_OPENAI_TESTING_DEPLOYMENT }}
+          LANGWATCH_API_KEY: ''
+        run: |
+          set -o pipefail
+          node --import tsx src/suite/run-live.ts ci --level L1 --live-model --summary "$GITHUB_STEP_SUMMARY" 2>&1 | tee "$RUNNER_TEMP/suite-l1-ci.log"
+          if grep -q 'gate passes with nothing to check' "$RUNNER_TEMP/suite-l1-ci.log"; then
+            echo '::notice::L1 gate passed with nothing to check: no suite has L1 tests and an L1 baseline at the merge-base.'
+          fi
+
+      # The run reports only, which can include reply excerpts and evidence; full transcripts
+      # and model request/response events (case-runs.json) are never uploaded.
+      - name: Upload suite reports
+        id: upload
+        if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: suite-l1-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            packages/conversation-sim/runs/suites/*/report.json
+            packages/conversation-sim/runs/suites/*/report.md
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Link reports
+        if: always() && steps.upload.outputs.artifact-url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          echo "Suite L1 reports: $ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

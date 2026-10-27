@@ -232,3 +232,464 @@ scenarios for action discipline, reminder deduplication, delayed follow-up polic
 assessment preparation, goal state, memory extraction, memory correction, and
 casual conversation. These deterministic entries have `judgePasses: 0`; live
 judge thresholds remain on the live baseline scenarios.
+
+## Conversation suites (Framework v2.1.1, `src/suite/`)
+
+The suite framework scores Framework v2.1.1 test cases per criterion, independently of
+the scenario gate above (`ScenarioRunReport`, `gate.config.json` and `run-gate.ts` are
+untouched). Suites are registered in `suite.config.json`; `p-v1` and `smoke-v1` are
+registered and empty today. L0 is the offline deterministic level: no Postgres, Redis or
+model credentials, and the CLI removes `OPENAI_API_KEY` and `AZURE_OPENAI_*` from its
+environment before running. L1 runs the real orchestrator and prompts with a live coach model
+and the pinned judge, so the default entry refuses it (exit 1, nothing written, no provider
+built) and only the gated live entry `suite:run:live` runs it. L2 drives journey tests
+through a running local stack; the default entry refuses it too and only
+`suite:run:live ... --level L2 --live-model --live-app` runs it (see [L2 executor](#l2-executor)).
+
+### Commands
+
+Root aliases delegate to this package and pass flags through.
+
+```bash
+pnpm suite:run --suite smoke-v1 --level L0 [--runs N] [--case <id>] [--allow-unpinned-judge]
+pnpm suite:diff --run <runId> [--baseline <path> | --merge-base]
+pnpm suite:baseline:accept --run <runId> [--allow-incomplete] [--allow-dirty] [--ci-run-url <url>]
+pnpm suite:ci --level L0 [--summary <path>]
+pnpm suite:calibrate --suite <id> [--import <qa-export.json>]
+pnpm suite:calibrate:live --suite <id> --live-judge   # human-run only: calls the pinned judge model
+pnpm suite:run:live --suite <id> --level L1 --live-model [--runs N] [--case <id>]   # human-run only: live coach and judge
+node --import tsx src/suite/run-live.ts ci --level L1 --live-model [--summary <path>]   # the opt-in L1 PR gate (from this package)
+node --import tsx src/suite/l1-gate.ts changes --base <sha> --head <sha> [--output <file>]   # L1 PR gate path filter
+node --import tsx src/suite/l1-gate.ts decide --changed <true|false> [--output <file>]     # L1 PR gate run decision
+node --import tsx src/suite/run-live.ts ci --level L2 --runs 3 --include-unbaselined --live-model --live-app [--summary <path>]   # the opt-in weekly L2 run
+node --import tsx src/suite/l2-stack.ts tenant-from-seed <seed-log> | worker-env --output <file>   # L2 workflow stack helpers
+pnpm --filter @entalent/conversation-sim suite:baseline:guard --base <rev> --head <rev> --labels '<json-array>'
+```
+
+- `suite:run` writes `runs/suites/<runId>/report.json`, `report.md` and `case-runs.json`
+  (gitignored). The run id is `<ISO timestamp>-<short sha>`. At L1/L2 the judge model is
+  the pin in `suite.config.json`; `SIM_JUDGE_MODEL` is honored only when unset, empty or
+  equal to the pin, otherwise the run is refused (exit 1, nothing written) unless
+  `--allow-unpinned-judge` is passed, which calls that model and makes the run untrusted
+  (`unpinned-judge`). At L0 neither has any effect.
+- `suite:diff` compares a run with a baseline and writes the diff into the same report.
+  Without a flag it reads the working-tree `baselines/<suite>/<level>.json`; `--merge-base`
+  reads that file at `git merge-base HEAD origin/main` (what CI uses), never the checkout.
+- `suite:baseline:accept` writes `baselines/<suite>/<level>.json` from a run. It refuses a
+  run below `baseline.minSamples`, an INCOMPLETE run (unless `--allow-incomplete`, recorded
+  as provisional), a dirty tree (unless `--allow-dirty`), a `--case` run, a run with a
+  different judge fingerprint (at L1/L2 the current one is computed from `suite.config.json`
+  and the suite's guidance), or a run whose called judge model is not the pin. Every entry
+  records `advisory` from the run: an L1/L2 run from an untrusted judge is still accepted
+  (with a `[suite] baseline: meaning results are advisory (<reason>) ...` line), and its
+  meaning entries diff as `inconclusive` until re-accepted from a trusted run, while its rule
+  and S entries gate normally. Entries without `advisory` (older baselines) count as
+  non-advisory. No baseline is committed yet.
+- `suite:ci` runs every registered suite that has tests through `suite:run` (n = 1) and
+  `suite:diff --merge-base`, logs `[suite] ci: <id> skipped (no tests)` for the others, and
+  appends a Markdown step summary to `--summary` (relative paths resolve against the
+  directory you ran `pnpm` from). The summary has the layer table, verdict, diff outcome,
+  baseline source, category counts and every changed entry, and no evidence, reason or
+  transcript text. With no suite that has tests it passes with nothing to check.
+  `--level L1` needs an injected judge, so the default entry refuses it (exit 1, the
+  `suite:run:live` hint); only `run-live.ts ci --level L1 --live-model` runs it (see
+  [L1 pull-request gate](#l1-pull-request-gate)). `--level L2` likewise needs a judge and a
+  running stack: the default entry refuses it naming `suite:run:live ... --live-app`, and only
+  `run-live.ts ci --level L2 --live-model --live-app` runs it (see [Weekly L2 run](#weekly-l2-run)).
+  At L2 the summary also lists the journey results (counts per status and a key/status table).
+- `suite:calibrate` manages judge calibration (AD-8). `--import` converts a QA session
+  export (`{ schemaVersion: 1, sessions: [{ ref, labeler, labeledAt, dialogue, statuses:
+  [{ criterionId, status, replyIndex }] }] }`; an assumed format until QA confirms theirs)
+  into labels and appends them to `calibration/<suite>/labels.json`: one label per status,
+  the transcript cut after `replyIndex` (whole dialogue when `null`), `source.ref` kept as
+  provenance only. Labels are deduplicated on criterion id plus transcript hash (the first
+  label wins; a skipped duplicate is warned about, naming a differing status). Existing
+  labels are never rewritten or re-statused. Any invalid entry (schema, a `replyIndex` that
+  is not a coach turn, an unknown, NOT TESTABLE or not meaning-judged criterion, or a scope
+  mismatch) rejects the whole import. The default entry wires no judge: with `--import` it
+  imports and skips calibration, and without it it exits 1 with the `suite:calibrate:live`
+  hint. A calibration run judges every label with the same input building and evidence rules
+  as `suite:run`, prints the per-layer table (`n`, agreement, Cohen's kappa over
+  PASS/FAIL/ERROR), one line per disagreement and judge usage, warns below
+  `judge.minLabels`, and writes `calibration/<suite>/agreement.json` (fingerprint, labels
+  hash, overall and per-layer agreement). A judge ERROR counts as a disagreement and exits
+  3. A criterion judged in several tests with different guidance, fixture context or scope
+  is refused before any judge call; fix the suite. No labels or agreement file are committed
+  yet (pending QA labels).
+- `suite:calibrate:live` is the only path to the live judge. It refuses (exit 1, no model
+  built) without `--live-judge`; no test, script or CI step runs it with the flag. It reads
+  `OPENAI_API_KEY` or `AZURE_OPENAI_*` from the shell environment and never loads `.env`.
+- `suite:run:live` is the only path to an L1 run. It refuses (exit 1, no provider or model
+  built) without `--live-model`, and runs only the `run` and `ci` commands at `--level L1`; no
+  test or script runs it with the flag, and its only automated caller is the opt-in L1
+  pull-request gate. It wires `L1OrchestratorExecutor` with
+  `createLiveProvider` (coach model label `azure:<OPENAI_MODEL_BALANCED ?? gpt-4o>` when
+  `AZURE_OPENAI_ENDPOINT` is set, else `openai:analysis=gpt-4o-mini,generation=gpt-4o`, the
+  provider's two default tiers; recorded as `models.coach`) and the
+  live pinned judge. `LANGWATCH_API_KEY`, when set, streams each test's conversation to
+  LangWatch; statuses, reports and `case-runs.json` are identical without it. It reads the
+  shell environment and never loads `.env`. The live judge gets `budgets.judgeCallTimeoutMs`
+  per call.
+- `suite:baseline:guard` fails when `git diff <base>...<head>` touches
+  `packages/conversation-sim/baselines/` and the labels lack `baseline-change`.
+
+### Budgets and usage
+
+`suite.config.json` `budgets` bounds one invocation (all `--runs` samples and retries
+together; raising `--runs` past them needs a deliberate config change):
+`maxCoachCallsPerRun` (600), `maxJudgeCallsPerRun` (150), `coachCallTimeoutMs` (120000)
+and `judgeCallTimeoutMs` (60000). The runner reserves every coach provider call through a
+budget hook the L1 executor asks before calling, and counts judge calls from each judge
+outcome (one judge invocation may overshoot by its single transport retry). Once a budget is
+spent the call is refused: the case it happens in ends as ERROR `budget-exceeded` from that
+step (even when the orchestrator swallowed the refused call and replied with a fallback),
+every remaining case is ERROR `budget-exceeded` without executing, nothing is retried, the
+run is provisional (`budget exceeded: coach|judge`), and `suite:run` exits 4 with the report
+written. A coach call that exceeds its timeout is ERROR infrastructure `coach-timeout`
+(retried once); a judge call that exceeds its timeout is a transport failure (retried once,
+then `judge-transport`). A timed-out coach request cannot be aborted through
+`AiProviderPort` and may finish in the background.
+
+`report.json` carries `budget` (`maxCoachCalls`, `maxJudgeCalls`, `coachCalls`,
+`judgeCalls`, `exceeded`) and `modelUsage` (one row per coach model label and one for the
+judge; coach tokens are `null`, not observable through the port), and
+`usage.coachModelCalls` is the reserved coach call count. `report.md` `## Usage` shows the
+per-model table and `- Budget: coach x/600, judge y/150`; the CI step summary adds one usage
+line per model that made calls (none at L0).
+
+### The first L1 baseline (human-run)
+
+Everything needed is built and tested offline; no L1 baseline is committed. Once `smoke-v1`
+has scenarios (and, for authoritative meaning entries, QA labels and a calibration):
+
+1. Optionally calibrate: `pnpm suite:calibrate:live --suite smoke-v1 --live-judge`.
+2. From a clean tree: `pnpm suite:run:live --suite smoke-v1 --level L1 --runs 5 --live-model`
+   (calls the live coach and judge; exit 4 means a budget was exceeded and the run cannot be
+   accepted as complete).
+3. `pnpm suite:baseline:accept --run <runId>`; review `baselines/smoke-v1/L1.json` and open
+   a pull request labeled `baseline-change`.
+
+### Exit codes
+
+| Command | 0 | 1 | 2 | 3 | 4 |
+| --- | --- | --- | --- | --- | --- |
+| `run`, `baseline:accept` | report or baseline written (whatever the verdict) | usage, config, load or refusal error | | | `run`: a call budget was exceeded (report still written) |
+| `diff` | clean, or no baseline | gating regression or lost coverage; usage error; unreadable run | baseline invalid (provenance differs, unreadable, git cannot resolve the merge-base) | judge infrastructure | budget exceeded |
+| `ci` | every suite clean, without baseline, or skipped | a suite's diff exited 1, or a suite failed to load or run | any suite exited 2 | any 3 (no 2) | any 4 (no 2 or 3) |
+| `calibrate` | import done or agreement file written | usage, config, unknown suite, load, invalid labels or export, unresolvable label, no judge without `--import` | | any label judged ERROR (file still written) | |
+| `baseline:guard` | no baseline changed, or labeled | baseline changed without the label; missing flags, bad labels or git failure (fails closed) | | | |
+
+`ci` attempts every suite and exits with the first code present by precedence 2 > 3 > 4 > 1.
+
+### L1 executor
+
+`L1OrchestratorExecutor` (`src/suite/executors/l1-orchestrator-executor.ts`) builds a fresh
+`CoachHarness` per test and per retry attempt over in-memory conversation, memory, goal,
+style, question-confirmation and survey repositories, a `FixedClock`, and the injected coach
+provider; every port is wrapped by the recording proxy, and AI events also carry
+`model: { name, settings, request, response }` untruncated in `case-runs.json` (never in
+logs). The inline outbox runs the real `SurveyEvidenceExtractionUseCase` (v1 path: saved
+evidence rows) over the same ports. Conversation steps are driven by one Scenario `run()`
+per test (`setId: entalent-suite-<suiteId>`): per step the gap, `user(text)`, `agent()` and
+a recording step with the stop checkpoint, then `succeed()`; there is no judge agent and no
+user simulator (a passive User-role adapter only carries the scripted texts, which Scenario
+0.4.15 requires). The `CaseRun` is built from the harness, the event sink and the clock,
+never from the Scenario result. Observation tests (P-06) drive the scheduler and check-in
+generation on the coach provider over the fixture clock. It supports all eight fixtures;
+`pulseCycle` (L1 only) seeds the V2 window and the survey window and verifies that every
+declared uncovered topic is still open. State queries come from the L1 table in
+`src/suite/fixtures/state-queries.ts` (`questionProgress` over the `pulseCycle` fixture's
+first uncovered topic, else the whole window; `stagedBundleCount`; `surveyEvidenceCount`;
+`outboundCount`), and L1 state criteria report `method: substituted`.
+
+### L2 executor
+
+`L2ApplicationExecutor` (`src/suite/executors/l2-application-executor.ts`) runs journey tests
+through the real local API, BullMQ queue, worker and Postgres over the development-only
+`/api/v1/dev` endpoints, using `DevApiClient` (`src/suite/executors/dev-api-client.ts`). Only
+`suite:run:live` reaches either module (`executors/import-graph.test.ts`); the default
+`suite:run` and `suite:ci` refuse `--level L2` naming the live entry.
+
+- **Gate:** `run-live.ts run --level L2` and `run-live.ts ci --level L2` need both
+  `--live-model` (the run calls the live pinned judge, and the stack's worker calls its own
+  coach model) and `--live-app` (it drives a running local stack). `--live-app` at any other
+  level is refused.
+- **Worker env:** `suite.config.json` `l2.workerEnv` (`{ "PROACTIVE_SCAN_ENABLED": "false" }`)
+  is the env the stack's worker must be started with, so the recurring proactive scan never
+  sends a check-in into a case. `run-live.ts` at L2 exits 1 with `suite.config.json
+  l2.workerEnv is absent` before building anything when it is missing, and the executor's
+  constructor refuses a missing or empty `workerEnv`. The suite cannot see the worker's env:
+  starting the worker with it is the operator's (or the workflow's) job.
+- **Environment** (validated before anything is built; a refusal names the variable and the
+  rule, never the value): `SUITE_L2_API_BASE` is an `http:`/`https:` URL whose host is exactly
+  `localhost`, `127.0.0.1` or `[::1]`, with path empty, `/` or `/api/v1` and no userinfo, query
+  or hash (never a remote or production host); `SUITE_L2_TENANT_ID` is a UUID; `ADMIN_API_KEY`
+  is non-empty and sent as `X-Api-Key` on every call (never logged). A non-2xx status, a
+  transport failure or timeout (30 s per request) or a response failing its schema is ERROR
+  infrastructure `dev-api:<operation>`.
+- **Isolation per attempt:** external user `suite-<runId>-<testId>` (plus `-s<sample>-a<attempt>`
+  above 1): `find-conversation`, `reset-user { deep: true }`, `find-conversation` again (the
+  deep reset deleted the conversation), and the conversation must be empty (else
+  `isolation-not-empty`, nothing sent). `CaseRun.subject` records the external user, user,
+  conversation and tenant ids. A reset that queues an onboarding intro shows up as a foreign
+  outbound (see below). A `404` from `reset-user` counts as a completed reset: the deep reset
+  commits first, then the onboarding restart answers 404 for a dev-only user without a
+  `people` row, which is always the case for a `find-conversation` persona; the second
+  `find-conversation` and the empty check stay the isolation guard. Any other non-2xx is
+  `dev-api:resetUser`.
+- **Steps and attribution:** before every step after the first the executor waits
+  `interMessageGapMs` (plus `advanceClock`) for real and records it as `gapMs`, then sends
+  `simulate-message`. It polls `messages?after=<inbound id>` every 500 ms for up to 60 s:
+  outbounds under the step's `traceId` are the reply (`occurredAt` order, texts joined by a
+  blank line), others are `unsolicited`; a foreign outbound before any own one is ERROR
+  infrastructure `unsolicited-outbound`. Polling stops on the first poll after the reply
+  that adds nothing. On timeout the inbound's `jobStatus` decides: `completed` re-polls once
+  and records `reply: null` (product silence, evaluated) if still none; `failed` is ERROR
+  product `job-failed`; anything else is ERROR infrastructure `reply-timeout:<status|none>`.
+  A `400` on `after` is `messages-after-rejected`.
+- **Observed fields:** `reply.text`, `reply.messages`, `steps.gapMs` and the four
+  `state.*` queries; never `events`, `turn.*` or `window.outbound`. State queries come from
+  the `l2` column of the single table in `src/suite/fixtures/state-queries.ts`
+  (`question-confirmation` for `questionProgress` (over the `pulseCycle` group) and
+  `stagedBundleCount`, `survey-state` for `surveyEvidenceCount`, the conversation messages
+  for `outboundCount`) and report `method: observed`; there is no `effect-count` pairing.
+- **Fixtures are verify-only:** L2 never writes the database, so `freshPersona` (memory,
+  survey evidence and the question window are empty; style and goals have no dev read),
+  `pulseCycle` (an active window with an open question for every declared topic) and
+  `disclosureDelivered` (a delivered outbound with the version) only read the dev endpoints.
+  When the stack has not established the state, the precondition is unsatisfied and every
+  criterion is `INVALID precondition:<name>`. `seededHistory`, `confirmationState`, `clock`,
+  `pendingBotQuestion` and `proactiveUsers` are unsupported (`unsupported-fixture:<name>`).
+  Observation tests never declare L2 (deferred), and atomic tests never do either.
+- **Budgets:** coach calls run inside the app worker and are not observable, so L2 reserves no
+  coach budget, `models.coach` is `null` and `maxCoachCallsPerRun` does not apply. The number
+  of coach calls is not capped: each step can make several worker model calls, and the steps
+  run once per test per `--runs` sample, plus once more for every infrastructure retry (which
+  replays the journey with a fresh persona). The judge budget applies unchanged. An L2 run reports
+  the verdict `n/a (journeys only)`.
+
+To run it by hand against a local stack (the weekly CI run is [Weekly L2 run](#weekly-l2-run)):
+start Postgres and Redis, the API with `NODE_ENV=test` and `ADMIN_API_KEY`, and the worker
+with `PROACTIVE_SCAN_ENABLED=false` (`l2.workerEnv`), then
+
+```sh
+SUITE_L2_API_BASE=http://localhost:3000 SUITE_L2_TENANT_ID=<uuid> \
+  pnpm suite:run:live --suite <id> --level L2 --live-model --live-app --case <test>
+```
+
+### Statuses and verdict
+
+Every in-scope criterion gets exactly one status, decided in this order:
+
+1. `NOT_TESTABLE` — the criterion carries a `not-testable` check (reason from the manifest).
+2. `INVALID` — a failed precondition or fixture verify, a failed checkpoint before the
+   criterion (`checkpoint:<k>`), or a change-type state criterion already satisfied before
+   the step (`precondition:already-satisfied`).
+3. `ERROR` — the executor or judge does not know what the product did at or before the step.
+4. `NOT_RUN` — the step was not reached, a fixture is unsupported, or a field is not
+   observable at the level (`unobservable:<field>@<level>`). Never `FAIL`.
+5. `PASS` / `FAIL` — any rule FAIL makes the criterion FAIL; meaning checks apply only when
+   no rule failed. Product silence is evaluated, not an error.
+
+Criteria a level cannot decide (`level-not-declared`, `no-judge-at-level`) are out of scope.
+Layer pass rate is PASS / (PASS + FAIL) over non-advisory results of atomic and observation
+tests; journeys are reported and diffed separately and never change the verdict. Verdict:
+any S FAIL is NOT ADEQUATE; otherwise a combined P+D+C pass rate of at least 0.90 is
+ADEQUATE, 0.75 to 0.89 is ACCEPTABLE WITH ISSUES, lower is NOT ADEQUATE. A run is COMPLETE
+when every in-scope status is PASS, FAIL or a declared NOT_TESTABLE; an INCOMPLETE run
+carries a provisional verdict with its reason.
+
+### Judge trust and the QA review list
+
+At L1/L2 the runner decides judge trust once per run (`judge/trust.ts`, AD-8) from the
+configured judge, the run-time fingerprint, the current labels hash and
+`calibration/<suite>/agreement.json`. The first failing check names the reason:
+`unpinned-judge`, `no-agreement` (today's normal state: no labels or agreement exist yet),
+`fingerprint-mismatch:<field>` (provider, model, decoding, promptSha256, schemaSha256,
+guidanceSha256, in that order), `labels-mismatch`, `below-min-labels`,
+`below-threshold:overall`, `below-threshold:kappa` (a null `overall` or `kappa` counts as
+below the threshold);
+otherwise the judge is trusted (`calibrated`). Until then every meaning-decided result is
+advisory: it is reported but excluded from layer pass rates and the verdict, and diffs mark
+it `inconclusive`. At L0 there is no judge (`no-judge-at-level`).
+
+`report.md` prints `Meaning checks: trusted` or `advisory (uncalibrated)` with the reason,
+the effective judge fingerprint (`none` at L0), and a `## QA review` section listing every
+meaning-based FAIL (judge FAIL or `no-reply`) per sample with its case, test, criterion,
+reply text and judge reason. Rule FAILs are not listed. The console prints only the trust
+line and the QA review count, and the CI step summary carries no QA review or reply text.
+
+### Reading a diff
+
+Entries are keyed `<testId>/<criterionId>` and listed `lost-coverage` first, in the
+sections Tests (atomic and observation) and Journeys. Categories: `lost-coverage`
+(baseline PASS or FAIL, now NOT_RUN, ERROR, INVALID or missing), `regressed` (baseline
+PASS, now below `minPasses`: n/n for rules), `fixed`, `gained-coverage`, `new`, `retired`,
+`inconclusive` (meaning checks with too few samples, an untrusted judge, or an advisory
+baseline entry), `unchanged`
+(counted only). An entry is **gating** when it is `regressed` or `lost-coverage` on an S or
+rule criterion (also in journeys), or `regressed` on a non-advisory meaning criterion outside
+journeys; any gating entry makes the diff exit 1. `inconclusive` and `new` never fail it. Without a baseline
+every pair is `new` and the diff exits 0 (`no-baseline`).
+
+### Baseline governance
+
+Baselines change only through `suite:baseline:accept`, in their own pull request. The CI
+job `Suite L0 gate` (`ci.yml`) runs `pnpm suite:ci --level L0` without secrets on pull requests
+to and pushes on `main` and `develop`, with full history so the merge-base resolves, and uploads
+`runs/suites/**`. The `Suite baseline governance` workflow fails a pull request that changes
+`baselines/**` without the `baseline-change` label and re-runs when labels change.
+`Suite L0 gate` and `Baseline change label` block merges only once they are required status
+checks in branch protection (a repository setting, pending approval, like the CODEOWNERS rule). A QA
+CODEOWNERS review for `baselines/**` is pending: the QA owner handle is not decided yet.
+
+### L1 pull-request gate
+
+`.github/workflows/conversation-suite-l1-pr.yml` is the meaning-level gate for pull requests
+to `main` and `develop` (AD-15). It is opt-in and inert by default.
+
+- **No `paths` filter.** The `Suite L1 changes` job always runs
+  `l1-gate.ts changes` (`git diff --name-only base...head`) over the gated paths
+  `packages/ai-openai/src/prompts/**`, `packages/ai-openai/src/openai-provider.ts`,
+  `packages/application/src/use-cases/conversation-orchestrator.ts`,
+  `packages/application/src/use-cases/proactive-*.ts`, `packages/application/src/policies/**`,
+  `packages/application/src/utils/quiet-hours.ts` and `packages/conversation-sim/**`, then
+  `l1-gate.ts decide`. A git failure fails the job, and with it the gate.
+- **Decision, in order.** No gated path changed: skip. Fork pull request: skip (forks never
+  run live models or receive secrets). The repository variable
+  `CONVERSATION_SUITE_L1_PR_GATE_ENABLED` is not exactly `true`: skip, naming the variable.
+  Enabled but credentials missing: **error** (a misconfigured opt-in fails closed). Otherwise
+  run. The decision job sees secrets only as presence booleans.
+- **Credentials** (existing secret names; the gate adds none): the judge needs
+  `OPENAI_API_KEY` (`judge.provider` `openai`) or `AZURE_OPENAI_ENDPOINT`,
+  `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` (`azure_openai`); the coach needs the full
+  Azure set including `AZURE_OPENAI_TESTING_DEPLOYMENT` (used as `OPENAI_MODEL_BALANCED`) when
+  `AZURE_OPENAI_ENDPOINT` is set, else `OPENAI_API_KEY`. `LANGWATCH_API_KEY` is set empty.
+- **`Suite L1 gate`** (the `l1` job, always named the same, `if: ${{ !cancelled() }}`, so a run superseded
+  by a newer push posts no failing check) fails when the
+  changes job did not succeed, prints a `::notice::` and passes on skip, prints `::error::`
+  and fails on error. On run it builds the dependencies, runs `suite:baseline:guard` with the
+  pull request's current labels (read with `gh pr view`, so re-running the job after adding
+  `baseline-change` sees it; the workflow does not trigger on label events), then
+  `run-live.ts ci --level L1 --live-model --summary "$GITHUB_STEP_SUMMARY"`.
+- **`ci --level L1`** runs, per registered suite in config order, only suites that have L1
+  tests (else `skipped (no L1 tests)`) and an `L1.json` baseline at the merge-base (else
+  `skipped (no L1 baseline at merge-base <ref>)`, with no run and no model spend); a
+  merge-base read error fails that suite. It runs `suite:run --runs diff.minSamples.L1` (3)
+  and `suite:diff --merge-base`, with the `suite:ci` exit-code precedence. With nothing to
+  check it passes: `no registered suite has L1 tests and an L1 baseline at the merge-base`.
+  While the judge is untrusted the summary states that meaning checks are advisory and the
+  gate fails only on rule and S regressions or lost coverage. Today both suites are empty and
+  no L1 baseline exists, so an enabled gate passes with nothing to check.
+- **Artifacts.** Only `runs/suites/*/report.json` and `report.md` are uploaded (14 days),
+  linked from the step summary. The run reports can include reply excerpts and evidence;
+  full transcripts and model request/response events (`case-runs.json`) are never uploaded.
+  With nothing to check the step also prints a `::notice::`.
+- **Cost.** Call budgets apply per suite run, so a gate run's worst case is (suites with L1
+  tests and a baseline) x the per-run budgets, on every push (superseded runs are cancelled).
+- **Required check.** `Suite L1 gate` blocks merges only once it is a required status check
+  in branch protection (a repository setting, pending approval). Because it always reports,
+  requiring it never leaves a pull request waiting on "Expected".
+
+### Scheduled L1 runs
+
+The `suite-l1` job (`Suite L1 scheduled run`) of `.github/workflows/conversation-sim.yml`
+observes conversation-quality drift between releases while the pinned coach model and judge
+fingerprint stay unchanged, for example provider-side behavior changes under unchanged code
+(AD-15). A changed coach model or judge fingerprint makes the diff exit 2 `baseline-invalid`
+and needs a re-accepted baseline. It reuses the workflow's `authorize` job unchanged.
+
+- **Opt-in.** Scheduled runs need the repository variable `CONVERSATION_SIM_SCHEDULED_ENABLED`
+  set to `true` (the same variable as the legacy `simulate` job); `workflow_dispatch` is a
+  manual run and needs no variable. The job runs only when `authorize` outputs
+  `should_run=true`, and its result is independent of the legacy gate's.
+- **Samples per schedule.** Nightly (`17 2 * * *`) n = 1: meaning criteria diff as
+  `inconclusive` (below `diff.minSamples.L1` = 3), so only rule and S regressions or lost
+  coverage can fail it. Weekly (`23 3 * * 0`) n = 5: the authoritative meaning diff. A manual
+  dispatch uses its `runs` input (1 or 5).
+- **Credentials** (existing secret names; no new secret): `OPENAI_API_KEY`,
+  `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`,
+  `AZURE_OPENAI_TESTING_DEPLOYMENT` (also used as `OPENAI_MODEL_BALANCED`); `LANGWATCH_API_KEY`
+  is set empty. Before any spend, `l1-gate.ts credentials` checks presence booleans against
+  `judge.provider` with the same rule as the PR gate and fails the job with `::error::` when a
+  name is missing. The pinned `openai` judge needs `OPENAI_API_KEY` even though `authorize`
+  accepts an Azure-only set.
+- **Command.** `run-live.ts ci --level L1 --runs "$RUNS" --include-unbaselined --live-model
+  --summary "$GITHUB_STEP_SUMMARY"`. `--runs N` overrides `diff.minSamples.L1`; the summary
+  adds `Samples per suite: n = N` and, below the minimum, the inconclusive line.
+  `--include-unbaselined` also runs suites that have L1 tests but no merge-base `L1.json`
+  (their diff reports `no baseline`, exit 0), because drift monitoring needs reports either way
+  and a weekly n = 5 report is the candidate for the first `suite:baseline:accept`. Suites
+  without L1 tests are still skipped `no L1 tests`; with none to run the job passes with
+  `no registered suite has L1 tests; L1 run passes with nothing to check`. Both flags are L1/L2
+  only (a usage error at L0), and the PR gate passes neither. Today both suites are empty, so
+  an opted-in run is a clean no-op.
+- **Artifacts.** `runs/suites/**` (reports and `case-runs.json`, which holds transcripts and
+  model request/response events for QA review) is uploaded as
+  `suite-l1-scheduled-<run id>-<attempt>` for 14 days and linked from the step summary. This
+  differs deliberately from the PR gate, which uploads reports only. Transcripts and events
+  never reach the CI log.
+- **Accepting the first baseline (human).** Download the `suite-l1-scheduled-*` artifact
+  within its 14-day retention, unpack the run folder to
+  `packages/conversation-sim/runs/suites/<runId>/` on a checkout of the run's commit, then run
+  `pnpm suite:baseline:accept --run <runId> --ci-run-url <workflow run url>` and commit the
+  resulting `baselines/<suite>/L1.json` in a pull request with the `baseline-change` label.
+  Accept refuses a run with n below `baseline.minSamples.L1` (5, so only a weekly or n = 5
+  dispatch run), an INCOMPLETE run (unless `--allow-incomplete`), a run made from a dirty tree
+  (unless `--allow-dirty`), a `--case` run, a run with no in-scope test criteria, an unpinned
+  judge model, or a judge fingerprint that differs from the one computed from the current
+  checkout (hence the checkout of the run's commit).
+- **Budgets.** Unchanged at 600 coach and 150 judge calls per suite run: weekly n = 5 is the
+  size of the baseline run the budgets already bound. The worst case per scheduled run is
+  (suites with L1 tests) x the per-run budgets.
+
+### Weekly L2 run
+
+`.github/workflows/conversation-suite-l2.yml` (`Conversation suite L2`, job `Suite L2 weekly
+run`) runs every suite's L2 journeys against a disposable stack built inside the job, weekly
+(`41 4 * * 1`) and on `workflow_dispatch` (no inputs). It has no `pull_request` or `push`
+trigger, so forks never reach it.
+
+- **Opt-in.** The job runs only when the repository variable `CONVERSATION_SUITE_L2_ENABLED` is
+  `true`, for both the schedule and a manual dispatch (Settings, Secrets and variables, Actions,
+  Variables). It is separate from the L1 variables: enabling nightly L1 never enables L2.
+- **Credentials** (existing secret names; no new secret): `OPENAI_API_KEY`,
+  `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`,
+  `AZURE_OPENAI_TESTING_DEPLOYMENT` (also the worker's `OPENAI_MODEL_BALANCED`). The
+  `l1-gate.ts credentials` presence check fails the job with `::error::` before the stack is
+  built. Only the worker start step and the run step receive secret values.
+- **The stack.** Services `pgvector/pgvector:pg16` and `redis:7-alpine` (as in `ci.yml`), job env
+  `NODE_ENV=test` (the dev routes mount), local `DATABASE_URL`/`REDIS_URL` and the all-zero
+  `FIELD_ENCRYPTION_KEY`. The job migrates and seeds the fresh database (the seed is not
+  idempotent: one new tenant per run), reads the tenant with `l2-stack.ts tenant-from-seed`,
+  generates a masked `ADMIN_API_KEY`, starts the api (placeholder model key; it calls no
+  model) and the worker from the checkout, the worker with the env `l2-stack.ts worker-env`
+  writes from `l2.workerEnv`, and waits for both ready routes. Every URL is `127.0.0.1` or
+  `localhost`. With `PROACTIVE_SCAN_ENABLED=false` the worker ignores every `scan` job, including
+  one enqueued by `POST /dev/simulate-proactive-scan`, so the onboarding dispatch, lost-reminder
+  sweep and role reconcile that a scan carries stop too; `onboarding-only` jobs still run.
+- **Command.** `run-live.ts ci --level L2 --runs 3 --include-unbaselined --live-model --live-app
+  --summary "$GITHUB_STEP_SUMMARY"` with `SUITE_L2_API_BASE=http://127.0.0.1:3000` and the seeded
+  tenant. It reuses `ci`: per-suite loop, `no L2 tests` skips, `--include-unbaselined` (a suite
+  without a merge-base `L2.json` runs and its diff reports no baseline), the exit precedence
+  2 > 3 > 4 > 1 and the step summary with journey results. Today both suites have no L2 tests,
+  so an enabled run boots the stack and passes with nothing to check (a smoke test of the boot).
+- **Artifacts.** `runs/suites/**` (reports and `case-runs.json` with transcripts) and the stack
+  logs `runs/l2-stack/{seed,api,worker}.log`, uploaded as `suite-l2-weekly-<run id>-<attempt>`
+  for 14 days and linked from the step summary.
+- **Budgets.** Only the judge budget (`maxJudgeCallsPerRun`) applies; coach calls run inside
+  the stack's worker and are not counted (see [L2 executor](#l2-executor)).
+- **Known limits.** The fixtures `pulseCycle` and `disclosureDelivered` cannot be satisfied on
+  a deep-reset persona (L2 writes nothing), so their criteria are `INVALID`; L2 journeys must
+  avoid them for now. An onboarding intro queued by the reset would end a case
+  `unsolicited-outbound`, and a `question-cutoff` send (the five-minute survey cutoff, which
+  stays on because it is not proactive scheduling) carries its own trace and is filed
+  `unsolicited`. Either one, seen in a run's case runs, is a finding to triage, not a reason
+  to change product behavior.
+- **The first L2 baseline (human).** No L2 baseline is committed. Once `smoke-v1` has L2
+  journeys, enable the variable (or dispatch with it set), download the `suite-l2-weekly-*`
+  artifact within 14 days, unpack the run folder to `packages/conversation-sim/runs/suites/<runId>/`
+  on a checkout of the run's commit, run `pnpm suite:baseline:accept --run <runId> --ci-run-url
+  <workflow run url>` and commit `baselines/<suite>/L2.json` in a pull request with the
+  `baseline-change` label. Accept needs n >= `baseline.minSamples.L2` (3) and refuses the same
+  cases as at L1 (INCOMPLETE, dirty, `--case`, unpinned or changed judge fingerprint).

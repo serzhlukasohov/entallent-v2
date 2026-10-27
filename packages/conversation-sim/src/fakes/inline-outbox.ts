@@ -1,7 +1,10 @@
 import {
   MemoryExtractionUseCase,
+  systemClock,
   StyleAnalysisUseCase,
+  SurveyEvidenceExtractionUseCase,
   type AiProviderPort,
+  type ClockPort,
   type ConversationRepositoryPort,
   type GoalRepositoryPort,
   type MemoryExtractionPayload,
@@ -10,11 +13,21 @@ import {
   type OutboxPort,
   type StyleAnalysisPayload,
   type StyleProfileRepositoryPort,
+  type SurveyEvidencePayload,
+  type SurveyRepositoryPort,
 } from '@entalent/application';
 
 export interface InlineOutboxOptions {
   /** Style analysis costs one extra LLM call per turn; off by default. */
   analyzeStyle?: boolean;
+  /** Source of the delivery `sentAt` stamp; defaults to the system clock. */
+  clock?: ClockPort;
+  /**
+   * Runs `SurveyEvidenceExtractionUseCase` inline over this outbox's AI provider and
+   * conversation repository and the given survey repository (v1 path: no question-capture
+   * port). Omitted means survey evidence is not extracted.
+   */
+  surveyEvidence?: { surveyRepo: SurveyRepositoryPort };
 }
 
 /**
@@ -25,9 +38,12 @@ export interface InlineOutboxOptions {
  */
 export class InlineOutbox implements OutboxPort {
   readonly sentMessages: MessageSendPayload[] = [];
+  /** Survey-evidence extractions that threw, as `Name: message`; the reply already persisted. */
+  readonly surveyEvidenceFailures: string[] = [];
 
   private readonly memoryExtraction: MemoryExtractionUseCase;
   private readonly styleAnalysis: StyleAnalysisUseCase;
+  private readonly surveyEvidence: SurveyEvidenceExtractionUseCase | null;
 
   constructor(
     ai: AiProviderPort,
@@ -39,6 +55,9 @@ export class InlineOutbox implements OutboxPort {
   ) {
     this.memoryExtraction = new MemoryExtractionUseCase(conversationRepo, memoryRepo, goalRepo, ai);
     this.styleAnalysis = new StyleAnalysisUseCase(ai, conversationRepo, styleRepo);
+    this.surveyEvidence = options.surveyEvidence
+      ? new SurveyEvidenceExtractionUseCase(ai, conversationRepo, options.surveyEvidence.surveyRepo)
+      : null;
   }
 
   async enqueueMessageSend(payload: MessageSendPayload): Promise<void> {
@@ -47,7 +66,7 @@ export class InlineOutbox implements OutboxPort {
       tenantId: payload.tenantId,
       conversationId: payload.conversationId,
       externalMessageId: `sim:${payload.messageId}`,
-      sentAt: new Date(),
+      sentAt: (this.options.clock ?? systemClock).now(),
     });
   }
 
@@ -64,8 +83,20 @@ export class InlineOutbox implements OutboxPort {
     // Reminders fire on a schedule that a single simulation never reaches.
   }
 
-  async enqueueSurveyEvidence(): Promise<void> {
-    // Requires the survey repository, which the simulation harness omits.
+  async enqueueSurveyEvidence(payload: SurveyEvidencePayload): Promise<void> {
+    // Without a survey repository (the default harness) survey evidence is not extracted.
+    if (!this.surveyEvidence) return;
+    const { conversationId, userId, tenantId, inboundMessageId } = payload;
+    // Production runs this in the worker, isolated from the reply: a failure is recorded, not thrown.
+    try {
+      if (payload.mode === 'backfill') {
+        await this.surveyEvidence.backfill({ conversationId, userId, tenantId });
+        return;
+      }
+      await this.surveyEvidence.execute({ conversationId, userId, tenantId, inboundMessageId });
+    } catch (error) {
+      this.surveyEvidenceFailures.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+    }
   }
 
   async enqueueGroupReport(): Promise<void> {

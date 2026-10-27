@@ -1,6 +1,10 @@
 import type { QuietHours } from '../utils/quiet-hours';
+import type { CheckInCadenceFacts } from '../policies/check-in-cadence';
 
-/** A user who is eligible for a proactive check-in right now. */
+/**
+ * A user who passed the repository prefilter for a proactive check-in. The use case
+ * re-decides cadence from `cadence` and applies the quiet-hours guard.
+ */
 export interface CheckInCandidate {
   userId: string;
   tenantId: string;
@@ -11,6 +15,8 @@ export interface CheckInCandidate {
   timezone: string;
   quietHours: QuietHours;
   preferredName?: string;
+  /** Per-user facts consumed by `checkInCadencePolicy`. */
+  cadence: CheckInCadenceFacts;
 }
 
 export interface FindCheckInCandidatesParams {
