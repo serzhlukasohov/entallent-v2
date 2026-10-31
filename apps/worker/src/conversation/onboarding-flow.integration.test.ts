@@ -22,7 +22,10 @@ vi.mock('@entalent/channel-slack', () => ({
 const databaseUrl = process.env['DATABASE_URL'];
 const redisUrl = process.env['REDIS_URL'];
 const localDatabase = databaseUrl && /^postgres(?:ql)?:\/\/(?:[^@]+@)?(?:127\.0\.0\.1|localhost):\d+\//.test(databaseUrl);
-const localRedis = redisUrl && /^redis:\/\/(?:127\.0\.0\.1|localhost):\d+\/?$/.test(redisUrl);
+const redisTarget = redisUrl && URL.canParse(redisUrl) ? new URL(redisUrl) : undefined;
+const localRedis = redisTarget?.protocol === 'redis:'
+  && ['127.0.0.1', 'localhost'].includes(redisTarget.hostname)
+  && redisTarget.port === '56385' && redisTarget.pathname === '/15';
 
 describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL and BullMQ', () => {
   const tenantId = randomUUID();
@@ -39,7 +42,7 @@ describe.skipIf(!localDatabase || !localRedis)('onboarding through PostgreSQL an
     const url = new URL(redisUrl!);
     queue = new Queue<MessageSendJob>(QUEUE_NAMES.MESSAGE_SEND, {
       prefix: `hierarchy-acceptance-${randomUUID()}`,
-      connection: { host: url.hostname, port: Number(url.port) },
+      connection: { host: url.hostname, port: Number(url.port), db: Number(url.pathname.slice(1)) },
     });
     await client.db.insert(tenants).values({ id: tenantId, name: 'Onboarding flow fixture' });
     await client.db.insert(users).values({ id: personId, tenantId, status: 'active' });

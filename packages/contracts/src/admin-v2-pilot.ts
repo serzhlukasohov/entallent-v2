@@ -1,6 +1,7 @@
 export interface AdminV2PilotQuestion {
   stableKey: string;
   title: string;
+  titleDisplay?: import('./pulse-language').DefinitionDisplay;
   group: string;
   working: number;
   ready: number;
@@ -45,6 +46,7 @@ export interface AdminV2PilotCycle {
 }
 
 export interface AdminV2PilotResponse {
+  companyLanguage?: import('./pulse-language').PulseLanguageReadMetadata;
   tenantId: string;
   checkedAt: string;
   cycles: AdminV2PilotCycle[];

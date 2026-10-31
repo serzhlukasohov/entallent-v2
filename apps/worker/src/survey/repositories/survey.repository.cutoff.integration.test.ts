@@ -52,7 +52,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question cutoff on PostgreSQL', () => {
       id uuid primary key, tenant_id uuid not null, user_id uuid not null,
       conversation_id uuid not null, direction text not null,
       occurred_at timestamptz not null, received_at timestamptz,
-      sent_at timestamptz, deleted_at timestamptz
+      sent_at timestamptz, delivery_recorded_at timestamptz, deleted_at timestamptz
     )`;
     await client`create temp table conversation_job_receipts (
       message_id uuid primary key, processed_at timestamptz not null default now()

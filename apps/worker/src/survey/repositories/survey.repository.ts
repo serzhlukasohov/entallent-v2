@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { eq, and, gt, isNull, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
 import {
+  lockPulseReportCycle,
+  withPulseReportSerializableRetry,
   surveyDefinitions,
   eligiblePulsePersonOrLegacy,
   surveyReportingCohorts,
@@ -46,6 +48,8 @@ import {
 import { DatabaseService } from '../../database/database.service';
 import { GroupStateRepository } from './group-state.repository';
 import { TeamRepository } from './team.repository';
+import { PulseReportScopeRepository } from './pulse-report-scope.repository';
+import { isPulseReportCollectionUnavailable, type PulseReportCycleSnapshot, type PulseReportCollectionUnavailable } from '@entalent/application';
 
 const SURVEY_EVIDENCE_POLARITIES: readonly SurveyEvidencePolarity[] = [
   'positive',
@@ -67,9 +71,14 @@ export class SurveyRepository implements SurveyRepositoryPort {
 
   async openReportingCycle(
     params: OpenSurveyReportingCycleParams,
-  ): Promise<SurveyReportingCohortRecord[]> {
+  ): Promise<SurveyReportingCohortRecord[] | PulseReportCycleSnapshot> {
+    if (params.scopeMode === 'org_native') return new PulseReportScopeRepository(this.db).openOrgNativeCycle(params);
     const openedAtIso = params.openedAt.toISOString();
-    return this.db.client.transaction(async (tx) => {
+    return withPulseReportSerializableRetry(() => this.db.client.transaction(async (tx) => {
+      await lockPulseReportCycle(tx, params);
+      const product = await tx.execute(sql`select 1 from survey_report_cycle_openings opening join survey_cycle_scoring_policies cycle on cycle.id = opening.cycle_scoring_policy_id and cycle.tenant_id = opening.tenant_id
+        where opening.tenant_id = ${params.tenantId}::uuid and cycle.survey_definition_id = ${params.surveyDefinitionId}::uuid and cycle.period_start = ${params.periodStart.toISOString()}::timestamptz and cycle.period_end = ${params.periodEnd.toISOString()}::timestamptz limit 1`);
+      if (product.length) throw new Error('pulse_report_scope_mode_conflict');
       const [definition] = await tx
         .select({ id: surveyDefinitions.id })
         .from(surveyDefinitions)
@@ -91,7 +100,9 @@ export class SurveyRepository implements SurveyRepositoryPort {
           eq(surveyReportingCohorts.periodEnd, params.periodEnd),
         ))
         .orderBy(surveyReportingCohorts.teamId);
-      if (existingCohorts.length > 0) return existingCohorts.map(mapReportingCohort);
+      const legacyOpening = await tx.execute(sql`select 1 from survey_report_legacy_cycle_openings where tenant_id = ${params.tenantId}::uuid and survey_definition_id = ${params.surveyDefinitionId}::uuid and period_start = ${params.periodStart.toISOString()}::timestamptz and period_end = ${params.periodEnd.toISOString()}::timestamptz limit 1`);
+      if (legacyOpening.length || existingCohorts.length > 0) return existingCohorts.map(mapReportingCohort);
+      await tx.execute(sql`insert into survey_report_legacy_cycle_openings(tenant_id, survey_definition_id, period_start, period_end, opened_at) values(${params.tenantId}::uuid, ${params.surveyDefinitionId}::uuid, ${params.periodStart.toISOString()}::timestamptz, ${params.periodEnd.toISOString()}::timestamptz, ${params.openedAt.toISOString()}::timestamptz)`);
 
       const tenantTeams = await tx
         .select({ teamId: teams.id })
@@ -158,7 +169,7 @@ export class SurveyRepository implements SurveyRepositoryPort {
         ))
         .orderBy(surveyReportingCohorts.teamId);
       return cohorts.map(mapReportingCohort);
-    });
+    }, { isolationLevel: 'serializable' }));
   }
 
   async findReportingCohortsReadyForFinalReports(
@@ -470,6 +481,17 @@ export class SurveyRepository implements SurveyRepositoryPort {
   async hasUnresolvedQuestionConfirmationForInbound(input: {
     tenantId: string; userId: string; conversationId: string; messageId: string;
   }): Promise<boolean> {
+    const native=await this.db.client.execute(sql`select exists(
+      select 1 from survey_report_shown_components shown join survey_report_window_bindings b on b.survey_window_id=shown.survey_window_id and b.tenant_id=shown.tenant_id
+      join survey_report_participants p on p.id=b.participant_id and p.user_id=w.user_id
+      join survey_cycle_scoring_policies c on c.id=b.cycle_scoring_policy_id
+      join survey_report_cycle_openings o on o.cycle_scoring_policy_id=c.id
+      where shown.tenant_id=w.tenant_id and shown.user_id=w.user_id and shown.conversation_id=w.conversation_id
+       and shown.sent_at<w.received_at and shown.acknowledged_at<w.received_at
+       and w.received_at>=greatest(c.period_start,o.opened_at) and w.received_at<least(c.period_end,coalesce(p.collection_stopped_at,c.period_end))
+       and shown.prompt_message_id=(select latest.id from messages latest where latest.tenant_id=w.tenant_id and latest.user_id=w.user_id and latest.conversation_id=w.conversation_id and latest.direction='outbound' and latest.sent_at<w.received_at and latest.delivery_recorded_at<w.received_at order by latest.sent_at desc,latest.id desc limit 1)
+    ) pending from survey_report_inbound_work w where w.inbound_receipt_id=${input.messageId}::uuid and w.tenant_id=${input.tenantId}::uuid and w.user_id=${input.userId}::uuid and w.conversation_id=${input.conversationId}::uuid and w.trust='db-receipt-v1' and exists(select 1 from survey_report_window_bindings b join survey_report_participants p on p.id=b.participant_id where b.tenant_id=w.tenant_id and p.user_id=w.user_id)`) as unknown as {pending:boolean}[];
+    if(native.length)return native[0].pending;
     const rows = await this.db.client.execute(sql`select 1
       from messages inbound
       join survey_question_confirmation_bundles bundle
@@ -497,7 +519,22 @@ export class SurveyRepository implements SurveyRepositoryPort {
     return rows.length > 0;
   }
 
-  async findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | null> {
+  async findNativeWindowForInbound(input:{tenantId:string;userId:string;inboundMessageId:string},create:boolean):Promise<SurveyWindowRecord|null|undefined>{
+    const rows=await this.db.client.execute(sql`select c.id cycle_id,c.survey_definition_id,b.survey_window_id from survey_report_inbound_work w join survey_report_participants p on p.tenant_id=w.tenant_id and p.user_id=w.user_id join survey_cycle_scoring_policies c on c.id=p.cycle_scoring_policy_id join survey_report_cycle_openings o on o.cycle_scoring_policy_id=c.id left join survey_report_window_bindings b on b.tenant_id=p.tenant_id and b.cycle_scoring_policy_id=c.id and b.participant_id=p.id where w.inbound_receipt_id=${input.inboundMessageId}::uuid and w.tenant_id=${input.tenantId}::uuid and w.user_id=${input.userId}::uuid and w.received_at>=greatest(c.period_start,o.opened_at) and w.received_at<least(c.period_end,coalesce(p.collection_stopped_at,c.period_end))`) as unknown as {cycle_id:string;survey_definition_id:string;survey_window_id:string|null}[];
+    if(rows.length>1)throw new Error('pulse_report_cycle_ambiguous');
+    if(!rows.length)return undefined;
+    const binding=rows[0];
+    if(!binding.survey_window_id){
+      if(!create)throw new Error('pulse_input_native_binding_missing');
+      const window=await new PulseReportScopeRepository(this.db).findOrCreateWindow(input.tenantId,input.userId,binding.survey_definition_id,{cycleId:binding.cycle_id,inboundReceiptId:input.inboundMessageId});
+      if(!window||isPulseReportCollectionUnavailable(window))return null;
+      return mapWindow(window);
+    }
+    const [window]=await this.db.client.select().from(surveyWindows).where(and(eq(surveyWindows.id,binding.survey_window_id),eq(surveyWindows.tenantId,input.tenantId),eq(surveyWindows.userId,input.userId)));
+    if(!window)throw new Error('pulse_input_native_binding_missing');return mapWindow(window);
+  }
+
+  async findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | PulseReportCollectionUnavailable | null> {
     const [existing] = await this.db.client
       .select()
       .from(surveyWindows)
@@ -531,7 +568,10 @@ export class SurveyRepository implements SurveyRepositoryPort {
 
     if (!globalDef) return existing ? mapWindow(existing) : null;
 
+    const productWindow = await new PulseReportScopeRepository(this.db).findOrCreateWindow(tenantId, userId, globalDef.id);
+    if (productWindow !== undefined) return isPulseReportCollectionUnavailable(productWindow) ? productWindow : mapWindow(productWindow);
     const now = new Date();
+    if (globalDef.version === 'v2-report-engagement-1.0.0') throw new Error('org_native_reporting_opening_required');
     const currentTeam = await this.teamRepo.findTeamByMemberId(userId, tenantId);
     const cohorts = await this.db.client
       .select()
@@ -1048,7 +1088,7 @@ function mapQuestion(row: DbSurveyQuestion): SurveyQuestionRecord {
 }
 
 function mapResponseType(value: string): SurveyQuestionRecord['responseType'] {
-  if (value === 'open_ended' || value === 'numeric_0_10') return value;
+  if (value === 'open_ended' || value === 'numeric_0_10' || value === 'numeric_1_10_integer') return value;
   throw new Error(`Unsupported survey response type: ${value}`);
 }
 

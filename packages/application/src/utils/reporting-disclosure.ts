@@ -1,3 +1,4 @@
+import type { PulseLanguageResource } from '@entalent/contracts';
 export const REPORTING_DISCLOSURE_VERSION = 'reporting-disclosure-v1';
 
 const REPORTING_DISCLOSURE_TEXT = {
@@ -30,12 +31,16 @@ const CONCISE_DATA_USE_EXPLANATION_TEXT = {
   uk: 'Я — ШІ, не людина. Повідомлення: відповіді, приватна пам’ять, цілі/завдання/нагадування, пульс, перевірки безпеки. Пам’ять/непідтверджене не звітні; лише показане підтверджене, знеособлене, невідкликане резюме може ввійти в командний звіт. Повідомлення/похідні дані мають строки зберігання; аудитований адмін/налагоджувальний доступ — лише уповноваженим.',
 } as const;
 
-export function getReportingDisclosureText(language?: string): string {
+export function getReportingDisclosureText(language?: string, resource?: PulseLanguageResource): string {
+  const resourceKey = 'rights';
+  if (resource && resource.locale === language && resource.texts[resourceKey]) return resource.texts[resourceKey]!;
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof REPORTING_DISCLOSURE_TEXT;
   return REPORTING_DISCLOSURE_TEXT[baseLanguage] ?? REPORTING_DISCLOSURE_TEXT.en;
 }
 
-export function getReportingExplanationText(language?: string, concise = false): string {
+export function getReportingExplanationText(language?: string, concise = false, resource?: PulseLanguageResource): string {
+  const resourceKey = concise ? 'reporting_concise' : 'reporting';
+  if (resource && resource.locale === language && resource.texts[resourceKey]) return resource.texts[resourceKey]!;
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof REPORTING_ACCESS_EXPLANATION_TEXT;
   if (concise) {
     return CONCISE_REPORTING_ACCESS_EXPLANATION_TEXT[baseLanguage]
@@ -46,7 +51,9 @@ export function getReportingExplanationText(language?: string, concise = false):
   return `${explanation}\n\n${getReportingDisclosureText(language)}`;
 }
 
-export function getDataUseExplanationText(language?: string, concise = false): string {
+export function getDataUseExplanationText(language?: string, concise = false, resource?: PulseLanguageResource): string {
+  const resourceKey = concise ? 'data_use_concise' : 'data_use';
+  if (resource && resource.locale === language && resource.texts[resourceKey]) return resource.texts[resourceKey]!;
   const baseLanguage = language?.toLowerCase().split('-')[0] as keyof typeof DATA_USE_EXPLANATION_TEXT;
   if (concise) {
     return CONCISE_DATA_USE_EXPLANATION_TEXT[baseLanguage]
@@ -55,8 +62,20 @@ export function getDataUseExplanationText(language?: string, concise = false): s
   return DATA_USE_EXPLANATION_TEXT[baseLanguage] ?? DATA_USE_EXPLANATION_TEXT.en;
 }
 
-export function appendReportingDisclosure(responseText: string, language?: string): string {
-  const disclosure = getReportingDisclosureText(language);
+export function appendBeforeExactForm(responseText: string, text: string, trailingExactForm?: string): string {
+  if (!trailingExactForm) return responseText ? `${responseText}\n\n${text}` : text;
+  if (!responseText.endsWith(trailingExactForm)) throw new Error('engagement_probe_form_not_suffix');
+  const prefix = responseText.slice(0, -trailingExactForm.length).trimEnd();
+  return `${prefix ? `${prefix}\n\n` : ''}${text}\n\n${trailingExactForm}`;
+}
+
+export function appendReportingDisclosure(responseText: string, language?: string, resource?: PulseLanguageResource, trailingExactForm?: string): string {
+  if (trailingExactForm) {
+    if (!responseText.endsWith(trailingExactForm)) throw new Error('engagement_probe_form_not_suffix');
+    const prefix = responseText.slice(0, -trailingExactForm.length).trimEnd();
+    return appendReportingDisclosure(prefix, language, resource) + '\n\n' + trailingExactForm;
+  }
+  const disclosure = getReportingDisclosureText(language, resource);
   if (responseText.includes(disclosure)) return responseText;
   return responseText ? `${responseText}\n\n${disclosure}` : disclosure;
 }

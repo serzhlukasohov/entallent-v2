@@ -12,6 +12,7 @@ const valid = {
 };
 
 assert.deepEqual(parseOpenSurveyReportingCycleConfig(valid), {
+  scopeMode: 'legacy',
   databaseUrl: valid.DATABASE_URL,
   tenantId: valid.TENANT_ID,
   surveyDefinitionId: valid.SURVEY_DEFINITION_ID,
@@ -27,5 +28,8 @@ assert.throws(
   () => parseOpenSurveyReportingCycleConfig({ ...valid, SURVEY_PERIOD_END: '2026-10-01' }),
   /explicit offset/,
 );
+
+assert.equal(parseOpenSurveyReportingCycleConfig({ ...valid, SURVEY_SCOPE_MODE: 'org_native' }).scopeMode, 'org_native');
+assert.throws(() => parseOpenSurveyReportingCycleConfig({ ...valid, SURVEY_SCOPE_MODE: 'unknown' }), /SURVEY_SCOPE_MODE/);
 
 console.log('Open survey reporting cycle config tests passed');

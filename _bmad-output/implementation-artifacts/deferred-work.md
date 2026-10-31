@@ -274,3 +274,21 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
   summary: Topic selection issues one idempotent `markDone` update per settled V2 question on every lookup; batch it or read backlog statuses first.
   evidence: S5 Blind Hunter finding 10; correct but adds writes on the conversation path (lookups now run only when the cadence and cap allow).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-rpt-08-connected-acceptance-and-pilot-readiness.md`
+  summary: Make the two preserved RPT07 Redis fixtures portable to an explicitly owned named local target without weakening isolation.
+  evidence: Official attempt2 receipt1793398502983-f53d0518 and its preserved log fail only the fixed56385 precondition on owned56397; default receipt1793399354824-e58f8f26 passes while these two behaviors remain unverified. See official-profile-skip-audit.json for all nine conditional skips and separate seven-case proof. This preexisting verification gap is outside required813/33 scope and retains a nonzero broad local remainder.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-rpt-09-employee-reporting-rights-intake.md`
+  summary: Re-check lineage finality inside the locked withdraw transaction so a final completion racing a partial Confirm cannot withdraw a just-finalized lineage.
+  evidence: RPT-09 Step04 Edge Case Hunter; isTargetCurrent runs before ReportingPermissionRepository.withdraw takes the subject lock. Outcome is only more restrictive; the fix changes the reused repository.
+- source_spec: `_bmad-output/implementation-artifacts/spec-rpt-09-employee-reporting-rights-intake.md`
+  summary: Produce and accept `reporting_rights` locale resources so rights menus render in non-English personal languages instead of the English fallback.
+  evidence: RPT-09 Step04 review; the new resource kind has no generator/acceptance producer. Belongs to gate G05 language resource preparation.
+- source_spec: `_bmad-output/implementation-artifacts/spec-rpt-09-employee-reporting-rights-intake.md`
+  summary: Decide retention for content-free rights menus and admissions, which are removed today only by user cascade.
+  evidence: RPT-09 implementation hand-back and Step04 review.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-rpt-10-native-production-registration.md`
+  summary: Make the lifecycle repeatable-scan registration safe when worker replicas boot with different PULSE_REPORTS_ENABLED values during a rolling deploy.
+  evidence: RPT-10 Step04 Edge Case Hunter; the last booting replica decides whether the scheduler exists. Single worker replica today, so documented only.

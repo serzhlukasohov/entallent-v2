@@ -1,3 +1,4 @@
+import { PulseReportScopeRepository } from './pulse-report-scope.repository';
 import { describe, expect, it, vi } from 'vitest';
 import type { SaveSurveyEvidenceParams, UpsertAssessmentParams } from '@entalent/application';
 import type { SQL } from 'drizzle-orm';
@@ -60,11 +61,12 @@ const validEvidenceParams: SaveSurveyEvidenceParams = {
 };
 
 describe('SurveyRepository', () => {
+  vi.spyOn(PulseReportScopeRepository.prototype, 'findOrCreateWindow').mockResolvedValue(undefined);
   it('excludes provisioned non-Pulse Persons from a new reporting roster', async () => {
     let selectIndex = 0;
     let rosterPredicate: SQL | undefined;
     const rows = [[{ id: 'definition-1' }], [], [{ teamId: 'team-1' }], [], []];
-    const tx = {
+    const tx = { execute: vi.fn().mockResolvedValue([]),
       select: () => {
         const index = selectIndex++;
         const result = rows[index] ?? [];
@@ -269,7 +271,7 @@ describe('SurveyRepository', () => {
       .mockReturnValueOnce({ from: vi.fn(() => ({ where: vi.fn(() => ({ orderBy: cohortOrderBy })) })) });
     const onConflictDoNothing = vi.fn().mockResolvedValue(undefined);
     const values = vi.fn(() => ({ onConflictDoNothing }));
-    const tx = { select, insert: vi.fn(() => ({ values })) };
+    const tx = { execute: vi.fn().mockResolvedValue([]), select, insert: vi.fn(() => ({ values })) };
     const transaction = vi.fn(async (run: (value: typeof tx) => Promise<unknown>) => run(tx));
     const repository = new SurveyRepository(
       { client: { transaction } } as never,
@@ -308,7 +310,7 @@ describe('SurveyRepository', () => {
       .mockReturnValueOnce({
         from: vi.fn(() => ({ where: vi.fn(() => ({ orderBy: vi.fn().mockResolvedValue([cohort]) })) })),
       });
-    const tx = { select, insert: vi.fn() };
+    const tx = { execute: vi.fn().mockResolvedValue([]), select, insert: vi.fn() };
     const transaction = vi.fn(async (run: (value: typeof tx) => Promise<unknown>) => run(tx));
     const repository = new SurveyRepository({ client: { transaction } } as never, {} as never, {} as never);
 
@@ -410,7 +412,7 @@ describe('SurveyRepository', () => {
       .mockReturnValueOnce({
         from: vi.fn(() => ({ where: vi.fn().mockResolvedValue([]) })),
       });
-    const tx = { select };
+    const tx = { execute: vi.fn().mockResolvedValue([]), select };
     const transaction = vi.fn(async (run: (value: typeof tx) => Promise<unknown>) => run(tx));
     const repository = new SurveyRepository({ client: { transaction } } as never, {} as never, {} as never);
 

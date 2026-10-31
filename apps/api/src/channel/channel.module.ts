@@ -5,6 +5,7 @@ import { IngestionService } from './ingestion.service';
 import { EventIdempotencyService } from './event-idempotency.service';
 import { SlackIngestService } from './slack-ingest.service';
 import { SlackSocketModeService } from './slack-socket-mode.service';
+import { ReportingRightsAdmissionRepository } from './reporting-rights-interaction';
 import { DatabaseModule } from '../database/database.module';
 import { QUEUE_NAMES } from '../queue/queue.module';
 
@@ -14,6 +15,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     BullModule.registerQueue(
       { name: QUEUE_NAMES.CONVERSATION },
       { name: QUEUE_NAMES.ONBOARDING_ACTION },
+      { name: QUEUE_NAMES.REPORTING_RIGHTS },
     ),
   ],
   controllers: [SlackEventsController],
@@ -22,6 +24,7 @@ import { QUEUE_NAMES } from '../queue/queue.module';
     EventIdempotencyService,
     SlackIngestService,
     SlackSocketModeService,
+    ReportingRightsAdmissionRepository,
   ],
   exports: [IngestionService],
 })

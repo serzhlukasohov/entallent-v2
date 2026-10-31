@@ -212,7 +212,6 @@ export class IngestionService implements IngestionRepositoryPort {
         externalMessageId: params.externalMessageId,
         externalThreadId: params.externalThreadId,
         occurredAt: params.occurredAt,
-        receivedAt: new Date(),
         traceId: params.traceId,
       }).returning({ id: messages.id });
       if (!msg) throw new Error('inbound_message_insert_failed');

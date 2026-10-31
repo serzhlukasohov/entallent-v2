@@ -1,9 +1,10 @@
+import { CompanyLabel } from '../company-language';
 import Link from 'next/link';
 
 const TABS = [
-  { key: 'team', label: 'Команда', href: '/' },
-  { key: 'cycles', label: 'Циклы', href: '/cycles' },
-  { key: 'current', label: 'Текущий цикл', href: '/pulse' },
+  { key: 'team', label: "ui.016", href: '/' },
+  { key: 'cycles', label: "ui.084", href: '/cycles' },
+  { key: 'current', label: "ui.031", href: '/pulse' },
 ] as const;
 
 export function Nav({ active }: { active: (typeof TABS)[number]['key'] }) {
@@ -16,7 +17,7 @@ export function Nav({ active }: { active: (typeof TABS)[number]['key'] }) {
           className={t.key === active ? 'active' : undefined}
           aria-current={t.key === active ? 'page' : undefined}
         >
-          {t.label}
+          <CompanyLabel label={t.label} />
         </Link>
       ))}
     </nav>

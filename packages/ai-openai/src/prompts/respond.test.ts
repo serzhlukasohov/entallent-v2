@@ -1462,3 +1462,24 @@ describe('buildRespondSystemPrompt topic question contract', () => {
     expect(prompt).not.toContain('"topicQuestion"');
   });
 });
+
+describe('RPT-09 reporting-rights reply contract', () => {
+  const plan = (extra: Record<string, unknown>) => context({
+    userName: 'Sam',
+    replyPlan: {
+      dialogueAct: 'request', latestUserSubstance: 'stop using my answers', topicAnchor: null, memoryAnchors: [],
+      responseMove: 'answer_request', mayInferFromBrevity: true,
+      questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' }, requiredGrounding: [], forbiddenMoves: [],
+      ...extra,
+    },
+  });
+  const coaching: ReplyStrategy = { ...strategy, mode: 'coaching' };
+  it('tells the model buttons are attached and forbids claiming a withdrawal only when the menu is proposed', () => {
+    expect(buildRespondSystemPrompt(coaching, plan({ reportingRightsRequest: 'open_menu' }))).toContain('Reporting-rights contract (hard contract)');
+    expect(buildRespondSystemPrompt(coaching, plan({ reportingRightsRequest: 'open_menu' }))).toContain('Do not claim that anything was withdrawn');
+    expect(buildRespondSystemPrompt(coaching, plan({}))).not.toContain('Reporting-rights contract');
+    const withdrawn = buildRespondSystemPrompt(coaching, plan({ reportingRightsRequest: 'already_withdrawn' }));
+    expect(withdrawn).toContain('already withdrawn all reporting permission, so no buttons are attached');
+    expect(withdrawn).not.toContain('are attached below this reply');
+  });
+});

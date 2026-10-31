@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vitest';
+import {companyLabelKey} from './company-label';
 import type { AdminV2PilotPerson, AdminV2PilotQaTeamSignal } from '@entalent/contracts';
 import {
   buildTopicRows, cohortLabel, cycleReportBadge, cycleReportState, cycleStateLabel, draftStatusBadge, freshnessLabel,
@@ -17,21 +18,21 @@ test('next step follows the available Autonomy evidence without claiming deliver
     userId: 'qa', displayName: 'QA', inbound: 2, lastInboundAt: null,
     questions: [question('autonomy', true), question('autonomy'), question('autonomy')],
   };
-  assert.match(personProgress(person).nextStep, /недостающим темам/);
+  assert.equal(personProgress(person).nextStep,'ui.123');
   person.questions = person.questions.map((item) => ({ ...item, ready: true }));
-  assert.match(personProgress(person).nextStep, /Проверить Bundle/);
+  assert.equal(personProgress(person).nextStep,'ui.121');
   person.questions = person.questions.map((item) => ({ ...item, outcome: 'scored', ready: false }));
-  assert.equal(personProgress(person).stage, 'Автономия 3/3');
+  assert.equal(personProgress(person).stage, 'ui.064');
   person.questions[2] = { ...person.questions[2]!, outcome: 'insufficient_evidence' };
-  assert.match(personProgress(person).stage, /оценено 2\/3/);
+  assert.equal(personProgress(person).stage,companyLabelKey('ui.autonomy_done',{count:2}));
 });
 
 test('only a running cohort is labelled as the current cycle', () => {
   const active = { state: 'active' as const, periodStart: '2026-10-09T10:00:00Z', periodEnd: '2026-10-14T17:00:00Z' };
-  assert.match(cohortLabel(active), /^Текущий цикл · 09\.10, 12:00 → 14\.10, 19:00/);
+  assert.equal(cohortLabel(active),companyLabelKey('ui.cohort_active',{start:active.periodStart,end:active.periodEnd},[],['start','end']));
   const closed = { state: 'closed' as const, periodStart: '2026-10-06T17:00:00Z', periodEnd: '2026-10-08T17:00:00Z' };
-  assert.match(cohortLabel(closed), /^Завершённый цикл · 06\.10, 19:00 → 08\.10, 19:00/);
-  assert.doesNotMatch(cohortLabel(closed), /Текущий/);
+  assert.equal(cohortLabel(closed),companyLabelKey('ui.cohort_closed',{start:closed.periodStart,end:closed.periodEnd},[],['start','end']));
+  assert.doesNotMatch(cohortLabel(closed), /ui.cohort_active/);
 });
 
 test('cycle report state follows sent reports, the Autonomy threshold and the cutoff', () => {
@@ -39,21 +40,21 @@ test('cycle report state follows sent reports, the Autonomy threshold and the cu
   const before = Date.parse('2026-10-14T10:00:00Z');
   const after = Date.parse('2026-10-15T10:00:00Z');
   const cycle = (autonomyScoredParticipants: number, sentReports = 0) => ({ state: 'active' as const, periodEnd, sentReports, autonomyScoredParticipants });
-  assert.equal(cycleReportState(cycle(0, 1), before), 'Отчёт отправлен');
-  assert.equal(cycleReportState(cycle(5), after), 'Цикл закрыт; отправка отчёта не подтверждена');
-  assert.equal(cycleReportState(cycle(6), before), 'Порог достигнут; проверка и отправка отчёта отдельно');
-  assert.equal(cycleReportState(cycle(4), after), 'Порог не достигнут до отсечки');
-  assert.equal(cycleReportState(cycle(4), before), 'Нужно ещё 1 участник с Автономией 3/3');
-  assert.equal(cycleReportState(cycle(2), before), 'Нужно ещё 3 участника с Автономией 3/3');
-  assert.equal(cycleReportState(cycle(0), before), 'Нужно ещё 5 участников с Автономией 3/3');
-  assert.equal(cycleReportState(cycle(0), Date.parse(periodEnd)), 'Порог не достигнут до отсечки');
-  assert.equal(cycleReportState({ ...cycle(0), state: 'upcoming' }, before), 'Цикл ещё не начался');
+  assert.equal(cycleReportState(cycle(0, 1), before), 'ui.112');
+  assert.equal(cycleReportState(cycle(5), after), 'ui.113');
+  assert.equal(cycleReportState(cycle(6), before), 'ui.114');
+  assert.equal(cycleReportState(cycle(4), after), 'ui.115');
+  assert.equal(cycleReportState(cycle(4), before), companyLabelKey('ui.need',{count:1}));
+  assert.equal(cycleReportState(cycle(2), before), companyLabelKey('ui.need',{count:3}));
+  assert.equal(cycleReportState(cycle(0), before), companyLabelKey('ui.need',{count:5}));
+  assert.equal(cycleReportState(cycle(0), Date.parse(periodEnd)), 'ui.115');
+  assert.equal(cycleReportState({ ...cycle(0), state: 'upcoming' }, before), 'ui.111');
 });
 
 test('cycle state labels and Warsaw date-time formatting', () => {
-  assert.equal(cycleStateLabel('active'), 'Идёт');
-  assert.equal(cycleStateLabel('closed'), 'Завершён');
-  assert.equal(cycleStateLabel('upcoming'), 'Не начался');
+  assert.equal(cycleStateLabel('active'), 'ui.105');
+  assert.equal(cycleStateLabel('closed'), 'ui.107');
+  assert.equal(cycleStateLabel('upcoming'), 'ui.106');
   assert.equal(warsawDateTime('2026-10-14T17:00:00Z'), '14.10.2026, 19:00');
   assert.equal(warsawDateTime('2026-01-14T17:00:00Z'), '14.01.2026, 18:00');
   assert.equal(warsawDateTime(null), '—');
@@ -65,16 +66,16 @@ test('cohort ids are validated before the API is called', () => {
   assert.equal(isCohortId('9b5d3697-229c-4243-9481-bd6f1456faec,aa069583-240e-4ef1-bd5a-d45fabdde17a'), false);
 });
 
-test('Team Signal labels are Russian and fall back to the raw value', () => {
-  assert.equal(signalDirectionLabel('adverse'), 'Негативный');
-  assert.equal(signalDirectionLabel('mixed'), 'Смешанный');
-  assert.equal(signalDirectionLabel('favorable'), 'Позитивный');
-  assert.equal(signalSeverityLabel('low'), 'Низкая');
-  assert.equal(signalSeverityLabel('moderate'), 'Средняя');
-  assert.equal(signalSeverityLabel('high'), 'Высокая');
-  assert.equal(signalOutcomeLabel('scored'), 'Оценено');
-  assert.equal(signalOutcomeLabel('insufficient_evidence'), 'Недостаточно данных');
-  assert.equal(rootCauseLabel('workload'), 'Нагрузка');
+test('Team Signal labels use stable resource keys and preserve unknown machine values', () => {
+  assert.equal(signalDirectionLabel('adverse'), 'ui.128');
+  assert.equal(signalDirectionLabel('mixed'), 'ui.129');
+  assert.equal(signalDirectionLabel('favorable'), 'ui.130');
+  assert.equal(signalSeverityLabel('low'), 'ui.131');
+  assert.equal(signalSeverityLabel('moderate'), 'ui.132');
+  assert.equal(signalSeverityLabel('high'), 'ui.133');
+  assert.equal(signalOutcomeLabel('scored'), 'ui.134');
+  assert.equal(signalOutcomeLabel('insufficient_evidence'), 'ui.135');
+  assert.equal(rootCauseLabel('workload'), 'ui.136');
   assert.equal(signalDirectionLabel('unknown'), 'unknown');
 });
 
@@ -84,8 +85,8 @@ test('short names keep the first name and the last initial only', () => {
   assert.equal(shortName('Участник 3'), 'Участник 3');
   assert.equal(initials('Анна Смирнова'), 'АС');
   assert.equal(initials(''), '?');
-  assert.equal(shortName('  '), 'Без имени');
-  assert.equal(shortName(''), 'Без имени');
+  assert.equal(shortName('  '), 'ui.144');
+  assert.equal(shortName(''), 'ui.144');
   assert.equal(initials('\u{1F600} Анна Смирнова'), 'АС');
   assert.equal(initials('\u{1F600}'), '?');
 });
@@ -117,7 +118,7 @@ test('topic rows align drafts and signals by topic in display order', () => {
   assert.deepEqual(result.rows.map((row) => row.stableKey), ['a1', 'a2', 'g1']);
   const [both, draftsOnly, signalsOnly] = result.rows;
   assert.equal(both!.drafts[0]!.name, 'Анна С.');
-  assert.equal(both!.drafts[0]!.badge.label, 'Черновик');
+  assert.equal(both!.drafts[0]!.badge.label, 'ui.145');
   assert.equal(both!.signals.length, 1);
   assert.equal(draftsOnly!.signals.length, 0);
   // A confirmed question is not a shown draft.
@@ -176,23 +177,23 @@ test('topic rows are null-safe and fall back to signal order without people', ()
 
 test('badges always carry text and never colour insufficient evidence', () => {
   const insufficient = signalBadge(signal('a1', 'autonomy', { outcome: 'insufficient_evidence', score: null }));
-  assert.deepEqual(insufficient, { tone: 'neutral', label: 'Недостаточно данных' });
-  assert.deepEqual(signalBadge(signal('a1', 'autonomy')), { tone: 'danger', label: 'Негативный · 40/100 · Высокая важность' });
+  assert.deepEqual(insufficient, { tone: 'neutral', label: 'ui.135' });
+  assert.deepEqual(signalBadge(signal('a1', 'autonomy')), { tone: 'danger', label: companyLabelKey('ui.signal_score',{direction:'ui.128',score:40,severity:'ui.133'},['direction','severity']) });
   assert.equal(signalBadge(signal('a1', 'autonomy', { direction: 'favorable' })).tone, 'success');
-  assert.equal(draftStatusBadge('pending_clarification').label, 'Нужно уточнение');
+  assert.equal(draftStatusBadge('pending_clarification').label, 'ui.147');
   assert.deepEqual(draftStatusBadge('weird'), { tone: 'neutral', label: 'weird' });
   assert.deepEqual(personStageBadge({ userId: 'q', displayName: 'Q', inbound: 0, lastInboundAt: null, questions: [] }), {
-    tone: 'neutral', label: 'Беседа не начата',
+    tone: 'neutral', label: 'ui.118',
   });
   const periodEnd = '2026-10-14T17:00:00Z';
   const cycle = { state: 'active' as const, periodEnd, sentReports: 1, autonomyScoredParticipants: 0 };
-  assert.deepEqual(cycleReportBadge(cycle, Date.parse('2026-10-14T10:00:00Z')), { tone: 'success', label: 'Отчёт отправлен' });
+  assert.deepEqual(cycleReportBadge(cycle, Date.parse('2026-10-14T10:00:00Z')), { tone: 'success', label: 'ui.112' });
   assert.equal(cycleReportBadge({ ...cycle, sentReports: 0 }, Date.parse('2026-10-15T10:00:00Z')).tone, 'warning');
   assert.deepEqual(cycleReportBadge({ ...cycle, sentReports: 0, autonomyScoredParticipants: 5 }, Date.parse('2026-10-14T10:00:00Z')), {
-    tone: 'accent', label: 'Порог достигнут; проверка и отправка отчёта отдельно',
+    tone: 'accent', label: 'ui.114',
   });
   assert.deepEqual(cycleReportBadge({ ...cycle, state: 'upcoming' }, Date.parse('2026-10-14T10:00:00Z')), {
-    tone: 'neutral', label: 'Цикл ещё не начался',
+    tone: 'neutral', label: 'ui.111',
   });
 });
 
@@ -217,22 +218,22 @@ test('freshness labels use Warsaw time and are null-safe', () => {
   assert.equal(warsawTime('2026-10-11T08:30:00Z'), '10:30');
   assert.equal(warsawTime('2026-01-11T08:30:00Z'), '09:30');
   assert.equal(warsawTime('2026-10-10T22:05:00Z'), '00:05');
-  assert.equal(lastMessageLabel('2026-10-11T08:30:00Z'), 'последнее сообщение в цикле: 11.10 10:30');
-  assert.equal(lastMessageLabel(null), 'в этом цикле сообщений нет');
-  assert.equal(freshnessLabel(['2026-10-15T08:12:00Z']), 'Проверено 15.10 в 10:12 (Варшава)');
+  assert.equal(lastMessageLabel('2026-10-11T08:30:00Z'), companyLabelKey('ui.last_message',{date:'2026-10-11T08:30:00Z'},[],['date']));
+  assert.equal(lastMessageLabel(null), 'ui.103');
+  assert.equal(freshnessLabel(['2026-10-15T08:12:00Z']), companyLabelKey('ui.checked',{date:'2026-10-15T08:12:00Z'},[],['date']));
   // The later of the two reads wins, whatever the order.
-  assert.equal(freshnessLabel(['2026-10-15T08:14:00Z', '2026-10-15T08:12:00Z']), 'Проверено 15.10 в 10:14 (Варшава)');
-  assert.equal(freshnessLabel(['2026-10-15T08:12:00Z', '2026-10-15T08:14:00Z']), 'Проверено 15.10 в 10:14 (Варшава)');
-  assert.equal(freshnessLabel([null, '2026-10-15T08:12:00Z', 'garbage']), 'Проверено 15.10 в 10:12 (Варшава)');
-  assert.equal(freshnessLabel([undefined, null]), 'Время проверки неизвестно');
+  assert.equal(freshnessLabel(['2026-10-15T08:14:00Z', '2026-10-15T08:12:00Z']), companyLabelKey('ui.checked',{date:'2026-10-15T08:14:00Z'},[],['date']));
+  assert.equal(freshnessLabel(['2026-10-15T08:12:00Z', '2026-10-15T08:14:00Z']), companyLabelKey('ui.checked',{date:'2026-10-15T08:14:00Z'},[],['date']));
+  assert.equal(freshnessLabel([null, '2026-10-15T08:12:00Z', 'garbage']), companyLabelKey('ui.checked',{date:'2026-10-15T08:12:00Z'},[],['date']));
+  assert.equal(freshnessLabel([undefined, null]), 'ui.104');
 });
 
 test('invalid instants render as a dash instead of throwing', () => {
   assert.equal(warsawDateTime('not a date'), '—');
   assert.equal(warsawTime('not a date'), '—');
-  assert.equal(lastMessageLabel('not a date'), 'в этом цикле сообщений нет');
+  assert.equal(lastMessageLabel('not a date'), 'ui.103');
   assert.equal(cohortLabel({ state: 'active', periodStart: 'bad', periodEnd: '2026-10-14T17:00:00Z' }),
-    'Текущий цикл · — → 14.10, 19:00 (Варшава)');
+    companyLabelKey('ui.cohort_active',{start:'bad',end:'2026-10-14T17:00:00Z'},[],['start','end']));
 });
 
 test('Warsaw formatting is assembled from explicit parts', () => {

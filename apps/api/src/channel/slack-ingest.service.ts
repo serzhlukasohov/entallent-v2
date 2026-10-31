@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
@@ -6,9 +6,11 @@ import { normalizeSlackEvent } from '@entalent/channel-slack';
 import { IngestionService } from './ingestion.service';
 import { EventIdempotencyService } from './event-idempotency.service';
 import { QUEUE_NAMES } from '../queue/queue.module';
-import type { OnboardingActionJob, OnboardingSystemJob } from '@entalent/contracts';
+import type { OnboardingActionJob, OnboardingSystemJob, ReportingRightsJob } from '@entalent/contracts';
+import { ReportingRightsIntakeUseCase } from '@entalent/application';
 import type { ConversationJob } from '../queue/queue.types';
 import { handleSlackInteraction } from './slack-interaction';
+import { handleReportingRightsInteraction, isReportingRightsActionId, ReportingRightsAdmissionRepository, ReportingRightsQueueJobs } from './reporting-rights-interaction';
 
 const CONVERSATION_DELAY_MS = 2_000;
 
@@ -26,6 +28,8 @@ export class SlackIngestService {
     private readonly idempotency: EventIdempotencyService,
     @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly conversationQueue: Queue<ConversationJob>,
     @InjectQueue(QUEUE_NAMES.ONBOARDING_ACTION) private readonly onboardingActionQueue: Queue<OnboardingActionJob | OnboardingSystemJob>,
+    @Optional() private readonly rightsStore?: ReportingRightsAdmissionRepository,
+    @Optional() @InjectQueue(QUEUE_NAMES.REPORTING_RIGHTS) private readonly rightsQueue?: Queue<ReportingRightsJob>,
   ) {}
 
   async processBody(body: Record<string, unknown>): Promise<void> {
@@ -50,6 +54,18 @@ export class SlackIngestService {
     const events = normalizeSlackEvent({ body, tenantId: workspaceIdentity.tenantId });
 
     for (const event of events) {
+      if (event.type === 'interaction' && isReportingRightsActionId(event.payload.actionId)) {
+        // Admission errors propagate so the caller does not acknowledge an unadmitted Confirm.
+        if (!this.rightsStore || !this.rightsQueue) throw new Error('reporting_rights_intake_unavailable');
+        await handleReportingRightsInteraction(event, {
+          findWorkspaceIdentity: (channelType, workspaceId) => this.ingestion.findWorkspaceIdentity(channelType, workspaceId),
+          findLinkedPersonId: (params) => this.ingestion.findLinkedPersonId(params),
+          intake: new ReportingRightsIntakeUseCase(this.rightsStore, new ReportingRightsQueueJobs(this.rightsQueue)),
+          debug: (message) => this.logger.debug(message),
+          warn: (message) => this.logger.warn(message),
+        });
+        continue;
+      }
       if (event.type === 'interaction') {
         await handleSlackInteraction(event, {
           findWorkspaceIdentity: (channelType, workspaceId) => this.ingestion.findWorkspaceIdentity(channelType, workspaceId),

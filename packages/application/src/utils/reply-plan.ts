@@ -91,6 +91,15 @@ export function buildReplyPlan(input: ReplyPlanInput): ReplyPlan {
   };
 }
 
+/**
+ * RPT-09: the typed model proposal reaches the reply plan only through what the rights adapter actually did,
+ * so the reply never advertises buttons that are not attached. Nothing is withdrawn here.
+ */
+export function withReportingRights(plan: ReplyPlan, opening: { status: 'menu' | 'already_withdrawn' } | null): ReplyPlan {
+  if (!opening) return plan;
+  return { ...plan, reportingRightsRequest: opening.status === 'menu' ? 'open_menu' : 'already_withdrawn' };
+}
+
 const OFFER_ACCEPTING_ACTS = new Set<SituationClassification['dialogueAct']>([
   'acknowledgement', 'continuation', 'request', 'new_substance', 'social_checkin', 'greeting',
 ]);

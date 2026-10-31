@@ -1,9 +1,10 @@
 import { createDbClient } from '@entalent/database';
 import { OpenSurveyReportingCycleUseCase } from '@entalent/application';
-import type { SurveyReportingCohortRecord } from '@entalent/application';
+import type { SurveyReportingCohortRecord, PulseReportCycleSnapshot, PulseReportScopeMode } from '@entalent/application';
 import { SurveyRepository } from '../apps/worker/src/survey/repositories/survey.repository';
 
 export interface OpenSurveyReportingCycleConfig {
+  scopeMode?: PulseReportScopeMode;
   databaseUrl: string;
   tenantId: string;
   surveyDefinitionId: string;
@@ -27,7 +28,10 @@ export function parseOpenSurveyReportingCycleConfig(
   if (env['CONFIRM_SURVEY_CYCLE_OPEN'] !== tenantId) {
     throw new Error('CONFIRM_SURVEY_CYCLE_OPEN must exactly match TENANT_ID');
   }
+  const scopeMode = env['SURVEY_SCOPE_MODE'] ?? 'legacy';
+  if (scopeMode !== 'legacy' && scopeMode !== 'org_native') throw new Error('SURVEY_SCOPE_MODE must be legacy or org_native');
   return {
+    scopeMode,
     databaseUrl,
     tenantId,
     surveyDefinitionId,
@@ -37,9 +41,12 @@ export function parseOpenSurveyReportingCycleConfig(
   };
 }
 
+export function openSurveyReportingCycle(config: OpenSurveyReportingCycleConfig & { scopeMode?: 'legacy' }): Promise<SurveyReportingCohortRecord[]>;
+export function openSurveyReportingCycle(config: OpenSurveyReportingCycleConfig & { scopeMode: 'org_native' }): Promise<PulseReportCycleSnapshot>;
+export function openSurveyReportingCycle(config: OpenSurveyReportingCycleConfig): Promise<SurveyReportingCohortRecord[] | PulseReportCycleSnapshot>;
 export async function openSurveyReportingCycle(
   config: OpenSurveyReportingCycleConfig,
-): Promise<SurveyReportingCohortRecord[]> {
+): Promise<SurveyReportingCohortRecord[] | PulseReportCycleSnapshot> {
   const client = createDbClient(config.databaseUrl);
   try {
     const repository = new SurveyRepository(
@@ -62,7 +69,9 @@ async function main(): Promise<void> {
       surveyDefinitionId: config.surveyDefinitionId,
       periodStart: config.periodStart.toISOString(),
       periodEnd: config.periodEnd.toISOString(),
-      cohorts: cohorts.map((cohort) => ({
+      scopeMode: config.scopeMode ?? 'legacy',
+    productSnapshot: Array.isArray(cohorts) ? undefined : { ...cohorts, scopes: cohorts.scopes.map(({ participantUserIds, ...scope }) => ({ ...scope, rosterSize: participantUserIds.length })) },
+    cohorts: (Array.isArray(cohorts) ? cohorts : []).map((cohort) => ({
         id: cohort.id,
         teamId: cohort.teamId,
         rosterSize: cohort.rosterUserIds.length,

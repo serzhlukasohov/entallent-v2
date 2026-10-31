@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { CompanyLanguageReadService } from '../admin/company-language-read.service';
+import { ReportConfigurationService } from '../report-configuration/report-configuration.service';
+import { Injectable, Optional } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import {
   channelAccounts, orgAdvisorAssignments, orgEmployeePlacements, orgHrbpScopes, orgOnboardingDeliveries,
@@ -48,7 +50,7 @@ export function summarizeOnboarding(
 
 @Injectable()
 export class CompanySetupReadService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly reportConfiguration:ReportConfigurationService, @Optional() private readonly languages:CompanyLanguageReadService = new CompanyLanguageReadService(db)) {}
 
   async snapshot(tenantId: string) {
     const [persons, units, teams, placements, capabilities, slackLinks, workspaces, deliveries, advisorAssignments, hrbpScopes, calendars, onboarding] = await Promise.all([
@@ -84,14 +86,16 @@ export class CompanySetupReadService {
       this.db.client.select({
         timezone: tenantWorkCalendars.timezone, workingDays: tenantWorkCalendars.workingDays,
         workStart: tenantWorkCalendars.workStart, workEnd: tenantWorkCalendars.workEnd,
+        holidays:tenantWorkCalendars.holidays,dateOverrides:tenantWorkCalendars.dateOverrides,
       }).from(tenantWorkCalendars).where(eq(tenantWorkCalendars.tenantId, tenantId)),
       this.db.client.select({ personId: onboardingStates.personId, introStatus: onboardingStates.introStatus })
         .from(onboardingStates).where(eq(onboardingStates.tenantId, tenantId)),
     ]);
+    const reportConfiguration=await this.reportConfiguration.read(tenantId);
     const onboardingSummary = summarizeOnboarding(units, teams, placements, onboarding);
     // Read-only: only enTalent staff configure the calendar (Q17); absence blocks rollout (Q18).
     const calendar = calendars[0] ?? null;
     return { persons, units, teams, placements, capabilities, slackLinks, workspaces, deliveries, advisorAssignments, hrbpScopes,
-      calendarConfigured: calendar !== null, calendar, onboardingSummary };
+      calendarConfigured: calendar !== null, calendar, onboardingSummary, reportConfiguration, companyLanguage: await this.languages.read(tenantId) };
   }
 }

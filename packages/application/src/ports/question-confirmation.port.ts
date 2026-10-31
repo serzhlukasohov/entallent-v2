@@ -1,3 +1,4 @@
+import type { PulseReportCollectionUnavailable } from './pulse-report-scope.repository.port';
 export interface ReadyQuestionBundle {
   tenantId: string;
   userId: string;
@@ -81,6 +82,8 @@ export interface CycleProgressSnapshot {
 }
 
 export interface QuestionConfirmationPort {
+  collectionAdmission?(input: { tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId?: string; sourceMessageId?: string }): Promise<string>;
+
   /** GC round 3 CAP-2: a driver topic question was delivered; the driver is asked at most once. */
   recordDriverRequested?(input: {
     tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId: string; requestedAt: Date;
@@ -104,7 +107,7 @@ export interface QuestionConfirmationPort {
     displayedText: string;
     statement: string;
     expectedWorkingSummary: string;
-  }): Promise<string>;
+  }): Promise<string | PulseReportCollectionUnavailable>;
   findAppliedQuestionVerdictForInbound(input: {
     tenantId: string; userId: string; conversationId: string; inboundMessageId: string;
   }): Promise<AppliedQuestionVerdict | null>;
@@ -122,19 +125,21 @@ export interface QuestionConfirmationPort {
   stageQuestionClarificationPrompt(input: {
     tenantId: string; userId: string; conversationId: string;
     workingInsightId: string; promptMessageId: string; displayedText: string;
-  }): Promise<boolean>;
+  }): Promise<boolean | PulseReportCollectionUnavailable>;
   applyQuestionClarificationVerdict(input: {
+    nativeReportClaimToken?: string;
     tenantId: string; userId: string; conversationId: string;
     workingInsightId: string; inboundMessageId: string;
     verdict: Exclude<QuestionClarificationVerdict, { kind: 'unrelated' }>;
-  }): Promise<boolean>;
+  }): Promise<boolean | PulseReportCollectionUnavailable>;
   findAwaitingQuestionBundle(input: {
     tenantId: string; userId: string; conversationId: string; inboundMessageId: string;
   }): Promise<AwaitingQuestionBundle | null>;
   applyQuestionBundleVerdict(input: {
+    nativeReportClaimToken?: string;
     tenantId: string; userId: string; conversationId: string;
     inboundMessageId: string; bundleId: string; verdict: Exclude<QuestionBundleVerdict, { kind: 'unrelated' }>;
-  }): Promise<boolean>;
+  }): Promise<boolean | PulseReportCollectionUnavailable>;
   findReadyQuestionBundle(input: {
     tenantId: string; userId: string;
   }): Promise<ReadyQuestionBundle | null>;
@@ -155,5 +160,5 @@ export interface QuestionConfirmationPort {
       statement: string;
       expectedWorkingSummary: string;
     }>;
-  }): Promise<string>;
+  }): Promise<string | PulseReportCollectionUnavailable>;
 }

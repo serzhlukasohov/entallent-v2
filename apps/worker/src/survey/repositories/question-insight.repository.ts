@@ -1,15 +1,23 @@
+import {readReportConfigSource,readReportConfigHead,reportSourceFingerprint} from '@entalent/database';
+import { canonicalCompanyLocale } from '@entalent/contracts';
+import type { QuestionScoreResult } from '@entalent/application';
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from 'drizzle-orm';
 import {
+  lockPulseReportSubject,
+  pulseReportAdmission,
   messages,
   pulseBacklog,
   surveyAssessments,
   surveyEvidence,
   surveyGroupStates,
   surveyDefinitions,
+  surveyEngagementContractQuestions,
+  surveyEngagementCollectionContracts,
   surveyQuestions,
   surveyQuestionConfirmationBundles,
   surveyQuestionInsights,
+  surveyReportInsightRevisions,
   surveyQuestionVerdictReceipts,
   surveyQuestionWorkingInsights,
   surveyScoringPolicies,
@@ -17,10 +25,13 @@ import {
   surveyWindows,
 } from '@entalent/database';
 import type {
+  PulseReportAdmissionInput,
+  PulseReportCollectionUnavailable,
   ApprovedQuestionRubric,
   FinalQuestionInsight,
   QuestionFinalizationContext,
   QuestionFinalizationRepositoryPort,
+  QuestionFinalizationScope,
   QuestionInsightInputRecord,
   PriorQuestionScoreRecord,
   QuestionInsightInputRepositoryPort,
@@ -41,6 +52,7 @@ import {
   accumulateQuestionReadiness,
   needsDriver,
   hasCompleteV2ScoringPolicy,
+  hasCompleteReportEngagementPolicy,
   hasLegacyV2ScoringPolicy,
   isApprovedQuestionRubric,
   isBundleShownIn,
@@ -59,6 +71,19 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     private readonly db: DatabaseService,
     private readonly teamRepository: TeamRepository,
   ) {}
+
+  private async orgNativeWindow(surveyWindowId: string, tx: { execute(query: ReturnType<typeof sql>): PromiseLike<unknown> } = this.db.client): Promise<boolean> {
+    const rows = await tx.execute(sql`select exists(select 1 from survey_report_window_bindings where survey_window_id = ${surveyWindowId}::uuid) as native`) as unknown as { native: boolean }[];
+    return rows[0]?.native ?? false;
+  }
+
+  private async trustedNativeReceipt(input:{tenantId:string;userId:string;inboundMessageId:string},windowId:string,tx:{execute(query:ReturnType<typeof sql>):PromiseLike<unknown>}):Promise<boolean>{
+    const rows=await tx.execute(sql`select exists(select 1 from survey_report_inbound_work w join survey_report_window_bindings b on b.survey_window_id=${windowId}::uuid and b.tenant_id=w.tenant_id join survey_report_participants p on p.id=b.participant_id and p.user_id=w.user_id where w.inbound_receipt_id=${input.inboundMessageId}::uuid and w.tenant_id=${input.tenantId}::uuid and w.user_id=${input.userId}::uuid and w.trust='db-receipt-v1' and pulse_input_receipt_in_scope(w.tenant_id,w.user_id,b.cycle_scoring_policy_id,w.received_at,null,false)) trusted`) as unknown as {trusted:boolean}[];return rows[0]?.trusted??false;
+  }
+
+  async collectionAdmission(input: { tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId?: string; sourceMessageId?: string }): Promise<string> {
+    return this.db.client.transaction((tx) => pulseReportAdmission(tx, input));
+  }
 
   async findAppliedQuestionVerdictForInbound(input: {
     tenantId: string; userId: string; conversationId: string; inboundMessageId: string;
@@ -100,7 +125,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   async findPendingQuestionClarification(input: {
     tenantId: string; userId: string; conversationId: string; inboundMessageId: string;
   }): Promise<PendingQuestionClarification | null> {
-    const [inbound] = await this.db.client.select({ occurredAt: messages.occurredAt })
+    const [inbound] = await this.db.client.select({ occurredAt: messages.occurredAt, receivedAt: messages.receivedAt })
       .from(messages).where(and(
         eq(messages.id, input.inboundMessageId),
         eq(messages.tenantId, input.tenantId),
@@ -135,7 +160,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyWindows.tenantId, input.tenantId),
         eq(surveyWindows.userId, input.userId),
         eq(surveyWindows.status, 'active'),
-        gt(surveyWindows.periodEnd, inbound.occurredAt),
+        sql`${surveyWindows.periodEnd} > case when exists(select 1 from survey_report_window_bindings b where b.survey_window_id = ${surveyWindows.id}) then ${inbound.receivedAt?.toISOString() ?? null}::timestamptz else ${inbound.occurredAt.toISOString()}::timestamptz end`,
         eq(messages.tenantId, input.tenantId),
         eq(messages.userId, input.userId),
         eq(messages.conversationId, input.conversationId),
@@ -144,6 +169,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         isNull(messages.deletedAt),
       )).orderBy(surveyQuestions.displayOrder).limit(1);
     if (!row || !row.workingSummary?.trim()) return null;
+    if (await this.collectionAdmission({ ...input, surveyWindowId: row.surveyWindowId, surveyQuestionId: row.surveyQuestionId, sourceMessageId: input.inboundMessageId }) !== 'allowed') return null;
     const component = parseBundleComponents(row.components, 'clarification')
       .find((item) => item.surveyQuestionId === row.surveyQuestionId);
     if (!component) throw new Error('v2_clarification_mapping_missing');
@@ -161,7 +187,8 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         )).limit(1);
       if (!prompt) throw new Error('v2_clarification_prompt_scope_mismatch');
       clarificationPromptSentAt = prompt.sentAt;
-      if (clarificationPromptSentAt && inbound.occurredAt <= clarificationPromptSentAt) return null;
+      const admittedAt = await this.orgNativeWindow(row.surveyWindowId) ? inbound.receivedAt : inbound.occurredAt;
+      if (!admittedAt || (clarificationPromptSentAt && admittedAt <= clarificationPromptSentAt)) return null;
     }
     return {
       workingInsightId: row.workingInsightId,
@@ -300,17 +327,20 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   async stageQuestionClarificationPrompt(input: {
     tenantId: string; userId: string; conversationId: string;
     workingInsightId: string; promptMessageId: string; displayedText: string;
-  }): Promise<boolean> {
+  }): Promise<boolean | PulseReportCollectionUnavailable> {
     validateQuestionClarificationPrompt(input.displayedText);
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
       const [working] = await tx.select().from(surveyQuestionWorkingInsights)
         .where(and(
           eq(surveyQuestionWorkingInsights.id, input.workingInsightId),
           eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
           eq(surveyQuestionWorkingInsights.userId, input.userId),
         )).for('update').limit(1);
-      if (!working || working.status !== 'pending_clarification'
-        || working.clarificationPromptMessageId || working.purgedAt) return false;
+      if (!working) return false;
+      const decision = await pulseReportAdmission(tx, { ...input, surveyWindowId: working.surveyWindowId, surveyQuestionId: working.surveyQuestionId });
+      if (decision !== 'allowed') return { kind: 'collection_unavailable', reason: decision as PulseReportCollectionUnavailable['reason'] };
+      if (working.status !== 'pending_clarification' || working.clarificationPromptMessageId || working.purgedAt) return false;
       if (working.clarificationAttempts >= MAX_QUESTION_CLARIFICATIONS) {
         throw new Error('v2_clarification_budget_exhausted');
       }
@@ -369,22 +399,27 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   }
 
   async applyQuestionClarificationVerdict(input: {
+    nativeReportClaimToken?: string;
     tenantId: string; userId: string; conversationId: string;
     workingInsightId: string; inboundMessageId: string;
     verdict: Exclude<QuestionClarificationVerdict, { kind: 'unrelated' }>;
-  }): Promise<boolean> {
+  }): Promise<boolean | PulseReportCollectionUnavailable> {
     if (input.verdict.kind === 'clarified' && !input.verdict.correctedSummary.trim()) {
       throw new Error('v2_clarification_summary_empty');
     }
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
+      await tx.execute(sql`select pulse_input_verify_claim(${input.tenantId}::uuid,${input.userId}::uuid,${input.inboundMessageId}::uuid,${input.nativeReportClaimToken ?? null}::uuid)`);
       const [working] = await tx.select().from(surveyQuestionWorkingInsights)
         .where(and(
           eq(surveyQuestionWorkingInsights.id, input.workingInsightId),
           eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
           eq(surveyQuestionWorkingInsights.userId, input.userId),
         )).for('update').limit(1);
-      if (!working || working.status !== 'pending_clarification'
-        || !working.clarificationPromptMessageId || !working.confirmationBundleId) return false;
+      if (!working) return false;
+      const decision = await pulseReportAdmission(tx, { ...input, surveyWindowId: working.surveyWindowId, surveyQuestionId: working.surveyQuestionId, sourceMessageId: input.inboundMessageId });
+      if (decision !== 'allowed') return { kind: 'collection_unavailable', reason: decision as PulseReportCollectionUnavailable['reason'] };
+      if (working.status !== 'pending_clarification' || working.purgedAt || !working.clarificationPromptMessageId || !working.confirmationBundleId) return false;
       const [bundle] = await tx.select({
         components: surveyQuestionConfirmationBundles.components,
         purgedAt: surveyQuestionConfirmationBundles.purgedAt,
@@ -421,7 +456,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(messages.direction, 'outbound'),
           isNull(messages.deletedAt),
         )).limit(1);
-      const [inbound] = await tx.select({ occurredAt: messages.occurredAt })
+      const [inbound] = await tx.select({ occurredAt: messages.occurredAt, receivedAt: messages.receivedAt })
         .from(messages).where(and(
           eq(messages.id, input.inboundMessageId),
           eq(messages.tenantId, input.tenantId),
@@ -430,14 +465,15 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(messages.direction, 'inbound'),
           isNull(messages.deletedAt),
         )).limit(1);
+      const admittedAt = inbound && (await this.orgNativeWindow(working.surveyWindowId, tx) ? inbound.receivedAt : inbound.occurredAt);
       const [window] = await tx.select({ periodEnd: surveyWindows.periodEnd, status: surveyWindows.status })
         .from(surveyWindows).where(and(
           eq(surveyWindows.id, working.surveyWindowId),
           eq(surveyWindows.tenantId, input.tenantId),
           eq(surveyWindows.userId, input.userId),
         )).limit(1);
-      if (!prompt?.sentAt || !inbound || !window || window.status !== 'active'
-        || inbound.occurredAt <= prompt.sentAt || inbound.occurredAt >= window.periodEnd) {
+      if (!prompt?.sentAt || !inbound || !admittedAt || !window || window.status !== 'active'
+        || admittedAt! <= prompt.sentAt || admittedAt! >= window.periodEnd) {
         throw new Error('v2_clarification_reply_scope_mismatch');
       }
       if (input.verdict.kind === 'clarified') {
@@ -455,7 +491,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           // working -> bundle -> prompt); staging the corrected statement replaces it.
           clarificationPromptMessageId: null,
           readyForConfirmation: true,
-          updatedAt: inbound.occurredAt,
+          updatedAt: admittedAt,
         }).where(eq(surveyQuestionWorkingInsights.id, working.id));
       } else {
         await tx.update(surveyQuestionWorkingInsights).set({
@@ -467,12 +503,12 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           confirmationMessageId: null,
           confirmedAt: null,
           readyForConfirmation: false,
-          purgedAt: inbound.occurredAt,
-          updatedAt: inbound.occurredAt,
+          purgedAt: admittedAt,
+          updatedAt: admittedAt,
         }).where(eq(surveyQuestionWorkingInsights.id, working.id));
         await tx.update(pulseBacklog).set({
-          status: 'done', doneAt: inbound.occurredAt,
-          resultedInCoverage: false, updatedAt: inbound.occurredAt,
+          status: 'done', doneAt: admittedAt,
+          resultedInCoverage: false, updatedAt: admittedAt,
         }).where(and(
           eq(pulseBacklog.tenantId, input.tenantId),
           eq(pulseBacklog.userId, input.userId),
@@ -494,7 +530,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       await tx.update(surveyQuestionConfirmationBundles).set({
         displayedText: null,
         components: remaining.length ? remainingComponents : null,
-        ...(remaining.length ? {} : { purgedAt: inbound.occurredAt }),
+        ...(remaining.length ? {} : { purgedAt: admittedAt }),
       }).where(and(
         eq(surveyQuestionConfirmationBundles.id, working.confirmationBundleId),
         eq(surveyQuestionConfirmationBundles.tenantId, input.tenantId),
@@ -515,7 +551,47 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   async findAwaitingQuestionBundle(input: {
     tenantId: string; userId: string; conversationId: string; inboundMessageId: string;
   }): Promise<AwaitingQuestionBundle | null> {
-    const [inbound] = await this.db.client.select({ occurredAt: messages.occurredAt })
+    const native = await this.db.client.execute(sql`select w.inbound_receipt_id from survey_report_inbound_work w join survey_report_participants p on p.tenant_id=w.tenant_id and p.user_id=w.user_id join survey_cycle_scoring_policies c on c.id=p.cycle_scoring_policy_id join survey_report_cycle_openings o on o.cycle_scoring_policy_id=c.id where w.inbound_receipt_id=${input.inboundMessageId}::uuid and w.tenant_id=${input.tenantId}::uuid and w.user_id=${input.userId}::uuid and w.conversation_id=${input.conversationId}::uuid and w.trust='db-receipt-v1' and w.received_at>=greatest(c.period_start,o.opened_at) and w.received_at<least(c.period_end,coalesce(p.collection_stopped_at,c.period_end)) limit 1`);
+    if (native.length) {
+      const forms = await this.db.client.execute(sql`select s.bundle_id,s.survey_window_id,s.survey_question_id,s.question_version,s.ordinal,s.component_hash,m.metadata,b.question_group,b.kind,
+        case when s.full_body_hash is null then m.text else substring(m.text from s.form_start_character for s.form_character_length) end displayed_text,
+        case when s.full_body_hash is null then encode(sha256(convert_to(m.text,'UTF8')),'hex')=s.form_hash
+          else s.full_body_hash=encode(sha256(convert_to(m.text,'UTF8')),'hex') and s.form_start_character>0 and s.form_character_length>0
+            and encode(sha256(convert_to(substring(m.text from s.form_start_character for s.form_character_length),'UTF8')),'hex')=s.form_hash end valid_form,
+        encode(sha256(convert_to(m.metadata->'nativeShownComponents'->(s.ordinal-1)->>'statement','UTF8')),'hex')=s.component_hash valid_component
+        from survey_report_inbound_work w join messages m on m.tenant_id=w.tenant_id and m.user_id=w.user_id and m.conversation_id=w.conversation_id and m.direction='outbound'
+        join survey_report_shown_components s on s.prompt_message_id=m.id and s.tenant_id=m.tenant_id and s.user_id=m.user_id
+        join survey_report_window_bindings binding on binding.survey_window_id=s.survey_window_id and binding.tenant_id=s.tenant_id
+        join survey_question_confirmation_bundles b on b.id=s.bundle_id and b.survey_window_id=s.survey_window_id
+        where w.inbound_receipt_id=${input.inboundMessageId}::uuid and w.tenant_id=${input.tenantId}::uuid and w.user_id=${input.userId}::uuid and m.deleted_at is null and s.body_disposition='retained' and s.sent_at<w.received_at and s.acknowledged_at<w.received_at
+          and pulse_input_receipt_in_scope(w.tenant_id,w.user_id,binding.cycle_scoring_policy_id,w.received_at,null,false)
+          and m.id=(select latest.id from messages latest where latest.tenant_id=w.tenant_id and latest.user_id=w.user_id and latest.conversation_id=w.conversation_id and latest.direction='outbound' and latest.sent_at<w.received_at and latest.delivery_recorded_at<w.received_at order by latest.sent_at desc,latest.id desc limit 1)
+          and not exists(select 1 from messages ambiguous where ambiguous.tenant_id=w.tenant_id and ambiguous.user_id=w.user_id and ambiguous.conversation_id=w.conversation_id and ambiguous.direction='outbound' and engagement_delivery_ambiguous(ambiguous.persisted_at,ambiguous.delivery_attempted_at,ambiguous.delivery_recorded_at,w.received_at))
+        order by s.ordinal`) as unknown as Record<string,unknown>[];
+      if (!forms.length) {
+        const missing=await this.db.client.execute(sql`select 1 from survey_report_inbound_work w join messages m on m.tenant_id=w.tenant_id and m.user_id=w.user_id and m.conversation_id=w.conversation_id and m.direction='outbound'
+          join survey_question_confirmation_bundles bundle on bundle.prompt_message_id=m.id and bundle.tenant_id=m.tenant_id and bundle.user_id=m.user_id
+          join survey_report_window_bindings binding on binding.survey_window_id=bundle.survey_window_id and binding.tenant_id=bundle.tenant_id
+          where w.inbound_receipt_id=${input.inboundMessageId}::uuid and pulse_input_receipt_in_scope(w.tenant_id,w.user_id,binding.cycle_scoring_policy_id,w.received_at,null,false)
+          and m.sent_at<w.received_at and m.delivery_recorded_at<w.received_at and m.deleted_at is null and not exists(select 1 from survey_report_shown_components s where s.prompt_message_id=m.id and s.body_disposition='deleted') and m.id=(select latest.id from messages latest where latest.tenant_id=w.tenant_id and latest.user_id=w.user_id and latest.conversation_id=w.conversation_id and latest.direction='outbound' and latest.sent_at<w.received_at and latest.delivery_recorded_at<w.received_at order by latest.sent_at desc,latest.id desc limit 1) limit 1`);
+        if(missing.length)throw new Error('pulse_input_shown_form_proof_unavailable');
+        return null;
+      }
+      const first=forms[0]!;
+      const components=parseBundleComponents((first.metadata as Record<string,unknown>)['nativeShownComponents']);
+      if (forms.some((f,i)=>!f.valid_form || !f.valid_component || f.bundle_id!==first.bundle_id || components[i]?.surveyQuestionId!==f.survey_question_id || components[i]?.questionVersion!==f.question_version) || components.length!==forms.length) throw new Error('pulse_input_shown_form_proof_unavailable');
+      const kind=parseBundleKind(String(first.kind));
+      let clarificationAttempts:number|undefined;
+      if(kind==='corrected_statement') {
+        const [linked]=await this.db.client.select({clarificationAttempts:surveyQuestionWorkingInsights.clarificationAttempts}).from(surveyQuestionWorkingInsights).where(and(
+          eq(surveyQuestionWorkingInsights.tenantId,input.tenantId),eq(surveyQuestionWorkingInsights.userId,input.userId),
+          eq(surveyQuestionWorkingInsights.surveyWindowId,String(first.survey_window_id)),eq(surveyQuestionWorkingInsights.confirmationBundleId,String(first.bundle_id)),isNull(surveyQuestionWorkingInsights.purgedAt),
+        )).limit(1);
+        clarificationAttempts=linked?.clarificationAttempts??MAX_QUESTION_CLARIFICATIONS;
+      }
+      return {id:String(first.bundle_id),tenantId:input.tenantId,userId:input.userId,surveyWindowId:String(first.survey_window_id),questionGroup:String(first.question_group),displayedText:String(first.displayed_text),components,kind,...(clarificationAttempts!==undefined?{clarificationAttempts}:{})};
+    }
+    const [inbound] = await this.db.client.select({ occurredAt: messages.occurredAt, receivedAt: messages.receivedAt })
       .from(messages).where(and(
         eq(messages.id, input.inboundMessageId),
         eq(messages.tenantId, input.tenantId),
@@ -549,12 +625,21 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(messages.conversationId, input.conversationId),
         eq(messages.direction, 'outbound'),
         isNull(messages.deletedAt),
-        lt(messages.sentAt, inbound.occurredAt),
+        sql`${messages.sentAt} < case when exists(select 1 from survey_report_window_bindings b where b.survey_window_id = ${surveyWindows.id}) then ${inbound.receivedAt?.toISOString() ?? null}::timestamptz else ${inbound.occurredAt.toISOString()}::timestamptz end`,
       )).limit(2);
     if (bundles.length === 0) return null;
     if (bundles.length !== 1) throw new Error('v2_multiple_awaiting_question_bundles');
     const bundle = bundles[0];
-    if (inbound.occurredAt >= bundle.periodEnd) return null;
+    const admittedAt = await this.orgNativeWindow(bundle.surveyWindowId) ? inbound.receivedAt : inbound.occurredAt;
+    if (!admittedAt || admittedAt >= bundle.periodEnd) return null;
+    const originalComponents = parseBundleComponents(bundle.components);
+    const permittedComponents = [];
+    for (const component of originalComponents) {
+      const decision = await this.collectionAdmission({ ...input, surveyWindowId: bundle.surveyWindowId, surveyQuestionId: component.surveyQuestionId, sourceMessageId: input.inboundMessageId });
+      if (decision === 'allowed') permittedComponents.push(component);
+      else if (decision !== 'lineage_excluded') return null;
+    }
+    if (!permittedComponents.length) return null;
     const kind = parseBundleKind(bundle.kind);
     let clarificationAttempts: number | undefined;
     if (kind === 'corrected_statement') {
@@ -577,33 +662,68 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       userId: input.userId,
       surveyWindowId: bundle.surveyWindowId,
       questionGroup: bundle.questionGroup,
-      displayedText: bundle.displayedText ?? '',
-      components: parseBundleComponents(bundle.components),
+      displayedText: bundle.displayedText!,
+      components: originalComponents,
       kind,
       ...(clarificationAttempts !== undefined ? { clarificationAttempts } : {}),
     };
   }
 
   async applyQuestionBundleVerdict(input: {
+    nativeReportClaimToken?: string;
     tenantId: string; userId: string; conversationId: string;
     inboundMessageId: string; bundleId: string;
     verdict: Exclude<QuestionBundleVerdict, { kind: 'unrelated' }>;
-  }): Promise<boolean> {
+  }): Promise<boolean | PulseReportCollectionUnavailable> {
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
+      await tx.execute(sql`select pulse_input_verify_claim(${input.tenantId}::uuid,${input.userId}::uuid,${input.inboundMessageId}::uuid,${input.nativeReportClaimToken ?? null}::uuid)`);
       const [bundle] = await tx.select().from(surveyQuestionConfirmationBundles)
         .where(and(
           eq(surveyQuestionConfirmationBundles.id, input.bundleId),
           eq(surveyQuestionConfirmationBundles.tenantId, input.tenantId),
           eq(surveyQuestionConfirmationBundles.userId, input.userId),
         )).for('update').limit(1);
-      if (!bundle || !['pending_delivery', 'awaiting_confirmation'].includes(bundle.status)) return false;
-      const components = parseBundleComponents(bundle.components);
-      const verdict = validateQuestionBundleVerdict(
-        input.verdict, components.map((component) => component.surveyQuestionId),
-      );
+      if (!bundle) return false;
+      if (await this.trustedNativeReceipt(input,bundle.surveyWindowId,tx) && input.verdict.kind==='agree' && !['pending_delivery','awaiting_confirmation'].includes(bundle.status)) {
+        const exact=await tx.execute(sql`select s.* from survey_report_shown_components s join survey_report_inbound_work w on w.inbound_receipt_id=${input.inboundMessageId}::uuid and w.tenant_id=s.tenant_id and w.user_id=s.user_id where s.bundle_id=${bundle.id}::uuid and s.tenant_id=${input.tenantId}::uuid and s.user_id=${input.userId}::uuid and s.conversation_id=${input.conversationId}::uuid and s.sent_at<w.received_at and s.acknowledged_at<w.received_at and exists(select 1 from survey_report_component_verdicts v where v.prompt_message_id=s.prompt_message_id and v.ordinal=s.ordinal and v.outcome='accepted')`) as unknown as Record<string,unknown>[];
+        const total=await tx.execute(sql`select count(*)::integer n from survey_report_shown_components where bundle_id=${bundle.id}::uuid`) as unknown as {n:number}[];
+        if(!exact.length||exact.length!==total[0]?.n)throw new Error('pulse_input_stale_form_reconciliation');
+        for(const form of exact)await tx.execute(sql`insert into survey_report_component_verdicts(tenant_id,user_id,inbound_receipt_id,prompt_message_id,ordinal,outcome)values(${input.tenantId}::uuid,${input.userId}::uuid,${input.inboundMessageId}::uuid,${String(form.prompt_message_id)}::uuid,${Number(form.ordinal)},'duplicate') on conflict do nothing`);
+        await tx.insert(surveyQuestionVerdictReceipts).values({inboundMessageId:input.inboundMessageId,tenantId:input.tenantId,userId:input.userId,conversationId:input.conversationId,questionGroup:bundle.questionGroup,verdictKind:'agree',bundleId:bundle.id});
+        return true;
+      }
+      if (!bundle.components && !['pending_delivery', 'awaiting_confirmation'].includes(bundle.status)) return false;
+      if (await this.trustedNativeReceipt(input,bundle.surveyWindowId,tx)) {
+        const proof=await tx.execute(sql`select 1 from survey_report_inbound_work w join survey_report_shown_components s on s.bundle_id=${bundle.id}::uuid and s.tenant_id=w.tenant_id and s.user_id=w.user_id and s.conversation_id=w.conversation_id where w.inbound_receipt_id=${input.inboundMessageId}::uuid and s.sent_at<w.received_at and s.acknowledged_at<w.received_at limit 1`);
+        if(!proof.length)throw new Error('pulse_input_shown_form_proof_unavailable');
+      }
+      const originalComponents = parseBundleComponents(bundle.components);
+      const excludedIds = new Set<string>();
+      for (const component of originalComponents) {
+        const decision = await pulseReportAdmission(tx, { ...input, surveyWindowId: bundle.surveyWindowId, surveyQuestionId: component.surveyQuestionId, sourceMessageId: input.inboundMessageId });
+        if (decision === 'lineage_excluded') excludedIds.add(component.surveyQuestionId);
+        else if (decision !== 'allowed') return { kind: 'collection_unavailable', reason: decision as PulseReportCollectionUnavailable['reason'] };
+      }
+      const components = originalComponents.filter((component) => !excludedIds.has(component.surveyQuestionId));
+      if (!components.length) return { kind: 'collection_unavailable', reason: 'lineage_excluded' };
+      if (!['pending_delivery', 'awaiting_confirmation'].includes(bundle.status)) return false;
+      const supplied = input.verdict;
+      let verdict: QuestionBundleVerdict;
+      if (supplied.kind === 'partial') {
+        const projection = {
+          kind: 'partial' as const,
+          acceptedQuestionIds: supplied.acceptedQuestionIds.filter((id) => !excludedIds.has(id)),
+          disputedQuestionIds: supplied.disputedQuestionIds.filter((id) => !excludedIds.has(id)),
+          declinedQuestionIds: supplied.declinedQuestionIds.filter((id) => !excludedIds.has(id)),
+        };
+        // Validate original identity boundaries before accepting a surviving subset of an older prepared verdict.
+        validateQuestionBundleVerdict({ ...projection, declinedQuestionIds: [...projection.declinedQuestionIds, ...excludedIds] }, originalComponents.map((component) => component.surveyQuestionId));
+        verdict = validateQuestionBundleVerdict(projection, components.map((component) => component.surveyQuestionId));
+      } else verdict = validateQuestionBundleVerdict(supplied, components.map((component) => component.surveyQuestionId));
       if (verdict.kind === 'unrelated') return false;
 
-      const [inbound] = await tx.select({ occurredAt: messages.occurredAt })
+      const [inbound] = await tx.select({ occurredAt: messages.occurredAt, receivedAt: messages.receivedAt })
         .from(messages).where(and(
           eq(messages.id, input.inboundMessageId),
           eq(messages.tenantId, input.tenantId),
@@ -612,6 +732,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(messages.direction, 'inbound'),
           isNull(messages.deletedAt),
         )).limit(1);
+      const admittedAt = inbound && (await this.orgNativeWindow(bundle.surveyWindowId, tx) ? inbound.receivedAt : inbound.occurredAt);
       const [prompt] = await tx.select({ sentAt: messages.sentAt })
         .from(messages).where(and(
           eq(messages.id, bundle.promptMessageId!),
@@ -627,17 +748,19 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyWindows.tenantId, input.tenantId),
           eq(surveyWindows.userId, input.userId),
         )).limit(1);
-      if (!inbound || !prompt?.sentAt || !window || window.status !== 'active'
-        || inbound.occurredAt <= prompt.sentAt || inbound.occurredAt >= window.periodEnd) {
+      const nativeWindow=await this.orgNativeWindow(bundle.surveyWindowId,tx);
+      if (!inbound || !admittedAt || !prompt?.sentAt || !window || !nativeWindow && (window.status !== 'active'
+        || admittedAt! <= prompt.sentAt || admittedAt! >= window.periodEnd)) {
         throw new Error('v2_confirmation_reply_scope_mismatch');
       }
 
-      const working = await tx.select().from(surveyQuestionWorkingInsights).where(and(
+      const linkedWorking = await tx.select().from(surveyQuestionWorkingInsights).where(and(
         eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
         eq(surveyQuestionWorkingInsights.userId, input.userId),
         eq(surveyQuestionWorkingInsights.surveyWindowId, bundle.surveyWindowId),
         eq(surveyQuestionWorkingInsights.confirmationBundleId, bundle.id),
-      )).orderBy(surveyQuestionWorkingInsights.surveyQuestionId).for('update');
+      )).orderBy(surveyQuestionWorkingInsights.id).for('update');
+      const working = linkedWorking.filter((row) => !excludedIds.has(row.surveyQuestionId));
       if (working.length !== components.length || working.some((row) => row.status !== 'pending_confirmation'
         || !components.some((component) => component.surveyQuestionId === row.surveyQuestionId
           && component.questionVersion === row.questionVersion))) {
@@ -665,15 +788,15 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
             status: 'confirmed',
             confirmedSemanticSummary: component.statement,
             confirmationMessageId: input.inboundMessageId,
-            confirmedAt: inbound.occurredAt,
+            confirmedAt: admittedAt,
             readyForConfirmation: false,
-            updatedAt: inbound.occurredAt,
+            updatedAt: admittedAt,
           }).where(eq(surveyQuestionWorkingInsights.id, row.id));
         } else if (outcome === 'disputed') {
           await tx.update(surveyQuestionWorkingInsights).set({
             status: 'pending_clarification',
             readyForConfirmation: false,
-            updatedAt: inbound.occurredAt,
+            updatedAt: admittedAt,
           }).where(eq(surveyQuestionWorkingInsights.id, row.id));
         } else {
           await tx.update(surveyQuestionWorkingInsights).set({
@@ -686,15 +809,15 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
             confirmationMessageId: null,
             confirmedAt: null,
             readyForConfirmation: false,
-            purgedAt: inbound.occurredAt,
-            updatedAt: inbound.occurredAt,
+            purgedAt: admittedAt,
+            updatedAt: admittedAt,
           }).where(eq(surveyQuestionWorkingInsights.id, row.id));
           await tx.update(pulseBacklog).set(outcome === 'reset' ? {
             status: 'pending', doneAt: null, evidenceCapturedCount: 0,
-            resultedInCoverage: null, updatedAt: inbound.occurredAt,
+            resultedInCoverage: null, updatedAt: admittedAt,
           } : {
-            status: 'done', doneAt: inbound.occurredAt,
-            resultedInCoverage: false, updatedAt: inbound.occurredAt,
+            status: 'done', doneAt: admittedAt,
+            resultedInCoverage: false, updatedAt: admittedAt,
           }).where(and(
             eq(pulseBacklog.tenantId, input.tenantId),
             eq(pulseBacklog.userId, input.userId),
@@ -707,10 +830,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       await tx.update(surveyQuestionConfirmationBundles).set({
         status: verdict.kind === 'reject' ? 'rejected' : 'resolved',
         displayedText: null,
-        components: needsClarification
+        components: verdict.kind === 'partial' && needsClarification
           ? components.filter((component) => verdict.disputedQuestionIds.includes(component.surveyQuestionId))
           : null,
-        ...(needsClarification ? {} : { purgedAt: inbound.occurredAt }),
+        ...(needsClarification ? {} : { purgedAt: admittedAt }),
       }).where(eq(surveyQuestionConfirmationBundles.id, bundle.id));
       await tx.insert(surveyQuestionVerdictReceipts).values({
         inboundMessageId: input.inboundMessageId,
@@ -749,6 +872,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     if (windows.length !== 1) throw new Error('v2_multiple_active_survey_windows');
     const window = windows[0];
     if (window.periodEnd <= new Date()) return null;
+    if (await this.collectionAdmission({ ...input, surveyWindowId: window.id }) !== 'allowed') return null;
     if (await this.getWindowMode({ ...input, surveyWindowId: window.id }) !== 'v2') {
       throw new Error('v2_question_bundle_policy_unbound');
     }
@@ -799,18 +923,26 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       const groupQuestions = questions.filter((question) => question.questionGroup === questionGroup)
         .sort((a, b) => a.displayOrder - b.displayOrder);
       if (groupQuestions.length !== 3) continue;
+      const excludedIds = new Set<string>();
+      for (const question of groupQuestions) {
+        const decision = await this.collectionAdmission({ ...input, surveyWindowId: window.id, surveyQuestionId: question.id });
+        if (decision === 'lineage_excluded') excludedIds.add(question.id);
+        else if (decision !== 'allowed') return null;
+      }
       const rows = groupQuestions.map((question) => byQuestion.get(question.id));
       const ready = rows.map((row, index) => ({ row, question: groupQuestions[index]! }))
-        .filter(({ row }) => row?.status === 'collecting' && row.readyForConfirmation
+        .filter(({ row, question }) => !excludedIds.has(question.id) && row?.status === 'collecting' && row.readyForConfirmation
           && row.workingSummary?.trim() && row.purgedAt === null);
       // GC round 3 S4b: a clarified meaning not yet shown back travels alone as a corrected statement;
       // its siblings may already be confirmed or declined.
       const corrected = ready.find(({ row }) => row!.clarificationAttempts > 0);
-      if (ready.length === 0 || rows.some((row, index) => !row
-        || row.questionVersion !== groupQuestions[index]!.version
-        || (!ready.some((item) => item.row === row)
-          && !(row.status === 'confirmed' && row.purgedAt && row.finalizedAt)
-          && !(corrected && row.status === 'declined' && row.purgedAt)))) continue;
+      if (ready.length === 0 || rows.some((row, index) => {
+        if (excludedIds.has(groupQuestions[index]!.id)) return false;
+        return !row || row.questionVersion !== groupQuestions[index]!.version
+          || (!ready.some((item) => item.row === row)
+            && !(row.status === 'confirmed' && row.purgedAt && row.finalizedAt)
+            && !(corrected && row.status === 'declined' && row.purgedAt));
+      })) continue;
       if (corrected) {
         return {
           ...input,
@@ -849,7 +981,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     components: Array<{
       surveyQuestionId: string; questionVersion: string; statement: string; expectedWorkingSummary: string;
     }>;
-  }): Promise<string> {
+  }): Promise<string | PulseReportCollectionUnavailable> {
     if (!['autonomy', 'growth', 'purpose', 'belonging'].includes(input.questionGroup)
       || input.components.length < 1 || input.components.length > 3
       || new Set(input.components.map((component) => component.surveyQuestionId)).size !== input.components.length
@@ -864,6 +996,11 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     }
 
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
+      for (const surveyQuestionId of input.components.map((component) => component.surveyQuestionId)) {
+        const decision = await pulseReportAdmission(tx, { ...input, surveyQuestionId });
+        if (decision !== 'allowed') return { kind: 'collection_unavailable', reason: decision as PulseReportCollectionUnavailable['reason'] };
+      }
       const [scope] = await tx.select({
         windowStatus: surveyWindows.status,
         periodEnd: surveyWindows.periodEnd,
@@ -924,6 +1061,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         (question) => component.surveyQuestionId === question.id && component.questionVersion === question.version,
       ))) throw new Error('v2_confirmation_bundle_question_set_mismatch');
 
+      const excludedIds = new Set<string>();
+      for (const question of questions) {
+        if (await pulseReportAdmission(tx, { ...input, surveyQuestionId: question.id }) === 'lineage_excluded') excludedIds.add(question.id);
+      }
       const working = await tx.select().from(surveyQuestionWorkingInsights)
         .where(and(
           eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
@@ -939,8 +1080,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       if (correctedSelection && selected.length !== 1) {
         throw new Error('v2_confirmation_bundle_invalid_composition');
       }
-      if (working.length !== 3 || selected.length !== input.components.length
+      if (working.filter((row) => !excludedIds.has(row.surveyQuestionId)).length !== questions.length - excludedIds.size || selected.length !== input.components.length
         || working.some((row) => {
+        if (excludedIds.has(row.surveyQuestionId)) return false;
           const component = input.components.find((item) => item.surveyQuestionId === row.surveyQuestionId);
           return component
             ? row.status !== 'collecting' || !row.readyForConfirmation
@@ -997,13 +1139,18 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     displayedText: string;
     statement: string;
     expectedWorkingSummary: string;
-  }): Promise<string> {
+  }): Promise<string | PulseReportCollectionUnavailable> {
     if (!(V2_QUESTION_GROUPS as readonly string[]).includes(input.questionGroup)
       || !input.displayedText.trim() || !input.statement.trim() || !input.expectedWorkingSummary.trim()
       || !input.questionVersion.trim() || input.displayedText.split(input.statement).length !== 2) {
       throw new Error('v2_corrected_statement_invalid_composition');
     }
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
+      for (const surveyQuestionId of [input.surveyQuestionId]) {
+        const decision = await pulseReportAdmission(tx, { ...input, surveyQuestionId });
+        if (decision !== 'allowed') return { kind: 'collection_unavailable', reason: decision as PulseReportCollectionUnavailable['reason'] };
+      }
       const [scope] = await tx.select({
         windowStatus: surveyWindows.status,
         periodEnd: surveyWindows.periodEnd,
@@ -1095,6 +1242,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     if (windows.length !== 1) throw new Error('v2_multiple_active_survey_windows');
     const window = windows[0]!;
     if (window.periodEnd <= new Date()) return null;
+    if (await this.collectionAdmission({ ...input, surveyWindowId: window.id }) !== 'allowed') return null;
     if (await this.getWindowMode({ ...input, surveyWindowId: window.id }) !== 'v2') return null;
     const questions = await this.db.client.select({
       id: surveyQuestions.id,
@@ -1136,6 +1284,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     promptMessageId: string; tenantId: string; conversationId: string; deliveredAt: Date;
   }): Promise<void> {
     await this.db.client.transaction(async (tx) => {
+      const [subject] = await tx.select({ userId: messages.userId }).from(messages).where(and(eq(messages.id, input.promptMessageId), eq(messages.tenantId, input.tenantId))).limit(1);
+      if (!subject) return;
+      await lockPulseReportSubject(tx, input.tenantId, subject.userId);
       const [bundle] = await tx.select({
         id: surveyQuestionConfirmationBundles.id,
         status: surveyQuestionConfirmationBundles.status,
@@ -1190,14 +1341,15 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyWindows.tenantId, input.tenantId),
           eq(surveyWindows.userId, input.userId),
         )).limit(1);
-      if (window?.definitionVersion === 'v2-policy-1.0.0') {
+      if (window && ['v2-policy-1.0.0', 'v2-report-engagement-1.0.0'].includes(window.definitionVersion)) {
         throw new Error('v2_window_policy_binding_missing');
       }
       return 'v1';
     }
-    if (bound.windowStatus !== 'active') throw new Error('v2_survey_window_inactive');
+    if (bound.windowStatus !== 'active' && !await this.orgNativeWindow(input.surveyWindowId)) throw new Error('v2_survey_window_inactive');
 
     const questions = await this.db.client.select({
+      id: surveyQuestions.id,
       stableKey: surveyQuestions.stableKey,
       responseType: surveyQuestions.responseType,
       questionGroup: surveyQuestions.questionGroup,
@@ -1206,9 +1358,11 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       version: surveyQuestions.version,
     }).from(surveyQuestions)
       .where(eq(surveyQuestions.surveyDefinitionId, bound.surveyDefinitionId));
+    const contracts = bound.definitionVersion === 'v2-report-engagement-1.0.0' ? await this.db.client.select().from(surveyEngagementContractQuestions).where(eq(surveyEngagementContractQuestions.surveyDefinitionId, bound.surveyDefinitionId)) : [];
+    const [collection] = bound.definitionVersion === 'v2-report-engagement-1.0.0' ? await this.db.client.select().from(surveyEngagementCollectionContracts).where(and(eq(surveyEngagementCollectionContracts.surveyDefinitionId, bound.surveyDefinitionId), eq(surveyEngagementCollectionContracts.tenantId, input.tenantId))) : [];
     if (!(bound.policyVersion === '1.0.0'
-      ? bound.definitionVersion === 'v2-policy-1.0.0'
-        && hasCompleteV2ScoringPolicy(questions, bound.rubrics)
+      ? ['v2-policy-1.0.0', 'v2-report-engagement-1.0.0'].includes(bound.definitionVersion)
+        && (bound.definitionVersion === 'v2-report-engagement-1.0.0' ? collection && hasCompleteReportEngagementPolicy(questions, bound.rubrics, contracts) : hasCompleteV2ScoringPolicy(questions, bound.rubrics))
       : hasLegacyV2ScoringPolicy(questions, bound.rubrics))) {
       throw new Error('v2_scoring_policy_incomplete');
     }
@@ -1238,10 +1392,13 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     sourceMessageId: string;
   }): Promise<boolean> {
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
+      if (await pulseReportAdmission(tx, input) !== 'allowed') return false;
+      const native = await this.orgNativeWindow(input.surveyWindowId, tx);
       const [scope] = await tx.select({
         periodStart: surveyWindows.periodStart,
         periodEnd: surveyWindows.periodEnd,
-        sourceOccurredAt: messages.occurredAt,
+        sourceOccurredAt: sql<Date>`case when exists(select 1 from survey_report_window_bindings b where b.survey_window_id = ${surveyWindows.id}) then ${messages.receivedAt} else ${messages.occurredAt} end`.mapWith(messages.occurredAt),
       }).from(surveyWindows)
         .innerJoin(surveyQuestions,
           eq(surveyQuestions.surveyDefinitionId, surveyWindows.surveyDefinitionId))
@@ -1252,8 +1409,8 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyWindows.id, input.surveyWindowId),
           eq(surveyWindows.tenantId, input.tenantId),
           eq(surveyWindows.userId, input.userId),
-          eq(surveyWindows.status, 'active'),
-          gt(surveyWindows.periodEnd, new Date()),
+          ...(native ? [] : [eq(surveyWindows.status, 'active')]),
+          ...(native ? [] : [gt(surveyWindows.periodEnd, new Date())]),
           eq(surveyQuestions.id, input.surveyQuestionId),
           eq(surveyQuestions.version, input.questionVersion),
           eq(surveyQuestions.responseType, 'open_ended'),
@@ -1333,7 +1490,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   async recordDriverRequested(input: {
     tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId: string; requestedAt: Date;
   }): Promise<boolean> {
-    const updated = await this.db.client.update(surveyQuestionWorkingInsights)
+    return this.db.client.transaction(async (tx) => {
+    if (await pulseReportAdmission(tx, input) !== 'allowed') return false;
+    const updated = await tx.update(surveyQuestionWorkingInsights)
       .set({ driverRequestedAt: input.requestedAt, updatedAt: input.requestedAt })
       .where(and(
         eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
@@ -1344,6 +1503,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         isNull(surveyQuestionWorkingInsights.driverRequestedAt),
       )).returning({ id: surveyQuestionWorkingInsights.id });
     return updated.length > 0;
+    });
   }
 
   /**
@@ -1356,24 +1516,27 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     surveyQuestionId: string; questionVersion: string; sourceMessageId: string;
   }): Promise<boolean> {
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
+      if (await pulseReportAdmission(tx, input) !== 'allowed') return false;
+      const native = await this.orgNativeWindow(input.surveyWindowId, tx);
       const [scope] = await tx.select({
         periodStart: surveyWindows.periodStart,
         periodEnd: surveyWindows.periodEnd,
-        sourceOccurredAt: messages.occurredAt,
+        sourceOccurredAt: sql<Date>`case when exists(select 1 from survey_report_window_bindings b where b.survey_window_id = ${surveyWindows.id}) then ${messages.receivedAt} else ${messages.occurredAt} end`.mapWith(messages.occurredAt),
       }).from(surveyWindows)
         .innerJoin(messages, eq(messages.id, input.sourceMessageId))
         .where(and(
           eq(surveyWindows.id, input.surveyWindowId),
           eq(surveyWindows.tenantId, input.tenantId),
           eq(surveyWindows.userId, input.userId),
-          eq(surveyWindows.status, 'active'),
+          ...(native ? [] : [eq(surveyWindows.status, 'active')]),
           eq(messages.tenantId, input.tenantId),
           eq(messages.userId, input.userId),
           eq(messages.conversationId, input.conversationId),
           eq(messages.direction, 'inbound'),
           isNull(messages.deletedAt),
         )).limit(1);
-      if (!scope || scope.periodEnd <= new Date() || scope.sourceOccurredAt < scope.periodStart
+      if (!scope || (!native && scope.periodEnd <= new Date()) || scope.sourceOccurredAt < scope.periodStart
         || scope.sourceOccurredAt >= scope.periodEnd) return false;
       const [working] = await tx.select().from(surveyQuestionWorkingInsights).where(and(
         eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
@@ -1384,11 +1547,12 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       )).for('update').limit(1);
       if (!working || working.status !== 'collecting' || working.purgedAt !== null
         || working.driverResolved || working.sourceMessageIds.includes(input.sourceMessageId)) return false;
-      const [latestSource] = working.sourceMessageIds.length === 0 ? [] : await tx.select({
-        occurredAt: messages.occurredAt,
-      }).from(messages).where(inArray(messages.id, working.sourceMessageIds))
-        .orderBy(desc(messages.occurredAt)).limit(1);
-      if (latestSource && scope.sourceOccurredAt <= latestSource.occurredAt) return false;
+      const sourceClock = native ? messages.receivedAt : messages.occurredAt;
+      const [latestSource] = working.sourceMessageIds.length === 0 ? [] : await tx.select({ admittedAt: sourceClock })
+        .from(messages).where(and(inArray(messages.id, working.sourceMessageIds), eq(messages.tenantId, input.tenantId), eq(messages.userId, input.userId)))
+        .orderBy(desc(sourceClock)).limit(1);
+      if ((native && working.sourceMessageIds.length > 0 && !latestSource?.admittedAt)
+        || (latestSource?.admittedAt && scope.sourceOccurredAt <= latestSource.admittedAt)) return false;
       await tx.update(surveyQuestionWorkingInsights).set({
         driverResolved: true,
         readyForConfirmation: working.readyForConfirmation || working.meaningSufficient,
@@ -1402,10 +1566,13 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     const meaning = input.meaning.trim();
     if (!meaning || !input.questionVersion.trim()) return 'ignored';
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, input.tenantId, input.userId);
+      if (await pulseReportAdmission(tx, input) !== 'allowed') return 'ignored';
+      const native = await this.orgNativeWindow(input.surveyWindowId, tx);
       const [scope] = await tx.select({
         periodStart: surveyWindows.periodStart,
         periodEnd: surveyWindows.periodEnd,
-        sourceOccurredAt: messages.occurredAt,
+        sourceOccurredAt: sql<Date>`case when exists(select 1 from survey_report_window_bindings b where b.survey_window_id = ${surveyWindows.id}) then ${messages.receivedAt} else ${messages.occurredAt} end`.mapWith(messages.occurredAt),
       }).from(surveyWindows)
         .innerJoin(surveyQuestions,
           eq(surveyQuestions.surveyDefinitionId, surveyWindows.surveyDefinitionId))
@@ -1416,7 +1583,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyWindows.id, input.surveyWindowId),
           eq(surveyWindows.tenantId, input.tenantId),
           eq(surveyWindows.userId, input.userId),
-          eq(surveyWindows.status, 'active'),
+          ...(native ? [] : [eq(surveyWindows.status, 'active')]),
           eq(surveyQuestions.id, input.surveyQuestionId),
           eq(surveyQuestions.version, input.questionVersion),
           eq(surveyQuestions.responseType, 'open_ended'),
@@ -1428,19 +1595,24 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           isNull(messages.deletedAt),
           eq(surveyWindowScoringPolicies.tenantId, input.tenantId),
         )).limit(1);
-      if (!scope || scope.periodEnd <= new Date() || scope.sourceOccurredAt < scope.periodStart
+      if (!scope || (!native && scope.periodEnd <= new Date()) || scope.sourceOccurredAt < scope.periodStart
         || scope.sourceOccurredAt >= scope.periodEnd) return 'ignored';
 
-      const [currentInsight] = await tx.select({ confirmedAt: surveyQuestionInsights.confirmedAt })
-        .from(surveyQuestionInsights).where(and(
-          eq(surveyQuestionInsights.tenantId, input.tenantId),
-          eq(surveyQuestionInsights.userId, input.userId),
-          eq(surveyQuestionInsights.surveyWindowId, input.surveyWindowId),
-          eq(surveyQuestionInsights.surveyQuestionId, input.surveyQuestionId),
-          eq(surveyQuestionInsights.questionVersion, input.questionVersion),
-          eq(surveyQuestionInsights.isCurrent, true),
+      const [currentInsight] = native
+        ? await tx.select({ confirmedAt: surveyReportInsightRevisions.confirmationReceivedAt }).from(surveyQuestionInsights)
+          .leftJoin(surveyReportInsightRevisions, eq(surveyReportInsightRevisions.insightId, surveyQuestionInsights.id))
+        .where(and(
+          eq(surveyQuestionInsights.tenantId, input.tenantId), eq(surveyQuestionInsights.userId, input.userId),
+          eq(surveyQuestionInsights.surveyWindowId, input.surveyWindowId), eq(surveyQuestionInsights.surveyQuestionId, input.surveyQuestionId),
+          eq(surveyQuestionInsights.questionVersion, input.questionVersion), eq(surveyQuestionInsights.isCurrent, true),
+        )).limit(1)
+        : await tx.select({ confirmedAt: surveyQuestionInsights.confirmedAt }).from(surveyQuestionInsights)
+        .where(and(
+          eq(surveyQuestionInsights.tenantId, input.tenantId), eq(surveyQuestionInsights.userId, input.userId),
+          eq(surveyQuestionInsights.surveyWindowId, input.surveyWindowId), eq(surveyQuestionInsights.surveyQuestionId, input.surveyQuestionId),
+          eq(surveyQuestionInsights.questionVersion, input.questionVersion), eq(surveyQuestionInsights.isCurrent, true),
         )).limit(1);
-      if (currentInsight && scope.sourceOccurredAt <= currentInsight.confirmedAt) return 'ignored';
+      if (currentInsight && (!currentInsight.confirmedAt || scope.sourceOccurredAt <= currentInsight.confirmedAt)) return 'ignored';
 
       const key = and(
         eq(surveyQuestionWorkingInsights.tenantId, input.tenantId),
@@ -1599,7 +1771,15 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     return rows.map((row) => ({ ...row, score: Number(row.score) }));
   }
 
-  async listPendingConfirmedUsers(): Promise<Array<{ tenantId: string; userId: string }>> {
+  private pendingFinalizationScope(scope?: QuestionFinalizationScope) {
+    if (!scope) return undefined;
+    const native = sql`exists(select 1 from survey_report_window_bindings binding
+      where binding.survey_window_id=${surveyQuestionWorkingInsights.surveyWindowId}
+        and binding.tenant_id=${surveyQuestionWorkingInsights.tenantId})`;
+    return scope === 'native_only' ? native : sql`not (${native})`;
+  }
+
+  async listPendingConfirmedUsers(input?: { scope?: QuestionFinalizationScope }): Promise<Array<{ tenantId: string; userId: string }>> {
     return this.db.client.selectDistinct({
       tenantId: surveyQuestionWorkingInsights.tenantId,
       userId: surveyQuestionWorkingInsights.userId,
@@ -1607,11 +1787,12 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       eq(surveyQuestionWorkingInsights.status, 'confirmed'),
       isNull(surveyQuestionWorkingInsights.purgedAt),
       isNotNull(surveyQuestionWorkingInsights.confirmedSemanticSummary),
+      this.pendingFinalizationScope(input?.scope),
     )).orderBy(surveyQuestionWorkingInsights.tenantId, surveyQuestionWorkingInsights.userId);
   }
 
   async listPendingConfirmedQuestions(input: {
-    tenantId: string; userId: string;
+    tenantId: string; userId: string; scope?: QuestionFinalizationScope;
   }): Promise<Array<{ surveyWindowId: string; surveyQuestionId: string }>> {
     return this.db.client.select({
       surveyWindowId: surveyQuestionWorkingInsights.surveyWindowId,
@@ -1621,7 +1802,17 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       eq(surveyQuestionWorkingInsights.userId, input.userId),
       eq(surveyQuestionWorkingInsights.status, 'confirmed'),
       isNull(surveyQuestionWorkingInsights.purgedAt),
+      this.pendingFinalizationScope(input.scope),
     )).orderBy(surveyQuestionWorkingInsights.confirmedAt);
+  }
+
+  async cacheAssessment(input: { context: QuestionFinalizationContext; assessment: QuestionScoreResult }): Promise<QuestionScoreResult | null> {
+    const c = input.context;
+    return this.db.client.transaction(async tx => {
+      await lockPulseReportSubject(tx, c.tenantId, c.userId);
+      const rows = await tx.execute(sql`update survey_question_working_insights set score_cache=coalesce(score_cache,${JSON.stringify(input.assessment)}::jsonb),score_cache_revision=updated_at where id=${c.workingInsightId}::uuid and tenant_id=${c.tenantId}::uuid and user_id=${c.userId}::uuid and updated_at=${c.workingRevision ?? c.workingUpdatedAt.toISOString()}::timestamptz and status='confirmed' and purged_at is null returning score_cache`) as unknown as { score_cache: QuestionScoreResult }[];
+      return rows[0]?.score_cache ?? null;
+    });
   }
 
   async loadConfirmedQuestion(input: {
@@ -1629,6 +1820,8 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   }): Promise<QuestionFinalizationContext | 'already_finalized' | null> {
     const [row] = await this.db.client.select({
       working: surveyQuestionWorkingInsights,
+      workingRevision: sql<string>`${surveyQuestionWorkingInsights.updatedAt}::text`,
+      scoreCacheCurrent: sql<boolean>`${surveyQuestionWorkingInsights.scoreCacheRevision} = ${surveyQuestionWorkingInsights.updatedAt}`,
       window: surveyWindows,
       question: surveyQuestions,
       policy: surveyScoringPolicies,
@@ -1651,6 +1844,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         eq(surveyScoringPolicies.tenantId, input.tenantId),
       )).limit(1);
     if (!row?.working.confirmedAt) return null;
+    for (const sourceMessageId of [...row.working.sourceMessageIds, row.working.confirmationMessageId]) {
+      const decision = await this.collectionAdmission({ ...input, ...(sourceMessageId ? { sourceMessageId } : {}) });
+      if (decision !== 'allowed') return null;
+    }
     // GC round 3 CAP-3: proof that the employee saw and confirmed this exact statement.
     const [receipt] = row.working.confirmationBundleId && row.working.confirmationMessageId
       ? await this.db.client.select({ inboundMessageId: surveyQuestionVerdictReceipts.inboundMessageId })
@@ -1671,13 +1868,13 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     if (!row.working.confirmedSemanticSummary
       || row.working.purgedAt || row.question.version !== row.working.questionVersion
       || row.question.surveyDefinitionId !== row.window.surveyDefinitionId
-      || row.working.confirmedAt < row.window.periodStart
-      || row.working.confirmedAt >= row.window.periodEnd) return null;
+      || (!await this.orgNativeWindow(row.window.id) && (row.working.confirmedAt < row.window.periodStart
+      || row.working.confirmedAt >= row.window.periodEnd))) return null;
 
     const rubric = rubricForQuestion(row.policy.rubrics, row.question.stableKey);
     const knownIdentifiers = await this.teamRepository.findCurrentHierarchyIdentifiers(input.userId, input.tenantId);
     const externalSources = row.working.sourceMessageIds.length
-      ? await this.db.client.select({ externalMessageId: messages.externalMessageId })
+      ? await this.db.client.select({ id: messages.id, receivedAt: sql<string | null>`${messages.receivedAt}::text`, externalMessageId: messages.externalMessageId })
         .from(messages).where(and(
           inArray(messages.id, row.working.sourceMessageIds),
           eq(messages.tenantId, input.tenantId),
@@ -1685,9 +1882,39 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(messages.direction, 'inbound'),
         ))
       : [];
+    let reportAdmissionProof: PulseReportAdmissionInput[] | undefined;
+    if (await this.orgNativeWindow(input.surveyWindowId)) {
+      const states = await this.db.client.execute(sql`select opening.opened_at::text, participant.collection_stopped_at::text, cycle.period_start::text, cycle.period_end::text,
+        coalesce(permission.full_reporting_denied, false) as full_denied,
+        exists(select 1 from survey_report_question_lineages lineage join survey_reporting_lineage_exclusions exclusion on exclusion.lineage_id = lineage.id and exclusion.tenant_id = lineage.tenant_id and exclusion.user_id = lineage.user_id where lineage.tenant_id = ${input.tenantId}::uuid and lineage.user_id = ${input.userId}::uuid and lineage.cycle_scoring_policy_id = binding.cycle_scoring_policy_id and lineage.survey_question_id = ${input.surveyQuestionId}::uuid) as lineage_excluded
+        from survey_report_window_bindings binding
+        join survey_cycle_scoring_policies cycle on cycle.id=binding.cycle_scoring_policy_id and cycle.tenant_id=binding.tenant_id
+        join survey_report_cycle_openings opening on opening.cycle_scoring_policy_id = binding.cycle_scoring_policy_id and opening.tenant_id = binding.tenant_id
+        join survey_report_participants participant on participant.id = binding.participant_id and participant.tenant_id = binding.tenant_id
+        left join survey_reporting_permissions permission on permission.tenant_id = participant.tenant_id and permission.user_id = participant.user_id
+        where binding.survey_window_id = ${input.surveyWindowId}::uuid and binding.tenant_id = ${input.tenantId}::uuid and participant.user_id = ${input.userId}::uuid`) as unknown as { opened_at: string | Date; collection_stopped_at: string | Date | null; period_start:string;period_end:string; full_denied: boolean; lineage_excluded: boolean }[];
+      const state = states[0];
+      if (!state) return null;
+      const [confirmation] = await this.db.client.select({ receivedAt: sql<string|null>`${messages.receivedAt}::text` }).from(messages).where(and(eq(messages.id, row.working.confirmationMessageId!), eq(messages.tenantId, input.tenantId), eq(messages.userId, input.userId), eq(messages.direction, 'inbound'))).limit(1);
+      reportAdmissionProof = externalSources.map((source) => ({ periodStart: state.period_start, periodEnd: state.period_end, openedAt: state.opened_at, collectionStoppedAt: state.collection_stopped_at, fullReportingDenied: state.full_denied, lineageExcluded: state.lineage_excluded, receivedAt: source.receivedAt, confirmationReceivedAt: confirmation?.receivedAt ?? null }));
+      if (!reportAdmissionProof.length) return null;
+    }
+    let languageCapture = row.working.languageCapture as { locale: string; configRevision: number } | null;
+    if (!languageCapture) {
+      const configSource=await readReportConfigSource(this.db.client,input.tenantId),configHead=await readReportConfigHead(this.db.client,input.tenantId);
+      const companyLocale=canonicalCompanyLocale(configSource.locale);
+      if(!companyLocale || (configHead && configHead.sourceFingerprint!==reportSourceFingerprint(configSource))) throw new Error('question_language_config_out_of_sync');
+      const configRevision=configHead?.revision ?? 0;
+      const capture = await this.db.client.execute(sql`update survey_question_working_insights w set language_capture=coalesce(w.language_capture,jsonb_build_object('locale',${companyLocale}::text,'configRevision',${configRevision}::integer)) from tenants t where w.id=${row.working.id}::uuid and w.tenant_id=t.id and coalesce(t.locale,'en')=${companyLocale} and coalesce((select max(revision) from tenant_report_config_revisions where tenant_id=t.id),0)=${configRevision} and w.updated_at=${row.workingRevision}::timestamptz and w.purged_at is null returning language_capture`) as unknown as { language_capture: { locale: string; configRevision: number } }[];
+      languageCapture = capture[0]?.language_capture ?? null;
+    }
+    if (!languageCapture || canonicalCompanyLocale(languageCapture.locale) !== languageCapture.locale) throw new Error('question_language_capture_unavailable');
     return {
+      languageCapture,
+      cachedAssessment: row.scoreCacheCurrent ? row.working.scoreCache as QuestionScoreResult : undefined,
       workingInsightId: row.working.id,
       workingUpdatedAt: row.working.updatedAt,
+      workingRevision: row.workingRevision,
       tenantId: input.tenantId,
       userId: input.userId,
       surveyWindowId: input.surveyWindowId,
@@ -1705,6 +1932,7 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
         ...externalSources.flatMap((source) => source.externalMessageId?.trim() ? [source.externalMessageId.trim()] : []),
       ])],
       shownStatementReceipt: receipt !== undefined,
+      reportAdmissionProof,
     };
   }
 
@@ -1712,9 +1940,11 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
     final: FinalQuestionInsight;
     workingInsightId: string;
     expectedWorkingUpdatedAt: Date;
+    expectedWorkingRevision?: string;
   }): Promise<'finalized' | 'already_finalized' | 'stale'> {
     const { final } = input;
     return this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, final.tenantId, final.userId);
       const [working] = await tx.select().from(surveyQuestionWorkingInsights)
         .where(and(
           eq(surveyQuestionWorkingInsights.id, input.workingInsightId),
@@ -1724,6 +1954,10 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyQuestionWorkingInsights.surveyQuestionId, final.surveyQuestionId),
         )).for('update').limit(1);
       if (!working) return 'stale';
+      if (input.expectedWorkingRevision) {
+        const exact = await tx.execute(sql`select updated_at=${input.expectedWorkingRevision}::timestamptz as matches from survey_question_working_insights where id=${working.id}::uuid`) as unknown as {matches:boolean}[];
+        if (!exact[0]?.matches) return 'stale';
+      }
 
       const [existing] = await tx.select({ id: surveyQuestionInsights.id })
         .from(surveyQuestionInsights)
@@ -1732,6 +1966,12 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           eq(surveyQuestionInsights.confirmedAt, final.confirmedAt),
         )).limit(1);
       if (existing && working.purgedAt) return 'already_finalized';
+      for (const sourceMessageId of [...working.sourceMessageIds, working.confirmationMessageId]) {
+        const decision = await pulseReportAdmission(tx, { tenantId: final.tenantId, userId: final.userId, surveyWindowId: final.surveyWindowId, surveyQuestionId: final.surveyQuestionId, ...(sourceMessageId ? { sourceMessageId } : {}) });
+        if (decision !== 'allowed') return 'stale';
+      }
+      const capture = working.languageCapture as {locale?:string;configRevision?:number}|null;
+      if (final.proseProvenance && (!capture || final.proseProvenance.locale !== capture.locale || final.proseProvenance.configRevision !== capture.configRevision)) return 'stale';
       if (working.status !== 'confirmed' || !working.confirmedAt
         || working.confirmedAt.getTime() !== final.confirmedAt.getTime()
         || working.updatedAt.getTime() !== input.expectedWorkingUpdatedAt.getTime()
@@ -1755,7 +1995,9 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
           surveyQuestionId: final.surveyQuestionId,
           questionVersion: final.questionVersion,
           questionGroup: final.questionGroup,
+          proseProvenance: final.proseProvenance,
           deidentifiedSummary: final.deidentifiedSummary,
+          summarySupport:final.summarySupport,
           outcome: final.outcome,
           score: final.score === null ? null : String(final.score),
           isCurrent: true,

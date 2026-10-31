@@ -104,8 +104,9 @@ export class AiProviderWithFallback implements AiProviderPort {
   async generateGroupSummary(
     summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
     questionGroup: string,
+    responseLanguage?: string,
   ): Promise<GroupSummary> {
-    return this.withFallback((p) => p.generateGroupSummary(summaries, questionGroup));
+    return this.withFallback((p) => p.generateGroupSummary(summaries, questionGroup, responseLanguage));
   }
 
   async generateGroupReport(

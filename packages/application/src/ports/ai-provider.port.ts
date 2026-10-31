@@ -130,6 +130,11 @@ export interface ReplyPlan {
   >;
   /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; null keeps the prose default. */
   formatRequest?: import('@entalent/contracts').FormatRequest | null;
+  /**
+   * RPT-09: set only from the rights adapter's result. `open_menu`: buttons are attached to this reply;
+   * `already_withdrawn`: full reporting permission is already withdrawn, no buttons are attached.
+   */
+  reportingRightsRequest?: 'open_menu' | 'already_withdrawn';
 }
 
 /** @deprecated Use ReplyPlan. Kept as a compatibility alias while prompts/tests migrate. */
@@ -138,7 +143,10 @@ export type ReplyBrief = ReplyPlan;
 export interface LanguagePolicy {
   /** Primary BCP-47 language subtag the mentor replies in. */
   responseLanguage: string;
-  source: 'product_default';
+  source: 'product_default' | 'explicit_current' | 'saved_explicit' | 'inferred_current' | 'saved_inferred' | 'user_locale';
+  requestedLocale?: string;
+  resourceStatus?: 'ready' | 'language_unavailable';
+  resources?: Partial<Record<import('@entalent/contracts').PulseResourceKind, import('@entalent/contracts').PulseLanguageResource>>;
 }
 
 /**
@@ -180,10 +188,10 @@ export interface ResponseContext {
    */
   topicQuestion?: TopicQuestionRequest;
   /** Survey probe to embed naturally in the response */
-  surveyProbeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
+  surveyProbeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType; stableKey?: string };
   /** Agent-initiated check-in: the agent writes first, optionally steering toward a survey topic */
   proactiveCheckIn?: {
-    probeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType };
+    probeQuestion?: { id: string; probeStrategies: string[]; responseType?: SurveyResponseType; stableKey?: string };
     /** The employee just agreed (by text) to start after the onboarding introduction. */
     afterUserStart?: boolean;
   };
@@ -315,6 +323,7 @@ export interface AiProviderPort {
   generateGroupSummary(
     summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
     questionGroup: string,
+    responseLanguage?: string,
   ): Promise<GroupSummary>;
 
   generateGroupReport(

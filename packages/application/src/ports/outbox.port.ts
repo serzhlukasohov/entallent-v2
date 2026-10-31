@@ -39,7 +39,7 @@ export interface SurveyEvidencePayload {
    * full recent history (sliding windows) instead of just the latest transcript.
    * Used to recover findings from before live extraction was fixed.
    */
-  mode?: 'backfill';
+  mode?: 'backfill' | 'finalize_only';
 }
 
 export interface GroupReportPayload {

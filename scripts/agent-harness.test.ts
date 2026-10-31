@@ -71,6 +71,18 @@ function testDatabaseMigrationRunsIntegrationGate(): void {
   ]);
 }
 
+function testContractTargetAvoidsArchivedChain():void {
+ const repo=mkdtempSync(join(tmpdir(),'agent-harness-contracts-'));
+ mkdirSync(join(repo,'packages/contracts/src'),{recursive:true});
+ writeFileSync(join(repo,'packages/contracts/package.json'),' {"name":"@entalent/contracts"}');
+ writeFileSync(join(repo,'packages/contracts/src/pulse-report-calendar.test.ts'),'');
+ writeFileSync(join(repo,'packages/contracts/src/runtime-contract.test.ts'),'');
+ assert.deepEqual(buildActiveTestCommands(repo,['packages/contracts/src/pulse-report-calendar.ts']),[
+  ['pnpm',['--filter','@entalent/contracts','exec','vitest','run','src/pulse-report-calendar.test.ts']],
+ ]);
+ assert.throws(()=>buildActiveTestCommands(repo,['packages/contracts/src/runtime-contract.test.ts']),/retired test target blocked/);
+}
+
 function testRetiredScopeGuard(): void {
   assert.deepEqual(
     findRetiredPaths([
@@ -513,6 +525,7 @@ function testSpecPathCannotEscapeApprovedArtifacts(): void {
 
 async function main(): Promise<void> {
   testDiffSelection();
+  testContractTargetAvoidsArchivedChain();
   testDatabaseMigrationRunsIntegrationGate();
   testRetiredScopeGuard();
   testReceiptIsStructuredAndRedacted();

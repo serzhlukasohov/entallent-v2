@@ -1,3 +1,4 @@
+import { lockPulseReportSubject, withPulseReportSerializableRetry } from '@entalent/database';
 import { Injectable } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import { DEFAULT_RETENTION_POLICY } from '@entalent/domain';
@@ -42,6 +43,8 @@ export class RetentionRepository implements RetentionCleanupRepositoryPort {
   }
 
   async applyRetention(params: RetentionCleanupParams): Promise<RetentionCleanupResult> {
+    await this.cleanupReportInputMetadata(params);
+    await this.cleanupEngagementAnswers(params);
     const now = params.now.toISOString();
     const messagesCutoff = params.messagesCutoff.toISOString();
     const memoryCutoff = params.memoryCutoff.toISOString();
@@ -209,11 +212,17 @@ export class RetentionRepository implements RetentionCleanupRepositoryPort {
           and purged_at is null
         returning id
       `),
+      // Revision receipt metadata cascades with expired insights; content-free lineage exclusions
+      // and negative permission state deliberately survive analytical retention until subject erasure.
       this.count(sql`
-        with expired as (
+        with subjects as materialized (
+          select pg_advisory_xact_lock(hashtextextended('pulse-report-subject:'||${params.tenantId}::uuid::text||':'||subject.user_id::text,0))
+          from (select distinct user_id from survey_question_insights where tenant_id=${params.tenantId}::uuid order by user_id) subject
+        ), expired as (
           delete from survey_question_insights
           where tenant_id = ${params.tenantId}::uuid
             and processed_at < ${memoryCutoff}::timestamptz
+            and (select count(*) from subjects)>=0
           returning id, tenant_id, user_id, survey_window_id,
             survey_question_id, withdrawn_at
         ), retained as (
@@ -272,8 +281,42 @@ export class RetentionRepository implements RetentionCleanupRepositoryPort {
     };
   }
 
+  private async cleanupReportInputMetadata(params:RetentionCleanupParams):Promise<void>{
+    await withPulseReportSerializableRetry(()=>this.db.client.transaction(async tx=>{
+      await tx.execute(sql`select pulse_publication_payload_purge(${params.tenantId}::uuid,${params.auditLogCutoff.toISOString()}::timestamptz)`);
+      await tx.execute(sql`update survey_report_input_coverage set supported_from=greatest(supported_from,${params.auditLogCutoff.toISOString()}::timestamptz) where tenant_id=${params.tenantId}::uuid`);
+      await tx.execute(sql`update survey_report_input_candidates set invalidated_at=coalesce(invalidated_at,clock_timestamp()) where tenant_id=${params.tenantId}::uuid and (expires_at<=clock_timestamp() or (context->>'periodStart')::timestamptz<${params.auditLogCutoff.toISOString()}::timestamptz)`);
+      await tx.execute(sql`delete from survey_report_input_candidates c where tenant_id=${params.tenantId}::uuid and expires_at<=clock_timestamp() and not exists(select 1 from survey_report_final_completions f where f.candidate_id=c.id)`);
+      await tx.execute(sql`delete from survey_report_inbound_work where tenant_id=${params.tenantId}::uuid and recorded_at<${params.auditLogCutoff.toISOString()}::timestamptz`);
+      await tx.execute(sql`delete from survey_report_shown_components where tenant_id=${params.tenantId}::uuid and recorded_at<${params.auditLogCutoff.toISOString()}::timestamptz`);
+      await tx.execute(sql`delete from survey_report_topic_watermarks where tenant_id=${params.tenantId}::uuid and confirmation_received_at<${params.auditLogCutoff.toISOString()}::timestamptz`);
+    }));
+  }
+
+  private async cleanupEngagementAnswers(params: RetentionCleanupParams): Promise<void> {
+    const subjects = await this.db.client.execute(sql`select distinct user_id from (
+      select user_id from survey_engagement_capture_events where tenant_id=${params.tenantId}::uuid
+      union select w.user_id from survey_windows w join survey_report_window_bindings b on b.survey_window_id=w.id
+        join survey_engagement_contract_questions q on q.survey_definition_id=w.survey_definition_id
+        where w.tenant_id=${params.tenantId}::uuid
+    ) subjects order by user_id`) as unknown as { user_id: string }[];
+    for (const subject of subjects) await this.db.client.transaction(async (tx) => {
+      await lockPulseReportSubject(tx, params.tenantId, subject.user_id);
+      // Write content-free replay tombstones before the generic private-message cleanup.
+      await tx.execute(sql`insert into survey_engagement_capture_events(inbound_receipt_id,tenant_id,user_id,status,answer_received_at)
+        select id,tenant_id,user_id,'source_deleted',received_at from messages where tenant_id=${params.tenantId}::uuid
+          and user_id=${subject.user_id}::uuid and direction='inbound' and received_at is not null
+          and occurred_at<${params.messagesCutoff.toISOString()}::timestamptz on conflict do nothing`);
+      await tx.execute(sql`update survey_engagement_capture_events e set status='expired' where e.tenant_id=${params.tenantId}::uuid
+        and e.user_id=${subject.user_id}::uuid and e.status='accepted' and exists(select 1 from survey_engagement_answer_revisions a
+          where a.inbound_receipt_id=e.inbound_receipt_id and (a.answer_received_at<=clock_timestamp()-(engagement_retention_days((select retention_policy from tenants where id=${params.tenantId}::uuid))*interval '1 day') or a.expires_at<=clock_timestamp()))`);
+      await tx.execute(sql`delete from survey_engagement_answer_revisions where tenant_id=${params.tenantId}::uuid
+        and user_id=${subject.user_id}::uuid and (answer_received_at<=clock_timestamp()-(engagement_retention_days((select retention_policy from tenants where id=${params.tenantId}::uuid))*interval '1 day') or expires_at<=clock_timestamp())`);
+    });
+  }
+
   private async count(statement: SQL): Promise<number> {
-    const rows = await this.db.client.execute(statement) as unknown as unknown[];
+    const rows = await withPulseReportSerializableRetry(()=>this.db.client.execute(statement)) as unknown as unknown[];
     return rows.length;
   }
 }

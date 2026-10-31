@@ -19,7 +19,7 @@
     "typecheck": "turbo run typecheck && pnpm exec tsc -p scripts/tsconfig.v2-policy.json",
     "test": "turbo run test && pnpm run test:scripts",
     "test:scripts": "pnpm run test:scripts:non-maf && pnpm run test:scripts:maf",
-    "test:scripts:non-maf": "pnpm exec tsx scripts/backfill-slack-display-names.test.ts && pnpm exec tsx scripts/typescript-conversation-decision-report.test.ts && pnpm exec tsx scripts/open-survey-reporting-cycle.test.ts && pnpm exec tsx scripts/open-survey-reporting-cycle.integration.test.ts && pnpm exec tsx scripts/activate-v2-scoring-policy.test.ts && pnpm exec tsx scripts/activate-v2-scoring-policy.integration.test.ts && pnpm exec tsx scripts/close-survey-reporting-cycle.test.ts && pnpm exec tsx scripts/run-retention-cleanup.test.ts && pnpm exec tsx scripts/agent-harness.test.ts",
+    "test:scripts:non-maf": "pnpm exec tsx scripts/backfill-slack-display-names.test.ts && pnpm exec tsx scripts/typescript-conversation-decision-report.test.ts && pnpm exec tsx scripts/open-survey-reporting-cycle.test.ts && pnpm exec tsx scripts/open-survey-reporting-cycle.integration.test.ts && pnpm exec tsx scripts/prepare-report-engagement-definition.test.ts && pnpm exec tsx scripts/activate-v2-scoring-policy.test.ts && pnpm exec tsx scripts/activate-v2-scoring-policy.integration.test.ts && pnpm exec tsx scripts/close-survey-reporting-cycle.test.ts && pnpm exec tsx scripts/run-retention-cleanup.test.ts && pnpm exec tsx scripts/pulse-report-activation.test.ts && pnpm exec tsx scripts/agent-harness.test.ts",
     "test:scripts:maf": "pnpm exec tsx scripts/live-maf-primary-app-smoke.test.ts",
     "test:integration": "turbo run test:integration",
     "sim": "pnpm --filter @entalent/conversation-sim sim",
@@ -54,7 +54,9 @@
     "db:studio": "pnpm --filter @entalent/database db:studio",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "reports:acceptance": "node --import tsx scripts/run-pulse-report-acceptance.ts",
+    "reports:activation": "node --import tsx scripts/pulse-report-activation.ts"
   },
   "devDependencies": {
     "@entalent/application": "workspace:*",

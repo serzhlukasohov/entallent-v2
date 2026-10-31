@@ -1,3 +1,4 @@
+import { LanguageProposalSchema } from './pulse-language';
 import { z } from 'zod';
 
 // ── Situation Classifier ────────────────────────────────────────────────────
@@ -79,9 +80,13 @@ export const OnboardingSignalSchema = z.object({
 });
 export type OnboardingSignal = z.infer<typeof OnboardingSignalSchema>;
 export const FormatRequestSchema = z.enum(['list', 'outline', 'steps']);
+/** RPT-09: the model may only propose opening the button-committed rights menu; it never withdraws. */
+export const ReportingRightsRequestSchema = z.enum(['none', 'open_menu']);
+export type ReportingRightsRequest = z.infer<typeof ReportingRightsRequestSchema>;
 export type FormatRequest = z.infer<typeof FormatRequestSchema>;
 
 export const SituationClassificationSchema = z.object({
+  languageProposal: LanguageProposalSchema.nullish().catch(null),
   primaryIntent: SituationIntentSchema,
   secondaryIntents: z.array(z.string()),
   emotionalState: z.array(z.string()),
@@ -144,6 +149,8 @@ export const SituationClassificationSchema = z.object({
   acceptsPriorOffer: z.boolean().optional().catch(false),
   /** GC round 3 CAP-9: the employee explicitly asked for this reply shape; unknown values fail closed. */
   formatRequest: FormatRequestSchema.nullable().optional().catch(null),
+  /** RPT-09: unknown or malformed values fail closed to `none`; only the typed value opens a menu. */
+  reportingRightsRequest: ReportingRightsRequestSchema.optional().catch('none'),
 }).transform((classification) => {
   const acceptsPriorOffer = classification.acceptsPriorOffer === undefined
     ? undefined

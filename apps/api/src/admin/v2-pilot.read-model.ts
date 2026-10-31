@@ -1,3 +1,4 @@
+import { CompanyLanguageReadService, definitionDisplay } from './company-language-read.service';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type {
@@ -33,6 +34,10 @@ type PersonQuestionRow = {
   ready: boolean | null;
   workingSummary: string | null;
   finalSummary: string | null;
+  sourceLocale?: string | null;
+  originalSafeSummary?: string | null;
+  displayLocale?: string;
+  displayStatus?: 'ready' | 'translation_pending';
   outcome: string | null;
   score: string | null;
 };
@@ -42,6 +47,9 @@ type TeamSignalRow = {
   title: string;
   group: string;
   summary: string;
+  displayLocale?: string;
+  sourceLocale?: string | null;
+  displayStatus?: 'ready' | 'translation_pending';
   outcome: string;
   score: string | null;
   direction: string;
@@ -68,7 +76,7 @@ export async function listV2PilotCohorts(db: DatabaseService, tenantId: string):
 
 @Injectable()
 export class V2PilotReadModel {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly languages: CompanyLanguageReadService = new CompanyLanguageReadService(db)) {}
 
   /**
    * Without an explicit cohortId the cohort is resolved from the tenant's V2
@@ -90,9 +98,12 @@ export class V2PilotReadModel {
              wi.status AS "workingStatus", wi.ready_for_confirmation AS ready,
              CASE WHEN wi.purged_at IS NULL THEN coalesce(wi.confirmed_semantic_summary, wi.working_summary)
                ELSE NULL END AS "workingSummary",
-             insight.deidentified_summary AS "finalSummary",
+             insight.localized_summary AS "finalSummary", insight.deidentified_summary AS "originalSafeSummary",
+             insight.prose_provenance->>'locale' AS "sourceLocale", tenant_locale.locale AS "displayLocale",
+             CASE WHEN insight.localized_summary IS NULL THEN 'translation_pending' ELSE 'ready' END AS "displayStatus",
              insight.outcome, insight.score
       FROM survey_reporting_cohorts c
+      JOIN tenants tenant_locale ON tenant_locale.id=c.tenant_id
       CROSS JOIN LATERAL unnest(c.roster_user_ids) WITH ORDINALITY AS member(user_id, position)
       JOIN survey_questions q ON q.survey_definition_id = c.survey_definition_id
         AND q.response_type = 'open_ended'
@@ -123,18 +134,23 @@ export class V2PilotReadModel {
         ORDER BY wi.updated_at DESC LIMIT 1
       ) wi ON true
       LEFT JOIN LATERAL (
-        SELECT i.deidentified_summary, i.outcome, i.score
+        SELECT i.deidentified_summary, i.prose_provenance, i.outcome, i.score,
+          CASE WHEN i.prose_provenance->>'locale'=tenant_locale.locale THEN i.deidentified_summary ELSE
+          (SELECT d.text FROM pulse_analytical_renditions d JOIN LATERAL pulse_language_permitted_source(i.tenant_id,i.id) permitted ON permitted."sourceHash"=d.source_hash WHERE d.tenant_id=i.tenant_id AND d.analytical_id=i.id AND d.locale=tenant_locale.locale AND d.policy_version='pulse-language-v1' AND d.expires_at>clock_timestamp() LIMIT 1) END AS localized_summary
         FROM survey_question_insights i
         WHERE i.tenant_id = c.tenant_id AND i.user_id = member.user_id
           AND i.survey_window_id = window_row.id AND i.survey_question_id = q.id
-          AND i.is_current AND i.withdrawn_at IS NULL
+          AND i.is_current AND i.withdrawn_at IS NULL AND EXISTS(SELECT 1 FROM pulse_language_permitted_source(i.tenant_id,i.id))
         ORDER BY i.scored_at DESC LIMIT 1
       ) insight ON true
       WHERE c.tenant_id = ${tenant} AND c.id = ${cohortId}
       ORDER BY member.position, q.display_order
     `) as unknown as PersonQuestionRow[];
 
-    return projectPilotPeople(cohort, rows, now);
+    const companyLanguage=await this.languages.read(tenant);
+    const result=projectPilotPeople(cohort,rows,now);
+    for(const person of result.people) for(const question of person.questions) question.titleDisplay=definitionDisplay(companyLanguage,question.stableKey,question.title);
+    return {...result,companyLanguage};
   }
 
   /**
@@ -150,7 +166,10 @@ export class V2PilotReadModel {
     const rows = await this.db.client.execute(
       teamSignalsQuery(tenant, cohort.cohortId, false),
     ) as unknown as TeamSignalRow[];
-    return projectPilotTeamSignals(cohort, rows, now);
+    const companyLanguage=await this.languages.read(tenant);
+    const result=projectPilotTeamSignals(cohort,rows,now);
+    for(const signal of result.signals) signal.titleDisplay=definitionDisplay(companyLanguage,signal.stableKey,signal.title);
+    return {...result,companyLanguage};
   }
 
   /**
@@ -163,7 +182,10 @@ export class V2PilotReadModel {
     const rows = await this.db.client.execute(
       teamSignalsQuery(tenant, cohort.cohortId, true),
     ) as unknown as QaTeamSignalRow[];
-    return projectPilotQaTeamSignals(cohort, rows, now);
+    const companyLanguage=await this.languages.read(tenant);
+    const result=projectPilotQaTeamSignals(cohort,rows,now);
+    for(const signal of result.signals) signal.titleDisplay=definitionDisplay(companyLanguage,signal.stableKey,signal.title);
+    return {...result,companyLanguage};
   }
 
   /** Shared by the people and Team Signals views so both resolve the same cohort. */
@@ -199,7 +221,7 @@ export class V2PilotReadModel {
         .filter((cohort) => cohortState(cohort, now) !== 'upcoming')
         .slice(0, MAX_CYCLES)
         .map((cohort) => cohort.cohortId);
-      if (cohortIds.length === 0) return { tenantId, checkedAt: now.toISOString(), cycles: [] };
+      if (cohortIds.length === 0) return { tenantId, checkedAt: now.toISOString(), cycles: [], companyLanguage: await this.languages.read(tenantId) };
     } else {
       cohortIds = typeof cohortIdsRaw === 'string' ? cohortIdsRaw.split(',') : [];
       if (cohortIds.length < 1 || cohortIds.length > MAX_CYCLES
@@ -308,6 +330,7 @@ export class V2PilotReadModel {
                WHERE s.tenant_id = c.tenant_id AND s.reporting_cohort_id = c.id
                  AND s.status = 'sent') AS "sentReports"
       FROM survey_reporting_cohorts c
+      JOIN tenants tenant_locale ON tenant_locale.id=c.tenant_id
       JOIN survey_definitions d ON d.id = c.survey_definition_id
         AND (d.tenant_id IS NULL OR d.tenant_id = c.tenant_id)
       JOIN survey_cycle_scoring_policies cp ON cp.tenant_id = c.tenant_id
@@ -324,7 +347,7 @@ export class V2PilotReadModel {
     const cycles: AdminV2PilotCycle[] = await Promise.all(rows.map(async (row) =>
       projectPilotCycle(row, await this.getQuestions(tenantId, row.cohortId), now)));
 
-    return { tenantId, checkedAt: now.toISOString(), cycles };
+    return { tenantId, checkedAt: now.toISOString(), cycles, companyLanguage: await this.languages.read(tenantId) };
   }
 
   private async getQuestions(tenantId: string, cohortId: string): Promise<AdminV2PilotQuestion[]> {
@@ -422,6 +445,7 @@ export function projectPilotPeople(
       ready: row.ready === true && row.outcome === null,
       workingSummary: row.outcome === null ? row.workingSummary : null,
       finalSummary: row.finalSummary,
+      ...(row.displayLocale ? { originalSafeSummary: row.originalSafeSummary ?? null, display: { locale: row.displayLocale, sourceLocale: row.sourceLocale ?? null, text: row.finalSummary, status: row.displayStatus ?? 'translation_pending' } } : {}),
       outcome: row.outcome,
       score: row.score === null ? null : Number(row.score),
     };
@@ -461,10 +485,11 @@ function teamSignalsQuery(tenantId: string, cohortId: string, includeAuthor: boo
     : sql``;
   return sql`
       SELECT ${author}q.stable_key AS "stableKey", q.title, q.question_group AS "group",
-             insight.deidentified_summary AS summary, insight.outcome, insight.score,
+             coalesce(insight.localized_summary,'') AS summary, insight.prose_provenance->>'locale' AS "sourceLocale", tenant_locale.locale AS "displayLocale", CASE WHEN insight.localized_summary IS NULL THEN 'translation_pending' ELSE 'ready' END AS "displayStatus", insight.outcome, insight.score,
              insight.signal_direction AS direction, insight.signal_severity AS severity,
              insight.root_cause_category AS "rootCause"
       FROM survey_reporting_cohorts c
+      JOIN tenants tenant_locale ON tenant_locale.id=c.tenant_id
       CROSS JOIN LATERAL ${roster}
       JOIN survey_questions q ON q.survey_definition_id = c.survey_definition_id
         AND q.response_type = 'open_ended'
@@ -475,12 +500,14 @@ function teamSignalsQuery(tenantId: string, cohortId: string, includeAuthor: boo
         ORDER BY w.period_start DESC LIMIT 1
       ) window_row ON true
       JOIN LATERAL (
-        SELECT i.deidentified_summary, i.outcome, i.score,
+        SELECT i.deidentified_summary, i.prose_provenance, i.outcome, i.score,
+          CASE WHEN i.prose_provenance->>'locale'=tenant_locale.locale THEN i.deidentified_summary ELSE
+          (SELECT d.text FROM pulse_analytical_renditions d JOIN LATERAL pulse_language_permitted_source(i.tenant_id,i.id) permitted ON permitted."sourceHash"=d.source_hash WHERE d.tenant_id=i.tenant_id AND d.analytical_id=i.id AND d.locale=tenant_locale.locale AND d.policy_version='pulse-language-v1' AND d.expires_at>clock_timestamp() LIMIT 1) END AS localized_summary,
                i.signal_direction, i.signal_severity, i.root_cause_category
         FROM survey_question_insights i
         WHERE i.tenant_id = c.tenant_id AND i.user_id = member.user_id
           AND i.survey_window_id = window_row.id AND i.survey_question_id = q.id
-          AND i.is_current AND i.withdrawn_at IS NULL AND i.working_insight_id IS NOT NULL
+          AND i.is_current AND i.withdrawn_at IS NULL AND i.working_insight_id IS NOT NULL AND EXISTS(SELECT 1 FROM pulse_language_permitted_source(i.tenant_id,i.id))
         ORDER BY i.scored_at DESC LIMIT 1
       ) insight ON true
       ${account}
@@ -506,6 +533,7 @@ function projectSignal(row: TeamSignalRow): AdminV2PilotTeamSignal {
     title: row.title,
     group: row.group,
     summary: row.summary,
+    ...(row.displayLocale ? { display: { locale: row.displayLocale, sourceLocale: row.sourceLocale ?? null, text: row.summary || null, status: row.displayStatus ?? 'translation_pending' } } : {}),
     outcome: row.outcome,
     score: row.score === null ? null : Number(row.score),
     direction: row.direction,

@@ -1,3 +1,4 @@
+import { ReportConfigurationModule } from '../report-configuration/report-configuration.module';
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ApiKeyGuard } from '../auth/api-key.guard';
@@ -9,7 +10,7 @@ import { OnboardingRestartController } from './onboarding-restart.controller';
 import { OnboardingRestartService } from './onboarding-restart.service';
 
 @Module({
-  imports: [AuditModule, BullModule.registerQueue({ name: QUEUE_NAMES.ONBOARDING_REMINDER })],
+  imports: [ReportConfigurationModule, AuditModule, BullModule.registerQueue({ name: QUEUE_NAMES.ONBOARDING_REMINDER })],
   controllers: [OnboardingRestartController],
   providers: [
     ApiKeyGuard,

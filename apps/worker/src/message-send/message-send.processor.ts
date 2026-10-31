@@ -2,7 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger, Optional } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { SlackAdapter } from '@entalent/channel-slack';
-import { OutgoingMessageSchema, type OutgoingMessage } from '@entalent/contracts';
+import { OutgoingMessageSchema, REPORTING_RIGHTS_ACTION_PREFIX, type OutgoingMessage } from '@entalent/contracts';
 import { WorkspaceConnectionRepository } from '../conversation/repositories/workspace-connection.repository';
 import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { GroupStateRepository } from '../survey/repositories/group-state.repository';
@@ -199,7 +199,15 @@ export class MessageSendProcessor extends WorkerHost {
 
   private messageActions(metadata: unknown): OutgoingMessage['actions'] {
     const parsed = OutgoingMessageSchema.shape.actions.safeParse(asRecord(metadata)['onboardingActions']);
-    return parsed.success && parsed.data?.length ? parsed.data : undefined;
+    if (parsed.success && parsed.data?.length) return parsed.data;
+    return this.reportingRightsActions(metadata);
+  }
+
+  /** RPT-09 rights menu buttons; only `reporting_rights:*` ids are rendered from this key. */
+  private reportingRightsActions(metadata: unknown): OutgoingMessage['actions'] {
+    const parsed = OutgoingMessageSchema.shape.actions.safeParse(asRecord(metadata)['reportingRightsActions']);
+    return parsed.success && parsed.data?.length && parsed.data.every((a) => a.actionId.startsWith(REPORTING_RIGHTS_ACTION_PREFIX))
+      ? parsed.data : undefined;
   }
 
   /** The trust half of an onboarding intro carries the buttons; its delivery moves onboarding forward. */

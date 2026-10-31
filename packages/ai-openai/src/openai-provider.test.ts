@@ -15,7 +15,7 @@ vi.mock('openai', () => {
 import { OpenAiProvider } from './openai-provider';
 import { ReplyStrategy, isModerationSignalError, type ModerationSignalError } from '@entalent/contracts';
 import type { CircuitBreaker } from './circuit-breaker';
-import type { LanguagePolicy, MemoryContext, ResponseContext } from '@entalent/application';
+import { resolveLanguagePolicy, type LanguagePolicy, type MemoryContext, type ResponseContext } from '@entalent/application';
 
 function makeProvider() {
   return new OpenAiProvider({ azure: false, apiKey: 'test', model: 'gpt-test' });
@@ -257,6 +257,18 @@ describe('OpenAiProvider.interpretQuestionBundleResponse', () => {
 
 describe('OpenAiProvider.classifySituation', () => {
   beforeEach(() => createMock.mockReset());
+
+  it.each(['explicit', 'inferred'] as const)('parses a %s language proposal from the same JSON completion and passes it to selection', async (kind) => {
+    const languageProposal={locale:'uk',kind};
+    createMock.mockResolvedValue({choices:[{finish_reason:'stop',message:{content:JSON.stringify({languageProposal,primaryIntent:'casual_conversation',secondaryIntents:[],emotionalState:['neutral'],urgency:'low',confidence:1,requiresSafetyCheck:false,surveyAllowed:true,reasoningSummary:'Synthetic language request.',dialogueAct:'request',latestUserSubstance:'Synthetic request',topicAnchor:null})}}]});
+    const result=await makeProvider().classifySituation([{role:'user',content:'Please answer in Ukrainian.',timestamp:new Date()}],{userName:'Synthetic'});
+    expect(result.languageProposal).toEqual(languageProposal);
+    expect(resolveLanguagePolicy({proposal:result.languageProposal})).toEqual({responseLanguage:'uk',source:kind+'_current'});
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const request=createMock.mock.calls[0]![0];
+    expect(request.response_format).toEqual({type:'json_object'});
+    expect(request.messages[1].content).toContain('"languageProposal"');
+  });
 
   it('uses deterministic temperature for dialogue act classification', async () => {
     createMock.mockResolvedValue({
@@ -2844,5 +2856,26 @@ describe('OpenAiProvider.generateResponse topic question (GC round 3 CAP-1)', ()
     await expect(makeProvider().generateResponse(turns, normal, topicContext))
       .rejects.toMatchObject({ message: 'topic_question_reply_invalid', reason: 'reply_question' });
     expect(createMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('OpenAiProvider literal engagement trusted form',()=>{
+  beforeEach(()=>createMock.mockReset());
+  const approved='On a scale from 1 to 10, where 1 means not at all engaged and 10 means fully engaged, how engaged do you feel with your work right now? Please reply with one whole number.';
+  const probe={id:'literal-q',stableKey:'engagement_current',responseType:'numeric_1_10_integer' as const,probeStrategies:[approved]};
+  const strategy={mode:'survey_probe' as const,tone:'warm' as const,includeFollowUpQuestion:true,maxResponseLength:'short' as const,forbiddenPatterns:[]};
+  it('R3 answers the substantive employee question before appending the exact approved numeric form',async()=>{
+    createMock.mockResolvedValue({choices:[{finish_reason:'stop',message:{content:JSON.stringify({text:'Ask your manager to agree which deadline takes priority, and explain the trade-off.',confidence:1,containsSurveyProbe:false})}}]});
+    const result=await makeProvider().generateResponse([{role:'user',content:'How do I handle two competing deadlines?',timestamp:new Date()}],strategy,responseContext({userName:'Synthetic',surveyProbeQuestion:probe}));
+    expect(result.text).toBe('Ask your manager to agree which deadline takes priority, and explain the trade-off.\n\n'+approved);
+    expect(result.containsSurveyProbe).toBe(true);expect(result.surveyProbeQuestionId).toBe(probe.id);expect(createMock).toHaveBeenCalledTimes(1);
+  });
+  it('R3 proactive probes use the trusted form without accepting wrong-topic or reversed-anchor model text',async()=>{
+    const result=await makeProvider().generateResponse(turns,strategy,responseContext({userName:'Synthetic',proactiveCheckIn:{probeQuestion:probe}}));
+    expect(result.text).toBe(approved);expect(createMock).not.toHaveBeenCalled();
+  });
+  it('R3 refuses an undeclared numeric topic before model generation',async()=>{
+    await expect(makeProvider().generateResponse(turns,strategy,responseContext({userName:'Synthetic',surveyProbeQuestion:{...probe,stableKey:'weather'}}))).rejects.toThrow('engagement_probe_topic_unavailable');
+    expect(createMock).not.toHaveBeenCalled();
   });
 });

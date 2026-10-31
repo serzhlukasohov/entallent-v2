@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import {createHash} from 'node:crypto';
+import { ConversationRepository } from '../conversation/repositories/conversation.repository';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { and, eq, isNull, sql } from 'drizzle-orm';
@@ -52,11 +54,13 @@ export class OnboardingIntroService {
   constructor(
     private readonly db: DatabaseService,
     @InjectQueue(QUEUE_NAMES.MESSAGE_SEND) private readonly messageSendQueue: Queue<MessageSendJob>,
+    @Optional() private readonly language?: ConversationRepository,
   ) {}
 
   async sendIntro(input: SendIntroInput): Promise<SendIntroResult> {
     const { tenantId, personId, role, conversation } = input;
-    const copy = introMessages(role);
+    const selectedLanguage = await this.language?.resolvePersonalLanguage({tenantId,userId:personId});
+    const copy = introMessages(role, selectedLanguage?.resources?.operational);
     const initial = initialOnboardingState(role);
 
     await this.db.client.insert(onboardingStates).values({
@@ -82,6 +86,7 @@ export class OnboardingIntroService {
     };
     const trustMetadata = {
       onboardingIntroPart: 'trust',
+      ...(selectedLanguage ? { languageForm: { locale:selectedLanguage.responseLanguage,version:selectedLanguage.resources?.operational?.version,sourceHash:selectedLanguage.resources?.operational?.sourceHash,textHash:createHash('sha256').update(copy.trust).digest('hex') } } : {}),
       ...(input.roleChange ? { onboardingRoleChange: true } : {}),
       onboardingActions: copy.actions.map((a) => ({
         actionId: `onboarding:${a.action}`, label: a.label, value: a.action,

@@ -5,10 +5,14 @@
     "noEmit": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "open-survey-reporting-cycle.ts",
+    "pulse-report-activation.ts",
+    "pulse-report-activation.test.ts",
     "open-survey-reporting-cycle.test.ts",
     "open-survey-reporting-cycle.integration.test.ts",
     "activate-v2-scoring-policy.ts",
@@ -18,6 +22,17 @@
     "redact-retained-message-send-jobs.ts",
     "redact-retained-message-send-jobs.test.ts",
     "enqueue-v2-reports.ts",
-    "enqueue-v2-reports.test.ts"
+    "enqueue-v2-reports.test.ts",
+    "prepare-report-engagement-definition.ts",
+    "prepare-report-engagement-definition.test.ts",
+    "install-v2-survey-definition.ts",
+    "run-pulse-report-acceptance.ts",
+    "run-pulse-report-acceptance.test.ts",
+    "report-acceptance-readiness.ts",
+    "report-acceptance-readiness.test.ts",
+    "report-acceptance-preview.ts",
+    "pulse-report-acceptance-evidence.ts",
+    "pulse-report-acceptance-run.ts",
+    "report-acceptance-preview.test.ts"
   ]
 }

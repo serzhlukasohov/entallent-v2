@@ -6,6 +6,8 @@ Last updated: 2026-09-06
 
 Scope: current TypeScript product. MAF is out of scope.
 
+Reporting scope update, 2026-10-21: the approved [Pulse Check Reports requirements package](../_bmad-output/planning-artifacts/pulse-check-reports/README.md) is authoritative for Team Lead and Manager intermediate/final reports where this earlier catalogue conflicts. It covers Manager overall/team scope, withdrawals/departures, last-working-day cutoff, audience-specific metrics, problem-based Main Focus, company language, and Slack presentation. HR/HRBP/Leadership reporting remains undefined. This is a target-requirements update, not a claim that the report pilot implements it or a rollout authorization.
+
 ## 1. Product Positioning
 
 ### REQ-001: Multi-Persona Product

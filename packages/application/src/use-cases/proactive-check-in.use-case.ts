@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { ENGAGEMENT_ANSWER_CONTRACT, ENGAGEMENT_QUESTIONS } from '@entalent/contracts';
 import type { GeneratedResponse, ReplyStrategy } from '@entalent/contracts';
 import type { AiProviderPort, ConversationTurn } from '../ports/ai-provider.port';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
@@ -109,7 +111,7 @@ export class ProactiveCheckInUseCase {
 
     const userName = conversation.userDisplayName ?? 'there';
     const flagCtx = { tenantId, userId };
-    const languagePolicy = resolveLanguagePolicy();
+    const languagePolicy = (await this.conversationRepo.resolvePersonalLanguage?.({ tenantId, userId }) ?? resolveLanguagePolicy());
 
     const [memoryEnabled, surveyFlagEnabled] = await Promise.all([
       this.featureFlags
@@ -154,7 +156,7 @@ export class ProactiveCheckInUseCase {
 
     // GC round 3 CAP-2: a driver follow-up belongs to the conversation's typed topic question; a
     // generic proactive probe would re-ask the status the employee already gave.
-    const probeQuestion: SurveyQuestionRecord | null = probeResult && probeResult.focus !== 'driver'
+    let probeQuestion: SurveyQuestionRecord | null = probeResult && probeResult.focus !== 'driver'
       ? probeResult.question
       : null;
 
@@ -167,13 +169,13 @@ export class ProactiveCheckInUseCase {
     };
 
     // G1: nothing in the backlog to start with, so the approved opener goes out verbatim, without a model call.
-    const generated = onboardingStart && !probeQuestion
-      ? { text: EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } as GeneratedResponse
+    let generated = onboardingStart && !probeQuestion
+      ? { text: languagePolicy.resources?.operational?.texts['empty_backlog'] ?? EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } as GeneratedResponse
       : await this.aiProvider.generateResponse(turns, strategy, {
       userName,
       languagePolicy,
       reportingDisclosure: surveyEnabled
-        ? getReportingDisclosureText(languagePolicy.responseLanguage)
+        ? getReportingDisclosureText(languagePolicy.responseLanguage, languagePolicy.resources?.disclosure)
         : undefined,
       memoryContext:
         memoryItems.length > 0
@@ -193,7 +195,8 @@ export class ProactiveCheckInUseCase {
         probeQuestion: probeQuestion
           ? {
               id: probeQuestion.id,
-              probeStrategies: probeQuestion.probeStrategies,
+              stableKey: probeQuestion.stableKey,
+              probeStrategies: probeQuestion.responseType === 'numeric_1_10_integer' ? [probeQuestion.title] : probeQuestion.probeStrategies,
               ...(probeQuestion.responseType ? { responseType: probeQuestion.responseType } : {}),
             }
           : undefined,
@@ -201,10 +204,28 @@ export class ProactiveCheckInUseCase {
       },
     });
 
+    if (probeQuestion && probeResult && this.pulseBacklogService) {
+      const current = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId, pulseConfig);
+      if (!current || current.windowId !== probeResult.windowId || current.question.id !== probeQuestion.id) {
+        probeQuestion = null;
+        generated = { text: languagePolicy.resources?.operational?.texts['empty_backlog'] ?? EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false };
+      }
+    }
+
+    let approvedFormSuffix: string | undefined;
+    if (probeQuestion?.responseType === 'numeric_1_10_integer' && generated.containsSurveyProbe && generated.surveyProbeQuestionId === probeQuestion.id) {
+      const sourceForm = ENGAGEMENT_QUESTIONS.find(q => q.stableKey === probeQuestion.stableKey);
+      const formText = languagePolicy.resources?.engagement?.texts[probeQuestion.stableKey] ?? (languagePolicy.responseLanguage === 'en' ? sourceForm?.title : undefined);
+      const approved = formText ? { title: formText } : null;
+      if (!approved) throw new Error('engagement_probe_topic_unavailable');
+      if ((!generated.text.endsWith(approved.title) || /[?？]/u.test(generated.text.slice(0, -approved.title.length)))) {
+        generated = { ...generated, containsSurveyProbe: false, surveyProbeQuestionId: undefined };
+      } else approvedFormSuffix = approved.title;
+    }
     // The onboarding opener never carries the disclosure; later check-ins deliver it (decision 2026-10-08).
     const appendDisclosure = surveyEnabled && !hasCurrentDeliveredDisclosure && !onboardingStart;
     const responseText = appendDisclosure
-      ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
+      ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage, languagePolicy.resources?.disclosure, approvedFormSuffix)
       : generated.text;
     const containsSurveyProbe =
       probeQuestion !== null
@@ -225,7 +246,7 @@ export class ProactiveCheckInUseCase {
       metadata: {
         ...(input.onboardingMessageId ? { onboardingDeliveryId: input.onboardingMessageId } : {}),
         ...(appendDisclosure
-          ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
+          ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION, reportingDisclosureForm: {locale:languagePolicy.responseLanguage,version:languagePolicy.resources?.disclosure?.version ?? 'pulse-copy-v1',sourceHash:languagePolicy.resources?.disclosure?.sourceHash ?? null,textHash:createHash('sha256').update(getReportingDisclosureText(languagePolicy.responseLanguage,languagePolicy.resources?.disclosure)).digest('hex'),fullBodyHash:createHash('sha256').update(responseText).digest('hex')} }
           : {}),
         ...(containsSurveyProbe
           ? {
@@ -233,6 +254,7 @@ export class ProactiveCheckInUseCase {
             surveyProbeQuestionId: generated.surveyProbeQuestionId,
           }
           : {}),
+        ...(containsSurveyProbe && probeQuestion?.responseType === 'numeric_1_10_integer' && probeResult ? { engagementProbe: { contractVersion: ENGAGEMENT_ANSWER_CONTRACT, surveyDefinitionId: probeQuestion.surveyDefinitionId, surveyWindowId: probeResult.windowId, questionId: probeQuestion.id, questionVersion: probeQuestion.version, stableKey: probeQuestion.stableKey, displayedFormHash: createHash('sha256').update(responseText).digest('hex'), ...(languagePolicy.responseLanguage !== 'en' && languagePolicy.resources?.engagement ? { locale: languagePolicy.responseLanguage, resourceVersion: languagePolicy.resources.engagement.version, resourceSourceHash: languagePolicy.resources.engagement.sourceHash, formTextHash: createHash('sha256').update(languagePolicy.resources.engagement.texts[probeQuestion.stableKey]!).digest('hex') } : {}) } } : {}),
         ...replyShapeMetadataFromStrategy(strategy),
       },
     });

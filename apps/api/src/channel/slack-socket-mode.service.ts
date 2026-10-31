@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { SocketModeClient } from '@slack/socket-mode';
 import { SlackIngestService } from './slack-ingest.service';
+import { isReportingRightsInteractionBody, reportingRightsErrorCode } from './reporting-rights-interaction';
 
 /**
  * Socket Mode keeps a persistent WebSocket to Slack — no public HTTP endpoint
@@ -26,10 +27,22 @@ export class SlackSocketModeService implements OnModuleInit, OnModuleDestroy {
     this.client = new SocketModeClient({ appToken });
 
     this.client.on('slack_event', async ({ ack, body }) => {
+      const b = body as Record<string, unknown>;
+      // Reporting-rights clicks are admitted durably in PostgreSQL before the ack (Slack never retries
+      // interactions). A failed admission is not acknowledged, so Slack shows the employee an error.
+      if (isReportingRightsInteractionBody(b)) {
+        try {
+          await this.pipeline.processBody(b);
+        } catch (error) {
+          this.logger.error(`slack_reporting_rights_admission_failed code=${reportingRightsErrorCode(error)}`);
+          return;
+        }
+        await ack();
+        return;
+      }
       // Ack within 3 seconds — then process asynchronously
       await ack();
 
-      const b = body as Record<string, unknown>;
       if (b['type'] === 'url_verification') return;
 
       this.pipeline.processBody(b).catch(() => {

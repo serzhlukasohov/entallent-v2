@@ -1,0 +1,1 @@
+ALTER TABLE "messages" ADD COLUMN "delivery_recorded_at" timestamp with time zone;

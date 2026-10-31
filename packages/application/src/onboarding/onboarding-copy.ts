@@ -1,3 +1,4 @@
+import type { PulseLanguageResource } from '@entalent/contracts';
 import type { PrimaryOrgRole } from '../hierarchy/draft-person';
 import type { AckKey, OnboardingAction } from './onboarding-state';
 
@@ -58,8 +59,10 @@ const INTRO_BY_ROLE: Record<PrimaryOrgRole, IntroMessages> = {
   },
 };
 
-export function introMessages(role: PrimaryOrgRole): IntroMessages {
-  return INTRO_BY_ROLE[role];
+export function introMessages(role: PrimaryOrgRole, resource?: PulseLanguageResource): IntroMessages {
+  const original = INTRO_BY_ROLE[role];
+  if (!resource) return original;
+  return { intro: resource.texts['intro.'+role]!, trust: resource.texts['trust.'+role]!, actions: original.actions.map(a => ({ ...a, label: resource.texts['action.'+role+'.'+a.action]! })) };
 }
 
 // Approved acknowledgements: docs/onboarding-v2-answers.md G2 table; already_complete from Q24.
@@ -93,8 +96,8 @@ const REMINDER_COPY = {
   team_lead: "Hi! Would you like to finish our introduction? We can start a conversation about how things are going for you at work, or you can acknowledge the introduction for now. I won't send another onboarding reminder.",
 } as const;
 
-export function reminderCopy(track: 'employee' | 'team_lead'): string {
-  return REMINDER_COPY[track];
+export function reminderCopy(track: 'employee' | 'team_lead', resource?: PulseLanguageResource): string {
+  return resource?.texts['reminder.'+track] ?? REMINDER_COPY[track];
 }
 
 export const EMPTY_BACKLOG_OPENER = "What’s on your mind today? We can talk about how things are going at work, or anything else you’d like to share.";

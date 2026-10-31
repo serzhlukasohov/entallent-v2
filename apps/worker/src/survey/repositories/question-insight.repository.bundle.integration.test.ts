@@ -65,11 +65,23 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       id uuid primary key, survey_window_id uuid not null,
       tenant_id uuid not null, user_id uuid not null, question_group text not null
     )`;
-    await client`create temp table messages (
-      id uuid primary key, tenant_id uuid not null, user_id uuid not null,
-      conversation_id uuid not null, direction text not null, text text not null,
-      occurred_at timestamptz not null, sent_at timestamptz, deleted_at timestamptz
-    )`;
+    // Retain the legacy positional fixture order while deriving every column/type/default
+    // from migrated storage. The temporary table deliberately has no production triggers/FKs.
+    const leadingMessageColumns = ['id', 'tenant_id', 'user_id', 'conversation_id', 'direction',
+      'text', 'occurred_at', 'received_at', 'sent_at', 'deleted_at'];
+    const messageColumns = await client<{ name: string; expression: string | null }[]>`
+      select a.attname as name,pg_get_expr(d.adbin,d.adrelid) as expression
+      from pg_attribute a left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
+      where a.attrelid='public.messages'::regclass and a.attnum>0 and not a.attisdropped
+      order by a.attnum`;
+    const quoteColumn = (name: string) => '"' + name.replaceAll('"', '""') + '"';
+    const orderedMessageColumns = [...leadingMessageColumns,
+      ...messageColumns.map(column => column.name).filter(name => !leadingMessageColumns.includes(name))];
+    await client.unsafe(`create temp table messages as select ${orderedMessageColumns.map(quoteColumn).join(',')}
+      from public.messages with no data`);
+    for (const column of messageColumns) if (column.expression) {
+      await client.unsafe(`alter table messages alter column ${quoteColumn(column.name)} set default ${column.expression}`);
+    }
     await client`create temp table conversation_job_receipts (
       message_id uuid primary key, processed_at timestamptz not null default now()
     )`;
@@ -96,6 +108,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       meaning_sufficient boolean not null default false, driver_resolved boolean not null default false,
       driver_requested_at timestamptz,
       confirmed_semantic_summary text,
+      language_capture jsonb, score_cache jsonb, score_cache_revision timestamptz,
       source_message_ids uuid[] not null default array[]::uuid[],
       confirmation_bundle_id uuid, confirmation_message_id uuid,
       clarification_prompt_message_id uuid, clarification_attempts integer not null default 0,
@@ -148,6 +161,9 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
 
   it('stages an exact mapping before delivery and activates only after persisted delivery', async () => {
     if (!client || !repository) return;
+    expect(await client`select language_capture, score_cache, score_cache_revision
+      from survey_question_working_insights where survey_window_id = ${surveyWindowId}`)
+      .toEqual(questionIds.map(() => ({ language_capture: null, score_cache: null, score_cache_revision: null })));
     const input = {
       tenantId, userId, conversationId, surveyWindowId, questionGroup: 'autonomy',
       promptMessageId, displayedText,
@@ -186,6 +202,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
     await client`update survey_question_working_insights set working_summary = ${statements[2]}
       where survey_question_id = ${questionIds[2]}`;
     const bundleId = await repository.stageQuestionConfirmationBundle(input);
+    if (typeof bundleId !== 'string') throw new Error('fixture_collection_unavailable');
     expect(await repository.findReadyQuestionBundle({ tenantId, userId })).toBeNull();
     expect(await client`select status, components from survey_question_confirmation_bundles where id = ${bundleId}`)
       .toMatchObject([{ status: 'pending_delivery', components: input.components.map((component, index) => ({
@@ -258,6 +275,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         expectedWorkingSummary: purposeStatements[index],
       })),
     });
+    if (typeof purposeBundleId !== 'string') throw new Error('fixture_collection_unavailable');
     await client`update messages set sent_at = '2026-09-28T18:03:00Z' where id = ${purposePromptId}`;
     await repository.activateDeliveredQuestionBundle({
       promptMessageId: purposePromptId, tenantId, conversationId,
@@ -313,6 +331,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         expectedWorkingSummary: growthStatements[index],
       })),
     });
+    if (typeof growthBundleId !== 'string') throw new Error('fixture_collection_unavailable');
     await client`update messages set sent_at = '2026-09-28T18:06:00Z' where id = ${growthPromptId}`;
     await repository.activateDeliveredQuestionBundle({
       promptMessageId: growthPromptId, tenantId, conversationId,
@@ -469,6 +488,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       ...correctedInput, expectedWorkingSummary: 'Another meaning.',
     })).rejects.toThrow('v2_corrected_statement_working_state_stale');
     const correctedBundleId = await repository.stageCorrectedStatementConfirmation(correctedInput);
+    if (typeof correctedBundleId !== 'string') throw new Error('fixture_collection_unavailable');
     expect(await client`select status, displayed_text, components from survey_question_confirmation_bundles
       where id = ${correctedBundleId}`).toMatchObject([{
         status: 'pending_delivery', displayed_text: correctedText,
@@ -530,6 +550,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         expectedWorkingSummary: meanings[index],
       })),
     });
+    if (typeof bundleId !== 'string') throw new Error('fixture_collection_unavailable');
     await client`update messages set sent_at = '2026-09-28T18:11:00Z' where id = ${bundlePromptId}`;
     await repository.activateDeliveredQuestionBundle({
       promptMessageId: bundlePromptId, tenantId, conversationId,
@@ -663,6 +684,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         workingInsightId: disputedRow.id, surveyQuestionId: ids[1], questionVersion: 'v2',
         promptMessageId: shownId, displayedText: displayed, statement: corrected, expectedWorkingSummary: corrected,
       });
+    if (typeof bundleId !== 'string') throw new Error('fixture_collection_unavailable');
       await deliver(shownId);
       return bundleId;
     };
@@ -676,6 +698,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         surveyQuestionId, questionVersion: 'v2', statement: meanings[index], expectedWorkingSummary: meanings[index],
       })),
     });
+    if (typeof firstBundle !== 'string') throw new Error('fixture_collection_unavailable');
     await deliver(firstPrompt);
     const firstReply = await inbound('One and three yes, two is off.');
     expect(await repository.findAwaitingQuestionBundle({ tenantId, userId, conversationId, inboundMessageId: firstReply }))
@@ -771,6 +794,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
         surveyQuestionId, questionVersion: 'v2', statement: meanings[index], expectedWorkingSummary: meanings[index],
       })),
     });
+    if (typeof bundleId !== 'string') throw new Error('fixture_collection_unavailable');
     await deliver(prompt);
     const reply = await inbound('One and three yes, two is off.');
     expect(await repository.applyQuestionBundleVerdict({
@@ -808,6 +832,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       promptMessageId: shown, displayedText: shownText,
       components: [{ surveyQuestionId: ids[1]!, questionVersion: 'v2', statement: corrected, expectedWorkingSummary: corrected }],
     });
+    if (typeof shownBundle !== 'string') throw new Error('fixture_collection_unavailable');
     const [stored] = await client`select kind from survey_question_confirmation_bundles where id = ${shownBundle}`;
     expect(stored.kind).toBe('corrected_statement');
     await deliver(shown);
@@ -853,6 +878,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
           expectedWorkingSummary: meanings[index],
         })),
       });
+    if (typeof bundleId !== 'string') throw new Error('fixture_collection_unavailable');
       await client`update messages set sent_at = '2026-09-28T18:21:00Z'
         where id = ${delayedPromptId}`;
       if (activationCompleted) {
@@ -922,11 +948,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
       )`;
       await client`insert into conversations values
         (${conversationId}, ${tenantId}, ${userId}, 'dev', 'queue-dev')`;
-      await client`alter table messages
-        add column metadata jsonb not null default '{}'::jsonb,
-        add column external_message_id text,
-        add column external_thread_id text`;
-      await client`insert into survey_windows values
+      await client`insert into survey_windows (id, tenant_id, user_id, survey_definition_id, status, period_end) values
         (${queuedWindowId}, ${tenantId}, ${userId}, ${definitionId}, 'active', ${activePeriodEnd})`;
       await client`insert into survey_window_scoring_policies values
         (${queuedWindowId}, ${tenantId}, ${policyId})`;
@@ -949,6 +971,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
           statement: queuedStatements[index], expectedWorkingSummary: queuedStatements[index],
         })),
       });
+    if (typeof bundleId !== 'string') throw new Error('fixture_collection_unavailable');
 
       const connection = {
         host: url.hostname, port: Number(url.port) || 6379, db: 15,
@@ -976,7 +999,7 @@ describe.runIf(Boolean(databaseUrl))('V2 question confirmation bundle on Postgre
           firstWorker!.once('failed', (_job, error) => {
             clearTimeout(timer);
             try {
-              expect(error.message).toBe('synthetic_activation_failure');
+              expect(error.message).toBe('outbound_delivery_state_unknown');
               resolve();
             } catch (assertionError) { reject(assertionError); }
           });

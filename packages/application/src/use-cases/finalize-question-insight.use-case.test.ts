@@ -378,3 +378,31 @@ describe('FinalizeQuestionInsightUseCase', () => {
       .toBe('Growth opportunities were limited.');
   });
 });
+
+describe('RPT-LANG immutable company capture and score staging', () => {
+  it('generates German prose without translating exact score input and keeps independent provenance', async () => {
+    const f = setup({ languageCapture: { locale: 'de', configRevision: 7 }, confirmedSemanticSummary: 'Die Arbeitsbelastung ist hoch und Unterstützung fehlt.', knownIdentifiers: [] });
+    vi.mocked(f.deidentifier.deidentify).mockResolvedValue('Hohe Arbeitsbelastung bei fehlender Unterstützung.');
+    f.deidentifier.reviewDeidentification = vi.fn().mockResolvedValue(true);
+    Object.assign(f.deidentifier,{proseModelId:'prose-fake',prosePromptVersion:'prose-v1'});
+    await f.useCase.execute(f.input);
+    expect(f.scorer.scoreConfirmedMeaning).toHaveBeenCalledWith(expect.objectContaining({semanticSummary:'Die Arbeitsbelastung ist hoch und Unterstützung fehlt.'}));
+    expect(f.deidentifier.deidentify).toHaveBeenCalledWith(expect.objectContaining({locale:'de'}));
+    expect(f.repository.persistFinalAndPurge).toHaveBeenCalledWith(expect.objectContaining({final:expect.objectContaining({score:37,modelId:'model-v2',promptVersion:'score-v2',proseProvenance:expect.objectContaining({locale:'de',configRevision:7,modelId:'prose-fake'})})}));
+  });
+  it('reuses the same staged score after a language-only resource failure, without purging early', async () => {
+    const f = setup({languageCapture:{locale:'de',configRevision:7}});
+    let cached: Awaited<ReturnType<QuestionScorerPort['scoreConfirmedMeaning']>> | undefined;
+    vi.mocked(f.repository.loadConfirmedQuestion).mockImplementation(async()=>({...context,languageCapture:{locale:'de',configRevision:7},cachedAssessment:cached}));
+    f.repository.cacheAssessment=vi.fn(async (i: Parameters<NonNullable<QuestionFinalizationRepositoryPort['cacheAssessment']>>[0])=>{cached=i.assessment;return i.assessment;});
+    vi.mocked(f.deidentifier.deidentify).mockRejectedValue(new Error('synthetic unavailable'));
+    const resources={read:vi.fn().mockResolvedValue(null),install:vi.fn()};
+    const useCase=new FinalizeQuestionInsightUseCase(f.repository,f.scorer,f.deidentifier,resources);
+    await expect(useCase.execute(f.input)).rejects.toMatchObject({code:'language_unavailable',locale:'de'});
+    expect(f.repository.persistFinalAndPurge).not.toHaveBeenCalled();
+    resources.read.mockResolvedValue({locale:'de',texts:{generalized:'Ein allgemeines Signal zum Arbeitserleben wurde erkannt.'}});
+    await expect(useCase.execute(f.input)).resolves.toBe('finalized');
+    expect(f.scorer.scoreConfirmedMeaning).toHaveBeenCalledTimes(1);
+    expect(f.repository.persistFinalAndPurge).toHaveBeenCalledWith(expect.objectContaining({final:expect.objectContaining({score:37,summarySupport:'generalized_signal'})}));
+  });
+});

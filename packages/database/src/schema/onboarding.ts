@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, foreignKey, index, integer, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, check, foreignKey, index, integer, jsonb, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { people } from './people';
 
@@ -10,6 +10,8 @@ export const tenantWorkCalendars = pgTable('tenant_work_calendars', {
   workingDays: smallint('working_days').array().notNull(),
   workStart: text('work_start').notNull(),
   workEnd: text('work_end').notNull(),
+  holidays: jsonb('holidays').notNull().default(sql`'[]'::jsonb`),
+  dateOverrides: jsonb('date_overrides').notNull().default(sql`'[]'::jsonb`),
   onboardingLanguage: text('onboarding_language').notNull().default('en'),
   updatedBy: text('updated_by').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -1,3 +1,5 @@
+import { ENGAGEMENT_ANSWER_CONTRACT, ENGAGEMENT_QUESTIONS } from '@entalent/contracts';
+import { hasCompleteReportEngagementPolicy } from './question-scoring-policy';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -42,4 +44,15 @@ it('keeps a legacy twelve-topic policy valid with three numeric Engagement quest
   expect(hasLegacyV2ScoringPolicy([...legacy, ...numeric.slice(0, 2),
     { stableKey: 'unapproved_numeric', questionGroup: 'engagement', responseType: 'numeric_0_10' }], rubrics)).toBe(false);
   expect(hasCompleteV2ScoringPolicy([...legacy, ...numeric], rubrics)).toBe(false);
+});
+
+it('accepts only the declared canonical12 plus exactly3 persisted literal question identities', () => {
+  const numeric=ENGAGEMENT_QUESTIONS.map((q,index)=>({...q,id:`numeric-${index}`,responseType:'numeric_1_10_integer',questionGroup:'engagement',version:ENGAGEMENT_ANSWER_CONTRACT}));
+  const declared=numeric.map(q=>({surveyQuestionId:q.id,stableKey:q.stableKey,questionVersion:q.version,contractVersion:ENGAGEMENT_ANSWER_CONTRACT}));
+  expect(hasCompleteReportEngagementPolicy([...questions,...numeric],approved,declared)).toBe(true);
+  expect(hasCompleteV2ScoringPolicy([...questions,...numeric],approved)).toBe(false);
+  expect(hasCompleteReportEngagementPolicy([...questions,...numeric],approved)).toBe(false);
+  expect(hasCompleteReportEngagementPolicy([...questions,...numeric],approved,declared.map(q=>({...q,surveyQuestionId:'forged'})))).toBe(false);
+  expect(hasCompleteReportEngagementPolicy([...questions,...numeric.slice(0,2)],approved,declared)).toBe(false);
+  expect(hasCompleteReportEngagementPolicy([...questions,...numeric.map(q=>({...q,responseType:'numeric_0_10'}))],approved,declared)).toBe(false);
 });

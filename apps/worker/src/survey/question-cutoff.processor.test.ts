@@ -420,3 +420,28 @@ describe('QuestionCutoffProcessor', () => {
     }, expect.objectContaining({ jobId: 'group-report-state-1', removeOnComplete: true }));
   });
 });
+
+describe('RPT05 native durable recovery branch',()=>{
+ const source={inbound_receipt_id:'source',tenant_id:'tenant',user_id:'user',conversation_id:'conversation',request_id:'request',event_id:'event',trace_id:'trace',external_workspace_id:'workspace',external_conversation_id:'channel',capture:'applied',native_verdict:'not_applicable',evidence:'pending',finalization:'not_applicable',committed:true,evidence_pending:false,failure_code:null};
+ function setup(rows:Record<string,unknown>[],state?:string,unknownSend=false){
+  const add=vi.fn().mockResolvedValue(undefined),evidenceAdd=vi.fn().mockResolvedValue(undefined),evidenceGetJob=vi.fn().mockResolvedValue(undefined),sendAdd=vi.fn().mockResolvedValue(undefined),reconcile=vi.fn().mockResolvedValue(undefined);
+  const conversationQueue={add,getJob:vi.fn().mockResolvedValue(state?{data:{messageId:'source',tenantId:'tenant',userId:'user',conversationId:'conversation'},getState:async()=>state}:undefined)};
+  const conv={findRecoverableMessageSends:async()=>[],countUnresolvedMessageSends:async()=>unknownSend?1:0,findRecoverableSurveyEvidence:async()=>[]};
+  const processor=new QuestionCutoffProcessor({execute:async()=>({tenantsProcessed:0,expiredQuestionCount:0,overdueReplyCount:0})} as never,{execute:async()=>({usersScanned:0,finalizedQuestionCount:0,failedUserCount:0})} as never,{} as never,{findUndispatchedTimelyQuestionReplies:async()=>[],findQueuedTimelyQuestionRepliesWithoutReceipt:async()=>[]} as never,conversationQueue as never,conv as never,{add:sendAdd} as never,undefined,undefined,undefined,{add:evidenceAdd,getJob:evidenceGetJob} as never,undefined,undefined,{recoveryBatch:async()=>rows,reconcileOnly:reconcile} as never);
+  return {processor,add,evidenceAdd,evidenceGetJob,sendAdd,reconcile};
+ }
+ it('committed turn resumes dispatch, existing evidence retries separately and completed turn gets only receipt retry',async()=>{
+  const a=setup([{...source,native_verdict:'pending',evidence_pending:true}]);await a.processor.process({name:'cutoff'} as never);expect(a.add).toHaveBeenCalledWith('conversation',expect.objectContaining({messageId:'source',requestId:'request'}),expect.objectContaining({jobId:expect.stringContaining('native-resume-')}));expect(a.evidenceAdd).toHaveBeenCalledWith('extract',expect.objectContaining({inboundMessageId:'source'}),expect.any(Object));expect(a.reconcile).not.toHaveBeenCalled();
+  const b=setup([source]);await b.processor.process({name:'cutoff'} as never);expect(b.add).toHaveBeenCalledWith('receipt-retry',expect.objectContaining({messageId:'source'}),expect.any(Object));expect(b.evidenceAdd).not.toHaveBeenCalled();
+ });
+ it('confirmed finalizer has explicit finalization-only mode, including admissionless source; no extraction regeneration',async()=>{
+  for(const committed of [true,false]){const t=setup([{...source,native_verdict:'applied',evidence:'applied',finalization:'pending',committed,request_id:committed?'request':null}]);await t.processor.process({name:'cutoff'} as never);expect(t.evidenceAdd).toHaveBeenCalledWith('finalize',expect.objectContaining({mode:'finalize_only',inboundMessageId:'source'}),expect.any(Object));expect(t.evidenceAdd).toHaveBeenCalledTimes(1);expect(t.reconcile).not.toHaveBeenCalled();}
+ });
+ it.each(['active','waiting','delayed','waiting-children'])('uncommitted %s job stays pending without regeneration or false manual reconciliation',async state=>{const t=setup([{...source,committed:false,native_verdict:'pending'}],state);await t.processor.process({name:'cutoff'} as never);expect(t.add).not.toHaveBeenCalled();expect(t.evidenceAdd).not.toHaveBeenCalled();expect(t.reconcile).not.toHaveBeenCalled();});
+ it.each(['failed','unknown','completed',undefined])('uncommitted %s/missing work is reconciliation-only',async state=>{const t=setup([{...source,committed:false,native_verdict:'pending'}],state);await t.processor.process({name:'cutoff'} as never);expect(t.reconcile).toHaveBeenCalledOnce();expect(t.add).not.toHaveBeenCalled();expect(t.evidenceAdd).not.toHaveBeenCalled();});
+ it('fallback and uncertain attempted delivery never cause automatic model regeneration or resend',async()=>{const t=setup([{...source,native_verdict:'blocked',failure_code:'manual_reconciliation'}],undefined,true);await t.processor.process({name:'cutoff'} as never);expect(t.reconcile).toHaveBeenCalledOnce();expect(t.add).not.toHaveBeenCalled();expect(t.evidenceAdd).not.toHaveBeenCalled();expect(t.sendAdd).not.toHaveBeenCalled();});
+ it.each(['active','waiting','delayed','waiting-children'])('R8 existing %s evidence work blocks fresh provider jobs across repeated scans',async state=>{
+  const t=setup([{...source,native_verdict:'applied',evidence_pending:true}]);t.evidenceGetJob.mockResolvedValue({data:{tenantId:'tenant',userId:'user',conversationId:'conversation',inboundMessageId:'source'},getState:async()=>state});
+  await t.processor.process({name:'cutoff'} as never);await t.processor.process({name:'cutoff'} as never);expect(t.evidenceAdd).not.toHaveBeenCalled();
+ });
+});

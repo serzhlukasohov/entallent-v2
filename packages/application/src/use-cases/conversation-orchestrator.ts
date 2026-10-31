@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { ENGAGEMENT_ANSWER_CONTRACT, ENGAGEMENT_QUESTIONS } from '@entalent/contracts';
+import { isPulseReportCollectionUnavailable } from '../ports/pulse-report-scope.repository.port';
 import {
   CLASSIFIER_TRANSCRIPT_TURN_LIMIT,
   PulseCaptureSourceMessageIdSchema,
@@ -10,6 +13,7 @@ import {
 import type { AiProviderPort, ConversationTurn, ResponseContext, QuestionBundleComposition } from '../ports/ai-provider.port';
 import type { ConversationDispatchKind, ConversationRepositoryPort } from '../ports/conversation.repository.port';
 import type { ConversationUnitOfWorkPort } from '../ports/conversation-unit-of-work.port';
+import type { ReportingRightsMenuPort } from '../ports/reporting-rights.port';
 import { ProviderContentFilterError } from '../ports/provider-error';
 import type { MemoryRepositoryPort } from '../ports/memory.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
@@ -32,7 +36,7 @@ import type {
   UserGoalRecord,
 } from '../types/records';
 import { BASE_STYLE, STYLE_CONFIDENCE_FLOOR, STYLE_OFF_BASE_MARGIN } from '../utils/style-adaptation';
-import { buildReplyPlan } from '../utils/reply-plan';
+import { buildReplyPlan, withReportingRights } from '../utils/reply-plan';
 import { predictCycleProgress, type CycleProgress } from '../utils/cycle-progress';
 import type { EscalationPort } from '../ports/escalation.port';
 import type { OutboxPort } from '../ports/outbox.port';
@@ -77,6 +81,7 @@ import { resolveLanguagePolicy } from '../utils/language-policy';
 import {
   REPORTING_DISCLOSURE_VERSION,
   appendReportingDisclosure,
+  appendBeforeExactForm,
   getDataUseExplanationText,
   getReportingDisclosureText,
   getReportingExplanationText,
@@ -95,7 +100,7 @@ import { EMPTY_BACKLOG_OPENER } from '../onboarding/onboarding-copy';
 import { interpretOnboardingSignal, type SignalOutcome } from '../onboarding/onboarding-signal';
 import type { OnboardingState } from '../onboarding/onboarding-state';
 
-export type OrchestrateInput = ProcessMessageRequest;
+export type OrchestrateInput = ProcessMessageRequest & { nativeReportClaimToken?: string };
 /** The active runtime result. Unlike the archived ProcessMessageResult, risk may be unassessed. */
 export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
   risk: RiskAssessment;
@@ -155,6 +160,8 @@ type LegacyGroupReportIntent = {
   questionGroup: string;
 };
 
+class ReportingStageUnavailable extends Error {}
+
 export class ConversationOrchestrator {
   constructor(
     private readonly conversationRepo: ConversationRepositoryPort,
@@ -173,7 +180,10 @@ export class ConversationOrchestrator {
     private readonly unitOfWork?: ConversationUnitOfWorkPort,
     private readonly onboardingTurn?: OnboardingTurnPort,
     private readonly logger: OrchestratorLogger = SILENT_LOGGER,
-  ) {}
+    private readonly reportingRightsMenu?: ReportingRightsMenuPort,
+  ) {
+    if (questionConfirmationRepo?.collectionAdmission && !unitOfWork) throw new Error('conversation_reporting_uow_required');
+  }
 
   async resumeCommittedTurn(input: OrchestrateInput): Promise<boolean> {
     const outbound = await this.conversationRepo.findCommittedTurnForInbound?.({
@@ -213,18 +223,18 @@ export class ConversationOrchestrator {
    * silence. Only a bounded failure code is stored; no model decisions or side effects run.
    */
   async commitFailedTurn(input: OrchestrateInput, failureCode: string): Promise<OrchestrateResult> {
-    const languagePolicy = resolveLanguagePolicy();
+    const languagePolicy = await this.conversationRepo.resolvePersonalLanguage?.({ tenantId: input.tenantId, userId: input.userId }) ?? resolveLanguagePolicy();
     return this.commitOutcomeTurn(input, 'processing_failed',
-      processingFailureExplanation(languagePolicy.responseLanguage), { failureCode, languagePolicy });
+      processingFailureExplanation(languagePolicy.responseLanguage, languagePolicy.resources?.operational), { failureCode, languagePolicy: { responseLanguage: languagePolicy.responseLanguage, source: languagePolicy.source, requestedLocale: languagePolicy.requestedLocale, resourceStatus: languagePolicy.resourceStatus } });
   }
 
   private async commitInputFilteredTurn(
     input: OrchestrateInput,
     contentFilterCategories: readonly string[],
   ): Promise<OrchestrateResult> {
-    const languagePolicy = resolveLanguagePolicy();
+    const languagePolicy = await this.conversationRepo.resolvePersonalLanguage?.({ tenantId: input.tenantId, userId: input.userId }) ?? resolveLanguagePolicy();
     const result = await this.commitOutcomeTurn(input, 'input_filtered',
-      contentFilterExplanation(languagePolicy.responseLanguage), {
+      contentFilterExplanation(languagePolicy.responseLanguage, languagePolicy.resources?.operational), {
         languagePolicy,
         ...(contentFilterCategories.length > 0 ? { contentFilterCategories: [...contentFilterCategories] } : {}),
       });
@@ -271,6 +281,7 @@ export class ConversationOrchestrator {
       });
       await this.conversationRepo.recordCommittedTurn?.({
         inboundMessageId: input.messageId,
+        nativeReportClaimToken: input.nativeReportClaimToken,
         outboundMessageId: outbound.id,
         tenantId: input.tenantId,
         userId: input.userId,
@@ -428,6 +439,7 @@ export class ConversationOrchestrator {
     let classification: SituationClassification = hasSafetyIntent
       ? { ...rawClassification, requiresSafetyCheck: true }
       : rawClassification;
+    const languagePolicy = await this.conversationRepo.resolvePersonalLanguage?.({ tenantId, userId, inboundMessageId: input.messageId, proposal: classification.languageProposal?.kind === 'inferred' && (!classification.latestUserSubstance || ['acknowledgement', 'greeting', 'closing'].includes(classification.dialogueAct)) ? null : classification.languageProposal }) ?? resolveLanguagePolicy();
     const reportingExplanationRequested =
       !(reportingDisclosureReceipt
         && classification.dialogueAct === 'acknowledgement'
@@ -678,7 +690,7 @@ export class ConversationOrchestrator {
         }
       }
     }
-    const clarificationRequest = pendingClarification
+    let clarificationRequest = pendingClarification
       && !pendingClarification.clarificationPromptMessageId
       && reportingDisclosureReceipt
       && !closingTurn
@@ -702,7 +714,7 @@ export class ConversationOrchestrator {
         inboundMessage?.occurredAt,
       )
       : { confirmedGroup: false as string | false, awaitingPresent: false };
-    const confirmedGroup = phaseB.confirmedGroup;
+    let confirmedGroup = phaseB.confirmedGroup;
     const confirmationHandled = confirmedGroup !== false;
 
     // ── Group confirmation surfacing (Phase A) ──────────────────────────────
@@ -762,7 +774,7 @@ export class ConversationOrchestrator {
     // An invalid composition (after the adapter's one repair, or on re-validation here) skips the
     // bundle for this turn instead of failing the employee's message: the turn continues as an
     // ordinary reply, the bundle stays ready for a later turn, and the reason is recorded.
-    const languagePolicy = resolveLanguagePolicy();
+
     let v2Composition: QuestionBundleComposition | null = null;
     /** Either composition that stayed invalid this turn; the metadata keys below name which one. */
     let bundleCompositionFallbackReason: BundleCompositionFallbackReason | undefined;
@@ -956,6 +968,24 @@ export class ConversationOrchestrator {
           surveyProbeQuestionId: probeQuestion?.id,
           sensitiveMode: strategyWithStyle.mode === 'sensitive' || strategyWithStyle.mode === 'crisis',
         });
+    // RPT-09: the model only proposes the menu; committing needs signed button clicks plus Confirm. The menu is
+    // opened before generation and outside the turn transaction, idempotently per inbound message, so the reply
+    // mentions buttons only when they really attach and a rights-store failure degrades to a plain reply.
+    let rightsMenu: Awaited<ReturnType<ReportingRightsMenuPort['openMenu']>> = null;
+    if (replyPlan && this.reportingRightsMenu && classification.reportingRightsRequest === 'open_menu'
+      && onboardingAck === undefined && !safetyTurn && !riskBlocksSurvey(risk)
+      && strategyWithStyle.mode !== 'crisis' && strategyWithStyle.mode !== 'sensitive'
+      && conversation.channelType === 'slack' && externalConversationId.startsWith('D')) {
+      try {
+        rightsMenu = await this.reportingRightsMenu.openMenu({
+          tenantId, userId, conversationId, channelType: conversation.channelType,
+          externalWorkspaceId, externalChannelId: externalConversationId, locale: languagePolicy.responseLanguage, turnKey: input.messageId,
+        });
+      } catch {
+        this.logger.warn('reporting_rights_menu_unavailable', { conversationId });
+      }
+      replyPlan = withReportingRights(replyPlan, rightsMenu);
+    }
     let strategy = replyPlan ? applyReplyPlanToStrategy(strategyWithStyle, replyPlan) : strategyWithStyle;
     let responseProbeQuestion = replyPlan?.questionPolicy.maxQuestions === 0
       ? null
@@ -997,7 +1027,7 @@ export class ConversationOrchestrator {
           forbiddenMoves: replyPlan.forbiddenMoves.filter((move) => move !== 'survey_probe'),
         };
         strategy = applyReplyPlanToStrategy({ ...strategyWithStyle, includeFollowUpQuestion: true }, replyPlan);
-        if (topicProbeQuestion.responseType === 'numeric_0_10') {
+        if (topicProbeQuestion.responseType === 'numeric_0_10' || topicProbeQuestion.responseType === 'numeric_1_10_integer') {
           // The numeric probe already has its own mandatory, validated path.
           responseProbeQuestion = topicProbeQuestion;
         } else {
@@ -1010,7 +1040,7 @@ export class ConversationOrchestrator {
         }
       }
     }
-    const clarificationText = clarificationRequest
+    let clarificationText = clarificationRequest
       ? validateQuestionClarificationPrompt(await this.aiProvider.composeQuestionClarification(
           turns, clarificationRequest, languagePolicy.responseLanguage,
         ))
@@ -1101,14 +1131,15 @@ export class ConversationOrchestrator {
         ? memoryContext
         : undefined,
       reportingDisclosure: shouldOfferReportingDisclosure
-        ? getReportingDisclosureText(languagePolicy.responseLanguage)
+        ? getReportingDisclosureText(languagePolicy.responseLanguage, languagePolicy.resources?.disclosure)
         : undefined,
       reminderConfirmation,
       topicQuestion,
       surveyProbeQuestion: responseProbeQuestion
         ? {
             id: responseProbeQuestion.id,
-            probeStrategies: responseProbeQuestion.probeStrategies,
+            stableKey: responseProbeQuestion.stableKey,
+            probeStrategies: responseProbeQuestion.responseType === 'numeric_1_10_integer' ? [responseProbeQuestion.title] : responseProbeQuestion.probeStrategies,
             responseType: responseProbeQuestion.responseType,
           }
         : undefined,
@@ -1182,13 +1213,13 @@ export class ConversationOrchestrator {
     } else {
       generated = canAnswerDataUseExplanation
         ? {
-            text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession),
+            text: getDataUseExplanationText(languagePolicy.responseLanguage, conciseSession, languagePolicy.resources?.disclosure),
             confidence: 1,
             containsSurveyProbe: false,
           }
         : canAnswerReportingExplanation
         ? {
-            text: getReportingExplanationText(languagePolicy.responseLanguage, conciseSession),
+            text: getReportingExplanationText(languagePolicy.responseLanguage, conciseSession, languagePolicy.resources?.disclosure),
             confidence: 1,
             containsSurveyProbe: false,
           }
@@ -1198,10 +1229,21 @@ export class ConversationOrchestrator {
           })
         : await this.aiProvider.generateResponse(turns, strategy, responseContext);
     }
+    const approvedProbe = onboardingOpener?.question ?? responseProbeQuestion;
+    let approvedFormSuffix: string | undefined;
+    if (approvedProbe?.responseType === 'numeric_1_10_integer' && generated.containsSurveyProbe && generated.surveyProbeQuestionId === approvedProbe.id) {
+      const sourceForm = ENGAGEMENT_QUESTIONS.find(q => q.stableKey === approvedProbe.stableKey);
+      const formText = languagePolicy.resources?.engagement?.texts[approvedProbe.stableKey] ?? (languagePolicy.responseLanguage === 'en' ? sourceForm?.title : undefined);
+      const approved = formText ? { title: formText } : null;
+      if (!approved) throw new Error('engagement_probe_topic_unavailable');
+      if ((!generated.text.endsWith(approved.title) || /[?？]/u.test(generated.text.slice(0, -approved.title.length)))) {
+        generated = { ...generated, containsSurveyProbe: false, surveyProbeQuestionId: undefined };
+      } else approvedFormSuffix = approved.title;
+    }
     // The onboarding opener never carries the disclosure; existing mechanisms deliver it later (decision 2026-10-08).
     let shouldAppendReportingDisclosure = shouldOfferReportingDisclosure && onboardingOpener === null;
     let responseText = shouldAppendReportingDisclosure
-      ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage)
+      ? appendReportingDisclosure(generated.text, languagePolicy.responseLanguage, languagePolicy.resources?.disclosure, approvedFormSuffix)
       : generated.text;
     let confirmationSummary = confirmationRequest ? generated.confirmationSummary : undefined;
     let deidentificationDecision: Extract<DeidentificationDecision, { status: 'accepted' }> | undefined;
@@ -1293,14 +1335,23 @@ export class ConversationOrchestrator {
           replyPlan,
         });
         responseText = generated.text;
-        shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage));
+        shouldAppendReportingDisclosure = responseText.includes(getReportingDisclosureText(languagePolicy.responseLanguage, languagePolicy.resources?.disclosure));
       }
     }
-    if (onboardingTrailingAck) responseText = `${responseText}\n\n${onboardingTrailingAck}`;
-    const topicQuestionAsked = topicQuestion !== undefined && topicQuestionFallbackReason === undefined
+    const reportingCandidates = () => [
+      ...(v2BundleRequest?.questions.map((question) => ({ surveyWindowId: v2BundleRequest!.surveyWindowId, surveyQuestionId: question.surveyQuestionId })) ?? []),
+      ...(correctedStatementRequest ? [{ surveyWindowId: correctedStatementRequest.surveyWindowId, surveyQuestionId: correctedStatementRequest.surveyQuestionId }] : []),
+      ...(clarificationRequest ? [{ surveyWindowId: clarificationRequest.surveyWindowId, surveyQuestionId: clarificationRequest.surveyQuestionId }] : []),
+      ...(topicQuestion && v2CycleSnapshot ? [{ surveyWindowId: v2CycleSnapshot.surveyWindowId, surveyQuestionId: topicQuestion.questionId }] : []),
+      ...(responseProbeQuestion?.responseType === 'numeric_1_10_integer' && speculativeProbe ? [{ surveyWindowId: speculativeProbe.windowId, surveyQuestionId: responseProbeQuestion.id }] : []),
+      ...(onboardingOpener?.question?.responseType === 'numeric_1_10_integer' && onboardingOpener.windowId ? [{ surveyWindowId: onboardingOpener.windowId, surveyQuestionId: onboardingOpener.question.id }] : []),
+    ];
+    if (languagePolicy.resourceStatus === 'language_unavailable' && languagePolicy.resources?.operational?.texts['language_pending']) responseText += '\n\n'+languagePolicy.resources.operational.texts['language_pending'];
+    if (onboardingTrailingAck) responseText = appendBeforeExactForm(responseText, onboardingTrailingAck, approvedFormSuffix);
+    let topicQuestionAsked = topicQuestion !== undefined && topicQuestionFallbackReason === undefined
       && generated.topicQuestion !== undefined;
     const surveyProbeSource = topicProbeQuestion ?? probeQuestion;
-    const containsSurveyProbe = onboardingOpener
+    let containsSurveyProbe = onboardingOpener
       ? onboardingOpener.probeQuestionId !== undefined
         && generated.containsSurveyProbe === true
         && generated.surveyProbeQuestionId === onboardingOpener.probeQuestionId
@@ -1310,20 +1361,42 @@ export class ConversationOrchestrator {
         && topicQuestionFallbackReason === undefined
         && generated.containsSurveyProbe === true);
     if (topicQuestionAsked) generated = { ...generated, surveyProbeQuestionId: topicQuestion!.questionId };
+    const engagementProbeQuestion = onboardingOpener?.question ?? surveyProbeSource;
+    const engagementProbeWindowId = onboardingOpener?.windowId ?? speculativeProbe?.windowId;
+    if (engagementProbeQuestion?.responseType === 'numeric_1_10_integer' && generated.surveyProbeQuestionId !== engagementProbeQuestion.id) containsSurveyProbe = false;
 
     // Pulse evidence only from active personal participants, read after this turn's onboarding event
     // (a substantive first message is analysed, Q2b); management roles never (Q11).
     const onboardingAllowsEvidence = onboardingState === null
       || (onboardingState.track !== 'management' && onboardingState.participation === 'active');
-    const surveyEvidenceWanted = surveyEnabled && !pulseCaptureExplanationRequested && onboardingAllowsEvidence;
+    let surveyEvidenceWanted = surveyEnabled && !pulseCaptureExplanationRequested && onboardingAllowsEvidence;
     let scheduledReminder: { id: string; dueAt: Date } | null = null;
     let legacyGroupReport: LegacyGroupReportIntent | null = null;
+    let reportingUnavailable = false;
+    const discardPreparedReporting = () => {
+      const hadVerdict = Boolean(v2PhaseB.verdictProposal || clarificationVerdictProposal);
+      responseText = (!hadVerdict && generated.replyText?.trim()) || (languagePolicy.resources?.operational?.texts['continue_conversation'] ?? 'We can continue our conversation.');
+      generated = { ...generated, text: responseText, topicQuestion: undefined, containsSurveyProbe: false, surveyProbeQuestionId: undefined };
+      v2BundleRequest = null; v2Composition = null;
+      correctedStatementRequest = null; correctedComposition = null;
+      clarificationRequest = null; clarificationText = null;
+      v2PhaseB.verdictProposal = undefined; clarificationVerdictProposal = null;
+      phaseB.commitLegacy = undefined; confirmedGroup = false;
+      topicQuestionAsked = false; containsSurveyProbe = false; surveyEvidenceWanted = false;
+      bundleReply = undefined; shouldAppendReportingDisclosure = false; replyPlan = undefined;
+      reportingUnavailable = true;
+    };
     const persistPreparedTurn = async () => {
       const committed = await this.conversationRepo.findCommittedTurnForInbound?.({
         inboundMessageId: input.messageId, tenantId, userId, conversationId,
         externalWorkspaceId, externalConversationId,
       });
       if (committed) return committed;
+      if (!reportingUnavailable && this.questionConfirmationRepo?.collectionAdmission) {
+        for (const candidate of reportingCandidates()) {
+          if (await this.questionConfirmationRepo.collectionAdmission({ tenantId, userId, ...candidate }) !== 'allowed') { discardPreparedReporting(); break; }
+        }
+      }
       legacyGroupReport = await phaseB.commitLegacy?.() ?? null;
       if (topicQuestionAsked && topicQuestion!.focus === 'driver' && v2CycleSnapshot
         && this.questionConfirmationRepo?.recordDriverRequested) {
@@ -1335,17 +1408,19 @@ export class ConversationOrchestrator {
       }
       if (v2PhaseB.verdictProposal && this.questionConfirmationRepo) {
         const applied = await this.questionConfirmationRepo.applyQuestionBundleVerdict({
-          tenantId, userId, conversationId, inboundMessageId: input.messageId,
+          tenantId, userId, conversationId, inboundMessageId: input.messageId, nativeReportClaimToken: input.nativeReportClaimToken,
           ...v2PhaseB.verdictProposal,
         });
-        if (!applied) throw new Error('v2_confirmation_bundle_stale');
+        if (isPulseReportCollectionUnavailable(applied)) throw new ReportingStageUnavailable();
+        if (applied === false) throw new Error('v2_confirmation_bundle_stale');
       }
       if (clarificationVerdictProposal && this.questionConfirmationRepo) {
         const applied = await this.questionConfirmationRepo.applyQuestionClarificationVerdict({
-          tenantId, userId, conversationId, inboundMessageId: input.messageId,
+          tenantId, userId, conversationId, inboundMessageId: input.messageId, nativeReportClaimToken: input.nativeReportClaimToken,
           ...clarificationVerdictProposal,
         });
-        if (!applied) throw new Error('v2_clarification_state_stale');
+        if (isPulseReportCollectionUnavailable(applied)) throw new ReportingStageUnavailable();
+        if (applied === false) throw new Error('v2_clarification_state_stale');
       }
 
       if (continuity.activeTopicUpdate) {
@@ -1369,6 +1444,10 @@ export class ConversationOrchestrator {
         ...(onboardingAck !== undefined ? { messageType: 'onboarding_ack' } : {}),
         metadata: {
           sourceInboundMessageId: input.messageId,
+          ...(rightsMenu?.status === 'menu' ? { reportingRightsMenuId: rightsMenu.menuId, reportingRightsActions: rightsMenu.actions } : {}),
+          ...(rightsMenu?.status === 'already_withdrawn' ? { reportingRightsStatus: 'already_withdrawn' } : {}),
+          ...(reportingUnavailable ? { nativeReportingUnavailable: true } : {}),
+          ...(containsSurveyProbe && engagementProbeQuestion?.responseType === 'numeric_1_10_integer' && engagementProbeWindowId ? { engagementProbe: { contractVersion: ENGAGEMENT_ANSWER_CONTRACT, surveyDefinitionId: engagementProbeQuestion.surveyDefinitionId, surveyWindowId: engagementProbeWindowId, questionId: engagementProbeQuestion.id, questionVersion: engagementProbeQuestion.version, stableKey: engagementProbeQuestion.stableKey, displayedFormHash: createHash('sha256').update(responseText).digest('hex'), ...(languagePolicy.responseLanguage !== 'en' && languagePolicy.resources?.engagement ? { locale: languagePolicy.responseLanguage, resourceVersion: languagePolicy.resources.engagement.version, resourceSourceHash: languagePolicy.resources.engagement.sourceHash, formTextHash: createHash('sha256').update(languagePolicy.resources.engagement.texts[engagementProbeQuestion.stableKey]!).digest('hex') } : {}) } } : {}),
           ...conversationDecisionMetadata({
             replyPlan,
             responseText,
@@ -1382,7 +1461,7 @@ export class ConversationOrchestrator {
             goalDecision,
           }),
           ...(shouldAppendReportingDisclosure
-            ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION }
+            ? { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION, reportingDisclosureForm: { locale: languagePolicy.responseLanguage, version: languagePolicy.resources?.disclosure?.version ?? 'pulse-copy-v1', sourceHash: languagePolicy.resources?.disclosure?.sourceHash ?? null, textHash: createHash('sha256').update(getReportingDisclosureText(languagePolicy.responseLanguage, languagePolicy.resources?.disclosure)).digest('hex'), fullBodyHash: createHash('sha256').update(responseText).digest('hex') } }
               : {}),
           ...(confirmationSummary
             ? {
@@ -1438,31 +1517,33 @@ export class ConversationOrchestrator {
       }
 
       if (v2BundleRequest && v2Composition && this.questionConfirmationRepo) {
-        await this.questionConfirmationRepo.stageQuestionConfirmationBundle({
+        const preparedBundle = v2BundleRequest;
+        const staged = await this.questionConfirmationRepo.stageQuestionConfirmationBundle({
           tenantId,
           userId,
           conversationId,
-          surveyWindowId: v2BundleRequest.surveyWindowId,
-          questionGroup: v2BundleRequest.questionGroup,
+          surveyWindowId: preparedBundle.surveyWindowId,
+          questionGroup: preparedBundle.questionGroup,
           promptMessageId: outbound.id,
           displayedText: v2Composition.text,
           components: v2Composition.statements.map((statement) => ({
             surveyQuestionId: statement.surveyQuestionId,
-            questionVersion: v2BundleRequest.questions.find(
+            questionVersion: preparedBundle.questions.find(
               (question) => question.surveyQuestionId === statement.surveyQuestionId,
             )!.questionVersion,
             statement: statement.statement,
-            expectedWorkingSummary: v2BundleRequest.questions.find(
+            expectedWorkingSummary: preparedBundle.questions.find(
               (question) => question.surveyQuestionId === statement.surveyQuestionId,
             )!.workingSummary,
           })),
         });
+        if (isPulseReportCollectionUnavailable(staged)) throw new ReportingStageUnavailable();
       }
       if (correctedStatementRequest && correctedComposition && this.questionConfirmationRepo) {
         if (!this.questionConfirmationRepo.stageCorrectedStatementConfirmation) {
           throw new Error('v2_corrected_statement_staging_unavailable');
         }
-        await this.questionConfirmationRepo.stageCorrectedStatementConfirmation({
+        const staged = await this.questionConfirmationRepo.stageCorrectedStatementConfirmation({
           tenantId, userId, conversationId,
           surveyWindowId: correctedStatementRequest.surveyWindowId,
           questionGroup: correctedStatementRequest.questionGroup,
@@ -1474,6 +1555,7 @@ export class ConversationOrchestrator {
           statement: correctedComposition.statements[0]!.statement,
           expectedWorkingSummary: correctedStatementRequest.correctedSummary,
         });
+        if (isPulseReportCollectionUnavailable(staged)) throw new ReportingStageUnavailable();
       }
       if (clarificationRequest && clarificationText && this.questionConfirmationRepo) {
         const staged = await this.questionConfirmationRepo.stageQuestionClarificationPrompt({
@@ -1482,7 +1564,8 @@ export class ConversationOrchestrator {
           promptMessageId: outbound.id,
           displayedText: clarificationText,
         });
-        if (!staged) throw new Error('v2_clarification_prompt_state_stale');
+        if (isPulseReportCollectionUnavailable(staged)) throw new ReportingStageUnavailable();
+        if (staged === false) throw new Error('v2_clarification_prompt_state_stale');
       }
 
       if (reminderToSchedule && this.scheduledActionRepo
@@ -1505,6 +1588,7 @@ export class ConversationOrchestrator {
 
       await this.conversationRepo.recordCommittedTurn?.({
         inboundMessageId: input.messageId,
+        nativeReportClaimToken: input.nativeReportClaimToken,
         outboundMessageId: outbound.id,
         tenantId, userId, conversationId,
         dispatchKinds: [
@@ -1520,9 +1604,16 @@ export class ConversationOrchestrator {
 
       return outbound;
     };
-    const outbound = this.unitOfWork
-      ? await this.unitOfWork.run(persistPreparedTurn)
-      : await persistPreparedTurn();
+    let outbound: MessageRecord;
+    try {
+      outbound = this.unitOfWork ? await this.unitOfWork.run(persistPreparedTurn) : await persistPreparedTurn();
+    } catch (error) {
+      if (!(error instanceof ReportingStageUnavailable) || !this.unitOfWork) throw error;
+      // The failed attempt, including its outbound row and any verdict mutations, has rolled back.
+      discardPreparedReporting();
+      legacyGroupReport = null; scheduledReminder = null;
+      outbound = await this.unitOfWork.run(persistPreparedTurn);
+    }
     const committedResponseText = outbound.text;
     await this.dispatchCommittedTurn(input, conversation.channelType, outbound, [
       'message_send',
@@ -2000,11 +2091,11 @@ export class ConversationOrchestrator {
     styleAdaptation: ResponseContext['styleAdaptation'];
     timezone: string | null | undefined;
     isSessionStart: boolean;
-  }): Promise<{ generated: GeneratedResponse; probeQuestionId?: string }> {
+  }): Promise<{ generated: GeneratedResponse; probeQuestionId?: string; question?: SurveyQuestionRecord; windowId?: string }> {
     const probe = input.surveyEnabled ? await this.findSurveyProbe(input.userId, input.tenantId) : null;
     const question = probe?.question;
     if (!question) {
-      return { generated: { text: EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } };
+      return { generated: { text: input.languagePolicy.resources?.operational?.texts['empty_backlog'] ?? EMPTY_BACKLOG_OPENER, confidence: 1, containsSurveyProbe: false } };
     }
     const generated = await this.aiProvider.generateResponse(input.turns, ONBOARDING_OPENER_STRATEGY, {
       userName: input.userName,
@@ -2018,22 +2109,23 @@ export class ConversationOrchestrator {
       proactiveCheckIn: {
         probeQuestion: {
           id: question.id,
-          probeStrategies: question.probeStrategies,
+          stableKey: question.stableKey,
+          probeStrategies: question.responseType === 'numeric_1_10_integer' ? [question.title] : question.probeStrategies,
           ...(question.responseType ? { responseType: question.responseType } : {}),
         },
         afterUserStart: true,
       },
     });
-    return { generated, probeQuestionId: question.id };
+    return { generated, probeQuestionId: question.id, question, windowId: probe!.windowId };
   }
 
   private async findSurveyProbe(
     userId: string,
     tenantId: string,
-  ): Promise<{ question: SurveyQuestionRecord; focus: ProbeFocus } | null> {
+  ): Promise<{ question: SurveyQuestionRecord; windowId: string; focus: ProbeFocus } | null> {
     if (!this.pulseBacklogService) return null;
     const result = await this.pulseBacklogService.getNextProbeQuestion(userId, tenantId);
-    return result ? { question: result.question, focus: result.focus ?? 'open' } : null;
+    return result ? { question: result.question, windowId: result.windowId, focus: result.focus ?? 'open' } : null;
   }
 
   /**
@@ -2502,6 +2594,8 @@ function conversationDecisionMetadata(input: {
     languagePolicy: {
       responseLanguage: input.languagePolicy.responseLanguage,
       source: input.languagePolicy.source,
+      ...(input.languagePolicy.requestedLocale ? {requestedLocale:input.languagePolicy.requestedLocale} : {}),
+      ...(input.languagePolicy.resourceStatus ? {resourceStatus:input.languagePolicy.resourceStatus} : {}),
     },
     isSessionStart: input.isSessionStart,
     memoryGrounding: {

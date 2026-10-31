@@ -19,6 +19,7 @@ describe('queue contract', () => {
       PROFILE_HYDRATION: 'profile-hydration',
       ONBOARDING_ACTION: 'onboarding-action',
       ONBOARDING_REMINDER: 'onboarding-reminder',
+      REPORTING_RIGHTS: 'reporting-rights',
     });
   });
 
@@ -39,6 +40,7 @@ describe('queue contract', () => {
       'profile-hydration',
       'onboarding-action',
       'onboarding-reminder',
+      'reporting-rights',
     ]);
   });
 

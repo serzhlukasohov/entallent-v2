@@ -1,4 +1,4 @@
-import type { QuestionFinalizationRepositoryPort, FinalizeQuestionInsightUseCase } from './finalize-question-insight.use-case';
+import type { QuestionFinalizationRepositoryPort, FinalizeQuestionInsightUseCase, QuestionFinalizationScope } from './finalize-question-insight.use-case';
 
 export interface QuestionRecoveryResult {
   usersScanned: number;
@@ -13,8 +13,8 @@ export class RecoverConfirmedQuestionInsightsUseCase {
     private readonly finalizer: Pick<FinalizeQuestionInsightUseCase, 'executePending'>,
   ) {}
 
-  async execute(): Promise<QuestionRecoveryResult> {
-    const users = await this.repository.listPendingConfirmedUsers();
+  async execute(input?: { scope?: QuestionFinalizationScope }): Promise<QuestionRecoveryResult> {
+    const users = await this.repository.listPendingConfirmedUsers(input);
     let finalizedQuestionCount = 0;
     let failedUserCount = 0;
     for (const user of users) {
@@ -23,7 +23,7 @@ export class RecoverConfirmedQuestionInsightsUseCase {
         continue;
       }
       try {
-        finalizedQuestionCount += await this.finalizer.executePending(user);
+        finalizedQuestionCount += await this.finalizer.executePending({ ...user, ...input });
       } catch {
         failedUserCount += 1;
       }

@@ -144,7 +144,7 @@ export interface RiskSignalRecord {
   expiresAt?: Date;
 }
 
-export type SurveyResponseType = 'open_ended' | 'numeric_0_10';
+export type SurveyResponseType = 'open_ended' | 'numeric_0_10' | 'numeric_1_10_integer';
 
 export interface SurveyQuestionRecord {
   id: string;

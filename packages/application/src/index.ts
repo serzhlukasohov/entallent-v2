@@ -113,7 +113,7 @@ export { CloseSurveyReportingCycleUseCase } from './use-cases/close-survey-repor
 export { FinalizeQuestionInsightUseCase } from './use-cases/finalize-question-insight.use-case';
 export { RecoverConfirmedQuestionInsightsUseCase } from './use-cases/recover-confirmed-question-insights.use-case';
 export type { QuestionRecoveryResult } from './use-cases/recover-confirmed-question-insights.use-case';
-export type { ApprovedQuestionRubric, QuestionFinalizationContext, QuestionScoreResult, QuestionScorerPort, QuestionDeidentifierPort, FinalQuestionInsight, QuestionFinalizationRepositoryPort } from './use-cases/finalize-question-insight.use-case';
+export type { ApprovedQuestionRubric, QuestionFinalizationContext, QuestionScoreResult, QuestionScorerPort, QuestionDeidentifierPort, FinalQuestionInsight, QuestionFinalizationRepositoryPort, QuestionFinalizationScope } from './use-cases/finalize-question-insight.use-case';
 export { SelectQuestionInsightInputsUseCase } from './use-cases/select-question-insight-inputs.use-case';
 export type { QuestionInsightInputRecord, PriorQuestionScoreRecord, QuestionInsightTrend, QuestionInsightInputRepositoryPort, QuestionInsightInputSelection } from './use-cases/select-question-insight-inputs.use-case';
 export { resolveQuestionBundle, clarifyQuestion, declineQuestion, cutOffQuestions, hasCompleteIndexInput } from './utils/question-insight-lifecycle';
@@ -150,3 +150,71 @@ export { selectV2CohortReportInputs } from './use-cases/select-v2-cohort-report-
 export type { V2CohortQuestionInput, V2CohortReportScope, V2CohortReportInputSelection } from './use-cases/select-v2-cohort-report-inputs.use-case';
 export { buildV2IndexReport, V2_REPORT_CALCULATION_VERSION, V2_REPORT_APPROVED_DECISION_ID } from './use-cases/build-v2-index-report';
 export type { V2IndexReport } from './use-cases/build-v2-index-report';
+
+export {
+  calculatePulseIndexMetric,
+  calculatePulseEngagementMetric,
+  evaluatePulseMetricEligibility,
+  classifyPulseIndex,
+  comparePulseMetric,
+  formatPulseMetric,
+} from './use-cases/calculate-pulse-report-metrics';
+export type {
+  PulseMetricKind,
+  PulseMetricAnswer,
+  PulseMetricParticipant,
+  PulseMetricCalculationInput,
+  PulseMetricCalculationResult,
+  PulseMetricInvalidInput,
+  PulseMetricValue,
+  PulseMetricEligibilityInput,
+  PulseMetricEligibilityResult,
+  PulseIndexCategory,
+  PulseMetricDirection,
+  PulseMetricComparisonInput,
+} from './use-cases/calculate-pulse-report-metrics';
+
+export * from './ports/pulse-report-scope.repository.port';
+export * from './ports/reporting-permission.repository.port';
+export * from './use-cases/pulse-report-scope-policy';
+export * from './use-cases/withdraw-reporting-permission.use-case';
+export * from './ports/reporting-rights.port';
+export * from './use-cases/reporting-rights-intake.use-case';
+
+export { hasCompleteReportEngagementPolicy } from './utils/question-scoring-policy';
+export * from './ports/engagement-answer.repository.port';
+export * from './use-cases/capture-engagement-answer.use-case';
+
+export { ENGAGEMENT_ANSWER_CONTRACT, ENGAGEMENT_QUESTIONS, ENGAGEMENT_RESPONSE_TYPE, REPORT_ENGAGEMENT_DEFINITION_VERSION } from '@entalent/contracts';
+export * from './use-cases/resolve-pulse-report-final-schedule';
+export * from './ports/pulse-report-final-schedule.repository.port';
+export * from './use-cases/begin-pulse-report-final-formation.use-case';
+
+export * from './ports/pulse-report-input.repository.port';
+
+export * from './ports/pulse-report-settlement.repository.port';
+
+export * from './ports/pulse-report-history.repository.port';
+
+export * from './use-cases/prepare-pulse-report-inputs.use-case';
+
+export * from './use-cases/settle-pulse-report-inputs.use-case';
+
+export * from './use-cases/select-pulse-report-baseline';
+export * from './ports/pulse-report-narrative.port';
+export * from './ports/pulse-report-presentation.repository.port';
+export * from './use-cases/pulse-report-narrative-policy';
+export * from './use-cases/build-pulse-report.use-case';
+export * from './ports/pulse-report-lifecycle.repository.port';
+export * from './ports/pulse-report-recipient.port';
+export * from './ports/pulse-report-delivery.port';
+export * from './use-cases/form-pulse-report.use-case';
+export * from './use-cases/deliver-pulse-report.use-case';
+export * from './ports/pulse-report-activation.port';
+export * from './use-cases/pulse-report-activation-policy';
+export * from './ports/pulse-language.port';
+export * from './ports/analytical-rendition.port';
+export * from './use-cases/prepare-pulse-language.use-case';
+export * from './use-cases/prepare-analytical-rendition.use-case';
+
+export * from './utils/language-policy';

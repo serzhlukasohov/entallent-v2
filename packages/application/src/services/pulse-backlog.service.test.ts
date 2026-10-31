@@ -571,3 +571,16 @@ describe('isEngagementWindowEligible', () => {
     expect(isEngagementWindowEligible({ periodEnd }, now)).toBe(false);
   });
 });
+
+it('literal coverage comes only from the accepted ledger and projects done backlog entries',async()=>{
+  const numeric=makeQuestion({responseType:'numeric_1_10_integer',questionGroup:'engagement',version:'engagement-1-10-v1'});
+  const survey=makeSurveyRepo(makeWindow(),[numeric]);
+  vi.mocked(survey.findAssessmentsForWindow).mockResolvedValue([{surveyQuestionId:numeric.id,status:'scored',score:8}]);
+  const backlog=makeBacklogRepo(),coveredQuestionIds=vi.fn().mockResolvedValue([]);
+  const service=new PulseBacklogService(backlog,survey,undefined,{coveredQuestionIds});
+  await service.getNextProbeQuestion('u-1','t-1');
+  expect(vi.mocked(backlog.initializeIfNeeded).mock.calls[0][4].has(numeric.id)).toBe(false);
+  coveredQuestionIds.mockResolvedValue([numeric.id]);
+  await service.getNextProbeQuestion('u-1','t-1');
+  expect(backlog.markDone).toHaveBeenCalledWith('u-1','w-1',numeric.id,0);
+});

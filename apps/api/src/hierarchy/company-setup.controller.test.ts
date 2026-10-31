@@ -32,13 +32,14 @@ function setup() {
   const deactivations = { deactivatePerson: vi.fn().mockResolvedValue({ personId: 'employee-1' }),
     deactivateTeam: vi.fn().mockResolvedValue({ teamId: 'team-1' }),
     transferAndDeactivateUnit: vi.fn().mockResolvedValue({ sourceUnitId: 'unit-1' }) };
+  const reportConfiguration={saveLanguage:vi.fn().mockResolvedValue({configuration:{revision:2}})};
   const controller = new CompanySetupController(
     sessions as never, reads as never, drafts as never, slack as never, rollout as never, mutations as never,
     capabilities as never,
     advisorScopes as never,
-    deactivations as never,
+    deactivations as never, reportConfiguration as never,
   );
-  return { controller, sessions, reads, drafts, slack, rollout, mutations, capabilities, advisorScopes, deactivations };
+  return { controller, sessions, reads, drafts, slack, rollout, mutations, capabilities, advisorScopes, deactivations, reportConfiguration };
 }
 
 describe('CompanySetupController customer boundary', () => {
@@ -262,4 +263,21 @@ describe('CompanySetupController customer boundary', () => {
       { type: 'company_admin', personId: 'admin-person' },
     );
   });
+});
+
+
+describe('company report language boundary',()=>{
+ const req={headers:{cookie:COOKIE,'x-csrf-token':'valid'}};
+ it('requires session and CSRF; an API key alone is insufficient',async()=>{
+  const {controller,reportConfiguration}=setup();
+  await expect(controller.companyLanguage({headers:{'x-api-key':'key'}} as never,{locale:'de',expectedConfigRevision:1})).rejects.toThrow('access denied');
+  await expect(controller.companyLanguage({headers:{cookie:COOKIE}} as never,{locale:'de',expectedConfigRevision:1})).rejects.toThrow('CSRF');
+  expect(reportConfiguration.saveLanguage).not.toHaveBeenCalled();
+ });
+ it('rejects injected tenant and actor and derives authorization from session',async()=>{
+  const {controller,reportConfiguration}=setup();
+  for(const patch of [{tenantId:'other'},{actorId:'other'},{personId:'other'}])await expect(controller.companyLanguage(req as never,{locale:'de',expectedConfigRevision:1,...patch})).rejects.toMatchObject({response:{code:'unexpected_field'}});
+  await controller.companyLanguage(req as never,{locale:'de',expectedConfigRevision:1});
+  expect(reportConfiguration.saveLanguage).toHaveBeenCalledWith('tenant-from-session','de',1,{type:'company_admin',personId:'admin-person'});
+ });
 });

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, pgTable, uuid, text, jsonb, timestamp, unique } from 'drizzle-orm/pg-core';
+import { bigint, check, pgTable, uuid, text, jsonb, timestamp, unique } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 import { users } from './users';
 
@@ -7,6 +7,7 @@ export const channelAccounts = pgTable(
   'channel_accounts',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    bindingRevision: bigint('binding_revision', { mode: 'number' }).notNull().default(1),
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),

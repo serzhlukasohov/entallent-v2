@@ -15,3 +15,15 @@ export * from './admin-v2-pilot';
 export * from './admin-v2-pilot-people';
 export * from './admin-v2-pilot-team-signals';
 export * from './admin-team-hierarchy';
+export * from './pulse-engagement';
+export * from './pulse-report-calendar';
+
+export * from './pulse-report-inputs';
+export * from './pulse-report-presentation';
+export * from './pulse-report-delivery';
+
+export * from './pulse-language';
+
+export * from './pulse-admin-copy';
+export * from './pulse-report-acceptance';
+export * from './reporting-rights';

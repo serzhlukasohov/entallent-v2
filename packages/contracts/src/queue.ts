@@ -14,6 +14,8 @@ export const QUEUE_NAMES = {
   PROFILE_HYDRATION: 'profile-hydration',
   ONBOARDING_ACTION: 'onboarding-action',
   ONBOARDING_REMINDER: 'onboarding-reminder',
+  /** Employee reporting-rights admissions (RPT-09); not report activation. */
+  REPORTING_RIGHTS: 'reporting-rights',
 } as const;
 
 export type QueueNameKey = keyof typeof QUEUE_NAMES;
@@ -32,3 +34,6 @@ export interface AdminQueuesResponse {
   queues: AdminQueueSnapshot[];
   timestamp: string;
 }
+
+/** Native report lifecycle queue (RPT-10). Registered by the worker survey module only; kept out of QUEUE_NAMES. */
+export const PULSE_REPORT_LIFECYCLE_QUEUE_NAME = 'pulse-report-lifecycle' as const;

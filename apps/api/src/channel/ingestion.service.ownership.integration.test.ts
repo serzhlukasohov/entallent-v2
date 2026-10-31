@@ -45,11 +45,13 @@ describe.skipIf(!localDatabase)('ingestion conversation ownership on migrated Po
       .from(conversations).where(eq(conversations.id, owned.conversationId));
     expect(stored?.userId).toBe(owner!.id);
 
+    const beforeRejectedMessage = await client.db.select({ id: messages.id }).from(messages).where(eq(messages.conversationId, owned.conversationId));
     await expect(service.saveInboundMessage({
       tenantId: tenant!.id, userId: other!.id, conversationId: owned.conversationId,
       text: 'Other employee private message.', externalMessageId: randomUUID(),
       occurredAt: new Date(), traceId: randomUUID(),
-    })).rejects.toThrow('message_conversation_owner_mismatch');
+    })).rejects.toThrow('pulse_receipt_owner_mismatch');
+    expect(await client.db.select({ id: messages.id }).from(messages).where(eq(messages.conversationId, owned.conversationId))).toEqual(beforeRejectedMessage);
     const saved = await service.saveInboundMessage({
       tenantId: tenant!.id, userId: owner!.id, conversationId: owned.conversationId,
       text: 'Owner private message.', externalMessageId: randomUUID(),
@@ -60,7 +62,7 @@ describe.skipIf(!localDatabase)('ingestion conversation ownership on migrated Po
     expect(validMessage?.userId).toBe(owner!.id);
     await expect(client.db.update(messages).set({ userId: other!.id })
       .where(eq(messages.id, saved.messageId)))
-      .rejects.toThrow('message_conversation_owner_mismatch');
+      .rejects.toThrow('pulse_receipt_identity_immutable');
     const [stillOwned] = await client.db.select({ userId: messages.userId })
       .from(messages).where(eq(messages.id, saved.messageId));
     expect(stillOwned?.userId).toBe(owner!.id);

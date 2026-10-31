@@ -1,3 +1,5 @@
+import type { EngagementAnswerRepositoryPort } from '../ports/engagement-answer.repository.port';
+import { isPulseReportCollectionUnavailable } from '../ports/pulse-report-scope.repository.port';
 import type { PulseBacklogRepositoryPort, ProactivePulseConfig } from '../ports/pulse-backlog.repository.port';
 import { DEFAULT_PULSE_CONFIG } from '../ports/pulse-backlog.repository.port';
 import type { SurveyRepositoryPort } from '../ports/survey.repository.port';
@@ -52,7 +54,8 @@ export class PulseBacklogService {
   constructor(
     private readonly backlogRepo: PulseBacklogRepositoryPort,
     private readonly surveyRepo: SurveyRepositoryPort,
-    private readonly questionCoverage?: Pick<QuestionWorkingCapturePort, 'findQuestionCoverage'>,
+    private readonly questionCoverage?: Pick<QuestionWorkingCapturePort, 'findQuestionCoverage' | 'collectionAdmission'>,
+    private readonly engagementAnswers?: Pick<EngagementAnswerRepositoryPort, 'coveredQuestionIds'> & Partial<Pick<EngagementAnswerRepositoryPort, 'reconcileBacklog'>>,
   ) {}
 
   /**
@@ -66,9 +69,16 @@ export class PulseBacklogService {
     config: ProactivePulseConfig = DEFAULT_PULSE_CONFIG,
   ): Promise<{ question: SurveyQuestionRecord; windowId: string; focus: ProbeFocus } | null> {
     const window = await this.surveyRepo.findOrCreateActiveWindow(userId, tenantId);
-    if (!window) return null;
+    if (!window || isPulseReportCollectionUnavailable(window)) return null;
 
-    const allQuestions = await this.surveyRepo.findQuestionsForWindow(window.id);
+    let allQuestions = await this.surveyRepo.findQuestionsForWindow(window.id);
+    if (this.questionCoverage?.collectionAdmission) {
+      const admitted = [];
+      for (const question of allQuestions) {
+        if (await this.questionCoverage.collectionAdmission({ tenantId, userId, surveyWindowId: window.id, surveyQuestionId: question.id }) === 'allowed') admitted.push(question);
+      }
+      allQuestions = admitted;
+    }
     if (!allQuestions.length) return null;
     const questionGroup = config.questionGroup?.trim();
 
@@ -87,21 +97,26 @@ export class PulseBacklogService {
       assessments
         .filter((assessment) => {
           const question = questionById.get(assessment.surveyQuestionId);
-          if (!question) return false;
+          if (!question || question.responseType === 'numeric_1_10_integer') return false;
           return question.responseType === 'numeric_0_10'
             ? assessment.status === 'scored' && assessment.score !== null
             : ['partially_covered', 'covered', 'scored'].includes(assessment.status);
         })
         .map((a) => a.surveyQuestionId),
     );
+    const literalCoveredIds = this.engagementAnswers?.reconcileBacklog
+      ? await this.engagementAnswers.reconcileBacklog({ tenantId, userId, surveyWindowId: window.id, coverageSnapshotAt })
+      : await this.engagementAnswers?.coveredQuestionIds(tenantId, userId, window.id) ?? [];
+    for (const id of literalCoveredIds) coveredIds.add(id);
+
     // GC round 3 CAP-1: V2 progress lives in working insights, not legacy assessments.
     const v2Coverage = await this.questionCoverage?.findQuestionCoverage?.({
       tenantId, userId, surveyWindowId: window.id,
     }) ?? [];
     const currentRows = v2Coverage.filter((row) =>
-      questionById.get(row.surveyQuestionId)?.version === row.questionVersion);
+      questionById.get(row.surveyQuestionId)?.version === row.questionVersion && questionById.get(row.surveyQuestionId)?.responseType !== 'numeric_1_10_integer');
     for (const row of currentRows.filter(isV2Covered)) coveredIds.add(row.surveyQuestionId);
-    const settledIds = currentRows.filter(isSettledForSelection).map((row) => row.surveyQuestionId);
+    const settledIds = [...currentRows.filter(isSettledForSelection).map((row) => row.surveyQuestionId), ...(this.engagementAnswers?.reconcileBacklog ? [] : literalCoveredIds)];
 
     await this.backlogRepo.initializeIfNeeded(
       userId,
@@ -129,7 +144,7 @@ export class PulseBacklogService {
 
     if (isEndOfQuarter && !questionGroup) {
       const engagementQuestions = allQuestions
-        .filter((q) => q.questionGroup === 'engagement' && !coveredIds.has(q.id))
+        .filter((q) => q.questionGroup === 'engagement' && !coveredIds.has(q.id) && (!this.engagementAnswers?.reconcileBacklog || q.responseType !== 'numeric_1_10_integer'))
         .sort((a, b) => a.displayOrder - b.displayOrder);
       await this.backlogRepo.unlockEngagementIfNeeded(userId, tenantId, window.id, engagementQuestions);
     }

@@ -38,8 +38,8 @@ ${sanitizeTurnContent(input.semanticSummary)}
 --- END CONFIRMED MEANING ---`;
 }
 
-export function buildQuestionDeidentifySystemPrompt(attempt: number): string {
-  return `Rewrite one private employee meaning into a generalized analytical sentence.
+export function buildQuestionDeidentifySystemPrompt(attempt: number, locale = 'en'): string {
+  return `Rewrite one private employee meaning directly in canonical BCP47 language ${locale} into a generalized analytical sentence. Preserve exact meaning, uncertainty and negation.
 Remove or generalize every person, manager, teammate, team, project, customer, account,
 Slack handle, email, phone, URL, exact date or time, and message identifier.
 Keep only a broad work-experience signal. Do not quote source text or add facts.
