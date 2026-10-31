@@ -132,4 +132,3 @@ Final evidence: [Official harness](../../runs/harness/receipt-1793182108438-a296
 
 - Keep offline evaluation explicitly separate from actual model acceptance.
   [pulse-report-narrative.eval.test.ts:1](../../packages/conversation-sim/src/harness/pulse-report-narrative.eval.test.ts#L1)
-

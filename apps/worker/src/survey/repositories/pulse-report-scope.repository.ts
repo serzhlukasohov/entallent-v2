@@ -108,7 +108,7 @@ export class PulseReportScopeRepository implements PulseReportScopeRepositoryPor
       await lockPulseReportSubject(tx, tenantId, userId);
       const [participant] = await tx.select().from(surveyReportParticipants).where(and(eq(surveyReportParticipants.tenantId, tenantId), eq(surveyReportParticipants.cycleScoringPolicyId, cycle.id), eq(surveyReportParticipants.userId, userId)));
       if (!participant) return { kind: 'collection_unavailable', reason: 'nonparticipant' };
-      if(exactSource){const source=await tx.execute(sql`select 1 from survey_report_inbound_work w where w.inbound_receipt_id=${exactSource.inboundReceiptId}::uuid and w.tenant_id=${tenantId}::uuid and w.user_id=${userId}::uuid and pulse_input_receipt_in_scope(w.tenant_id,w.user_id,${cycle.id}::uuid,w.received_at,null,false)`);if(!source.length)return {kind:'collection_unavailable',reason:'missing_proof'};} 
+      if(exactSource){const source=await tx.execute(sql`select 1 from survey_report_inbound_work w where w.inbound_receipt_id=${exactSource.inboundReceiptId}::uuid and w.tenant_id=${tenantId}::uuid and w.user_id=${userId}::uuid and pulse_input_receipt_in_scope(w.tenant_id,w.user_id,${cycle.id}::uuid,w.received_at,null,false)`);if(!source.length)return {kind:'collection_unavailable',reason:'missing_proof'};}
       const [permission] = await tx.select().from(surveyReportingPermissions).where(and(eq(surveyReportingPermissions.tenantId, tenantId), eq(surveyReportingPermissions.userId, userId)));
       if (permission?.fullReportingDenied) return { kind: 'collection_unavailable', reason: 'full_withdrawal' };
       if (participant.collectionStoppedAt && !exactSource) return { kind: 'collection_unavailable', reason: 'stopped' };

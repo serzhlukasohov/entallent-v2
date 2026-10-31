@@ -143,4 +143,3 @@ Execution verification: all eight tasks and four ACs checked against the 28-case
 
 - Verify actual endpoint erasure with delivered numeric probes and ambiguous-send proof.
   [pulse-report-review.integration.test.ts:612](../../packages/database/src/__tests__/pulse-report-review.integration.test.ts#L612)
-

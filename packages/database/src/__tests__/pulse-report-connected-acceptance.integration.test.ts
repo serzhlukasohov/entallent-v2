@@ -85,7 +85,7 @@ await seed.database.client.transaction(async tx=>{
         expect(overall.metrics.find((m:{metricKey:string})=>m.metricKey==='autonomy').rawMean).toBeCloseTo(ACCEPTANCE_ORACLES.overallMean,10);
         const overallMembers=await seed.raw`select distinct user_id from survey_report_candidate_sources where candidate_id=${overall.id}`;
         expect(overallMembers.map((r)=>String(r.user_id)).sort()).toEqual([...people].sort());
-        
+
         for (const [index, team] of f.teamList.entries()) {
           const [scope] = await seed.raw`select id from survey_report_scopes where tenant_id=${f.tenantId} and org_team_id=${team.id}`;
           const candidate = candidates.find((c)=>c.scope_id===scope.id)!;
