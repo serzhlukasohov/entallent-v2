@@ -9,6 +9,8 @@
  * --fresh also wipes the person's conversation history, memory, goals, risk and
  * pulse data through the existing dev reset endpoint (API must be running).
  */
+import { ensureDevCompanyCalendar } from './dev-company-calendar';
+import type { DatabaseService } from '../src/database/database.service';
 import { randomUUID } from 'node:crypto';
 import { Queue } from 'bullmq';
 import { createDbClient } from '@entalent/database';
@@ -53,18 +55,13 @@ async function main(): Promise<void> {
   const db = createDbClient(env('DATABASE_URL'));
 
   try {
+    await ensureDevCompanyCalendar({client:db.db} as DatabaseService,tenantId);
     const result = await db.sql.begin(async (tx) => {
       const credentials = encryptField(JSON.stringify({ botToken, signingSecret }), env('FIELD_ENCRYPTION_KEY'));
       await tx`INSERT INTO workspace_connections (tenant_id, channel_type, external_workspace_id, encrypted_credentials, status, scopes)
         VALUES (${tenantId}, 'slack', ${teamId}, ${credentials}, 'active', ${JSON.stringify(['chat:write', 'im:write', 'im:history', 'users:read', 'users:read.email'])}::jsonb)
         ON CONFLICT (channel_type, external_workspace_id)
         DO UPDATE SET encrypted_credentials = EXCLUDED.encrypted_credentials, status = 'active', tenant_id = EXCLUDED.tenant_id`;
-
-      const [calendar] = await tx`SELECT tenant_id FROM tenant_work_calendars WHERE tenant_id = ${tenantId}`;
-      if (!calendar) {
-        await tx`INSERT INTO tenant_work_calendars (tenant_id, timezone, working_days, work_start, work_end, updated_by)
-          VALUES (${tenantId}, 'Europe/Kyiv', '{1,2,3,4,5}', '09:00', '18:00', 'dev-slack-onboard')`;
-      }
 
       const [account] = await tx`SELECT user_id FROM channel_accounts
         WHERE channel_type = 'slack' AND external_workspace_id = ${teamId} AND external_user_id = ${slackUser.id}`;

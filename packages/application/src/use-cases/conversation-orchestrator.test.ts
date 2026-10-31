@@ -7157,3 +7157,187 @@ describe('GC round 3 CAP-1: topic steering inside an active V2 cycle', () => {
     expect(savedOutbound(m).metadata).toMatchObject({ topicCompleted: 'autonomy' });
   });
 });
+
+describe('RPT-02 reporting staging transaction races', () => {
+  function scenario(kind: 'bundle' | 'corrected' | 'clarification') {
+    const m = baseMocks();
+    const questions = ['q-a', 'q-b', 'q-c'].map((surveyQuestionId) => ({ surveyQuestionId, questionVersion: 'v2', workingSummary: `Meaning ${surveyQuestionId}.` }));
+    const pending = { workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy', workingSummary: 'Meaning q-b.', disputedStatement: 'Meaning q-b.', clarificationPromptMessageId: kind === 'corrected' ? 'shown-clarification' : null, clarificationPromptSentAt: kind === 'corrected' ? new Date(INBOUND_OCCURRED_AT.getTime() - 1000) : null };
+    const unavailable = { kind: 'collection_unavailable', reason: 'stopped' };
+    const repo = {
+      collectionAdmission: vi.fn().mockResolvedValue('allowed'),
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(kind === 'bundle' ? null : pending),
+      previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(unavailable),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(kind === 'bundle'),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(kind === 'bundle' ? { tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy', questions } : null),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue(unavailable),
+      stageCorrectedStatementConfirmation: vi.fn().mockResolvedValue(unavailable),
+      findCycleProgress: vi.fn().mockResolvedValue(kind === 'corrected' ? { surveyWindowId: 'w-v2', groups: [{ questionGroup: 'autonomy', questions: questions.map((q) => ({ surveyQuestionId: q.surveyQuestionId, status: q.surveyQuestionId === 'q-b' ? 'pending_clarification' : 'confirmed' })) }] } : null),
+    };
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'clarified', correctedSummary: 'Corrected meaning.' });
+    m.aiProvider.composeQuestionClarification = vi.fn().mockResolvedValue('What part should change?');
+    m.aiProvider.composeQuestionBundle = vi.fn(async (_turns: unknown, questions: Array<{ surveyQuestionId: string; workingSummary: string }>) => ({
+      text: `${questions.map((q) => q.workingSummary).join(' ')} Is that right?`,
+      statements: questions.map((q) => ({ surveyQuestionId: q.surveyQuestionId, statement: q.workingSummary })),
+    }));
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: { text: string } }) => ({
+      text: context.trailingBundle ? `Coaching response.\n\n${context.trailingBundle.text}` : 'Coaching response.',
+      replyText: 'Coaching response.', bundleText: context.trailingBundle?.text, confidence: 0.9, containsSurveyProbe: false,
+    }));
+    let persisted: Array<{ text: string; metadata: Record<string, unknown> }> = [];
+    m.conversationRepo.saveMessage.mockImplementation(async (params: { text: string; metadata: Record<string, unknown> }) => { persisted.push(params); return { ...params, id: 'out-1' }; });
+    const uow = { run: vi.fn(async (operation: () => Promise<unknown>) => { const before = [...persisted]; try { return await operation(); } catch (error) { persisted = before; throw error; } }) };
+    const orchestrator = new ConversationOrchestrator(m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined, undefined, undefined, repo as never, uow as never);
+    return { m, repo, uow, orchestrator, persisted: () => persisted };
+  }
+
+  it.each(['bundle', 'corrected', 'clarification'] as const)('rolls back unavailable %s staging and commits one coaching-only response', async (kind) => {
+    const s = scenario(kind);
+    const result = await s.orchestrator.orchestrate(INPUT);
+    const expected = kind === 'corrected' ? 'We can continue our conversation.' : 'Coaching response.';
+    expect(result.responseText).toBe(expected);
+    expect(s.uow.run).toHaveBeenCalledTimes(2);
+    expect(s.persisted()).toHaveLength(1);
+    expect(s.persisted()[0].text).toBe(expected);
+    for (const key of ['v2ConfirmationBundle', 'v2CorrectedStatement', 'v2ClarificationPrompt', 'topicQuestion', 'topicCompleted']) expect(s.persisted()[0].metadata[key]).toBeUndefined();
+    expect(s.m.outbox.enqueueMessageSend).toHaveBeenCalledOnce();
+    expect(s.m.aiProvider.generateResponse).toHaveBeenCalledOnce();
+    if (kind === 'corrected') expect(s.repo.applyQuestionClarificationVerdict).toHaveBeenCalledOnce();
+  });
+
+  it('requires UOW before an admission-aware consumer can stage persisted reporting prompts', () => {
+    const s = scenario('bundle');
+    expect(() => new ConversationOrchestrator(s.m.conversationRepo, s.m.aiProvider, s.m.outbox, undefined, s.m.surveyRepo,
+      undefined, undefined, s.m.featureFlags, undefined, undefined, undefined, undefined, s.repo as never)).toThrow('conversation_reporting_uow_required');
+  });
+});
+
+it('persists the normal literal1-10 probe identity and actual displayed form without extra confirmation',async()=>{
+  const m=baseMocks();m.conversationRepo.findRecentMessages.mockResolvedValue([
+    ...[2,1].map(i=>({id:`older-${i}`,...OWNERSHIP,direction:'inbound',text:'Earlier substantive work context',occurredAt:new Date(INBOUND_OCCURRED_AT.getTime()-i*60_000)})),
+    {id:'m-1',...OWNERSHIP,direction:'inbound',text:'Work context',occurredAt:INBOUND_OCCURRED_AT},
+  ]);const q={id:'q-literal',surveyDefinitionId:'def-literal',stableKey:'engagement_current',title:'On a scale from 1 to 10, where 1 means not at all engaged and 10 means fully engaged, how engaged do you feel with your work right now? Please reply with one whole number.',canonicalMeaning:'Current engagement with work.',questionGroup:'engagement',responseType:'numeric_1_10_integer',version:'engagement-1-10-v1',probeStrategies:[]};
+  const backlog={getNextProbeQuestion:vi.fn().mockResolvedValue({question:q,windowId:'w-literal',focus:'open'}),recordProbeSent:vi.fn()};
+  m.aiProvider.generateResponse.mockResolvedValue({text:q.title,confidence:1,containsSurveyProbe:true,surveyProbeQuestionId:q.id});
+  await new ConversationOrchestrator(m.conversationRepo,m.aiProvider,m.outbox,undefined,m.surveyRepo,undefined,undefined,m.featureFlags,undefined,backlog as never).orchestrate(INPUT);
+  expect(m.conversationRepo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({metadata:expect.objectContaining({engagementProbe:expect.objectContaining({contractVersion:q.version,surveyDefinitionId:q.surveyDefinitionId,surveyWindowId:'w-literal',questionId:q.id,questionVersion:q.version,stableKey:q.stableKey,displayedFormHash:expect.stringMatching(/^[a-f0-9]{64}$/)})})}));
+});
+
+it('R3 retains coaching text and drops proof for a substituted numeric form probe identity and actual displayed form without extra confirmation',async()=>{
+  const m=baseMocks();m.conversationRepo.findRecentMessages.mockResolvedValue([
+    ...[2,1].map(i=>({id:`older-${i}`,...OWNERSHIP,direction:'inbound',text:'Earlier substantive work context',occurredAt:new Date(INBOUND_OCCURRED_AT.getTime()-i*60_000)})),
+    {id:'m-1',...OWNERSHIP,direction:'inbound',text:'Work context',occurredAt:INBOUND_OCCURRED_AT},
+  ]);const q={id:'q-literal',surveyDefinitionId:'def-literal',stableKey:'engagement_current',title:'On a scale from 1 to 10, where 1 means not at all engaged and 10 means fully engaged, how engaged do you feel with your work right now? Please reply with one whole number.',canonicalMeaning:'Current engagement with work.',questionGroup:'engagement',responseType:'numeric_1_10_integer',version:'engagement-1-10-v1',probeStrategies:[]};
+  const backlog={getNextProbeQuestion:vi.fn().mockResolvedValue({question:q,windowId:'w-literal',focus:'open'}),recordProbeSent:vi.fn()};
+  m.aiProvider.generateResponse.mockResolvedValue({text:'Ask your manager to rank the competing deadlines. From 1 to 10, how is the weather?',confidence:1,containsSurveyProbe:true,surveyProbeQuestionId:q.id});
+  await new ConversationOrchestrator(m.conversationRepo,m.aiProvider,m.outbox,undefined,m.surveyRepo,undefined,undefined,m.featureFlags,undefined,backlog as never).orchestrate(INPUT);
+  const saved=m.conversationRepo.saveMessage.mock.calls.find(([message]: [{direction:string}])=>message.direction==='outbound')![0];
+  expect(saved.text).toContain('Ask your manager to rank the competing deadlines.');expect(saved.metadata?.engagementProbe).toBeUndefined();
+});
+
+describe('RPT-LANG production language selection boundary',()=>{
+ it('passes the existing classifier proposal once to trusted repository selection and uses the selected personal language',async()=>{
+  const m=baseMocks();const resolve=vi.fn().mockResolvedValue({responseLanguage:'uk',source:'explicit_current',resourceStatus:'ready'});
+  Object.assign(m.conversationRepo,{resolvePersonalLanguage:resolve});
+  m.aiProvider.classifySituation.mockResolvedValue({...await m.aiProvider.classifySituation(),languageProposal:{locale:'uk',kind:'explicit'}});m.aiProvider.classifySituation.mockClear();
+  const orch=new ConversationOrchestrator(m.conversationRepo,m.aiProvider,m.outbox,undefined,m.surveyRepo,undefined,undefined,m.featureFlags);
+  await orch.orchestrate(INPUT);
+  expect(m.aiProvider.classifySituation).toHaveBeenCalledTimes(1);
+  expect(resolve).toHaveBeenCalledWith(expect.objectContaining({tenantId:INPUT.tenantId,userId:INPUT.userId,inboundMessageId:INPUT.messageId,proposal:{locale:'uk',kind:'explicit'}}));
+  expect(m.aiProvider.generateResponse.mock.calls[0]![2].languagePolicy).toMatchObject({responseLanguage:'uk',source:'explicit_current'});
+ });
+});
+
+describe('ConversationOrchestrator RPT-09 reporting-rights menu proposal', () => {
+  const MENU = '00000000-0000-4000-8000-0000000000a1';
+  const ACTIONS = [{ actionId: 'reporting_rights:full', label: 'Withdraw all', value: MENU }];
+  const DM_INPUT = { ...INPUT, externalConversationId: 'D123' };
+  const withRights = (m: ReturnType<typeof baseMocks>, port: unknown, logger?: unknown) => new ConversationOrchestrator(
+    m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+    undefined, undefined, m.featureFlags, m.scheduledActionRepo, undefined,
+    undefined, undefined, undefined, undefined, undefined, (logger ?? { warn: vi.fn() }) as never, port as never,
+  );
+  const setup = (value: unknown, over: Record<string, unknown> = {}, conversation: Record<string, unknown> = {}) => {
+    const m = baseMocks();
+    m.conversationRepo.findById.mockResolvedValue({
+      id: 'c-1', tenantId: 't-1', userId: 'u-1', channelType: 'slack', externalConversationId: 'D123', userDisplayName: 'Sam', userLocale: 'en', userTimezone: 'UTC',
+      ...conversation,
+    });
+    m.aiProvider.classifySituation.mockResolvedValue({
+      primaryIntent: 'support', secondaryIntents: [], emotionalState: [], urgency: 'low', confidence: 0.9,
+      surveyAllowed: true, requiresSafetyCheck: false, reasoningSummary: 'test', reminderRequest: null,
+      dialogueAct: 'request', latestUserSubstance: 'please stop using my answers', topicAnchor: null,
+      reportingRightsRequest: value, ...over,
+    });
+    return m;
+  };
+  const savedMetadata = (m: ReturnType<typeof baseMocks>) => m.conversationRepo.saveMessage.mock.calls.at(-1)[0].metadata;
+  const replyContext = (m: ReturnType<typeof baseMocks>) => m.aiProvider.generateResponse.mock.calls.at(-1)[2];
+
+  it('opens the menu before generation, once per turn, and attaches its buttons; nothing is withdrawn', async () => {
+    const m = setup('open_menu');
+    const order: string[] = [];
+    const port = { openMenu: vi.fn(async () => { order.push('menu'); return { status: 'menu', menuId: MENU, actions: ACTIONS }; }) };
+    m.aiProvider.generateResponse.mockImplementation(async () => { order.push('generate'); return { text: 'reply', confidence: 0.9, containsSurveyProbe: false }; });
+    await withRights(m, port).orchestrate(DM_INPUT);
+    expect(port.openMenu).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', channelType: 'slack',
+      externalWorkspaceId: 'ws', externalChannelId: 'D123', locale: 'en', turnKey: 'm-1',
+    });
+    expect(order).toEqual(['menu', 'generate']);
+    expect(savedMetadata(m)).toMatchObject({ reportingRightsMenuId: MENU, reportingRightsActions: ACTIONS });
+    expect(replyContext(m).replyPlan.reportingRightsRequest).toBe('open_menu');
+  });
+
+  it('degrades to a plain reply that does not advertise buttons when the rights store fails', async () => {
+    const m = setup('open_menu');
+    const logger = { warn: vi.fn() };
+    await withRights(m, { openMenu: vi.fn().mockRejectedValue(new Error('db down: private')) }, logger).orchestrate(DM_INPUT);
+    expect(savedMetadata(m)).not.toHaveProperty('reportingRightsActions');
+    expect(replyContext(m).replyPlan).not.toHaveProperty('reportingRightsRequest');
+    expect(logger.warn).toHaveBeenCalledWith('reporting_rights_menu_unavailable', { conversationId: 'c-1' });
+    expect(m.conversationRepo.saveMessage).toHaveBeenCalled();
+  });
+
+  it('a fully withdrawn subject gets a status reply without commit buttons', async () => {
+    const m = setup('open_menu');
+    await withRights(m, { openMenu: vi.fn().mockResolvedValue({ status: 'already_withdrawn' }) }).orchestrate(DM_INPUT);
+    expect(savedMetadata(m)).toMatchObject({ reportingRightsStatus: 'already_withdrawn' });
+    expect(savedMetadata(m)).not.toHaveProperty('reportingRightsActions');
+    expect(replyContext(m).replyPlan.reportingRightsRequest).toBe('already_withdrawn');
+  });
+
+  it.each([
+    ['none', setupArgs('none')],
+    ['an invalid model value', setupArgs('withdraw_now')],
+    ['a safety turn', setupArgs('open_menu', { requiresSafetyCheck: true })],
+    ['a non-DM Slack channel', setupArgs('open_menu', {}, { externalConversationId: 'C123' }, 'C123')],
+    ['a non-Slack conversation', setupArgs('open_menu', {}, { channelType: 'dev' })],
+  ])('does not open a menu or advertise buttons for %s', async (_label, args) => {
+    const m = setup(args.value, args.over, args.conversation);
+    const port = { openMenu: vi.fn() };
+    await withRights(m, port).orchestrate({ ...DM_INPUT, externalConversationId: args.channel }).catch(() => undefined);
+    expect(port.openMenu).not.toHaveBeenCalled();
+    const call = m.conversationRepo.saveMessage.mock.calls.at(-1);
+    if (call) expect(call[0].metadata ?? {}).not.toHaveProperty('reportingRightsActions');
+    const context = m.aiProvider.generateResponse.mock.calls.at(-1)?.[2];
+    expect(context?.replyPlan?.reportingRightsRequest).toBeUndefined();
+  });
+
+  it('degrades to a plain reply when the rights port is not wired', async () => {
+    const m = setup('open_menu');
+    await makeOrchestrator(m).orchestrate(DM_INPUT);
+    expect(savedMetadata(m)).not.toHaveProperty('reportingRightsActions');
+    expect(replyContext(m).replyPlan).not.toHaveProperty('reportingRightsRequest');
+  });
+});
+
+function setupArgs(value: unknown, over: Record<string, unknown> = {}, conversation: Record<string, unknown> = {}, channel = 'D123') {
+  return { value, over, conversation, channel };
+}

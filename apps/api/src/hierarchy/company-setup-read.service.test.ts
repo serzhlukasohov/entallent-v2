@@ -3,21 +3,21 @@ import { onboardingStates, orgEmployeePlacements, orgUnits, tenantWorkCalendars 
 import { CompanySetupReadService } from './company-setup-read.service';
 
 function service(calendar: Record<string, unknown> | null) {
-  const client = { select: () => ({ from: (table: unknown) => ({
+  const client = { execute: async()=>[{locale:'en'}], select: () => ({ from: (table: unknown) => ({
     where: async () => (table === tenantWorkCalendars && calendar ? [calendar] : []),
   }) }) };
-  return new CompanySetupReadService({ client } as never);
+  return new CompanySetupReadService({ client } as never, {read:async()=>({revision:1,locale:'en',unavailableReason:'missing_calendar'})} as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
 }
 
 describe('CompanySetupReadService calendar', () => {
   it('reports calendarConfigured=false when enTalent has not configured it', async () => {
-    const snapshot = await service(null).snapshot('tenant-1');
+    const snapshot = await service(null).snapshot('7d1e0163-6d53-4713-bd24-254690cc5090');
     expect(snapshot.calendarConfigured).toBe(false);
     expect(snapshot.calendar).toBeNull();
   });
   it('exposes the calendar values read-only when configured', async () => {
     const calendar = { timezone: 'Europe/Kyiv', workingDays: [1, 2, 3, 4, 5], workStart: '09:00', workEnd: '18:00' };
-    const snapshot = await service(calendar).snapshot('tenant-1');
+    const snapshot = await service(calendar).snapshot('7d1e0163-6d53-4713-bd24-254690cc5090');
     expect(snapshot.calendarConfigured).toBe(true);
     expect(snapshot.calendar).toEqual(calendar);
   });
@@ -30,8 +30,8 @@ function seeded(unitSize: number, states: string[], extra: Record<string, unknow
     [orgEmployeePlacements, ids.map((id) => ({ employeePersonId: id, unitId: 'u1', lifecycleStatus: 'active' }))],
     [onboardingStates, ids.map((id, i) => ({ personId: id, introStatus: states[i] ?? 'pending' }))],
   ]);
-  const client = { select: () => ({ from: (table: unknown) => ({ where: async () => rows.get(table) ?? extra[String(table)] ?? [] }) }) };
-  return new CompanySetupReadService({ client } as never);
+  const client = { execute: async()=>[{locale:'en'}], select: () => ({ from: (table: unknown) => ({ where: async () => rows.get(table) ?? extra[String(table)] ?? [] }) }) };
+  return new CompanySetupReadService({ client } as never, {read:async()=>({revision:1,locale:'en',unavailableReason:'missing_calendar'})} as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
 }
 
 function keys(value: unknown, out: string[] = []): string[] {

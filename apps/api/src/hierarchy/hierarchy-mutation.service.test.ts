@@ -41,6 +41,7 @@ function setup(lastTeamEmployee = false, extraUnitEmployee = false) {
     },
   }));
   const db = {
+    execute: vi.fn().mockResolvedValue([]),
     select: () => ({ from: (table: unknown) => ({ where: () => ({
       then: (resolve: (value: unknown[]) => unknown, reject?: (reason: unknown) => unknown) =>
         Promise.resolve(rows.get(table) ?? []).then(resolve, reject),

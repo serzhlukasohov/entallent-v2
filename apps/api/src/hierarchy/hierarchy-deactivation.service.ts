@@ -1,3 +1,4 @@
+import { stopChangedPulseReportParticipants } from '@entalent/database';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { planEmployeeDeactivation, planTeamDeactivation, planUnitTransferDeactivation, type ActiveGraphIssue, type ActiveHierarchyGraph, type PreviousManagerAction, type PreviousTeamLeadAction } from '@entalent/application';
@@ -125,6 +126,7 @@ export class HierarchyDeactivationService {
               leadPlacement: leadAction === 'become_employee' ? { unitId: plan.unitId, teamId: null } : null,
               placements: plan.placementIds.map((id) => ({ id, teamId: null })) } },
         }).returning({ id: auditLogs.id });
+        await stopChangedPulseReportParticipants(tx, tenantId, audit.id);
         onboardingEvents = [{ personId: plan.leadPersonId, auditLogId: audit.id,
           event: leadAction === 'become_employee'
             ? { type: 'role_changed', from: 'team_lead', to: 'employee' } : { type: 'deactivated' } }];
@@ -274,6 +276,7 @@ export class HierarchyDeactivationService {
               placements: plan.placements.map((row) => ({ id: row.id, unitId: targetUnitId,
                 teamId: row.teamId })) } },
         }).returning({ id: auditLogs.id });
+        await stopChangedPulseReportParticipants(tx, tenantId, audit.id);
         onboardingEvents = [{ personId: plan.managerPersonId, auditLogId: audit.id,
           event: managerAction === 'become_employee'
             ? { type: 'role_changed', from: 'manager', to: 'employee' } : { type: 'deactivated' } }];
@@ -361,6 +364,7 @@ export class HierarchyDeactivationService {
             before: { primaryRole: person.primaryRole, lifecycleStatus: 'active', activePlacementIds: placementIds },
             after: { primaryRole: person.primaryRole, lifecycleStatus: 'inactive', activePlacementIds: [] } },
         }).returning({ id: auditLogs.id });
+        await stopChangedPulseReportParticipants(tx, tenantId, audit.id);
         onboardingEvents = [{ personId, auditLogId: audit.id, event: { type: 'deactivated' } }];
         return { personId, previousRole: person.primaryRole, lifecycleStatus: 'inactive' as const };
       }, { isolationLevel: 'serializable' }));

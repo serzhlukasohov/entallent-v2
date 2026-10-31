@@ -27,3 +27,19 @@ export * from './runtime-attempts';
 export * from './runtime-actions';
 export * from './runtime-shadow-diagnostics';
 export * from './onboarding';
+
+export * from './survey-report-scopes';
+
+export * from './survey-engagement-answers';
+
+export * from './survey-report-calendar';
+
+export * from "./survey-report-inputs";
+
+export * from './survey-report-delivery';
+
+export * from './pulse-language';
+
+export * from './survey-reporting-rights';
+
+export * from './pulse-report-activation';

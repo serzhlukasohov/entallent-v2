@@ -1,6 +1,6 @@
 import { Controller, Post, Get, Param, ParseUUIDPipe, UseGuards, Logger, HttpCode } from '@nestjs/common';
-import { eq, and, desc, isNull } from 'drizzle-orm';
-import { users, messages, memoryItems, userGoals, scheduledActions, riskSignals } from '@entalent/database';
+import { eq, and, desc, isNull, sql } from 'drizzle-orm';
+import { users, messages, memoryItems, userGoals, scheduledActions, riskSignals, lockPulseReportSubject } from '@entalent/database';
 import { DatabaseService } from '../database/database.service';
 import { AuditLogRepository } from '../audit/audit-log.repository';
 import { ApiKeyGuard } from '../auth/api-key.guard';
@@ -97,20 +97,22 @@ export class UserDataController {
       reason: 'User requested data deletion (GDPR right to erasure)',
     });
 
+    await this.db.client.transaction(async tx => {
+    await lockPulseReportSubject(tx,tenantId,userId);
     // Anonymize message text
-    await this.db.client
+    await tx
       .update(messages)
-      .set({ text: '[deleted]', normalizedText: null, deletedAt: new Date() })
-      .where(and(eq(messages.userId, userId), eq(messages.tenantId, tenantId), isNull(messages.deletedAt)));
+      .set({ text: '[deleted]', normalizedText: null, metadata: {}, deletedAt: sql`coalesce(${messages.deletedAt},clock_timestamp())` })
+      .where(and(eq(messages.userId, userId), eq(messages.tenantId, tenantId)));
 
     // Delete memory items
-    await this.db.client
+    await tx
       .update(memoryItems)
       .set({ status: 'deleted', content: '[deleted]', updatedAt: new Date() })
       .where(and(eq(memoryItems.userId, userId), eq(memoryItems.tenantId, tenantId)));
 
     // Delete goals
-    await this.db.client
+    await tx
       .update(userGoals)
       .set({
         title: '[deleted]',
@@ -122,7 +124,7 @@ export class UserDataController {
       .where(and(eq(userGoals.userId, userId), eq(userGoals.tenantId, tenantId)));
 
     // Cancel scheduled actions
-    await this.db.client
+    await tx
       .update(scheduledActions)
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(
@@ -134,13 +136,13 @@ export class UserDataController {
       );
 
     // Resolve risk signals
-    await this.db.client
+    await tx
       .update(riskSignals)
       .set({ status: 'resolved', resolvedAt: new Date() })
       .where(and(eq(riskSignals.userId, userId), eq(riskSignals.tenantId, tenantId), eq(riskSignals.status, 'active')));
 
     // Soft-delete user
-    await this.db.client
+    await tx
       .update(users)
       .set({
         status: 'deleted',
@@ -156,6 +158,7 @@ export class UserDataController {
       })
       .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)));
 
+    });
     this.logger.log(`Data deletion completed for user ${userId}`);
 
     return {

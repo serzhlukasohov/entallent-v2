@@ -1,3 +1,4 @@
+import { ReportConfigurationConflict } from '@entalent/database';
 import {
   BadRequestException, Body, ConflictException, Controller, Get, HttpCode, Logger, NotFoundException, Param, Post, Query, UseGuards,
 } from '@nestjs/common';
@@ -55,9 +56,17 @@ export class DevOnboardingController {
     const role = this.roleOf(body.role);
 
     let calendarCreated = false;
-    if (!(await this.calendar.get(tenantId))) {
-      await this.calendar.configure(tenantId, DEV_WORK_CALENDAR, DEV_OPERATOR);
-      calendarCreated = true;
+    for (let attempt=0; attempt<4; attempt++) {
+      const expectedRevision=await this.calendar.currentRevision(tenantId);
+      if(await this.calendar.get(tenantId))break;
+      try {
+        await this.calendar.configure(tenantId,DEV_WORK_CALENDAR,DEV_OPERATOR,expectedRevision);
+        calendarCreated=true;
+        break;
+      } catch(error) {
+        if(!(error instanceof ReportConfigurationConflict))throw error;
+        if(attempt===3)throw new ConflictException({code:error.code});
+      }
     }
 
     const { userId: personId } = await this.ingestion.findOrCreateUser({

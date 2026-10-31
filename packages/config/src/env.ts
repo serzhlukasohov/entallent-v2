@@ -63,6 +63,13 @@ const envSchema = z.object({
     .default('true')
     .transform((v) => v !== 'false' && v !== '0'), // false disables the quiet-hours guard (dev)
 
+  // Native pulse reports (RPT-10). Process kill switch; per-tenant/scope DB activation controls still apply.
+  PULSE_REPORTS_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+  PULSE_REPORT_SCAN_INTERVAL_SEC: z.coerce.number().int().positive().default(60),
+
   // Observability (optional)
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
   SENTRY_DSN: z.string().optional(),

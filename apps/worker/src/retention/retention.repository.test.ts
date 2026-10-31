@@ -34,8 +34,11 @@ describe('RetentionRepository', () => {
   });
 
   it('applies retention to each durable survey and conversation store for one tenant', async () => {
-    const execute = vi.fn().mockResolvedValue([{ id: 'row-1' }]);
-    const repository = new RetentionRepository({ client: { execute } } as never);
+    const execute = vi.fn().mockResolvedValueOnce([]).mockResolvedValue([{ id: 'row-1' }]);
+    const metadataExecute = vi.fn().mockResolvedValue([]);
+    const transaction = vi.fn(async (work: (tx: unknown) => Promise<void>) =>
+      work({ execute: metadataExecute }));
+    const repository = new RetentionRepository({ client: { execute, transaction } } as never);
     const now = new Date('2026-10-31T00:00:00.000Z');
 
     await expect(repository.applyRetention({
@@ -61,7 +64,20 @@ describe('RetentionRepository', () => {
       reportSnapshotsDeleted: 2,
     });
 
-    const queries = execute.mock.calls.map((call) => compileSql(call[0]));
+    expect(transaction).toHaveBeenCalledOnce();
+    const metadataQueries = metadataExecute.mock.calls.map((call) => compileSql(call[0]));
+    expect(metadataQueries.map((query) => query.sql)).toEqual([
+      expect.stringContaining('select pulse_publication_payload_purge'),
+      expect.stringContaining('update survey_report_input_coverage'),
+      expect.stringContaining('update survey_report_input_candidates'),
+      expect.stringContaining('delete from survey_report_input_candidates'),
+      expect.stringContaining('delete from survey_report_inbound_work'),
+      expect.stringContaining('delete from survey_report_shown_components'),
+      expect.stringContaining('delete from survey_report_topic_watermarks'),
+    ]);
+    expect(metadataExecute.mock.invocationCallOrder.at(-1)).toBeLessThan(execute.mock.invocationCallOrder[0]!);
+    expect(compileSql(execute.mock.calls[0][0]).sql).toContain('select distinct user_id');
+    const queries = execute.mock.calls.slice(1).map((call) => compileSql(call[0]));
     expect(queries).toHaveLength(14);
     expect(queries.map((query) => query.sql)).toEqual([
       expect.stringContaining('update messages'),

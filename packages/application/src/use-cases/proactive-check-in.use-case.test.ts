@@ -113,6 +113,17 @@ const BASE_INPUT = {
 };
 
 describe('ProactiveCheckInUseCase', () => {
+  it('removes a prepared probe when collection becomes unavailable during model work', async () => {
+    const backlog = makePulseBacklogService();
+    vi.mocked(backlog.getNextProbeQuestion).mockResolvedValueOnce({ question: makeQuestion(), windowId: 'w-1', focus: 'open' }).mockResolvedValueOnce(null);
+    const outbox = makeOutbox(); const repo = makeConversationRepo();
+    const result = await new ProactiveCheckInUseCase(repo, makeAiProvider(true, 'q-1'), outbox, undefined, backlog).execute(BASE_INPUT);
+    expect(result.probeQuestionId).toBeNull();
+    expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
+    expect(backlog.recordProbeSent).not.toHaveBeenCalled();
+    expect(outbox.enqueueMessageSend).toHaveBeenCalledOnce();
+  });
+
   it('returns a result with the outbound message', async () => {
     const conversationRepo = makeConversationRepo();
     const useCase = new ProactiveCheckInUseCase(
@@ -439,4 +450,12 @@ describe('ProactiveCheckInUseCase', () => {
       expect(result.responseText).toBe(EMPTY_BACKLOG_OPENER);
     });
   });
+});
+
+it('carries the literal1-10 contract and actual displayed form into persisted proactive probe proof',async()=>{
+  const question={...makeQuestion(),stableKey:'engagement_current',questionGroup:'engagement',responseType:'numeric_1_10_integer' as const,version:'engagement-1-10-v1'};
+  const repo=makeConversationRepo(),ai=makeAiProvider(true,question.id),backlog=makePulseBacklogService(question);
+  vi.mocked(ai.generateResponse).mockResolvedValue({text:'On a scale from 1 to 10, where 1 means not at all engaged and 10 means fully engaged, how engaged do you feel with your work right now? Please reply with one whole number.',containsSurveyProbe:true,surveyProbeQuestionId:question.id,confidence:1});
+  await new ProactiveCheckInUseCase(repo,ai,makeOutbox(),undefined,backlog).execute(BASE_INPUT);
+  expect(repo.saveMessage).toHaveBeenCalledWith(expect.objectContaining({metadata:expect.objectContaining({engagementProbe:expect.objectContaining({contractVersion:'engagement-1-10-v1',questionId:question.id,questionVersion:question.version,surveyWindowId:'w-1',stableKey:'engagement_current',displayedFormHash:expect.stringMatching(/^[a-f0-9]{64}$/)})})}));
 });

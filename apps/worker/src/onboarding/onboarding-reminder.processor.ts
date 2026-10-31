@@ -72,7 +72,8 @@ export class OnboardingReminderProcessor extends WorkerHost {
       this.logger.warn(`No active conversation for onboarding reminder person=${personId}`);
       return;
     }
-    const text = reminderCopy(track);
+    const language = await this.effects.resolveLanguage?.(tenantId,personId);
+    const text = reminderCopy(track,language?.resources?.operational);
     let messageId: string | null = null;
     // 6. Persist + state transition in one transaction; guards are re-checked under the row lock.
     const result = await this.onboarding.apply(tenantId, personId, { type: 'reminder_sent', at: now }, async (tx, row) => {

@@ -122,7 +122,7 @@ describe('V2 pilot operator projection', () => {
       const execute = vi.fn()
         .mockResolvedValueOnce([CLOSED, ACTIVE])
         .mockResolvedValueOnce([personRow('serhii', 'scored'), personRow('illia', 'scored')]);
-      const readModel = new V2PilotReadModel({ client: { execute } } as never);
+      const readModel = new V2PilotReadModel({ client: { execute } } as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
 
       const current = await readModel.getPeople(TENANT, undefined);
       expect(current).toMatchObject({ cohortId: ACTIVE.cohortId, state: 'active',
@@ -150,7 +150,7 @@ describe('V2 pilot operator projection', () => {
         .mockResolvedValueOnce([ACTIVE, CLOSED])
         .mockResolvedValueOnce([cycleRow(ACTIVE), cycleRow(CLOSED)])
         .mockResolvedValue([]);
-      const readModel = new V2PilotReadModel({ client: { execute } } as never);
+      const readModel = new V2PilotReadModel({ client: { execute } } as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
       const result = await readModel.getStatus(TENANT, undefined);
       expect(result.cycles.map((cycle) => [cycle.cohortId, cycle.state])).toEqual([
         [ACTIVE.cohortId, 'active'], [CLOSED.cohortId, 'closed'],
@@ -162,7 +162,7 @@ describe('V2 pilot operator projection', () => {
 
   it('validates Team Signals input before querying', async () => {
     const execute = vi.fn();
-    const readModel = new V2PilotReadModel({ client: { execute } } as never);
+    const readModel = new V2PilotReadModel({ client: { execute } } as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
     await expect(readModel.getTeamSignals('bad-tenant', undefined)).rejects.toThrow('UUIDs');
     await expect(readModel.getTeamSignals(TENANT, 'not-a-uuid')).rejects.toThrow('UUIDs');
     expect(execute).not.toHaveBeenCalled();
@@ -176,7 +176,7 @@ describe('V2 pilot operator projection', () => {
       const execute = vi.fn()
         .mockResolvedValueOnce([CLOSED, ACTIVE])
         .mockResolvedValueOnce([signalRow('Team wants clearer priorities')]);
-      const readModel = new V2PilotReadModel({ client: { execute } } as never);
+      const readModel = new V2PilotReadModel({ client: { execute } } as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
 
       const current = await readModel.getTeamSignals(TENANT, undefined);
       expect(current).toMatchObject({ cohortId: ACTIVE.cohortId, state: 'active' });
@@ -232,7 +232,7 @@ describe('V2 pilot operator projection', () => {
     const execute = vi.fn().mockResolvedValueOnce([ACTIVE]).mockResolvedValueOnce([
       { ...signalRow('Summary'), insightId: 'insight-1', userId: 'qa-user', displayName: 'Anna' },
     ]);
-    const readModel = new V2PilotReadModel({ client: { execute } } as never);
+    const readModel = new V2PilotReadModel({ client: { execute } } as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
     const result = await readModel.getTeamSignals(TENANT, ACTIVE.cohortId);
     expect(result.signals[0]).not.toHaveProperty('insightId');
     expect(result.signals[0]).not.toHaveProperty('author');
@@ -248,7 +248,7 @@ describe('V2 pilot operator projection', () => {
     const execute = vi.fn().mockResolvedValueOnce([ACTIVE]).mockResolvedValueOnce([
       { ...signalRow('Summary'), userId: 'anna-id', displayName: 'Anna Smirnova' },
     ]);
-    const readModel = new V2PilotReadModel({ client: { execute } } as never);
+    const readModel = new V2PilotReadModel({ client: { execute } } as never,{read:async()=>({locale:'en',status:'ready',resourceVersion:'pulse-copy-v1',resources:{}})} as never);
     await expect(readModel.getQaTeamSignals('bad-tenant', undefined)).rejects.toThrow('UUIDs');
     const result = await readModel.getQaTeamSignals(TENANT, ACTIVE.cohortId);
     expect(result.cohortId).toBe(ACTIVE.cohortId);

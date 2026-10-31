@@ -1,3 +1,6 @@
+import { PULSE_COPY_VERSION, PULSE_LANGUAGE_POLICY, PulseLanguageUnavailable, type PulseProseProvenance } from '@entalent/contracts';
+import type { PulseLanguageRepositoryPort } from '../ports/pulse-language.port';
+import { evaluatePulseReportAdmission, type PulseReportAdmissionInput } from './pulse-report-scope-policy';
 import { evaluateQuestionDeidentification } from '../utils/question-deidentification-policy';
 import { isApprovedQuestionRubric } from '../utils/question-scoring-policy';
 
@@ -11,8 +14,11 @@ export interface ApprovedQuestionRubric {
 }
 
 export interface QuestionFinalizationContext {
+  languageCapture?: { locale: string; configRevision: number };
+  cachedAssessment?: QuestionScoreResult;
   workingInsightId: string;
   workingUpdatedAt: Date;
+  workingRevision?: string;
   tenantId: string;
   userId: string;
   surveyWindowId: string;
@@ -31,6 +37,7 @@ export interface QuestionFinalizationContext {
    * (GC round 3 CAP-3). Without it the meaning never becomes a final insight.
    */
   shownStatementReceipt: boolean;
+  reportAdmissionProof?: PulseReportAdmissionInput[];
 }
 
 export type SafeSignalDirection = 'adverse' | 'mixed' | 'favorable';
@@ -59,10 +66,15 @@ export interface QuestionScorerPort {
 }
 
 export interface QuestionDeidentifierPort {
-  deidentify(input: { semanticSummary: string; attempt: number }): Promise<string>;
+  deidentify(input: { semanticSummary: string; attempt: number; locale?: string }): Promise<string>;
+  reviewDeidentification?(input: { semanticSummary: string; candidate: string; locale: string }): Promise<boolean>;
+  readonly proseModelId?: string;
+  readonly prosePromptVersion?: string;
 }
 
 export interface FinalQuestionInsight {
+  proseProvenance?: PulseProseProvenance;
+  summarySupport?: 'deidentified_employee_statement' | 'generalized_signal';
   tenantId: string;
   userId: string;
   surveyWindowId: string;
@@ -86,9 +98,12 @@ export interface FinalQuestionInsight {
   scoredAt: Date;
 }
 
+export type QuestionFinalizationScope = 'native_only' | 'legacy_only';
+
 export interface QuestionFinalizationRepositoryPort {
-  listPendingConfirmedUsers(): Promise<Array<{ tenantId: string; userId: string }>>;
-  listPendingConfirmedQuestions(input: { tenantId: string; userId: string }): Promise<Array<{
+  cacheAssessment?(input: { context: QuestionFinalizationContext; assessment: QuestionScoreResult }): Promise<QuestionScoreResult | null>;
+  listPendingConfirmedUsers(input?: { scope?: QuestionFinalizationScope }): Promise<Array<{ tenantId: string; userId: string }>>;
+  listPendingConfirmedQuestions(input: { tenantId: string; userId: string; scope?: QuestionFinalizationScope }): Promise<Array<{
     surveyWindowId: string; surveyQuestionId: string;
   }>>;
   loadConfirmedQuestion(input: { tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId: string }):
@@ -98,6 +113,7 @@ export interface QuestionFinalizationRepositoryPort {
     final: FinalQuestionInsight;
     workingInsightId: string;
     expectedWorkingUpdatedAt: Date;
+    expectedWorkingRevision?: string;
   }): Promise<'finalized' | 'already_finalized' | 'stale'>;
 }
 
@@ -106,9 +122,10 @@ export class FinalizeQuestionInsightUseCase {
     private readonly repository: QuestionFinalizationRepositoryPort,
     private readonly scorer: QuestionScorerPort,
     private readonly deidentifier: QuestionDeidentifierPort,
+    private readonly languages?: PulseLanguageRepositoryPort,
   ) {}
 
-  async executePending(input: { tenantId: string; userId: string }): Promise<number> {
+  async executePending(input: { tenantId: string; userId: string; scope?: QuestionFinalizationScope }): Promise<number> {
     const pending = await this.repository.listPendingConfirmedQuestions(input);
     let finalized = 0;
     let failed = false;
@@ -134,6 +151,7 @@ export class FinalizeQuestionInsightUseCase {
     const context = await this.repository.loadConfirmedQuestion(input);
     if (context === 'already_finalized') return 'already_finalized';
     if (!context) return 'stale';
+    if (context.reportAdmissionProof?.some((proof) => evaluatePulseReportAdmission(proof) !== 'allowed')) return 'stale';
     if (!isApprovedQuestionRubric(context.rubric)) throw new Error('approved_question_rubric_missing');
     if (!context.confirmedSemanticSummary.trim()) throw new Error('confirmed_question_meaning_missing');
     if (!context.scoringPolicyVersion.trim()) throw new Error('bound_scoring_policy_missing');
@@ -141,16 +159,22 @@ export class FinalizeQuestionInsightUseCase {
     // Configuration faults above stay loud; a missing receipt is a stale, unreportable row.
     if (!context.shownStatementReceipt) return 'stale';
 
-    const assessment = await this.scorer.scoreConfirmedMeaning({
+    const locale = context.languageCapture?.locale ?? 'en';
+    let assessment = context.cachedAssessment ?? await this.scorer.scoreConfirmedMeaning({
       semanticSummary: context.confirmedSemanticSummary,
       rubric: context.rubric,
       questionId: context.surveyQuestionId,
       scoringPolicyVersion: context.scoringPolicyVersion,
     });
     if (!isValidAssessment(assessment)) throw new Error('question_score_invalid');
+    if (!context.cachedAssessment && this.repository.cacheAssessment) {
+      const cached = await this.repository.cacheAssessment({ context, assessment });
+      if (!cached) return 'stale';
+      assessment = cached;
+    }
     const privacyIdentifiers = [
       ...context.knownIdentifiers,
-      ...extractPrivateIdentifiersFromSource(context.confirmedSemanticSummary),
+      ...extractPrivateIdentifiersFromSource(context.confirmedSemanticSummary, locale),
     ];
 
     let acceptedSummary: string | null = null;
@@ -160,6 +184,7 @@ export class FinalizeQuestionInsightUseCase {
         candidate = await this.deidentifier.deidentify({
           semanticSummary: context.confirmedSemanticSummary,
           attempt,
+          locale,
         });
       } catch {
         continue;
@@ -168,17 +193,21 @@ export class FinalizeQuestionInsightUseCase {
         text: candidate,
         knownIdentifiers: privacyIdentifiers,
         sourceMessageIds: context.sourceMessageIds,
-      }).status === 'accepted') {
+      }).status === 'accepted' && (!this.deidentifier.reviewDeidentification || await this.deidentifier.reviewDeidentification({ semanticSummary: context.confirmedSemanticSummary, candidate, locale }))) {
         acceptedSummary = candidate.trim();
         break;
       }
     }
+    let generalized = false;
     if (!acceptedSummary) {
-      acceptedSummary = [
+      generalized = true;
+      const resource = this.languages ? await this.languages.read(locale, 'safe_signal') : null;
+      if (this.languages && !resource) throw new PulseLanguageUnavailable(locale, 'safe_signal');
+      acceptedSummary = (resource ? [resource.texts['generalized']!] : [
         safeFallback(assessment),
         'A generalized work experience signal was identified.',
         'A generalized signal was identified.',
-      ].find((candidate) => evaluateQuestionDeidentification({
+      ]).find((candidate) => evaluateQuestionDeidentification({
         text: candidate,
         knownIdentifiers: privacyIdentifiers,
         sourceMessageIds: context.sourceMessageIds,
@@ -197,7 +226,9 @@ export class FinalizeQuestionInsightUseCase {
     return this.repository.persistFinalAndPurge({
       workingInsightId: context.workingInsightId,
       expectedWorkingUpdatedAt: context.workingUpdatedAt,
+      expectedWorkingRevision: context.workingRevision,
       final: {
+      proseProvenance: { locale, configRevision: context.languageCapture?.configRevision ?? 0, modelId: generalized ? 'reviewed-resource' : this.deidentifier.proseModelId ?? 'legacy-adapter', promptVersion: generalized ? PULSE_COPY_VERSION : this.deidentifier.prosePromptVersion ?? 'legacy-adapter', languagePolicyVersion: PULSE_LANGUAGE_POLICY, resourceVersion: PULSE_COPY_VERSION },
       tenantId: context.tenantId,
       userId: context.userId,
       surveyWindowId: context.surveyWindowId,
@@ -217,6 +248,7 @@ export class FinalizeQuestionInsightUseCase {
       modelId: assessment.modelId,
       promptVersion: assessment.promptVersion,
       privacyPolicyVersion: privacyDecision.policyVersion,
+      summarySupport:generalized?'generalized_signal':'deidentified_employee_statement',
       confirmedAt: context.confirmedAt,
       scoredAt: input.now ?? new Date(),
       },
@@ -241,21 +273,21 @@ function safeFallback(value: QuestionScoreResult): string {
   return `A ${value.severity} ${value.direction} signal related to ${category} was identified.`;
 }
 
-function extractPrivateIdentifiersFromSource(text: string): string[] {
+function extractPrivateIdentifiersFromSource(text: string, locale = 'en'): string[] {
   const identifiers = new Set<string>();
   const genericSentenceOpeners = new Set([
     'The', 'This', 'There', 'Employee', 'Growth', 'Autonomy',
     'Belonging', 'Purpose', 'Engagement', 'Work', 'Workload', 'Team',
   ]);
-  for (const match of text.matchAll(/(?:^|[.!?]\s+)(\p{Lu}[\p{Ll}\p{M}]{2,})\s+(\p{Lu}[\p{Ll}\p{M}]{2,})(?=\s|[,.!?;:]|$)/gu)) {
+  if (!locale.startsWith('de')) for (const match of text.matchAll(/(?:^|[.!?]\s+)(\p{Lu}[\p{Ll}\p{M}]{2,})\s+(\p{Lu}[\p{Ll}\p{M}]{2,})(?=\s|[,.!?;:]|$)/gu)) {
     if (genericSentenceOpeners.has(match[1]!)) continue;
     identifiers.add(match[1]!);
     identifiers.add(match[2]!);
   }
-  for (const match of text.matchAll(/(?:^|[.!?]\s+)(\p{Lu}[\p{Ll}\p{M}]{2,})\s+\p{Ll}/gu)) {
+  if (!locale.startsWith('de')) for (const match of text.matchAll(/(?:^|[.!?]\s+)(\p{Lu}[\p{Ll}\p{M}]{2,})\s+\p{Ll}/gu)) {
     if (!genericSentenceOpeners.has(match[1]!)) identifiers.add(match[1]!);
   }
-  const labeledName = /(?:^|[^\p{L}\p{N}])(?:manager|teammate|colleague|team|project|customer|client|account|менеджер|коллега|команда|проект|клиент|menedżer|kolega|koleżanka|zespół|projekt|klient|konto|колега|проєкт|клієнт)\s+/giu;
+  const labeledName = /(?:^|[^\p{L}\p{N}])(?:manager|teammate|colleague|team|project|customer|client|account|Kunde|Kundin|Auftraggeber|Konto|Vorgesetzte|Vorgesetzter|Kollege|Kollegin|менеджер|коллега|команда|проект|клиент|menedżer|kolega|koleżanka|zespół|projekt|klient|konto|колега|проєкт|клієнт)\s+/giu;
   const properName = /^(\p{Lu}[\p{L}\p{N}_-]{2,}(?:\s+\p{Lu}[\p{L}\p{N}_-]{2,}){0,2})/u;
   for (const match of text.matchAll(labeledName)) {
     const name = properName.exec(text.slice(match.index + match[0].length));
@@ -264,7 +296,7 @@ function extractPrivateIdentifiersFromSource(text: string): string[] {
   }
   // Capitalized words inside a sentence can identify a person or named entity
   // even when the employee did not use a role, project, or team label.
-  for (const match of text.matchAll(/\p{Lu}[\p{L}\p{N}_-]{2,}/gu)) {
+  if (!locale.startsWith('de')) for (const match of text.matchAll(/\p{Lu}[\p{L}\p{N}_-]{2,}/gu)) {
     const preceding = text.slice(0, match.index).trimEnd();
     if (preceding && !/[.!?]\s*$/u.test(preceding)) identifiers.add(match[0]);
   }

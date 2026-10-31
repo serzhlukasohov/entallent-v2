@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { UserDataController } from './user-data.controller';
 
 const USER_ID = '9d1e0163-6d53-4713-bd24-254690cc5090';
@@ -87,12 +89,7 @@ describe('UserDataController GDPR privacy regression', () => {
     const controller = new UserDataController(
       {
         client: {
-          update: vi.fn(() => ({
-            set: vi.fn((value: unknown) => {
-              sets.push(value);
-              return { where: vi.fn(async () => []) };
-            }),
-          })),
+          transaction:vi.fn(async (run:(tx:unknown)=>Promise<unknown>)=>run({execute:vi.fn().mockResolvedValue([]),update:vi.fn(()=>({set:vi.fn((value:unknown)=>{sets.push(value);return {where:vi.fn(async()=>[])};})}))})),
         },
       } as never,
       auditLog as never,
@@ -111,7 +108,7 @@ describe('UserDataController GDPR privacy regression', () => {
       resourceId: USER_ID,
     }));
     expect(sets).toEqual([
-      expect.objectContaining({ text: '[deleted]', normalizedText: null, deletedAt: expect.any(Date) }),
+      expect.objectContaining({ text: '[deleted]', normalizedText: null, metadata: {}, deletedAt: expect.any(SQL) }),
       expect.objectContaining({ status: 'deleted', content: '[deleted]', updatedAt: expect.any(Date) }),
       expect.objectContaining({
         title: '[deleted]',
@@ -135,6 +132,9 @@ describe('UserDataController GDPR privacy regression', () => {
         updatedAt: expect.any(Date),
       }),
     ]);
+    const erased = sets[0] as { deletedAt: SQL };
+    const dialect = new PgDialect();
+    expect(dialect.sqlToQuery(erased.deletedAt).sql).toContain('coalesce(');
   });
 });
 

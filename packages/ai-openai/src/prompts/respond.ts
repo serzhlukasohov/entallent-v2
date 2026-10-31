@@ -71,7 +71,7 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
     : '';
 
   const checkInProbe = context.proactiveCheckIn?.probeQuestion;
-  const numericCheckInProbe = checkInProbe?.responseType === 'numeric_0_10';
+  const numericCheckInProbe = checkInProbe?.responseType === 'numeric_0_10' || checkInProbe?.responseType === 'numeric_1_10_integer';
   const checkInOpening = context.proactiveCheckIn?.afterUserStart
     ? `\n${context.userName} just agreed to start the conversation after your introduction. Open it now.
 
@@ -91,9 +91,9 @@ How to open:
   const checkInHint = context.proactiveCheckIn
     ? `${checkInOpening}${checkInProbe ? numericCheckInProbe ? `
 
-Ask exactly ONE direct question that requests an explicit rating from 0 to 10 for this topic:
+Ask exactly ONE direct question that requests an explicit rating from ${context.surveyProbeQuestion?.responseType === 'numeric_1_10_integer' || checkInProbe?.responseType === 'numeric_1_10_integer' ? '1' : '0'} to 10 for this topic:
 ${checkInProbe.probeStrategies.map(s => `• ${s}`).join('\n')}
-The 0–10 question must be the only question in the message. Keep it human and concise; never mention surveys, HR, assessment mechanics, or internal scoring.
+The numeric question must be the only question in the message. Keep it human and concise; never mention surveys, HR, assessment mechanics, or internal scoring.
 Set "containsSurveyProbe": true and "surveyProbeQuestionId": "${checkInProbe.id}".` : `
 
 There is a territory you quietly care about learning over time:
@@ -119,10 +119,10 @@ Ask NOTHING else. Do not raise a new topic. Do not include any survey probe or f
     : '';
 
   const probeHint = context.surveyProbeQuestion && !context.proactiveCheckIn && !topicQuestionHint
-    ? context.surveyProbeQuestion.responseType === 'numeric_0_10'
-      ? `\nAsk exactly ONE direct question that requests an explicit rating from 0 to 10 for this topic:
+    ? context.surveyProbeQuestion.responseType === 'numeric_0_10' || context.surveyProbeQuestion.responseType === 'numeric_1_10_integer'
+      ? `\nAsk exactly ONE direct question that requests an explicit rating from ${context.surveyProbeQuestion?.responseType === 'numeric_1_10_integer' || checkInProbe?.responseType === 'numeric_1_10_integer' ? '1' : '0'} to 10 for this topic:
 ${context.surveyProbeQuestion.probeStrategies.map(s => `• ${s}`).join('\n')}
-The 0–10 question must be the only question in the message. Keep it human and concise; never mention surveys, HR, assessment mechanics, or internal scoring.
+The numeric question must be the only question in the message. Keep it human and concise; never mention surveys, HR, assessment mechanics, or internal scoring.
 Set "containsSurveyProbe": true and "surveyProbeQuestionId": "${context.surveyProbeQuestion.id}".`
       : `\nOptional — a topic worth exploring when the moment is right:
 ${context.surveyProbeQuestion.probeStrategies.map(s => `• ${s}`).join('\n')}
@@ -476,6 +476,11 @@ function buildReplyPlanBlock(
   const correctionCarryover = plan.correctionCarryover
     ? '\nRecent-correction contract: the employee rejected a prior frame in the recent conversation. Follow the latest employee request directly. Do not revive, offer, or ask about topics from before that correction unless the latest employee message explicitly raises them again.'
     : '';
+  const rightsMenu = plan.reportingRightsRequest === 'open_menu'
+    ? '\nReporting-rights contract (hard contract): buttons to withdraw reporting permission fully or for chosen topics are attached below this reply. Briefly say they can use the buttons; nothing changes until they press Confirm. Do not claim that anything was withdrawn, stopped, or deleted.'
+    : plan.reportingRightsRequest === 'already_withdrawn'
+      ? '\nReporting-rights contract (hard contract): the employee has already withdrawn all reporting permission, so no buttons are attached. Briefly say that their pulse insights are no longer used in reports and nothing more is needed. Do not mention buttons or offer another withdrawal.'
+      : '';
   const pause = !pauseTurn
     ? ''
     : plan.dialogueAct === 'acknowledgement'
@@ -488,7 +493,7 @@ function buildReplyPlanBlock(
 
   return `\nReply plan (typed policy controls the response move, pacing, and limits; the latest employee message in the transcript is authoritative for meaning):
   - dialogueAct: ${plan.dialogueAct}
-  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${resolvedDetails}${answeredDetails}${forbiddenMoves}${evidenceBoundary}${brevity}${social}${emotionalSupport}${request}${offerDelivery}${offerLimit}${format}${correction}${correctionCarryover}${pause}
+  - responseMove: ${plan.responseMove}${substance}${anchor}${memoryAnchors}${requiredGrounding}${memoryUse}${questionPolicy}${resolvedDetails}${answeredDetails}${forbiddenMoves}${evidenceBoundary}${brevity}${social}${emotionalSupport}${request}${offerDelivery}${offerLimit}${format}${rightsMenu}${correction}${correctionCarryover}${pause}
   `;
 }
 

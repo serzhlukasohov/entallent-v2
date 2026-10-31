@@ -130,6 +130,26 @@ function makePulseService(): PulseBacklogService {
 const BASE_INPUT = { conversationId: 'c-1', userId: 'u-1', tenantId: 't-1', inboundMessageId: 'm-1' };
 
 describe('SurveyEvidenceExtractionUseCase', () => {
+  it('applies surviving prepared questions after partial permission withdrawal during evaluation', async () => {
+    const ai = makeAi('covered'); const survey = makeSurveyRepo('covered');
+    vi.mocked(survey.findQuestionsForWindow).mockResolvedValue([makeQuestion('q-1'), makeQuestion('q-2')]);
+    vi.mocked(ai.evaluateSurveyEvidence).mockResolvedValue({ candidateQuestionIds: ['q-1', 'q-2'], evidence: ['q-1', 'q-2'].map((questionId) => ({ questionId, evidenceSummary: 'Synthetic sufficient meaning', polarity: 'positive' as const, strength: 0.8, completeness: 0.8, confidence: 0.9, assessmentShouldRemainUnknown: false, driverCaptured: true, followUpProbeNeeded: false, thresholdReached: true })) });
+    let excluded = false;
+    const capture = { getWindowMode: vi.fn().mockResolvedValue('v2'), captureMeaning: vi.fn().mockResolvedValue('captured'), collectionAdmission: vi.fn(async (input: { surveyQuestionId?: string }) => excluded && input.surveyQuestionId === 'q-1' ? 'lineage_excluded' : 'allowed') } as unknown as QuestionWorkingCapturePort;
+    const useCase = new SurveyEvidenceExtractionUseCase(ai, makeConversationRepo(), survey, undefined, capture);
+    const prepared = await useCase.prepare(BASE_INPUT); expect(prepared).not.toBeNull(); excluded = true;
+    await expect(useCase.apply(BASE_INPUT, prepared!)).resolves.toBeUndefined();
+    expect(vi.mocked(capture.captureMeaning).mock.calls.map(([input]) => input.surveyQuestionId)).toEqual(['q-2']);
+  });
+
+  it('treats typed stopped collection as a benign skip before model evaluation', async () => {
+    const ai = makeAi('covered'); const survey = makeSurveyRepo('covered');
+    vi.mocked(survey.findOrCreateActiveWindow).mockResolvedValue({ kind: 'collection_unavailable', reason: 'stopped' });
+    await expect(new SurveyEvidenceExtractionUseCase(ai, makeConversationRepo(), survey).execute(BASE_INPUT)).resolves.toBeUndefined();
+    expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();
+    expect(survey.saveEvidence).not.toHaveBeenCalled();
+  });
+
   it('rejects another employee in the queued scope before reading history or calling AI', async () => {
     const ai = makeAi('covered');
     const conversationRepo = makeConversationRepo();
@@ -987,4 +1007,11 @@ describe('SurveyEvidenceExtractionUseCase', () => {
 
     expect(surveyRepo.upsertGroupState).not.toHaveBeenCalled();
   });
+});
+
+it('never evaluates or applies literal1-10 questions as semantic evidence or legacy numeric scores',async()=>{
+  const ai=makeAi('scored',9),survey=makeSurveyRepo('scored');
+  vi.mocked(survey.findQuestionsForWindow).mockResolvedValue([makeQuestion('q-1','engagement',{responseType:'numeric_1_10_integer',version:'engagement-1-10-v1'})]);
+  await new SurveyEvidenceExtractionUseCase(ai,makeConversationRepo(),survey).execute(BASE_INPUT);
+  expect(ai.evaluateSurveyEvidence).not.toHaveBeenCalled();expect(survey.upsertAssessment).not.toHaveBeenCalled();expect(survey.upsertGroupState).not.toHaveBeenCalled();
 });

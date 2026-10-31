@@ -1,3 +1,4 @@
+import { ReportConfigurationModule } from '../report-configuration/report-configuration.module';
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { QUEUE_NAMES } from '../queue/queue.module';
@@ -6,7 +7,7 @@ import { BullOnboardingReminderRecalculator } from './onboarding-reminder-recalc
 import { OnboardingRestartService } from './onboarding-restart.service';
 
 @Module({
-  imports: [BullModule.registerQueue({ name: QUEUE_NAMES.ONBOARDING_REMINDER })],
+  imports: [ReportConfigurationModule, BullModule.registerQueue({ name: QUEUE_NAMES.ONBOARDING_REMINDER })],
   providers: [
     CompanyCalendarService,
     OnboardingRestartService,

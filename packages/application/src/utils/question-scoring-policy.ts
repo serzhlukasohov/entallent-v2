@@ -1,3 +1,4 @@
+import { ENGAGEMENT_ANSWER_CONTRACT, ENGAGEMENT_QUESTIONS, ENGAGEMENT_RESPONSE_TYPE } from '@entalent/contracts';
 import { createHash } from 'node:crypto';
 import type { ApprovedQuestionRubric } from '../use-cases/finalize-question-insight.use-case';
 
@@ -96,4 +97,21 @@ export function hasLegacyV2ScoringPolicy(
     && new Set(openEnded.map((question) => question.stableKey)).size === 12
     && openEnded.every((question) => expected[question.stableKey] === question.questionGroup
       && isApprovedQuestionRubric(entries[question.stableKey]));
+}
+
+/** The new catalog is exactly canonical V2 plus the declared literal questions. */
+export function hasCompleteReportEngagementPolicy(
+  questions: readonly { id?: string; stableKey: string; responseType: string; questionGroup: string; title?: string; canonicalMeaning?: string; version?: string }[],
+  rubrics: unknown,
+  declared?: readonly { surveyQuestionId: string; stableKey: string; questionVersion: string; contractVersion: string }[],
+): boolean {
+  const open = questions.filter((q) => q.responseType === 'open_ended');
+  const numeric = questions.filter((q) => q.responseType === ENGAGEMENT_RESPONSE_TYPE);
+  return declared?.length === 3 && new Set(declared.map((q) => q.surveyQuestionId)).size === 3
+    && numeric.every((q) => declared.some((binding) => binding.surveyQuestionId === q.id && binding.stableKey === q.stableKey && binding.questionVersion === q.version && binding.contractVersion === ENGAGEMENT_ANSWER_CONTRACT))
+    && questions.length === 15 && hasCompleteV2ScoringPolicy(open, rubrics)
+    && numeric.length === 3 && new Set(numeric.map((q) => q.stableKey)).size === 3
+    && ENGAGEMENT_QUESTIONS.every((declared) => numeric.some((q) => q.stableKey === declared.stableKey
+      && q.questionGroup === 'engagement' && q.version === ENGAGEMENT_ANSWER_CONTRACT
+      && q.title === declared.title && q.canonicalMeaning === declared.canonicalMeaning));
 }

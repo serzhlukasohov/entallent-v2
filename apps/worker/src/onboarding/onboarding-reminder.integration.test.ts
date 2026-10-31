@@ -1,3 +1,4 @@
+import { DatabaseService } from '../database/database.service';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
@@ -45,7 +46,8 @@ describe.skipIf(!localDatabase)('onboarding reminder against PostgreSQL', () => 
     await db.insert(onboardingStates).values({ tenantId, personId, track: s.track, introStatus: 'delivered',
       participation: 'deferred', reminderStatus: 'scheduled', reminderOriginAt: new Date(due.getTime() - 3 * 86_400_000),
       reminderDueAt: due, introActionsMessageTs: '1.2' });
-    const dbService = { client: db } as never;
+    const dbService = new DatabaseService({ get: () => databaseUrl } as never);
+    (dbService as unknown as { _client: DbClient })._client = client;
     const effects = new OnboardingEffectsService(reminderQueue as never, {} as never, dbService, messageSendQueue as never, {} as never, {} as never);
     const onboarding = new OnboardingService(new OnboardingStateRepository(dbService), effects);
     processor = new OnboardingReminderProcessor(new OnboardingReminderRepository(dbService), onboarding, effects, reminderQueue as never);

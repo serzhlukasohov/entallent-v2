@@ -203,3 +203,13 @@ describe('onboarding signal classification', () => {
     expect(prompt.indexOf('ONBOARDING STATUS')).toBeLessThan(prompt.indexOf('LATEST EMPLOYEE MESSAGE TO CLASSIFY'));
   });
 });
+
+describe('RPT-09 reporting-rights classifier field', () => {
+  it('asks for the typed reportingRightsRequest in the user prompt without changing the system schema', () => {
+    const prompt = buildClassifyUserPrompt([{ role: 'user', content: 'Please stop using my answers in reports', timestamp: new Date() }], { userName: 'Sam' });
+    expect(prompt).toContain('--- REPORTING RIGHTS ---');
+    expect(prompt).toContain('"reportingRightsRequest": "open_menu" or "none"');
+    expect(prompt).toMatch(/never changes anything by itself/);
+    expect(buildClassifySystemPrompt()).not.toContain('reportingRightsRequest');
+  });
+});

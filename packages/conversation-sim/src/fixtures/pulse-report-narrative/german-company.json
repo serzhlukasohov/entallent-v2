@@ -1,0 +1,9 @@
+{
+ "locale":"de-DE","personalLocale":"uk-UA","sources":["Ownership is unclear.","Працівники цінують підтримку навчання."],
+ "labels":{
+  "title_tl_intermediate":"Vorläufiger Bericht für die Teamleitung","title_tl_final":"Abschlussbericht für die Teamleitung","title_manager_intermediate":"Vorläufiger Bericht für die Führungskraft","title_manager_final":"Abschlussbericht für die Führungskraft","title_insufficient_final":"Abschlussbericht",
+  "index_autonomy":"Autonomie","index_growth":"Entwicklung","index_purpose":"Sinn","index_belonging":"Zugehörigkeit","engagement":"Engagement","period":"Zeitraum","overall_scope":"Gesamtbereich","teams_management":"Teams im Verantwortungsbereich","explanation":"Einordnung","main_focus":"Schwerpunkt","actions":"Maßnahmen",
+  "state_healthy":"Gesund","state_attention":"Aufmerksamkeit erforderlich","state_critical":"Kritisch","direction_improving":"Verbessert","direction_stable":"Unverändert","direction_declining":"Verschlechtert","baseline_established":"Ausgangsbasis festgelegt",
+  "preliminary_notice":"Diese Ergebnisse und Empfehlungen sind vorläufig. Der Abschlussbericht erfolgt am letzten Arbeitstag des Zyklus.","insufficient_data":"Unzureichende Daten","none_supported_problem":"Die vorhandenen Hinweise belegen keinen konkreten aktuellen Schwerpunkt.","none_supported_action":"Die vorhandenen Hinweise stützen keine aktuelle Maßnahme.","composition_caveat":"Änderungen der Zusammensetzung können den Vergleich beeinflussen.","part":"Teil","continued":"Fortsetzung"
+ }
+}

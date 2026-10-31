@@ -4,8 +4,10 @@ import type { AdminV2PilotCohortState } from './admin-v2-pilot';
 export interface AdminV2PilotTeamSignal {
   stableKey: string;
   title: string;
+  titleDisplay?: import('./pulse-language').DefinitionDisplay;
   group: string;
   summary: string;
+  display?: import('./pulse-language').AnalyticalDisplay;
   outcome: string;
   score: number | null;
   direction: string;
@@ -14,6 +16,7 @@ export interface AdminV2PilotTeamSignal {
 }
 
 export interface AdminV2PilotTeamSignalsResponse {
+  companyLanguage?: import('./pulse-language').PulseLanguageReadMetadata;
   cohortId: string;
   periodStart: string;
   periodEnd: string;
@@ -33,6 +36,7 @@ export interface AdminV2PilotQaTeamSignal extends AdminV2PilotTeamSignal {
 
 /** QA-only envelope for {@link AdminV2PilotQaTeamSignal}; same cohort, population and order as Team Signals. */
 export interface AdminV2PilotQaTeamSignalsResponse {
+  companyLanguage?: import('./pulse-language').PulseLanguageReadMetadata;
   cohortId: string;
   periodStart: string;
   periodEnd: string;

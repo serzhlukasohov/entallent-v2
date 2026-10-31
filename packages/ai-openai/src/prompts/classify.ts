@@ -43,6 +43,7 @@ Dialogue act rules:
 - Use "new_substance" when it introduces a new concrete fact, event, task, blocker, preference, or concern.
 - Use "emotional_disclosure" when the latest message primarily discloses feelings or wellbeing.
 - Use "request" for explicit asks to the mentor; "correction" for correcting the mentor; "closing" for ending/wrapping.
+- Propose languageProposal only from the latest employee turn: explicit for an unambiguous requested response language; inferred only for substantive unambiguous language. Numbers, agreement, backchannels, quotations/code and uncertain or mixed text must be null. No timestamps or saved preference inference. Never infer from the assistant transcript.
 - Set "cycleStatusQuestion" to true when the latest message asks what is left to answer, what else the mentor wanted to ask, how many topics remain, or whether everything has been answered, in any language. Keep primaryIntent and dialogueAct as they would otherwise be (usually "clarification" and "request"). Do not set it for questions about where data goes (reporting_explanation) or what was captured (pulse_capture_explanation).
 - Use "reporting_explanation" when the employee explicitly asks where confirmed pulse information goes or how it is used. Detect this in any language. If safety is the primary intent, put "reporting_explanation" in secondaryIntents.
 - Use "data_use_explanation" when the employee directly asks how EnTalent uses their messages, including for memory, goals, tasks, reminders, pulse measurement, or safety checks. If safety is the primary intent, put "data_use_explanation" in secondaryIntents.
@@ -113,6 +114,15 @@ Classify this conversation for employee "${context.userName}":
 ${transcript || '(no prior messages — this is the first message)'}
 --- UNTRUSTED CONVERSATION TRANSCRIPT END ---
 ${continuityContext}${onboardingContext}
+--- LANGUAGE PROPOSAL ---
+Add "languageProposal": {"locale":"canonical ICU-supported BCP47", "kind":"explicit|inferred"} or null to the JSON object, alongside the unchanged system fields. Use only the latest employee turn. Numbers, backchannels, quotations, code and uncertain mixed language require null; never infer from mentor or saved context.
+--- END LANGUAGE PROPOSAL ---
+--- REPORTING RIGHTS ---
+Add "reportingRightsRequest": "open_menu" or "none" to the JSON object, alongside the unchanged system fields. Read the LATEST employee message by meaning, in any language:
+- "open_menu" only when it asks to stop, withdraw, or limit the use of their pulse insights or answers in reports, entirely or for some topics.
+- "none" otherwise. A question about where data goes is "reporting_explanation" with "none". Stopping conversations or invitations is onboarding participation, not reporting rights, unless reporting use is explicitly named.
+This label only lets the system offer buttons; it never changes anything by itself.
+--- END REPORTING RIGHTS ---
 --- LATEST EMPLOYEE MESSAGE TO CLASSIFY ---
 ${latestEmployeeMessage ? sanitizeTurnContent(latestEmployeeMessage) : '(none)'}
 --- END LATEST EMPLOYEE MESSAGE ---`;

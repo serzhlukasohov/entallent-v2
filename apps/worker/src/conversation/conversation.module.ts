@@ -31,6 +31,7 @@ import { SurveyRepository } from '../survey/repositories/survey.repository';
 import { SurveyModule } from '../survey/survey.module';
 import { QuestionInsightRepository } from '../survey/repositories/question-insight.repository';
 import { DatabaseService } from '../database/database.service';
+import { ReportingRightsRepository } from '../survey/repositories/reporting-rights.repository';
 
 // Onboarding degradations are logged, never thrown into the reply path.
 const nestOrchestratorLogger = new Logger(ConversationOrchestrator.name);
@@ -81,6 +82,7 @@ const orchestratorLogger = {
         questionInsightRepo: QuestionInsightRepository,
         db: DatabaseService,
         onboardingTurn: OnboardingService,
+        reportingRights: ReportingRightsRepository,
       ) => new ConversationOrchestrator(
         repo,
         ai,
@@ -98,6 +100,7 @@ const orchestratorLogger = {
         { run: (callback) => db.withTransaction(callback) },
         onboardingTurn,
         orchestratorLogger,
+        reportingRights,
       ),
       inject: [
         ConversationRepository,
@@ -115,6 +118,7 @@ const orchestratorLogger = {
         QuestionInsightRepository,
         DatabaseService,
         OnboardingService,
+        ReportingRightsRepository,
       ],
     },
     {

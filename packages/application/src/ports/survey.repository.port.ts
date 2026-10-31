@@ -1,3 +1,4 @@
+import type { PulseReportCollectionUnavailable, PulseReportCycleSnapshot, PulseReportScopeMode } from './pulse-report-scope.repository.port';
 import type {
   SurveyQuestionRecord,
   SurveyWindowRecord,
@@ -150,6 +151,7 @@ export interface SurveyTeamRecord {
 }
 
 export interface OpenSurveyReportingCycleParams {
+  scopeMode?: PulseReportScopeMode;
   tenantId: string;
   surveyDefinitionId: string;
   periodStart: Date;
@@ -170,7 +172,8 @@ export interface ExpireTemporaryGroupStatesForClosedCohortsParams {
 }
 
 export interface SurveyRepositoryPort {
-  openReportingCycle(params: OpenSurveyReportingCycleParams): Promise<SurveyReportingCohortRecord[]>;
+  findNativeWindowForInbound?(input:{tenantId:string;userId:string;inboundMessageId:string},create:boolean):Promise<SurveyWindowRecord|null|undefined>;
+  openReportingCycle(params: OpenSurveyReportingCycleParams): Promise<SurveyReportingCohortRecord[] | PulseReportCycleSnapshot>;
   findReportingCohortsReadyForFinalReports(
     params: FindReportingCohortsReadyForFinalReportsParams,
   ): Promise<SurveyReportingCohortRecord[]>;
@@ -186,7 +189,7 @@ export interface SurveyRepositoryPort {
   /** Count timely replies still awaiting conversation processing after the cutoff grace period. */
   countOverdueQuestionConfirmationReplies(now: Date): Promise<number>;
   /** Find active window or auto-create one from the active survey definition. Returns null if no definition exists for the tenant. */
-  findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | null>;
+  findOrCreateActiveWindow(userId: string, tenantId: string): Promise<SurveyWindowRecord | PulseReportCollectionUnavailable | null>;
   findQuestionsForWindow(windowId: string): Promise<SurveyQuestionRecord[]>;
   saveEvidence(params: SaveSurveyEvidenceParams): Promise<SurveyEvidenceRecord>;
   markEvidenceSuperseded(evidenceIds: string[]): Promise<void>;

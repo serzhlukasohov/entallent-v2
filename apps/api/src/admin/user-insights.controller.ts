@@ -1,4 +1,5 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { CompanyLanguageReadService, definitionDisplay } from './company-language-read.service';
+import { BadRequestException, Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { Env } from '@entalent/config';
@@ -22,14 +23,19 @@ export class UserInsightsController {
   constructor(
     private readonly db: DatabaseService,
     private readonly config: ConfigService<Env, true>,
+    private readonly languages: CompanyLanguageReadService = new CompanyLanguageReadService(db),
   ) {}
 
   @Get()
   async getInsights(
     @Param('userId') userId: string,
-    @Query('tenantId') _tenantId?: string,
+    @Query('tenantId') tenantId?: string,
   ): Promise<UserInsightsResponse> {
     assertInternalDashboardEnabled(this.config);
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!tenantId || !uuid.test(tenantId) || !uuid.test(userId)) throw new BadRequestException('invalid_tenant_or_user');
+
+    const companyLanguage = await this.languages.read(tenantId);
 
     // 1. Find active window for this user
     const [window] = await this.db.client
@@ -39,11 +45,11 @@ export class UserInsightsController {
         definitionId: surveyWindows.surveyDefinitionId,
       })
       .from(surveyWindows)
-      .where(and(eq(surveyWindows.userId, userId), eq(surveyWindows.status, 'active')))
+      .where(and(eq(surveyWindows.userId, userId), eq(surveyWindows.tenantId, tenantId), eq(surveyWindows.status, 'active')))
       .limit(1);
 
     if (!window) {
-      return { userId, windowId: null, periodEnd: null, questions: [] };
+      return { userId, windowId: null, periodEnd: null, questions: [], companyLanguage };
     }
 
     // 2. All questions for this window's definition
@@ -110,6 +116,7 @@ export class UserInsightsController {
         questionId: q.id,
         stableKey: q.stableKey,
         title: q.title,
+        titleDisplay: definitionDisplay(companyLanguage, q.stableKey, q.title),
         canonicalMeaning: q.canonicalMeaning,
         group: q.group,
         displayOrder: q.displayOrder,
@@ -127,6 +134,7 @@ export class UserInsightsController {
 
     return {
       userId,
+      companyLanguage,
       windowId: window.id,
       periodEnd: window.periodEnd.toISOString(),
       questions: result,

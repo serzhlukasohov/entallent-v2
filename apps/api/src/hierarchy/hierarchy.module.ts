@@ -1,3 +1,4 @@
+import { ReportConfigurationModule } from '../report-configuration/report-configuration.module';
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { QUEUE_NAMES } from '../queue/queue.module';
@@ -16,7 +17,7 @@ import { HierarchyAdvisorScopeService } from './hierarchy-advisor-scope.service'
 import { HierarchyDeactivationService } from './hierarchy-deactivation.service';
 
 @Module({
-  imports: [CompanyAuthModule, BullModule.registerQueue({ name: QUEUE_NAMES.ONBOARDING_ACTION })],
+  imports: [ReportConfigurationModule, CompanyAuthModule, BullModule.registerQueue({ name: QUEUE_NAMES.ONBOARDING_ACTION })],
   controllers: [CompanySetupController, CompanySetupUiController],
   providers: [HierarchyDraftService, HierarchySlackLinkService, SlackDirectoryService, HierarchyRolloutService, CompanySetupReadService, HierarchyMutationService, HierarchyCapabilityService, HierarchyAdvisorScopeService, HierarchyDeactivationService, OnboardingEventPublisher],
   exports: [HierarchyDraftService, HierarchySlackLinkService, HierarchyRolloutService],

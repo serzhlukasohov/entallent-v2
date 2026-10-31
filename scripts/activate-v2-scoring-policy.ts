@@ -4,9 +4,9 @@ import { resolve } from 'node:path';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import {
   createDbClient, surveyCycleScoringPolicies, surveyDefinitions, surveyQuestions, surveyScoringPolicies,
-  surveyWindowScoringPolicies, surveyWindows,
+  surveyWindowScoringPolicies, surveyWindows, surveyEngagementContractQuestions, surveyEngagementCollectionContracts,
 } from '@entalent/database';
-import { hasCompleteV2ScoringPolicy } from '@entalent/application';
+import { hasCompleteV2ScoringPolicy, hasCompleteReportEngagementPolicy } from '@entalent/application';
 
 export interface ActivateV2ScoringPolicyConfig {
   databaseUrl: string;
@@ -61,11 +61,12 @@ export async function activateV2ScoringPolicy(config: ActivateV2ScoringPolicyCon
     const result = await client.db.transaction(async (tx) => {
       const [definition] = await tx.select().from(surveyDefinitions)
         .where(eq(surveyDefinitions.id, config.surveyDefinitionId)).limit(1);
-      if (!definition || definition.version !== 'v2-policy-1.0.0'
+      if (!definition || !['v2-policy-1.0.0', 'v2-report-engagement-1.0.0'].includes(definition.version)
         || definition.tenantId !== config.tenantId) {
         throw new Error('approved_v2_definition_required');
       }
       const questions = await tx.select({
+        id: surveyQuestions.id,
         stableKey: surveyQuestions.stableKey,
         responseType: surveyQuestions.responseType,
         questionGroup: surveyQuestions.questionGroup,
@@ -73,14 +74,16 @@ export async function activateV2ScoringPolicy(config: ActivateV2ScoringPolicyCon
         canonicalMeaning: surveyQuestions.canonicalMeaning,
         version: surveyQuestions.version,
       }).from(surveyQuestions).where(eq(surveyQuestions.surveyDefinitionId, config.surveyDefinitionId));
-      if (config.policyVersion !== '1.0.0' || !hasCompleteV2ScoringPolicy(questions, rubrics)) {
+      const contracts = definition.version === 'v2-report-engagement-1.0.0' ? await tx.select().from(surveyEngagementContractQuestions).where(eq(surveyEngagementContractQuestions.surveyDefinitionId, config.surveyDefinitionId)) : [];
+      const [collection] = definition.version === 'v2-report-engagement-1.0.0' ? await tx.select().from(surveyEngagementCollectionContracts).where(and(eq(surveyEngagementCollectionContracts.surveyDefinitionId, config.surveyDefinitionId), eq(surveyEngagementCollectionContracts.tenantId, config.tenantId))) : [];
+      if (config.policyVersion !== '1.0.0' || !(definition.version === 'v2-report-engagement-1.0.0' ? collection && hasCompleteReportEngagementPolicy(questions, rubrics, contracts) : hasCompleteV2ScoringPolicy(questions, rubrics))) {
         throw new Error('approved_question_rubrics_incomplete');
       }
       const [existingPolicy] = await tx.select().from(surveyScoringPolicies).where(and(
         eq(surveyScoringPolicies.tenantId, config.tenantId),
         eq(surveyScoringPolicies.version, config.policyVersion),
       )).limit(1);
-      if (existingPolicy && !hasCompleteV2ScoringPolicy(questions, existingPolicy.rubrics)) {
+      if (existingPolicy && !(definition.version === 'v2-report-engagement-1.0.0' ? collection && hasCompleteReportEngagementPolicy(questions, existingPolicy.rubrics, contracts) : hasCompleteV2ScoringPolicy(questions, existingPolicy.rubrics))) {
         throw new Error('scoring_policy_version_content_mismatch');
       }
       const policy = existingPolicy ?? (await tx.insert(surveyScoringPolicies).values({

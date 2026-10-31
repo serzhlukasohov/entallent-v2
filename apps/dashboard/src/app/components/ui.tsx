@@ -1,3 +1,4 @@
+import { CompanyText, CompanyLabel, CompanyProgressTrack } from '../company-language';
 import type { ReactNode } from 'react';
 import { draftStatusBadge, freshnessLabel, initials, type BadgeTone, type BadgeView } from '../v2-pilot-progress';
 
@@ -11,14 +12,14 @@ export function PageHeader({ title, subtitle, children }: { title: ReactNode; su
   );
 }
 
-export function Stat({ label, value, note }: { label: string; value: ReactNode; note?: string }) {
+export function Stat({ label, value, note }: { label: ReactNode; value: ReactNode; note?: ReactNode }) {
   // Sentence-length values read better at body size.
   const long = typeof value === 'string' && value.length > 12;
   return (
     <div className="stat">
       <div className="stat-label">{label}</div>
       <div className={long ? 'stat-value stat-value-text' : 'stat-value'}>{value}</div>
-      {note && <div className="stat-note">{note}</div>}
+      {note && <div className="stat-note">{typeof note === 'string' ? <CompanyLabel label={note} /> : note}</div>}
     </div>
   );
 }
@@ -28,7 +29,7 @@ export function Badge({ tone = 'neutral', children }: { tone?: BadgeTone; childr
 }
 
 export function ViewBadge({ badge }: { badge: BadgeView }) {
-  return <Badge tone={badge.tone}>{badge.label}</Badge>;
+  return <Badge tone={badge.tone}><CompanyLabel label={badge.label} /></Badge>;
 }
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
@@ -46,17 +47,9 @@ export function ProgressBar({ value, max, label }: { value: number; max: number;
   const percent = Math.round((ariaNow / ariaMax) * 100);
   return (
     <div className="progress">
-      <div
-        className="progress-track"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={ariaMax}
-        aria-valuenow={ariaNow}
-        aria-valuetext={`${value} / ${max}`}
-        aria-label={label}
-      >
+      <CompanyProgressTrack value={ariaNow} max={ariaMax} label={label}>
         <div className="progress-fill" style={{ width: `${percent}%` }} />
-      </div>
+      </CompanyProgressTrack>
       <span className="progress-label">{value} / {max}</span>
     </div>
   );
@@ -70,9 +63,9 @@ export function Initials({ name }: { name: string }) {
 export function Freshness({ checkedAt, href }: { checkedAt: (string | null | undefined)[]; href: string }) {
   return (
     <p className="freshness muted small">
-      {freshnessLabel(checkedAt)}
+      <CompanyLabel label={freshnessLabel(checkedAt)} />
       {' · '}
-      <a href={href}>Обновить</a>
+      <a href={href}><CompanyText k="ui.085" /></a>
     </p>
   );
 }
@@ -80,10 +73,10 @@ export function Freshness({ checkedAt, href }: { checkedAt: (string | null | und
 export function Legend() {
   return (
     <details className="legend card">
-      <summary>Как читать</summary>
+      <summary><CompanyText k="ui.086" /></summary>
       <div className="legend-body">
         <div>
-          <h4>Путь темы</h4>
+          <h4><CompanyText k="ui.087" /></h4>
           <div className="row">
             <ViewBadge badge={draftStatusBadge('collecting')} /><span aria-hidden="true">→</span>
             <ViewBadge badge={draftStatusBadge('pending_confirmation')} /><span aria-hidden="true">→</span>
@@ -91,35 +84,32 @@ export function Legend() {
             <ViewBadge badge={draftStatusBadge('scored')} />
           </div>
           <p className="muted small">
-            «Подтверждено» — участник согласился с текстом, итог ещё считается; «Итог оценён» — готов обезличенный итог с оценкой.
-          </p>
+            <CompanyText k="ui.088" /></p>
           <ul className="muted small">
-            <li><ViewBadge badge={draftStatusBadge('pending_clarification')} /> — бот переспрашивает участника.</li>
-            <li><ViewBadge badge={draftStatusBadge('declined')} /> — участник отказался обсуждать тему; черновик удалён.</li>
-            <li><ViewBadge badge={draftStatusBadge('reset')} /> — участник отверг весь Bundle; тема собирается заново.</li>
-            <li><ViewBadge badge={draftStatusBadge('no_data')} /> — записи по теме нет или цикл закрылся до подтверждения.</li>
-            <li><ViewBadge badge={draftStatusBadge('insufficient_evidence')} /> — итог есть, но оценки нет.</li>
+            <li><ViewBadge badge={draftStatusBadge('pending_clarification')} /> <CompanyText k="ui.089" /></li>
+            <li><ViewBadge badge={draftStatusBadge('declined')} /> <CompanyText k="ui.090" /></li>
+            <li><ViewBadge badge={draftStatusBadge('reset')} /> <CompanyText k="ui.091" /></li>
+            <li><ViewBadge badge={draftStatusBadge('no_data')} /> <CompanyText k="ui.092" /></li>
+            <li><ViewBadge badge={draftStatusBadge('insufficient_evidence')} /> <CompanyText k="ui.093" /></li>
           </ul>
         </div>
         <div>
-          <h4>Цвета сигналов</h4>
+          <h4><CompanyText k="ui.094" /></h4>
           <div className="row">
-            <Badge tone="success">Позитивно</Badge>
-            <Badge tone="warning">Смешанно</Badge>
-            <Badge tone="danger">Негативно</Badge>
-            <Badge tone="neutral">Нет оценки</Badge>
+            <Badge tone="success"><CompanyText k="ui.095" /></Badge>
+            <Badge tone="warning"><CompanyText k="ui.096" /></Badge>
+            <Badge tone="danger"><CompanyText k="ui.097" /></Badge>
+            <Badge tone="neutral"><CompanyText k="ui.098" /></Badge>
           </div>
         </div>
         <div>
-          <h4>Оценка</h4>
-          <p className="small">От 0 до 100: чем выше, тем лучше.</p>
+          <h4><CompanyText k="ui.099" /></h4>
+          <p className="small"><CompanyText k="ui.100" /></p>
         </div>
         <div>
-          <h4>Обезличено</h4>
+          <h4><CompanyText k="ui.101" /></h4>
           <p className="small">
-            Текст переписан без имён и узнаваемых деталей. Автор показан для проверки обезличивания:
-            сверьте итог с исходным диалогом.
-          </p>
+            <CompanyText k="ui.102" /></p>
         </div>
       </div>
     </details>

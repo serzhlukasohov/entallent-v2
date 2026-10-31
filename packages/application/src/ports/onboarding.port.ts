@@ -17,6 +17,8 @@ export interface OnboardingApplyResult {
 
 /** Post-commit side effects of onboarding transitions. Implementations must be idempotent per dedupeKey. */
 export interface OnboardingEffectsPort {
+  readShownIntroTrust?(input:{tenantId:string;personId:string;channelId:string;messageTs:string}):Promise<string|null>;
+  resolveLanguage?(tenantId: string, userId: string): Promise<import('./ai-provider.port').LanguagePolicy>;
   scheduleReminder(input: { tenantId: string; personId: string; dueAt: Date }): Promise<void>;
   /** Rewrites the intro message without buttons; resolves true only when the message was actually edited. Never throws. */
   replaceIntroActions(input: { tenantId: string; personId: string; channelId: string; messageTs: string; text: string }): Promise<boolean>;

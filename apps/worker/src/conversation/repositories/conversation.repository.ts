@@ -1,3 +1,6 @@
+import { canonicalCompanyLocale, PULSE_LANGUAGE_POLICY, type LanguageProposal } from '@entalent/contracts';
+import { resolveLanguagePolicy, type LanguagePolicy } from '@entalent/application';
+import { PulseLanguageRepository } from '../../survey/repositories/pulse-language.repository';
 import { Injectable } from '@nestjs/common';
 import { eq, and, desc, gte, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { channelAccounts, conversationDispatchIntents, conversationJobAdmissions, conversationJobReceipts, conversationMessageSendAttempts, conversationTurnEffects, conversations, messages, onboardingStates, orgOnboardingDeliveries, people, scheduledActions, surveyGroupStates, surveyReportingCohorts, surveyWindows, users } from '@entalent/database';
@@ -16,6 +19,68 @@ import { DatabaseService } from '../../database/database.service';
 export class ConversationRepository implements ConversationRepositoryPort {
   constructor(private readonly db: DatabaseService) {}
 
+  async resolvePersonalLanguage(input: { tenantId: string; userId: string; inboundMessageId?: string; proposal?: LanguageProposal | null }): Promise<LanguagePolicy> {
+    const resources = new PulseLanguageRepository(this.db);
+    return this.db.withTransaction(async () => {
+      const tx = this.db.client;
+      const rows = await tx.execute(sql`select locale,communication_preferences from users where id=${input.userId}::uuid and tenant_id=${input.tenantId}::uuid and deleted_at is null for update`) as unknown as { locale: string; communication_preferences: Record<string, unknown> }[];
+      const user = rows[0];
+      if (!user) throw new Error('language_subject_missing');
+      const saved = user.communication_preferences['pulseLanguage'] as { locale: string; kind: 'explicit' | 'inferred'; receivedAt?: string; inboundId?: string } | undefined;
+      const pending = user.communication_preferences['pulseLanguagePending'] as {locale:string;kind:'explicit'|'inferred';receivedAt?:string;inboundId?:string}|undefined;
+      let proposal = input.proposal ?? (pending?.receivedAt && pending.inboundId ? {locale:pending.locale,kind:pending.kind} : null);
+      let receipt: { received_at: string; id: string } | undefined;
+      if (!input.proposal && pending?.receivedAt && pending.inboundId) receipt={received_at:pending.receivedAt,id:pending.inboundId};
+      if (input.proposal && input.inboundMessageId) {
+        const inbound = await tx.execute(sql`select id,to_char(received_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') received_at from messages where id=${input.inboundMessageId}::uuid and tenant_id=${input.tenantId}::uuid and user_id=${input.userId}::uuid and direction='inbound' and receipt_trust='db-receipt-v1' and received_at is not null`) as unknown as { received_at: string; id: string }[];
+        receipt = inbound[0];
+        if (receipt && saved?.receivedAt && (receipt.received_at < saved.receivedAt || (receipt.received_at === saved.receivedAt && receipt.id <= (saved.inboundId ?? '')))) proposal = null;
+        if (receipt && pending?.receivedAt && (receipt.received_at < pending.receivedAt || (receipt.received_at === pending.receivedAt && receipt.id < (pending.inboundId ?? '')))) proposal=null;
+      }
+      if (pending?.kind === 'explicit' && pending.receivedAt && pending.inboundId && (input.proposal?.kind !== 'explicit' || !proposal)) {
+        proposal = { locale: pending.locale, kind: pending.kind };
+        receipt = { received_at: pending.receivedAt, id: pending.inboundId };
+      }
+      const requested = resolveLanguagePolicy({ proposal, saved, userLocale: user.locale });
+      const operational = await resources.read(requested.responseLanguage, 'operational');
+      const disclosure = await resources.read(requested.responseLanguage, 'disclosure');
+      const engagement = await resources.read(requested.responseLanguage, 'engagement');
+      if (!operational || !disclosure) {
+        if (receipt && proposal && (proposal.kind==='explicit' || saved?.kind!=='explicit')) await tx.execute(sql`update users set communication_preferences=jsonb_set(communication_preferences,'{pulseLanguagePending}',${JSON.stringify({locale:requested.responseLanguage,kind:proposal.kind,version:PULSE_LANGUAGE_POLICY,receivedAt:receipt.received_at,inboundId:receipt.id})}::jsonb,true) where id=${input.userId}::uuid and tenant_id=${input.tenantId}::uuid`);
+        const last = resolveLanguagePolicy({ saved, userLocale: 'en' });
+        const safeLocale = canonicalCompanyLocale(last.responseLanguage) ?? 'en';
+        const lastOperational = await resources.read(safeLocale, 'operational');
+        const lastDisclosure = await resources.read(safeLocale, 'disclosure');
+        const fallback = lastOperational && lastDisclosure ? last : resolveLanguagePolicy();
+        return { ...fallback, requestedLocale: requested.responseLanguage, resourceStatus: 'language_unavailable', resources: { operational: await resources.read(fallback.responseLanguage, 'operational') ?? undefined, disclosure: await resources.read(fallback.responseLanguage, 'disclosure') ?? undefined } };
+      }
+      if (receipt && proposal && (proposal.kind === 'explicit' || saved?.kind !== 'explicit')) {
+        await tx.execute(sql`update users set communication_preferences=jsonb_set(communication_preferences-'pulseLanguagePending','{pulseLanguage}',${JSON.stringify({ locale: requested.responseLanguage, kind: proposal.kind, version: PULSE_LANGUAGE_POLICY, receivedAt: receipt.received_at, inboundId: receipt.id })}::jsonb,true) where id=${input.userId}::uuid and tenant_id=${input.tenantId}::uuid`);
+      }
+      return { ...requested, resourceStatus: 'ready', resources: { operational, disclosure, ...(engagement ? { engagement } : {}) } };
+    });
+  }
+
+  async claimNativeInput(input: { tenantId:string; userId:string; messageId:string }):Promise<string|null> {
+    const rows=await this.db.client.execute(sql`select pulse_input_claim(${input.tenantId}::uuid,${input.userId}::uuid,${input.messageId}::uuid) token`) as unknown as {token:string|null}[];
+    return rows[0]?.token??null;
+  }
+  async deferNativeInput(input:{tenantId:string;userId:string;messageId:string}, targetId?:string):Promise<void> {
+    await this.db.client.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('pulse-report-subject:'||${input.tenantId}::uuid::text||':'||${input.userId}::uuid::text,0))`);
+      const applicable=await tx.execute(sql`select 1 from survey_report_inbound_work w join survey_report_participants p on p.tenant_id=w.tenant_id and p.user_id=w.user_id join survey_cycle_scoring_policies c on c.id=p.cycle_scoring_policy_id join survey_report_cycle_openings o on o.cycle_scoring_policy_id=c.id where w.inbound_receipt_id=${input.messageId}::uuid and w.trust='db-receipt-v1' and w.native_verdict in ('pending','claimed') and w.received_at>=greatest(c.period_start,o.opened_at) and w.received_at<least(c.period_end,coalesce(p.collection_stopped_at,c.period_end)) limit 1`);
+      if(!applicable.length)return;
+      // A skip is safe only after the native shown-verdict stage was independently classified.
+      const forms=await tx.execute(sql`select 1 from survey_report_inbound_work w join survey_report_shown_components s on s.tenant_id=w.tenant_id and s.user_id=w.user_id and s.conversation_id=w.conversation_id join survey_report_window_bindings b on b.survey_window_id=s.survey_window_id and b.tenant_id=s.tenant_id join survey_report_participants p on p.id=b.participant_id and p.user_id=w.user_id join survey_cycle_scoring_policies c on c.id=b.cycle_scoring_policy_id join survey_report_cycle_openings o on o.cycle_scoring_policy_id=c.id where w.received_at>=greatest(c.period_start,o.opened_at) and w.received_at<least(c.period_end,coalesce(p.collection_stopped_at,c.period_end)) and w.inbound_receipt_id=${input.messageId}::uuid and s.sent_at<w.received_at and s.acknowledged_at<w.received_at limit 1`);
+      if(forms.length) throw new Error('pulse_input_skipped_verdict_reconciliation');
+      if(targetId) await tx.execute(sql`insert into survey_report_work_dependencies(tenant_id,user_id,inbound_receipt_id,depends_on_receipt_id) values(${input.tenantId}::uuid,${input.userId}::uuid,${input.messageId}::uuid,${targetId}::uuid) on conflict do nothing`);
+      await tx.execute(sql`update survey_report_inbound_work set native_verdict='not_applicable',evidence=${targetId?'delegated':'blocked'},finalization='not_applicable',attempt_token=null,lease_until=null,failure_code=${targetId?null:'manual_reconciliation'} where inbound_receipt_id=${input.messageId}::uuid and tenant_id=${input.tenantId}::uuid and user_id=${input.userId}::uuid`);
+    });
+  }
+  async findCoalescingTarget(input:{tenantId:string;userId:string;conversationId:string;messageId:string}):Promise<string|undefined>{
+    const rows=await this.db.client.execute(sql`select later.inbound_receipt_id from survey_report_inbound_work source join survey_report_inbound_work later on later.tenant_id=source.tenant_id and later.user_id=source.user_id and later.conversation_id=source.conversation_id and (later.received_at,later.inbound_receipt_id)>(source.received_at,source.inbound_receipt_id) where source.inbound_receipt_id=${input.messageId}::uuid and source.tenant_id=${input.tenantId}::uuid and source.user_id=${input.userId}::uuid order by later.received_at desc,later.inbound_receipt_id desc limit 1`) as unknown as {inbound_receipt_id:string}[];
+    return rows[0]?.inbound_receipt_id;
+  }
   async markInboundConversationJobProcessed(input: {
     messageId: string; tenantId: string; userId: string; conversationId: string;
   }): Promise<void> {
@@ -381,7 +446,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
       )).limit(1))[0]
       : null);
     const expectedSourceInboundId = params.metadata?.['sourceInboundMessageId'];
-    const idempotencyMarkerMatches = !params.id || (typeof expectedSourceInboundId === 'string'
+    const idempotencyMarkerMatches = !params.id || (params.direction==='inbound' ? msg?.text===params.text && (!params.occurredAt || msg?.occurredAt.getTime()===params.occurredAt.getTime()) : typeof expectedSourceInboundId === 'string'
       ? (msg?.metadata as Record<string, unknown> | undefined)?.['sourceInboundMessageId'] === expectedSourceInboundId
         && msg?.text === params.text
       : params.metadata?.['onboardingDeliveryId'] === params.id
@@ -443,12 +508,21 @@ export class ConversationRepository implements ConversationRepositoryPort {
   }
 
   async recordCommittedTurn(input: {
+    nativeReportClaimToken?: string;
     inboundMessageId: string; outboundMessageId: string;
     tenantId: string; userId: string; conversationId: string;
     dispatchKinds: ConversationDispatchKind[];
     followUpActions?: Array<{ id: string; dueAt: Date }>;
     groupReportStateIds?: string[];
   }): Promise<void> {
+    await this.db.client.execute(sql`select pulse_input_verify_claim(${input.tenantId}::uuid,${input.userId}::uuid,${input.inboundMessageId}::uuid,${input.nativeReportClaimToken ?? null}::uuid)`);
+    await this.db.client.execute(sql`update survey_report_inbound_work w set
+      native_verdict=case when w.native_verdict='applied' then 'applied' when exists(select 1 from messages o where o.id=${input.outboundMessageId}::uuid and (o.metadata->>'conversationOutcome'='processing_failed' or o.metadata->>'nativeReportingUnavailable'='true')) then 'blocked' else 'not_applicable' end,
+      evidence=case when ${input.dispatchKinds.includes('survey_evidence')} then 'pending' else 'not_applicable' end,
+      finalization=case when w.native_verdict='applied' then w.finalization else 'not_applicable' end,
+      failure_code=case when exists(select 1 from messages o where o.id=${input.outboundMessageId}::uuid and (o.metadata->>'conversationOutcome'='processing_failed' or o.metadata->>'nativeReportingUnavailable'='true')) then 'manual_reconciliation' else null end,
+      attempt_token=null,lease_until=null
+      where w.inbound_receipt_id=${input.inboundMessageId}::uuid and w.tenant_id=${input.tenantId}::uuid and w.user_id=${input.userId}::uuid`);
     const [admission] = await this.db.client.select({ messageId: conversationJobAdmissions.messageId })
       .from(conversationJobAdmissions).where(and(
         eq(conversationJobAdmissions.messageId, input.inboundMessageId),
@@ -619,7 +693,13 @@ export class ConversationRepository implements ConversationRepositoryPort {
         eq(conversationTurnEffects.userId, input.userId),
         eq(conversationTurnEffects.conversationId, input.conversationId),
       )).limit(1);
-    if (!effect) return 'not_tracked';
+    const recordAttempt = async () => {
+    await this.db.client.update(messages).set({ deliveryAttemptedAt: new Date().toISOString() }).where(and(
+      eq(messages.id, input.messageId), eq(messages.tenantId, input.tenantId), eq(messages.userId, input.userId),
+      eq(messages.conversationId, input.conversationId), eq(messages.direction, 'outbound'),
+    ));
+    };
+    if (!effect) { await recordAttempt(); return 'not_tracked'; }
     const [existing] = await this.db.client.select({ outboundMessageId: conversationMessageSendAttempts.outboundMessageId })
       .from(conversationMessageSendAttempts)
       .where(eq(conversationMessageSendAttempts.outboundMessageId, input.messageId)).limit(1);
@@ -629,6 +709,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         inboundMessageId: effect.inboundMessageId,
         outboundMessageId: input.messageId,
       }).onConflictDoNothing().returning({ outboundMessageId: conversationMessageSendAttempts.outboundMessageId });
+      if (claimed) await recordAttempt();
       return claimed ? 'claimed' : 'already_started';
     } catch (error) {
       const [raced] = await this.db.client.select({ outboundMessageId: conversationMessageSendAttempts.outboundMessageId })
@@ -1008,6 +1089,7 @@ export class ConversationRepository implements ConversationRepositoryPort {
         isNotNull(messages.sentAt),
         isNull(messages.deletedAt),
         sql`${messages.metadata}->>'reportingDisclosureVersion' = ${version}`,
+        sql`(not (${messages.metadata} ? 'reportingDisclosureForm') or ${messages.metadata}->'reportingDisclosureForm'->>'fullBodyHash'=encode(sha256(convert_to(${messages.text},'UTF8')),'hex'))`,
         lt(messages.sentAt, before),
         ),
       )

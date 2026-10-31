@@ -1,5 +1,6 @@
+import { CaptureEngagementAnswerUseCase } from '@entalent/application';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger, OnApplicationShutdown } from '@nestjs/common';
+import { Logger, OnApplicationShutdown, Optional } from '@nestjs/common';
 import { Job, type Queue } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import {
@@ -26,6 +27,7 @@ export type ConversationJob = {
   externalConversationId: string;
   traceId: string;
   rapidMessageCoalescing?: true;
+  nativeReportClaimToken?: string;
 };
 
 export type CheckInJob = Omit<ConversationJob, 'requestId' | 'eventId' | 'messageId'> & {
@@ -51,6 +53,7 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
     private readonly conversationRepo: ConversationRepository,
     private readonly surveyRepo: SurveyRepository,
     @InjectQueue(QUEUE_NAMES.CONVERSATION) private readonly queue: Queue,
+    @Optional() private readonly engagementCapture?: CaptureEngagementAnswerUseCase,
   ) {
     super();
   }
@@ -126,14 +129,16 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       conversationId: job.data.conversationId,
     });
 
+    await this.engagementCapture?.execute({ tenantId: job.data.tenantId, userId: job.data.userId, conversationId: job.data.conversationId, inboundMessageId: job.data.messageId });
     const pendingQuestionReply = await this.surveyRepo.hasUnresolvedQuestionConfirmationForInbound(job.data);
     if (await this.orchestrator.resumeCommittedTurn?.(job.data)) {
       await this.settleInbound(job.data, pendingQuestionReply);
       this.logger.log(`Committed conversation turn resumed for job ${job.id}`);
       return;
     }
-    if (!await this.conversationRepo.isUserRuntimeEligible(job.data.tenantId, job.data.userId)) {
+    if (!pendingQuestionReply && !await this.conversationRepo.isUserRuntimeEligible(job.data.tenantId, job.data.userId)) {
       this.logger.log(`Skipping conversation job for inactive runtime user ${job.data.userId}`);
+      await this.conversationRepo.deferNativeInput?.(job.data);
       await this.settleInbound(job.data, pendingQuestionReply);
       return;
     }
@@ -149,10 +154,13 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
       })
     ) {
       this.logger.log(`Skipping stale conversation job ${job.id}`);
+      await this.conversationRepo.deferNativeInput?.(job.data, await this.conversationRepo.findCoalescingTarget?.(job.data));
       await this.settleInbound(job.data, pendingQuestionReply);
       return;
     }
 
+    const claim = await this.conversationRepo.claimNativeInput?.(job.data);
+    if (claim) job.data.nativeReportClaimToken = claim;
     const start = Date.now();
     let status: 'success' | 'error' = 'success';
     let errorCode: string | undefined;

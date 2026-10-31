@@ -15,6 +15,7 @@ import type { SurveyEvidenceExtractionUseCase, SurveyEvidencePayload } from '@en
 import { SurveyEvidenceProcessor } from '../survey-evidence.processor';
 import { QuestionCutoffProcessor } from '../question-cutoff.processor';
 import { QuestionInsightRepository } from './question-insight.repository';
+import { PulseReportProgressRepository } from './pulse-report-progress.repository';
 
 const databaseUrl = process.env['DATABASE_URL'];
 
@@ -171,10 +172,12 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
     await db.update(surveyQuestionWorkingInsights)
       .set({ confirmationBundleId: shownBundle!.id, confirmationMessageId: newMessage!.id })
       .where(eq(surveyQuestionWorkingInsights.surveyQuestionId, confirmedQuestion.id));
+    const progress = new PulseReportProgressRepository({ client: db } as never);
+    expect(await progress.finalizationScope({ tenantId, userId: user!.id, conversationId: conversation!.id, inboundMessageId: newMessage!.id })).toBe('legacy_only');
     const processor = new SurveyEvidenceProcessor({
       assertConversationOwner: async () => undefined,
       execute: async () => { throw new Error('private evidence-model output'); },
-    } as unknown as SurveyEvidenceExtractionUseCase, finalizer);
+    } as unknown as SurveyEvidenceExtractionUseCase, finalizer, undefined, undefined, progress);
     await expect(processor.process({ data: {
       tenantId, userId: user!.id, conversationId: conversation!.id,
       inboundMessageId: newMessage!.id, traceId: 'synthetic-v2',
@@ -452,6 +455,7 @@ describe.runIf(Boolean(databaseUrl))('V2 repository on fully migrated PostgreSQL
         questionVersion: confirmedQuestion.version, statement: supplementStatement,
         expectedWorkingSummary: reopened!.workingSummary! }],
     });
+    if (typeof supplementBundleId !== 'string') throw new Error('fixture_collection_unavailable');
     const sentAt = new Date(laterMessage!.occurredAt.getTime() + 2_000);
     await db.update(messages).set({ sentAt }).where(eq(messages.id, supplementPrompt!.id));
     await repository.activateDeliveredQuestionBundle({

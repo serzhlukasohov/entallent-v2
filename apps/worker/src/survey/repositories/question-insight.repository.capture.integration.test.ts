@@ -47,7 +47,7 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
     await client`create temp table messages (
       id uuid primary key, tenant_id uuid not null, user_id uuid not null,
       conversation_id uuid not null, direction text not null,
-      occurred_at timestamptz not null, deleted_at timestamptz
+      occurred_at timestamptz not null, deleted_at timestamptz, received_at timestamptz
     )`;
     await client`create temp table survey_evidence (
       id uuid primary key, survey_window_id uuid not null,
@@ -71,7 +71,7 @@ describe.runIf(Boolean(databaseUrl))('V2 working question capture on PostgreSQL'
       meaning_sufficient boolean not null default false,
       driver_resolved boolean not null default false,
       driver_requested_at timestamptz,
-      confirmed_semantic_summary text,
+      confirmed_semantic_summary text, language_capture jsonb, score_cache jsonb, score_cache_revision timestamptz,
       source_message_ids uuid[] not null default array[]::uuid[],
       confirmation_bundle_id uuid, confirmation_message_id uuid,
       clarification_prompt_message_id uuid, clarification_attempts integer not null default 0,

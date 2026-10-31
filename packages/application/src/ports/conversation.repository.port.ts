@@ -25,6 +25,8 @@ export type ConversationDispatchKind =
   | 'profile_hydration';
 
 export interface ConversationRepositoryPort {
+  resolvePersonalLanguage?(input: { tenantId: string; userId: string; inboundMessageId?: string; proposal?: import('@entalent/contracts').LanguageProposal | null }): Promise<import('./ai-provider.port').LanguagePolicy>;
+
   findMessageById?(id: string, tenantId: string, conversationId: string): Promise<MessageRecord | null>;
   findById(id: string, tenantId: string): Promise<ConversationRecord | null>;
   findRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]>;
@@ -62,6 +64,7 @@ export interface ConversationRepositoryPort {
     externalWorkspaceId?: string; externalConversationId?: string;
   }): Promise<MessageRecord | null>;
   recordCommittedTurn?(input: {
+    nativeReportClaimToken?: string;
     inboundMessageId: string; outboundMessageId: string;
     tenantId: string; userId: string; conversationId: string;
     dispatchKinds: ConversationDispatchKind[];

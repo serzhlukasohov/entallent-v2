@@ -1,3 +1,4 @@
+import type { PulseLanguageResource } from '@entalent/contracts';
 import type { MessageRecord } from '../types/records';
 
 /** A persisted recovery response is the only authority for a model-context reset. */
@@ -44,7 +45,8 @@ export function modelMessagesForInbound(
 }
 
 /** Explain only what the provider reported; its response does not identify a specific phrase. */
-export function contentFilterExplanation(locale?: string): string {
+export function contentFilterExplanation(locale?: string, resource?: PulseLanguageResource): string {
+  if (resource && resource.locale === locale && resource.texts['input_filtered']) return resource.texts['input_filtered'];
   if (locale?.toLowerCase().startsWith('uk')) {
     return 'Я не зміг відповісти: сервіс моделі відхилив запит через фільтр вмісту. Він не вказав, який саме фрагмент став причиною, тому я не буду вгадувати. Можеш надіслати суть ще раз окремим повідомленням?';
   }
@@ -55,6 +57,7 @@ export function contentFilterExplanation(locale?: string): string {
 }
 
 /** Shown once when an inbound could not be processed after every retry (GC round 2 CAP-1). */
-export function processingFailureExplanation(_language: string): string {
+export function processingFailureExplanation(_language: string, resource?: PulseLanguageResource): string {
+  if (resource && resource.locale === _language && resource.texts['processing_failed']) return resource.texts['processing_failed'];
   return 'Sorry, I could not process your last message because of an internal error on my side. Could you send it again?';
 }

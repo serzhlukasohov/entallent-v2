@@ -1,3 +1,4 @@
+import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -34,6 +35,12 @@ export class OnboardingEffectsService implements OnboardingEffectsPort {
     private readonly workspaceRepo: WorkspaceConnectionRepository,
     private readonly intro: OnboardingIntroService,
   ) {}
+
+  async readShownIntroTrust(input:{tenantId:string;personId:string;channelId:string;messageTs:string}):Promise<string|null> {
+    const [row]=await this.db.client.select({text:messages.text}).from(messages).innerJoin(conversations,and(eq(conversations.id,messages.conversationId),eq(conversations.tenantId,messages.tenantId),eq(conversations.userId,messages.userId))).where(and(eq(messages.tenantId,input.tenantId),eq(messages.userId,input.personId),eq(messages.externalMessageId,input.messageTs),eq(conversations.externalConversationId,input.channelId),eq(messages.direction,'outbound'))).limit(1);
+    return row?.text ?? null;
+  }
+  resolveLanguage(tenantId: string, userId: string) { return new ConversationRepository(this.db).resolvePersonalLanguage({tenantId,userId}); }
 
   async scheduleReminder(input: { tenantId: string; personId: string; dueAt: Date }): Promise<void> {
     await this.reminderQueue.add('remind', {

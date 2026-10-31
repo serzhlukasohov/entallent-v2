@@ -1,3 +1,4 @@
+import { CompanyLanguageReadService } from './company-language-read.service';
 import { Module } from '@nestjs/common';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { DatabaseModule } from '../database/database.module';
@@ -30,6 +31,6 @@ import { TeamHierarchyReadModel } from './team-hierarchy.read-model';
     V2PilotController,
     TeamHierarchyController,
   ],
-  providers: [ApiKeyGuard, ManagerDashboardReadModel, V2PilotReadModel, TeamHierarchyReadModel],
+  providers: [CompanyLanguageReadService, ApiKeyGuard, ManagerDashboardReadModel, V2PilotReadModel, TeamHierarchyReadModel],
 })
 export class AdminModule {}

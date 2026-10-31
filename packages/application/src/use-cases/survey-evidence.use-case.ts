@@ -1,3 +1,5 @@
+import type { CaptureEngagementAnswerUseCase } from './capture-engagement-answer.use-case';
+import { isPulseReportCollectionUnavailable } from '../ports/pulse-report-scope.repository.port';
 import type { AiProviderPort, ConversationTurn, SurveyQuestionForEvaluation } from '../ports/ai-provider.port';
 import { accumulateQuestionReadiness } from '../utils/question-readiness';
 import type { ConversationRepositoryPort } from '../ports/conversation.repository.port';
@@ -48,8 +50,22 @@ export class SurveyEvidenceExtractionUseCase {
     private readonly surveyRepo: SurveyRepositoryPort,
     private readonly pulseBacklogService?: PulseBacklogService,
     private readonly questionCapture?: QuestionWorkingCapturePort,
+    private readonly engagementCapture?: CaptureEngagementAnswerUseCase,
   ) {}
 
+  private async admittedQuestions(input: { tenantId: string; userId: string }, window: SurveyWindowRecord, questions: SurveyQuestionRecord[], sourceMessageId: string): Promise<SurveyQuestionRecord[]> {
+    if (!this.questionCapture?.collectionAdmission) return questions;
+    const admitted: SurveyQuestionRecord[] = [];
+    for (const question of questions) {
+      if (await this.questionCapture.collectionAdmission({ ...input, surveyWindowId: window.id, surveyQuestionId: question.id, sourceMessageId }) === 'allowed') admitted.push(question);
+    }
+    return admitted;
+  }
+
+  private async sourceWindow(input:SurveyEvidenceExtractionInput,create:boolean){
+    const native=await this.surveyRepo.findNativeWindowForInbound?.(input,create);
+    return native===undefined?this.surveyRepo.findOrCreateActiveWindow(input.userId,input.tenantId):native;
+  }
   async execute(input: SurveyEvidenceExtractionInput): Promise<void> {
     const prepared = await this.prepare(input);
     if (prepared) await this.apply(input, prepared);
@@ -57,6 +73,7 @@ export class SurveyEvidenceExtractionUseCase {
 
   async prepare(input: SurveyEvidenceExtractionInput): Promise<PreparedSurveyEvidenceExtraction | null> {
     await this.assertConversationOwner(input);
+    await this.engagementCapture?.execute(input);
     const messages = this.conversationRepo.findMessagesThrough
       ? await this.conversationRepo.findMessagesThrough({ ...input, limit: 15 })
       : await this.conversationRepo.findRecentMessages(input.conversationId, 15);
@@ -66,11 +83,11 @@ export class SurveyEvidenceExtractionUseCase {
     if (sourceIndex < 0) return null;
     const source = messages[sourceIndex]!;
 
-    const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
-    if (!window) return null;
+    const window = await this.sourceWindow(input,true);
+    if (!window || isPulseReportCollectionUnavailable(window)) return null;
 
     const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
-    const eligibleQuestions = this.eligibleQuestions(window, questions, source.occurredAt);
+    const eligibleQuestions = await this.admittedQuestions(input, window, this.eligibleQuestions(window, questions, source.occurredAt), input.inboundMessageId);
     if (!eligibleQuestions.length) return null;
 
     const mode = await this.questionCapture?.getWindowMode({
@@ -104,13 +121,18 @@ export class SurveyEvidenceExtractionUseCase {
         || message.occurredAt.getTime() !== prepared.messages[index]?.occurredAt.getTime())) {
       throw new Error('survey_evidence_prepared_history_changed');
     }
-    const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
-    if (!window || window.id !== prepared.window.id) return;
+    const window = await this.sourceWindow(input,false);
+    if (!window || isPulseReportCollectionUnavailable(window) || window.id !== prepared.window.id) return;
     const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
-    const eligible = this.eligibleQuestions(window, questions, source.occurredAt);
-    if (eligible.length !== prepared.eligibleQuestions.length
-      || eligible.some((question, index) => question.id !== prepared.eligibleQuestions[index]?.id
-        || question.version !== prepared.eligibleQuestions[index]?.version)) {
+    const originalEligible = this.eligibleQuestions(prepared.window, prepared.questions, source.occurredAt);
+    const currentEligible = this.eligibleQuestions(window, questions, source.occurredAt);
+    if (currentEligible.length !== originalEligible.length || currentEligible.some((question, index) =>
+      question.id !== originalEligible[index]?.id || question.version !== originalEligible[index]?.version)) {
+      throw new Error('survey_evidence_prepared_questions_changed');
+    }
+    const eligible = await this.admittedQuestions(input, window, currentEligible, prepared.sourceMessageId);
+    if (!eligible.length) return;
+    if (eligible.some((question) => !prepared.eligibleQuestions.some((previous) => previous.id === question.id && previous.version === question.version))) {
       throw new Error('survey_evidence_prepared_questions_changed');
     }
     const mode = await this.questionCapture?.getWindowMode({
@@ -134,8 +156,9 @@ export class SurveyEvidenceExtractionUseCase {
     input: Omit<SurveyEvidenceExtractionInput, 'inboundMessageId'>,
   ): Promise<{ windowsProcessed: number }> {
     await this.assertConversationOwner(input);
+    await this.engagementCapture?.backfill(input);
     const window = await this.surveyRepo.findOrCreateActiveWindow(input.userId, input.tenantId);
-    if (!window) return { windowsProcessed: 0 };
+    if (!window || isPulseReportCollectionUnavailable(window)) return { windowsProcessed: 0 };
 
     const questions = await this.surveyRepo.findQuestionsForWindow(window.id);
     if (!questions.length) return { windowsProcessed: 0 };
@@ -500,9 +523,9 @@ export class SurveyEvidenceExtractionUseCase {
     evaluatedAt: Date | undefined,
   ): SurveyQuestionRecord[] {
     if (evaluatedAt && isEngagementWindowEligible(window, evaluatedAt)) {
-      return questions;
+      return questions.filter((question) => question.responseType !== 'numeric_1_10_integer');
     }
-    return questions.filter((question) => question.questionGroup !== 'engagement');
+    return questions.filter((question) => question.questionGroup !== 'engagement' && question.responseType !== 'numeric_1_10_integer');
   }
 }
 

@@ -1,6 +1,7 @@
 import { Queue } from 'bullmq';
 import { QUEUE_NAMES } from '@entalent/contracts';
 import type { DatabaseService } from '../database/database.service';
+import { ReportConfigurationService } from '../report-configuration/report-configuration.service';
 import { CompanyCalendarService } from './company-calendar.service';
 import { BullOnboardingReminderRecalculator } from './onboarding-reminder-recalculator';
 
@@ -38,9 +39,10 @@ export interface BuiltCalendarService {
 export function buildCalendarService(
   db: DatabaseService, env: { REDIS_URL?: string | undefined },
 ): BuiltCalendarService {
+  const configuration=new ReportConfigurationService(db);
   const redisUrl = env.REDIS_URL?.trim();
   if (!redisUrl) {
-    return { service: new CompanyCalendarService(db), close: async () => undefined,
+    return { service: new CompanyCalendarService(db,undefined,configuration), close: async () => undefined,
       warning: 'REDIS_URL is not set; scheduled onboarding reminders will not be recalculated' };
   }
   const queue = new Queue(QUEUE_NAMES.ONBOARDING_REMINDER, { connection: redisConnectionFromUrl(redisUrl) });
@@ -52,7 +54,7 @@ export function buildCalendarService(
       inner.recalculateScheduledReminders(tenantId), RECALCULATION_TIMEOUT_MS, 'recalculation_queue_timeout'),
   };
   return {
-    service: new CompanyCalendarService(db, recalculator),
+    service: new CompanyCalendarService(db, recalculator,configuration),
     close: async () => {
       await withTimeout(queue.close(), 2_000, 'queue_close_timeout').catch(() => queue.disconnect().catch(() => undefined));
     },

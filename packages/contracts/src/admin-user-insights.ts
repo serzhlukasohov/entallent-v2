@@ -2,6 +2,7 @@ export interface AdminQuestionInsight {
   questionId: string;
   stableKey: string;
   title: string;
+  titleDisplay?: import('./pulse-language').DefinitionDisplay;
   canonicalMeaning: string;
   group: string;
   displayOrder: number;
@@ -17,6 +18,7 @@ export interface AdminQuestionInsight {
 }
 
 export interface AdminUserInsightsResponse {
+  companyLanguage?: import('./pulse-language').PulseLanguageReadMetadata;
   userId: string;
   windowId: string | null;
   periodEnd: string | null;

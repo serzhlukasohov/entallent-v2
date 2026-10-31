@@ -69,6 +69,7 @@ export const surveyCycleScoringPolicies = pgTable(
     activatedAt: timestamp('activated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
+    tenantIdKey: unique('survey_cycle_scoring_policies_tenant_id_key').on(t.tenantId, t.id),
     cycleScope: unique('survey_cycle_scoring_policies_scope_key').on(
       t.tenantId, t.surveyDefinitionId, t.periodStart, t.periodEnd,
     ),
@@ -100,6 +101,9 @@ export const surveyQuestionWorkingInsights = pgTable(
     driverResolved: boolean('driver_resolved').notNull().default(false),
     /** GC round 3 CAP-2: the bot asked for the driver once; it is not asked again this window. */
     driverRequestedAt: timestamp('driver_requested_at', { withTimezone: true }),
+    languageCapture: jsonb('language_capture'),
+    scoreCache: jsonb('score_cache'),
+    scoreCacheRevision: timestamp('score_cache_revision', { withTimezone: true }),
     workingSummary: text('working_summary'),
     confirmedSemanticSummary: text('confirmed_semantic_summary'),
     sourceMessageIds: uuid('source_message_ids').array().notNull().default(sql`ARRAY[]::uuid[]`),
@@ -205,7 +209,9 @@ export const surveyQuestionInsights = pgTable(
     surveyQuestionId: uuid('survey_question_id').notNull().references(() => surveyQuestions.id),
     questionVersion: text('question_version').notNull(),
     questionGroup: text('question_group').notNull(),
+    proseProvenance: jsonb('prose_provenance'),
     deidentifiedSummary: text('deidentified_summary').notNull(),
+    summarySupport:text('summary_support').notNull().default('unverified_historical'),
     outcome: text('outcome').notNull().default('scored'),
     score: numeric('score'),
     isCurrent: boolean('is_current').notNull().default(true),

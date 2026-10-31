@@ -5,7 +5,7 @@ import { createDbClient, surveyDefinitions, surveyQuestions } from '@entalent/da
 import { hasCompleteV2ScoringPolicy } from '@entalent/application';
 
 const VERSION = 'v2-policy-1.0.0';
-const POLICY_FILE = resolve('scripts/data/v2-scoring-policy-1.0.0.json');
+const POLICY_FILE = resolve(__dirname, 'data/v2-scoring-policy-1.0.0.json');
 
 export async function installV2SurveyDefinition(databaseUrl: string, tenantId: string): Promise<string> {
   const policy: unknown = JSON.parse(await readFile(POLICY_FILE, 'utf8'));

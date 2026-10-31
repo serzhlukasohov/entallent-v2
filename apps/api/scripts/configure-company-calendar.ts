@@ -22,6 +22,8 @@ async function main(): Promise<void> {
     workingDays: required('days').split(',').map((day) => Number(day.trim())),
     workStart: required('start'),
     workEnd: required('end'),
+    ...(arg('holidays') !== undefined ? {holidays:JSON.parse(arg('holidays')!)}:{}),
+    ...(arg('date-overrides') !== undefined ? {dateOverrides:JSON.parse(arg('date-overrides')!)}:{}),
   };
   const databaseUrl = process.env['DATABASE_URL']?.trim();
   if (!databaseUrl) throw new Error('DATABASE_URL is required');
@@ -30,11 +32,11 @@ async function main(): Promise<void> {
     { client: client.db } as DatabaseService, { REDIS_URL: process.env['REDIS_URL'] });
   if (warning) process.stderr.write(`warning: ${warning}\n`);
   try {
-    const { calendar, recalculation } = await service.configure(tenantId, input, operator);
+    const { calendar, configRevision, recalculation } = await service.configure(tenantId, input, operator, Number(required('expected-revision')));
     if (recalculation !== 'queued') {
       process.stderr.write(`warning: calendar saved but scheduled reminders were not recalculated (${recalculation}); re-run after fixing Redis/queue access\n`);
     }
-    process.stdout.write(`${JSON.stringify({ tenantId, calendar, updatedBy: operator, recalculation })}\n`);
+    process.stdout.write(`${JSON.stringify({ tenantId, calendar, configRevision, updatedBy: operator, recalculation })}\n`);
   } finally {
     await close();
     await client.sql.end();

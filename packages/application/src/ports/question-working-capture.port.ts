@@ -27,6 +27,8 @@ export interface QuestionWorkingCoverage {
 }
 
 export interface QuestionWorkingCapturePort {
+  collectionAdmission?(input: { tenantId: string; userId: string; surveyWindowId: string; surveyQuestionId?: string; sourceMessageId?: string }): Promise<string>;
+
   /** A bound but invalid V2 policy must throw instead of falling back to V1. */
   getWindowMode(input: { tenantId: string; userId: string; surveyWindowId: string }):
     Promise<'v1' | 'v2'>;

@@ -1,10 +1,11 @@
-import { pgTable, uuid, text, jsonb, timestamp, unique } from 'drizzle-orm/pg-core';
+import { bigint, pgTable, uuid, text, jsonb, timestamp, unique } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 export const workspaceConnections = pgTable(
   'workspace_connections',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    bindingRevision: bigint('binding_revision', { mode: 'number' }).notNull().default(1),
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id, { onDelete: 'cascade' }),

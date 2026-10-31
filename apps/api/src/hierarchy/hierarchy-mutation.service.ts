@@ -1,3 +1,4 @@
+import { stopChangedPulseReportParticipants } from '@entalent/database';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { and, eq, inArray } from 'drizzle-orm';
 import { planEmployeeMove, planManagerPromotion, planTeamLeadPromotion, type ActiveGraphIssue, type ActiveHierarchyGraph, type PreviousManagerAction, type PreviousTeamLeadAction } from '@entalent/application';
@@ -120,6 +121,7 @@ export class HierarchyMutationService {
                 primaryRole: previousManagerAction === 'become_employee' ? 'employee' : 'manager',
                 lifecycleStatus: previousManagerAction === 'deactivate' ? 'inactive' : 'active' } } },
         }).returning({ id: auditLogs.id });
+        await stopChangedPulseReportParticipants(tx, tenantId, audit.id);
         onboardingEvents = [
           { personId: employeePersonId, auditLogId: audit.id,
             event: { type: 'role_changed', from: 'employee', to: 'manager' } },
@@ -230,6 +232,7 @@ export class HierarchyMutationService {
                 primaryRole: previousLeadAction === 'become_employee' ? 'employee' : 'team_lead',
                 lifecycleStatus: previousLeadAction === 'deactivate' ? 'inactive' : 'active' } } },
         }).returning({ id: auditLogs.id });
+        await stopChangedPulseReportParticipants(tx, tenantId, audit.id);
         onboardingEvents = [
           { personId: employeePersonId, auditLogId: audit.id,
             event: { type: 'role_changed', from: 'employee', to: 'team_lead' } },
@@ -291,11 +294,12 @@ export class HierarchyMutationService {
           eq(orgEmployeePlacements.tenantId, tenantId),
           eq(orgEmployeePlacements.lifecycleStatus, 'active'))).returning({ id: orgEmployeePlacements.id });
         if (!updated) throw new HierarchyMutationError('employee_move_stale');
-        await tx.insert(auditLogs).values({
+        const [audit] = await tx.insert(auditLogs).values({
           tenantId, actorType: actor.type, actorId: actorId(actor),
           action: 'org.employee.move', resourceType: 'person', resourceId: employeePersonId,
           metadata: { placementId: plan.placementId, before: plan.before, after: plan.after },
-        });
+        }).returning({ id: auditLogs.id });
+        await stopChangedPulseReportParticipants(tx, tenantId, audit.id);
         return { employeePersonId, placementId: plan.placementId, ...plan.after };
       }, { isolationLevel: 'serializable' }));
     } catch (error) {

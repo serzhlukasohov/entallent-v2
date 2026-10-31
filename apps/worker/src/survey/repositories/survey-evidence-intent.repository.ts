@@ -40,6 +40,7 @@ export class SurveyEvidenceIntentRepository {
         lastQueuedAt: sql`coalesce(${conversationDispatchIntents.lastQueuedAt}, ${completedAt.toISOString()}::timestamptz)`,
         completedAt,
       }).where(eq(conversationDispatchIntents.id, intent.id));
+      await this.db.client.execute(sql`update survey_report_inbound_work set evidence='applied' where inbound_receipt_id=${input.inboundMessageId}::uuid and tenant_id=${input.tenantId}::uuid and user_id=${input.userId}::uuid`);
       return true;
     });
   }

@@ -666,3 +666,46 @@ describe('dev channel onboarding buttons (local dev console)', () => {
     expect(repo.isUserOnboardingEligible).toHaveBeenCalledWith('tenant-1', 'u1', 'workspace-1', 'slack');
   });
 });
+
+describe('RPT-09 reporting-rights buttons', () => {
+  const sentAt = new Date('2026-10-31T10:00:00.000Z');
+  const rights = [
+    { actionId: 'reporting_rights:confirm', label: 'Confirm', value: '00000000-0000-4000-8000-0000000000a1' },
+    { actionId: 'reporting_rights:cancel', label: 'Cancel', value: '00000000-0000-4000-8000-0000000000a1' },
+  ];
+  function build(metadata: Record<string, unknown>) {
+    const repo = {
+      findOutboundMessageForDelivery: vi.fn().mockResolvedValue({
+        userId: 'user-1', text: 'Please confirm', sentAt: null, messageType: 'reporting_rights', metadata,
+        onboardingDeliveryId: null, channelType: 'slack', externalConversationId: 'channel-1',
+      }),
+      findOnboardingDelivery: vi.fn().mockResolvedValue(null),
+      isUserRuntimeEligible: vi.fn().mockResolvedValue(true),
+      updateMessageDelivery: vi.fn().mockResolvedValue(sentAt),
+    };
+    const onboarding = { recordIntroDelivered: vi.fn() };
+    const processor = new MessageSendProcessor(
+      { findByExternalWorkspace: vi.fn().mockResolvedValue({ botToken: 'tok' }) } as never,
+      repo as never,
+      { activateDeliveredConfirmation: vi.fn().mockResolvedValue(false) } as never,
+      onboarding as never,
+      { enqueueTrustAfterIntro: vi.fn().mockResolvedValue(undefined) } as never,
+    );
+    return { processor, onboarding };
+  }
+
+  it('renders rights menu buttons without touching onboarding state', async () => {
+    slack.sendMessage.mockResolvedValue({ externalMessageId: '1.2', sentAt });
+    const { processor, onboarding } = build({ reportingRightsActions: rights });
+    await processor.process({ data: slackJob() } as Job<MessageSendJob>);
+    expect(slack.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ actions: rights }));
+    expect(onboarding.recordIntroDelivered).not.toHaveBeenCalled();
+  });
+
+  it('never renders foreign action ids from the rights key', async () => {
+    slack.sendMessage.mockResolvedValue({ externalMessageId: '1.3', sentAt });
+    const { processor } = build({ reportingRightsActions: [{ actionId: 'onboarding:start', label: 'Start', value: 'start' }] });
+    await processor.process({ data: slackJob() } as Job<MessageSendJob>);
+    expect(slack.sendMessage).toHaveBeenLastCalledWith(expect.not.objectContaining({ actions: expect.anything() }));
+  });
+});

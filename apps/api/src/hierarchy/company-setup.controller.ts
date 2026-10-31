@@ -1,3 +1,5 @@
+import { ReportConfigurationService, ReportConfigurationError } from '../report-configuration/report-configuration.service';
+import { ReportConfigurationConflict } from '@entalent/database';
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException,
   Get, Param, ParseUUIDPipe, Post, Req, UnauthorizedException, UnprocessableEntityException,
@@ -30,12 +32,22 @@ export class CompanySetupController {
     private readonly capabilities: HierarchyCapabilityService,
     private readonly advisorScopes: HierarchyAdvisorScopeService,
     private readonly deactivations: HierarchyDeactivationService,
+    private readonly reportConfiguration: ReportConfigurationService,
   ) {}
 
   @Get('snapshot')
   async snapshot(@Req() request: FastifyRequest) {
     const session = await this.authorize(request, false);
     return this.reads.snapshot(session.tenantId);
+  }
+
+  @Post('company-language')
+  async companyLanguage(@Req() request:FastifyRequest,@Body() body:unknown){
+    const session=await this.authorize(request,true);
+    const input=record(body);
+    if(Object.keys(input).some(key=>!['locale','expectedConfigRevision'].includes(key)))throw new BadRequestException({code:'unexpected_field'});
+    if(!Number.isInteger(input['expectedConfigRevision'])||Number(input['expectedConfigRevision'])<0)throw new BadRequestException({field:'expectedConfigRevision',code:'invalid'});
+    return this.execute(()=>this.reportConfiguration.saveLanguage(session.tenantId,required(input,'locale'),input['expectedConfigRevision'] as number,{type:'company_admin',personId:session.personId}));
   }
 
   @Post('persons')
@@ -374,6 +386,8 @@ export class CompanySetupController {
     try {
       return await run();
     } catch (error) {
+      if (error instanceof ReportConfigurationConflict)throw new ConflictException({code:error.code});
+      if (error instanceof ReportConfigurationError)throw new BadRequestException({code:error.code});
       if (error instanceof HierarchyAuthorizationError) throw new ForbiddenException(error.message);
       if (error instanceof DraftPersonValidationError || error instanceof DraftStructureValidationError ||
           error instanceof HierarchyDraftReferenceError) {

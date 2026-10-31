@@ -1,3 +1,4 @@
+import { ConversationRepository } from '../conversation/repositories/conversation.repository';
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { DatabaseModule } from '../database/database.module';
@@ -25,6 +26,7 @@ import { ONBOARDING_EFFECTS, OnboardingService } from './onboarding.service';
     ),
   ],
   providers: [
+    ConversationRepository,
     WorkspaceConnectionRepository,
     OnboardingStateRepository,
     OnboardingEffectsService,

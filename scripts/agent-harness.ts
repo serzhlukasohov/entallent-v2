@@ -96,6 +96,7 @@ const RETIRED_PATHS = [
   /^packages\/application\/src\/ports\/agent-runtime\.port\.ts$/,
   /^packages\/application\/src\/use-cases\/(?:maf-|agent-runtime-(?:router|mode-resolver))/,
   /^packages\/contracts\/runtime\//,
+  /^packages\/contracts\/src\/runtime-contract\.test\.ts$/,
   /^packages\/database\/migrations\/[^/]*maf/i,
   /^packages\/database\/src\/(?:__tests__\/runtime-ledger\.integration\.test|schema\/runtime-attempts)\.ts$/,
   /^scripts\/(?:live-maf|maf-)/,
@@ -699,6 +700,8 @@ export function buildActiveTestCommands(
     if (packageRoot === 'packages/database') {
       if (!env.DATABASE_URL) throw new Error('database integration target required');
       commands.push(['pnpm', ['--filter', manifest.name, 'test:integration', ...targets]]);
+    } else if (packageRoot === 'packages/contracts') {
+      commands.push(['pnpm', ['--filter', manifest.name, 'exec', 'vitest', 'run', ...targets]]);
     } else {
       commands.push(['pnpm', ['--filter', manifest.name, 'test', ...targets]]);
     }

@@ -87,7 +87,10 @@ export class AiService implements AiProviderPort, QuestionScorerPort, QuestionDe
     return this.provider.scoreConfirmedMeaning(input);
   }
 
-  deidentify(input: { semanticSummary: string; attempt: number }): Promise<string> {
+  get proseModelId() { return this.provider.proseModelId; }
+  get prosePromptVersion() { return this.provider.prosePromptVersion; }
+  reviewDeidentification(input: { semanticSummary: string; candidate: string; locale: string }) { return this.provider.reviewDeidentification(input); }
+  deidentify(input: { semanticSummary: string; attempt: number; locale?: string }): Promise<string> {
     return this.provider.deidentify(input);
   }
 
@@ -132,8 +135,9 @@ export class AiService implements AiProviderPort, QuestionScorerPort, QuestionDe
   generateGroupSummary(
     summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
     questionGroup: string,
+    responseLanguage?: string,
   ): Promise<GroupSummary> {
-    return this.provider.generateGroupSummary(summaries, questionGroup);
+    return this.provider.generateGroupSummary(summaries, questionGroup, responseLanguage);
   }
 
   generateGroupReport(

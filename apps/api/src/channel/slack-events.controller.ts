@@ -1,10 +1,11 @@
-import { Controller, Post, Req, Body, HttpCode, Logger, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Req, Body, HttpCode, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { FastifyRequest } from 'fastify';
 import { SlackAdapter } from '@entalent/channel-slack';
 import type { Env } from '@entalent/config';
 import { IngestionService } from './ingestion.service';
 import { SlackIngestService } from './slack-ingest.service';
+import { isReportingRightsInteractionBody, reportingRightsErrorCode } from './reporting-rights-interaction';
 
 @Controller('channel/slack')
 export class SlackEventsController {
@@ -46,6 +47,16 @@ export class SlackEventsController {
       throw new UnauthorizedException('Invalid Slack signature');
     }
 
+    // Reporting-rights clicks are admitted before the 200; a failed admission returns an error to Slack.
+    if (isReportingRightsInteractionBody(payload)) {
+      try {
+        await this.pipeline.processBody(payload);
+      } catch (error) {
+        this.logger.error(`slack_reporting_rights_admission_failed code=${reportingRightsErrorCode(error)}`);
+        throw new ServiceUnavailableException('Reporting-rights request not admitted');
+      }
+      return {};
+    }
     await this.pipeline.processBody(payload).catch((err: unknown) => {
       this.logger.error('Slack interaction processing failed', err);
     });

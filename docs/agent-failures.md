@@ -16,6 +16,51 @@ Use this file to turn agent misses into harness improvements.
 
 ## Open Failures
 
+## 2026-10-26: Calendar adapter array binding failed against actual PostgreSQL
+
+- Symptom: The new RPT-04 calendar-save adapter used a generic interpolated array that PostgreSQL treated as a record, rejecting the smallint[] write; initial native fixtures also lacked the established guarded question map.
+- Expected: A valid settings save atomically persists source/revision/audit/plans through the real adapter without weakening existing cycle guards.
+- Root cause layer: verification
+- Harness fix: Use driver-compatible bound working-day serialization and keep an actual PostgreSQL source-to-context regression. Seed valid current-policy mappings; synthetic historical rows are explicitly isolated in a local fixture transaction with guards restored before the behavior under test. Normalize timestamp assertions by instant/exact microseconds rather than session-offset spelling.
+- Regression check: `packages/database/src/__tests__/pulse-report-calendar.integration.test.ts`; current native suite passes 22 cases, including opening/lock and review regressions; final full database suite passes 125.
+- Status: fixed
+
+## 2026-10-26: Active contracts gate chained retired runtime checks
+
+- Symptom: The RPT-04 package test script ran all contracts tests, including the archived runtime-contract suite and Python fixture validator. `scripts/agent-harness.ts` also selected that chained script for a focused active contracts target.
+- Expected: Ordinary active TypeScript verification must not invoke archived MAF contracts or their historical tests.
+- Root cause layer: verification
+- Harness fix: Route focused active contracts through direct Vitest, reject the exact archived runtime-contract test path, and preserve archived files/default historical scripts. Record the inadvertently executed read-only checks separately from active acceptance; no external provider, agent-service process or production operation occurred.
+- Regression check: `scripts/agent-harness.test.ts` must prove active calendar targets select direct Vitest and archived runtime-contract targets are refused; direct active-contract Vitest excludes the historical runtime suite.
+- Status: fixed; focused harness regression passed; final full harness remains the completion gate.
+
+## 2026-10-26: Implementation delegation transient capacity failure
+
+- Symptom: The full-history RPT-04 implementation agent returned selected-model capacity, recovered once, wrote initial contracts/resolver tests, then hit the same capacity failure again.
+- Expected: A failed delegation does not silently end approved work or require a different product approval.
+- Root cause layer: tooling
+- Harness fix: Keep implementation delegation bounded: pass the approved spec/design and artifact paths in a fresh-context task rather than the whole multi-day transcript. One same-agent retry is allowed; on recurrence preserve partial edits and resume from durable files in a fresh context. If delegation remains unavailable, use the BMad direct-implementation fallback. No model override or scope change.
+- Regression check: Confirm active agent acknowledgement and source/progress before relying on delegated work; root retains final verification ownership.
+- Status: fixed
+
+## 2026-10-26: Task-owned PostgreSQL restart lost explicit port
+
+- Symptom: Fresh RPT-04 database creation received connection refused because restarting the retained task cluster without `-o` put it on default port 5432 instead of 55443.
+- Expected: Every task-owned cluster restart uses its explicitly named host/port before migrations or connector fixtures.
+- Root cause layer: environment
+- Harness fix: Inspect the task data directory postmaster identity and restart only that owned server with `-o -h 127.0.0.1 -p 55443`; retain the data directory. Never infer runtime port from a successful pg_ctl start.
+- Regression check: Check postmaster.pid port plus protocol preflight of the exact PostgreSQL/Redis target before payload; use explicit startup args on all later restarts.
+- Status: fixed
+
+## 2026-10-25: RPT-03 independent review exposed proof and backlog gaps
+
+- Symptom: Initial Engagement implementation could bind by persistence order, accept wrong-topic numeric wording, leave expired/withdrawn backlog state stuck, and omit exact database contract/probe checks and acceptance time. Delivered form metadata was not frozen independently of delayed capture.
+- Expected: `apps/worker/src/survey/repositories/engagement-answer.repository.ts` and database guards bind the exact positively delivered approved question; `packages/application/src/services/pulse-backlog.service.ts` reflects current allowed ledger coverage and partial rights; permanent proof remains immutable and auditable.
+- Root cause layer: architecture
+- Harness fix: Apply review RPT03-R1 through RPT03-R8 with targeted adversarial fixtures: reversed delivery, wrong topic/reversed anchors, expiry reprobe, partial-withdrawal progression, orphan collection envelope, post-delivery form mutation, contradictory SQL metadata and receipt-versus-acceptance timing. Forward 0073 centralizes the NULL-aware attempted-delivery rule after retained/erased historical rows reproduced an R1 addendum; all 52 native RPT-03 cases pass. Preserve the frozen intent and legacy paths.
+- Regression check: RPT-03 native migrated integration, actual normal/proactive producers and real backlog, affected application/AI/worker suites, independent correction recheck, then `pnpm harness:check -- --base 237d7075ff08f262ccf3cbe2bf7c36cb390d204e` on the fresh task-local database. Review triage is `runs/rpt-03/review/triage.json`.
+- Status: fixed; two independent correction rechecks clear; final full harness passed `runs/harness/receipt-1792923081548-bc98a337.json`.
+
 ## 2026-10-18: Pre-push harness treats a base-branch merge's migration as the branch's own change
 
 - Symptom: After merging `origin/main` (which carried migration `0051`) into PR #25's branch, `git push` failed in the pre-push hook with `database integration target required`. `harness:check` without `--base` resolves the base to the branch upstream, so the diff `upstream..HEAD` contained the migration brought in by the merge; the PR itself changes no migration. `--base main` failed the same way because the local `main` in the main checkout was stale.
@@ -482,6 +527,9 @@ Use this file to turn agent misses into harness improvements.
 - Root cause layer: environment
 - Harness fix: Provision workspace dependencies before the task or provide a dependency-independent reflection launcher that fails fast when its runtime is absent.
 - Recurrence, 2026-10-21 (documentation-only Reports worktree): the direct Node/tsx launcher found tsx but failed on eager `ioredis` imports even though the reflection/docs gate needs no database. Task workaround: use ignored worktree-local links to already installed tsx, ioredis, and postgres packages. The bundled pnpm also attempted an automatic dependency install before the script; it was interrupted, then `verify-deps-before-run=false` allowed the actual docs-only harness to pass without installing. No tracked lockfile or runtime edit resulted. The durable dependency-independent launcher remains open.
+- Recurrence, 2026-10-23 (RPT-03 planning): ignored worktree package metadata was absent again; the direct launcher failed with `ERR_MODULE_NOT_FOUND`. Restoring only ignored tsx/ioredis/postgres links to the complete existing checkout installation made both required reflection commands pass. Previous targets are recorded in `runs/rpt-03/tool-links-before.json`; no tracked dependency/config changes or install occurred. The durable launcher fix remains open.
+- Recurrence, 2026-10-25 (approved RPT-03 implementation): Vitest package metadata was also absent in the isolated worktree. Restored only ignored links to existing installed packages; prior targets are in `runs/rpt-03/implementation-tool-links-before.json`. No tracked dependency or lockfile edit. Reflection and targeted tests then launched successfully; the durable launcher fix remains open.
+- Recurrence, 2026-10-25 (RPT-04 planning): the optional spec tokenizer was listed in the worktree pnpm store but its module payload was absent. Counted the draft through the existing shared-checkout `js-tiktoken` installation directly; no install, dependency edit or link replacement. Treat store directory presence as insufficient evidence of an available runtime; resolve the actual package before invoking it.
 - Regression check: Run reflection and `harness:check` in a clean checkout with network disabled; each must produce its artifact or a clear no-runtime diagnostic without invoking `pnpm install`.
 - Status: open
 
@@ -3248,3 +3296,936 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Run DB-backed checks on a fresh local database (`create database <name>` + `pnpm --filter @entalent/database db:migrate` with an overridden `DATABASE_URL`); recreating the shared `entalent` DB needs user approval because it holds local dev data.
 - Regression check: compare `select max(created_at) from drizzle.__drizzle_migrations` with the journal `when` values; any unapplied entry older than the watermark means the DB must be rebuilt.
 - Status: open
+
+## 2026-10-22: Isolated worktree lacks local BMad installation assets
+
+- Symptom: Reading the Quick Dev template and invoking `_bmad/scripts` from the new PR #32 worktree failed because these ignored local installation assets are not part of its Git tree.
+- Expected: BMad planning uses the installed workflow/configuration while all generated artifacts remain in the authorized isolated worktree.
+- Root cause layer: environment
+- Harness fix: The Reports implementation plan records separate installation and artifact roots. Resolve skills/config with absolute paths in the original installation; use the worktree for source verification, outputs and checks. Dependencies were provisioned with the offline frozen-lockfile install, without reinstalling BMad.
+- Regression check: Verify the shared skill/config resolver paths exist, run the resolver there, and confirm new planning artifacts and `git status` belong to the implementation worktree; original dirty paths must remain unchanged.
+- Status: fixed
+
+## 2026-10-22: Deliberately malformed metric fixture initially failed static casting
+
+- Symptom: A negative comparison fixture failed TypeScript checking before its runtime fail-closed assertion could be accepted.
+- Expected: Deliberately untyped inputs reach validation tests while valid callers retain strict metric-kind typing.
+- Root cause layer: verification
+- Harness fix: The malformed fixture explicitly crosses through `unknown`; compile-time mode/kind rejection remains separately asserted.
+- Regression check: Run application typecheck and `calculate-pulse-report-metrics.test.ts`; both must pass, including invalid comparison and mode/kind cases.
+- Status: fixed
+
+## 2026-10-22: RPT-02 initial design omitted cross-operation safety details
+
+- Symptom: Read-only planning review found that separate-table opening modes could race, receipt bounds were incomplete, mutation lock ordering was underspecified, and blanket undelivered-snapshot cancellation could erase ambiguous-send evidence.
+- Expected: The approved implementation contract states shared locks, exact admission bounds, lineage-specific exclusions and preserved delivery ambiguity before code changes.
+- Root cause layer: architecture
+- Harness fix: `RPT-02-DESIGN.md` now defines the common cycle lock, subject-before-working order, half-open opening/cycle/stop interval, safe unattempted cancellation and explicit survey-evidence handling. Both reviewers verified corrections; no RPT-02 runtime implementation is claimed.
+- Regression check: During RPT-02, run migrated cross-mode opening, lifecycle/withdrawal/finalization races, pre-opening and cycle-boundary admission, partial-topic and attempted/delivery_unknown snapshot fixtures. These runtime regressions are specified, not executed yet.
+- Status: fixed
+
+## 2026-10-22: RPT-02 local integration services blocked by sandbox capabilities
+
+- Symptom: Expected local PostgreSQL/Redis targets were unavailable; sandboxed initdb failed shared-memory creation and Redis could not bind localhost. A Redis health probe also returned a transport-level TCP_NODELAY error.
+- Expected: Deterministic migrated fixtures use reachable isolated local services without changing a shared developer database.
+- Root cause layer: environment
+- Harness fix: Provision task-owned PostgreSQL 17 and Redis directories under `/private/tmp`, bind only localhost on dedicated ports, and use approved escalated execution for local sockets/shared memory. A fresh named database received all baseline migrations. Do not interpret sandbox transport errors as product/provider failures.
+- Regression check: Run named-target `pnpm harness:preflight` before migrated tests; both services must be reachable. Setup passed in `runs/harness/receipt-1792671072675-f5bd32ac.json`; baseline migration output is `runs/rpt-02-baseline-migrate.log`.
+- Status: fixed
+
+## 2026-10-22: RPT-02 finalization and withdrawal observed different permission state
+
+- Symptom: A real migrated concurrency assertion allowed finalization after withdrawal had waited for the same subject lock.
+- Expected: Committed withdrawal exclusions prevail without resurrecting report inputs or failing private coaching.
+- Root cause layer: architecture
+- Harness fix: Use READ COMMITTED for withdrawal under the shared subject advisory lock so reads after lock acquisition observe the latest finalization; retain serializable retries for opening and hierarchy mutations.
+- Regression check: Run the migrated `pulse-report-scopes.integration.test.ts` withdrawal/finalization race, receipt-boundary and no-resurrection cases.
+- Status: fixed
+
+## 2026-10-22: RPT-02 test fixtures lagged adapter and receipt precision
+
+- Symptom: Initial policy run failed at import collection; a stop-boundary fixture lost PostgreSQL microseconds through JavaScript Date; the opt-in queue fixture lacked adapter-required columns and expected an obsolete unsanitized error.
+- Expected: Behavioral RED evidence reaches assertions; database boundaries retain server precision; deterministic queue fixtures exercise the current schema and delivery safety contract.
+- Root cause layer: verification
+- Harness fix: Build workspace dependencies, assign exact stop timestamps within SQL, and align synthetic temporary-table columns and sanitized ambiguous-delivery expectation with the production adapter. Count the later race assertion as behavioral RED, not the import failure.
+- Regression check: Run migrated scope tests plus the explicitly enabled deterministic worker queue suite before the final harness.
+- Status: fixed
+
+## 2026-10-22: Generated RPT-02 foreign-key names collided after PostgreSQL truncation
+
+- Symptom: Two generated composite-FK names truncated to the same 63-character identifier; duplicate-object handling concealed an absent participant FK. The erasure regression also exposed an immutable-membership trigger blocking its parent cascade.
+- Expected: Both tenant/cycle scope and participant references exist, while authorized parent erasure cascades without leaving orphan memberships.
+- Root cause layer: tooling
+- Harness fix: Add forward migrations with explicit short FK names and permit only parent-backed cascade deletion through the immutable-state trigger; preserve already-applied migrations.
+- Regression check: Query actual pg_constraint definitions after migration and run the migrated participant-erasure assertion, including zero orphan memberships.
+- Status: fixed
+
+## 2026-10-22: RPT-02 review exposed incomplete partial-withdrawal and late-staging recovery
+
+- Symptom: Independent reviews found permission changes could fail prepared evidence application, leave excluded pending work blocking other topics, or dispatch a survey prompt after staging was denied. Source ordering also mixed receipt and provider clocks for org-native collection.
+- Expected: Partial exclusion affects only its lineage, current collection admission governs persisted prompts, and receipt-based source precedence stays consistent without failing coaching.
+- Root cause layer: architecture
+- Harness fix: Add focused prepared-evidence, surviving-bundle, excluded-clarification, late-staging and skewed-clock regressions, then correct the local state handling while preserving display/delivery evidence and legacy semantics.
+- Regression check: Run the new targeted application and migrated repository cases, affected app suites, then rerun the root harness on the isolated local database.
+- Status: fixed
+
+## 2026-10-22: A progress update inferred GREEN from a remediation phase
+
+- Symptom: A progress message called staging checks green before reading the latest completed run; the latest log still contained one failing expectation and a fixture type error.
+- Expected: Progress claims use completed exit statuses and test summaries, regardless of log filenames or expected remediation progress.
+- Root cause layer: verification
+- Harness fix: Correct the update immediately and read the latest completed summary before each pass claim; final acceptance requires an independent structured harness receipt after all fixes.
+- Regression check: Match each reported suite count to its completed log and the final harness receipt before marking the specification done.
+- Status: fixed
+
+## 2026-10-22: Parallel workspace rebuild removed dist during database test collection
+
+- Symptom: The final database run could not collect the native matrix while concurrent typecheck cleaned/rebuilt a workspace dist; the other eleven files passed, so no native behavioral result was available.
+- Expected: Consumer tests resolve stable, fully built workspace outputs.
+- Root cause layer: workflow
+- Harness fix: Add the explicit AGENTS.md rule to finish dist-cleaning builds/typechecks before consumer Vitest, then run the database suite sequentially. A related initial import failure had already shown why package-resolution errors are not behavioral RED.
+- Recurrence, 2026-10-26 (RPT-04): a yielded DB suite was still finishing when independent unit commands began. No dist rebuild overlapped and no data failure was observed, but the BMad sequential rule still applies: await the returned process session to completion before the next build/test command. Subsequent verification is sequential.
+- Regression check: Complete workspace build/typecheck first, then run the full database integration suite and final harness with no concurrent rebuild.
+- Status: fixed
+
+## 2026-10-23: RPT-03 draft assumed legacy catalog compatibility
+
+- Symptom: Initial planning reused the 12-question V2 preparation/opening path for a new 15-question catalog and did not explicitly reject first capture after analytical expiry.
+- Expected: Each exact-version validator, SQL guard and missing-opening fallback must handle the declared new contract; an expired source must never recreate numeric content.
+- Root cause layer: architecture
+- Harness fix: RPT-03 design now names the distinct catalog contract, strict canonical subset validation, forward 0047 guard replacement, missing-native-opening rejection, receipt-time prompt binding and subject-locked first-capture expiry check. Two read-only planning audits checked corrections.
+- Regression check: Before implementation, check RPT-03 design sections 2/3/5/7 and ownership map; runtime acceptance requires the specified migrated catalog, missing-opening, delayed-binding and expiry-race fixtures.
+- Status: fixed (planning omission corrected; runtime implementation and acceptance remain pending)
+
+## 2026-10-26: Local setup UI fixture launched without API decorator configuration
+
+- Symptom: The synthetic setup-page fixture failed during TypeScript loading on API parameter decorators.
+- Expected: The fixture serves the actual setup HTML and JavaScript using the API compiler configuration.
+- Root cause layer: environment
+- Harness fix: Launch the isolated fixture with `TSX_TSCONFIG_PATH=apps/api/tsconfig.json node --import tsx runs/rpt-04/ui-fixture.ts`; do not alter product decorators or compiler settings.
+- Regression check: Confirm the fixture starts and then exercise canonical locale save, validation, stale revision and refresh in the browser; evidence is `runs/rpt-04/ui-verification.json`.
+- Status: fixed
+
+## 2026-10-26: RPT-04 independent review found unsupported retained-source and boundary paths
+
+- Symptom: Invalid retained JSONB calendar extras crashed setup rendering; local dates crossing Gregorian range boundaries lost closes or threw; stale CLI CAS errors were blank; an ordinary dev initializer still bypassed configuration revisions.
+- Expected: Invalid legacy sources remain repairable, supported UTC bounds resolve without era/range truncation, CAS failures identify the conflict, and sanctioned calendar writers capture source/revision/audit together.
+- Root cause layer: verification
+- Harness fix: Add focused execution tests for malformed setup snapshots, both timezone-crossing year boundaries, stable conflict diagnostics, and dev initialization after a prior missing-calendar capture; route the initializer through the shared configuration boundary.
+- Regression check: Run the new resolver/UI/migrated configuration cases, independently recheck the corrections, and finish the baseline harness.
+- Status: fixed
+
+## 2026-10-26: RPT-05 planning assumed resolver and optional tokenizer entry points
+
+- Symptom: The first BMad config invocation omitted required `--project-root`; optional token counting used a nonexistent top-level shared package link.
+- Expected: Shared tooling resolves against its installed project, with artifact destinations kept in the authorized worktree; optional modules load from a verified existing payload.
+- Root cause layer: tooling
+- Harness fix: Use the resolver's documented `--project-root /Users/serzh/Documents/enTalentNew` and verify the shared pnpm tokenizer package path before loading it. No install or dependency mutation is necessary.
+- Regression check: Resolve config successfully and write the measured spec token count before the BMad checkpoint.
+- Recurrence 2026-10-29 (RPT-LANG planning): the first config call again omitted required `--project-root`; the corrected worktree-root invocation succeeded. A top-level optional tokenizer resolution was unavailable; the verified existing shared pnpm module payload supplied the tokenizer without installation. The new RPT-LANG required design section11 now records both exact resolver invocations, and the planning validator records config resolution and measured token count before approval.
+- Status: fixed
+
+## 2026-10-26: RPT-05 local restart selected an incompatible PostgreSQL binary
+
+- Symptom: Bare `pg_ctl` selected Homebrew PostgreSQL14 and could not open the task-owned version17 data directory.
+- Expected: Restart the existing isolated database using its initialized major version and explicit port55443.
+- Root cause layer: environment
+- Harness fix: Read `PG_VERSION` and use `/opt/homebrew/opt/postgresql@17/bin/pg_ctl` and matching client tools explicitly; retain the existing data directory and log.
+- Regression check: Compare server/client major versions before local restart, then apply baseline migrations to newly named task databases and run exact-target preflight.
+- Status: fixed
+
+## 2026-10-26: RPT-05 combined migration command was rejected by automatic review
+
+- Symptom: Automatic approval review rejected a combined fixture/source/migration command, citing risk of rewriting applied0075 and manually editing migration history; the command did not execute.
+- Expected: Review corrections use a generated forward migration, leaving every applied SQL/snapshot unchanged.
+- Root cause layer: workflow
+- Harness fix: Generate0076 through Drizzle separately, write only its new SQL, verify0075 SQL/snapshot hashes, then run an explicitly targeted local migration command. The safe forward-only path completed.
+- Regression check: Compare every applied SQL/snapshot to its frozen hash before/after migrations and keep generation, mutation and application sequential/reviewable.
+- Status: fixed
+
+## 2026-10-27: Temporary worktree lost untouched baseline files during execution
+
+- Symptom: Around local midnight the worktree lost its `.git` pointer, 1142 untouched tracked files, installed BMad links and executable wrappers; a migration launcher failed before connecting to the database.
+- Expected: A long-running task retains its baseline and local tooling throughout verification.
+- Root cause layer: environment. The removal source is unconfirmed; surviving recent files and midnight directory timestamps are consistent with age-based temporary-directory cleanup.
+- Harness fix: Pause builds/migrations, restore only absent baseline blobs from the pinned Git object and the verified worktree pointer, then restore missing ignored links to existing installed tooling. Preserve every pre-existing file and record hashes; never use reset/clean. Recovery manifests are `runs/rpt-05/tmp-cleanup-recovery.json` and `tmp-cleanup-tool-links.json`.
+- Regression check: Before resuming, verify the worktree HEAD, zero missing tracked files, starting dirty-file preservation, tool resolution and named local dependency preflight. Keep future multi-day worktrees outside cleanup-managed temporary directories when authorized.
+- Status: fixed
+
+## 2026-10-27: Native report replay reached the legacy unresolved-bundle gate
+
+- Symptom: Source verification found that the processor's pre-orchestration unresolved-confirmation check still used provider time and mutable unpurged bundles, although native replay now had immutable shown mappings. Departed/inactive or coalesced timely receipts could enter skip reconciliation instead of the native historical-verdict path.
+- Expected: Native routing uses the original DB receipt and exact historical shown form before runtime/coalescing skips; legacy routing retains its existing semantics.
+- Root cause layer: verification. Adapter-only verdict tests did not exercise the processor's earlier gate.
+- Harness fix: Add a native receipt-bound branch to the gate and an actual processor-entry regression with inactive/coalescing conditions, then keep it in the affected worker suite.
+- Regression check: Run the RPT-05 migrated shown-form/processor fixture and the focused worker conversation suite.
+- Verification: Full active migrated database suite passed149/149 in `runs/rpt-05/database-integration-all.log`; focused compatibility/new-native cases passed47/47.
+- Status: fixed
+
+## 2026-10-27: Native shown-proof enforcement changed unverified historical processing
+
+- Symptom: The first complete migrated database suite passed140/149; eight RPT-02 native fixtures failed strict shown/ACK proof and one fixture attempted an immutable receipt update.
+- Expected: DB-authored native receipts require the new proof path; historical explicit/unverified receipts preserve prior processing semantics without becoming report-settlement evidence. Fixtures choose their clock on insertion.
+- Root cause layer: context. New native arbitration did not consistently distinguish instrumentation trust from native scope ownership.
+- Harness fix: Gate strict historical-shown arbitration on `db-receipt-v1`; retain the unverified processing compatibility branch and update the old fixture at initial insert. Keep the full RPT-02 migrated suite in RPT-05 verification.
+- Regression check: Run all active database integration tests, plus RPT-05 final-unverified/backdate cases; verify no receipt/coverage trust upgrade.
+- Verification: Full active migrated database suite passed149/149 in `runs/rpt-05/database-integration-all.log`; focused compatibility/new-native cases passed47/47.
+- Status: fixed
+
+## 2026-10-27: Retention fixture omitted the new reporting transaction boundary
+
+- Symptom: The first active worker unit run failed one retention case because the database double had no `transaction` method after metadata cleanup gained an atomic boundary.
+- Expected: The fixture models the transaction and verifies invalidation precedes metadata pruning.
+- Root cause layer: verification.
+- Harness fix: Extend the focused retention double and assert invalidation-before-prune ordering, rather than bypassing the production transaction. Preserve the failed run in `runs/rpt-05/worker-active-retention-red.log`.
+- Regression check: Active worker unit suite passed307 with6 explicitly gated cases skipped in `runs/rpt-05/worker-active-tests.log`; migrated integrations remain separately required.
+- Status: fixed
+
+## 2026-10-27: Report privacy compatibility used a placeholder version
+
+- Symptom: Source verification found a hardcoded `privacy-v1` in native report compatibility while finalization records `question-deidentification-v2`; the reader accepted any nonempty privacy version.
+- Expected: Allowed-source admission and baseline compatibility use the actual approved privacy/calculation contracts; unknown privacy policies cannot silently qualify.
+- Root cause layer: architecture. The report contract was not linked to the existing permanent-insight privacy policy identity.
+- Harness fix: Share the explicit approved version without a database-to-application dependency, validate retained row versions and use it in the compatibility signature.
+- Regression check: Wrong/unknown privacy-version adapter fixture plus positive migrated preparation and compatible baseline cases.
+- Verification: Final migrated DB152/152, targeted inputs19/19, enabled worker integrations20/20 and workspace typecheck/lint24/24 passed; see the RPT-05 implementation handoff.
+- Status: fixed
+
+## 2026-10-27: Legacy Bundle fixture drifted from delivery columns twice
+
+- Symptom: The worker integration fixture first lacked `delivery_recorded_at`; its enabled queue restart case then lacked `delivery_attempted_at`. Both failures occurred in hand-written temporary `messages` DDL.
+- Expected: Isolated fixture columns follow the migrated production shape while retaining its legacy positional inserts and avoiding production data, triggers or foreign keys.
+- Root cause layer: verification.
+- Harness fix: Derive the remaining message columns/types/defaults from migrated `public.messages`, preserving the first legacy positional fields. This prevents repeated one-column repairs. Previous failures are retained in `worker-migrated-fixture-red.log` and `worker-queue-fixture-red.log` under `runs/rpt-05/`.
+- Regression check: Enable all three local queue/backfill/recovery flags and run the seven affected worker integration files after named PostgreSQL/Redis preflight.
+- Verification: Final migrated DB152/152, targeted inputs19/19, enabled worker integrations20/20 and workspace typecheck/lint24/24 passed; see the RPT-05 implementation handoff.
+- Status: fixed
+
+## 2026-10-27: Final team projections could invalidate each other on replay
+
+- Symptom: The new frozen-context replay guard compared projection while candidate uniqueness omitted it. Alternating Team Lead overall and Manager team requests for one final team scope could invalidate each other's otherwise compatible candidates repeatedly.
+- Expected: Both required projections coexist or reuse a canonical equivalent candidate without losing the strict intermediate gate distinction or genuine contract checks.
+- Root cause layer: architecture. Candidate identity and replay validation did not use the same calculation variant.
+- Harness fix: Align calculation variant/projection identity and replay validation, then exercise alternating final requests against real migrated persistence.
+- Regression check: Alternating final projections preserve stable candidate identities and do not advance invalidation generation unnecessarily; mismatched compatibility context still rejects.
+- Verification: Final migrated DB152/152, targeted inputs19/19, enabled worker integrations20/20 and workspace typecheck/lint24/24 passed; see the RPT-05 implementation handoff.
+- Status: fixed
+
+## 2026-10-27: Full workspace typecheck exposed fixture-only database types
+
+- Symptom: The first workspace-wide typecheck found three new database-fixture errors: transaction objects were cast to a full database including `$client`, and source/dist class imports had distinct nominal private-field types.
+- Expected: Fixtures type only the methods they consume and import the same package-facing class as the actual worker consumer.
+- Root cause layer: verification.
+- Harness fix: Use a narrow delete/update capability type and the worker-facing package import; keep workspace-wide typecheck before independent review. Runtime behavior is unchanged.
+- Regression check: Workspace typecheck plus the targeted migrated input suite; initial failure is `runs/rpt-05/workspace-typecheck-fixture-red.log`.
+- Verification: Final migrated DB152/152, targeted inputs19/19, enabled worker integrations20/20 and workspace typecheck/lint24/24 passed; see the RPT-05 implementation handoff.
+- Recurrence during R8 correction: the new Redis Worker test inferred a throw-only callback as never and retained a possibly undefined worker reference. Explicit Promise<void> typing and narrowed lifecycle ownership are required; runtime suites had passed, workspace typecheck caught the fixture defect. Current-source workspace verification remains pending.
+- Verification: current DB164, worker323, API337, application569, contracts95 and queue54 passed without skips; both v3 rechecks clear; workspace typecheck/lint and official full harness `runs/harness/receipt-1793065369178-50365fe6.json` passed.
+- Status: fixed
+
+## 2026-10-27: Independent RPT-05 review exposed untested native boundaries
+
+- Symptom: Two independent source reviews found eight implementation gaps: prefixed shown-body hashes, clarification budget, out-of-frontier invalidation, cross-cycle claims/forms, historical window recovery, private erasure metadata and duplicate recovery enqueue.
+- Expected: Normal native confirmations, independent cycles, frozen final candidates, erasure and safe recovery follow the already approved boundaries.
+- Root cause layer: verification. Initial fixtures mostly covered same-cycle exact bundle bodies and one recovery scan; they missed composed outbound bodies, older/newer cycle coexistence, metadata scrubbing and repeated scans.
+- Harness fix: Add one behavioral regression per accepted finding and preserve the extended cases in the mapped migrated/processor suites. Details and deduplication are `runs/rpt-05/review/triage.json`.
+- Regression check: Corrected native migrated/queue suites, source preservation and both independent correction rechecks before the official pinned-baseline harness.
+- Verification: current DB164, worker323, API337, application569, contracts95 and queue54 passed without skips; both v3 rechecks clear; workspace typecheck/lint and official full harness `runs/harness/receipt-1793065369178-50365fe6.json` passed.
+- Status: fixed
+
+## 2026-10-27 — RPT-05 lineage invalidation crossed the legacy/native opening boundary
+
+- Symptom: the full migrated DB gate passed 162 cases but failed the historical RPT-02 revision backfill with a native input-generation FK error after forward0081.
+- Expected: legacy lineage backfill must remain compatible without acquiring RPT-05 native opening or receipt trust.
+- Root cause layer: architecture. The new lineage invalidation function attempted native generation for every lineage cycle, including historical cycles without a native opening.
+- Harness fix: restrict generation insertion to cycles with an actual native opening in a forward migration, retaining existing legacy semantics and full DB regression coverage. Applied 0081 remains immutable.
+- Regression check: run the full migrated database suite including historical RPT-02 revision backfill and RPT-05 corrective cases.
+- Verification: after forward0082 the full migrated DB gate passed 163/163 cases across 17 files, including the unchanged historical RPT-02 backfill and all 11 review regressions; `runs/rpt-05/correction-database-all.log`.
+- Status: fixed.
+
+## 2026-10-27 — RPT-05 metadata erasure conflicted with delivered numeric-proof guard
+
+- Symptom: independent correction review found that removing only nativeShownComponents left engagementProbe metadata, so erasing delivered numeric-probe text violated the existing immutable-form trigger and rolled back the endpoint transaction.
+- Expected: actual soft-erasure succeeds for both native confirmation metadata and delivered numeric probes while retaining the separate content-free delivery and unknown-send proof.
+- Root cause layer: verification. The initial actual-endpoint fixture covered native metadata but missed coexistence with the delivered numeric-form guard.
+- Harness fix: scrub private message metadata using the existing erasure contract and extend the same actual DB-backed endpoint fixture with delivered numeric and unknown-send records.
+- Regression check: actual endpoint erasure commits, private metadata disappears and persisted/attempted/ACK proof and ambiguity results remain unchanged.
+- Verification: current DB164, worker323, API337, application569, contracts95 and queue54 passed without skips; both v3 rechecks clear; workspace typecheck/lint and official full harness `runs/harness/receipt-1793065369178-50365fe6.json` passed.
+- Status: fixed
+
+## 2026-10-27 — RPT-05 root migration verifier omitted explicit database argument
+
+- Symptom: the verifier rejected its first invocation with task_target_mismatch before connecting, because its required expected-database argument was omitted.
+- Expected: every task-owned DB command supplies the exact intended target.
+- Root cause layer: tooling.
+- Harness fix: retain the fail-closed target guard; invoke with the explicit harness database argument.
+- Regression check: corrected invocation passes all 83 applied migration hashes; `runs/rpt-05/root-applied-migration-check.json`.
+- Status: fixed.
+
+## 2026-10-27 — RPT-05 inline legacy recovery bypassed native queue deduplication
+
+- Symptom: independent corrective review traced a native finalize-only/evidence queue claim followed by unconditional legacy inline recovery for the same pending insight, permitting overlapping scorer/deidentifier calls.
+- Expected: an active native finalization stage must not be repeated through another recovery path. Legacy recovery remains available for its own rows.
+- Root cause layer: architecture. Queue deduplication did not cover the adjacent inline provider path.
+- Harness fix: make the native finalization ownership boundary apply to both queued and inline recovery, including mixed users: admitted native queue work uses native-only selection, inline recovery uses legacy-only selection, and legacy evidence with an injected progress adapter preserves its legacy path. Cover an already active native evidence job with real repository selectors and provider-call assertions.
+- Regression check: repeated/concurrent cutoff scanning neither enqueues nor invokes duplicate provider work for active native finalization; legacy recovery still runs.
+- Behavioral RED: actual Redis Worker plus real DB selectors/recovery/finalizer observed 4 native scorer calls where 1 was permitted while the first call remained active; `runs/rpt-05/correction-inline-red.log`.
+- Verification: current DB164, worker323, API337, application569, contracts95 and queue54 passed without skips; both v3 rechecks clear; workspace typecheck/lint and official full harness `runs/harness/receipt-1793065369178-50365fe6.json` passed.
+- Status: fixed
+
+## 2026-10-27 — RPT-05 queued scope classifier ran before receipt-free backfill branch
+
+- Symptom: independent v2 correction review found the actual dev backfill producer uses inboundMessageId empty string, but the new processor called a UUID-casting receipt classifier before branching on backfill mode.
+- Expected: backfill continues without inventing receipt trust or consuming queued native finalization.
+- Root cause layer: verification. The scope classifier regression covered normal native/legacy jobs but missed the existing receipt-free backfill payload.
+- Harness fix: branch receipt-free backfill before UUID classification, retain disjoint native/legacy ownership and preserve the real producer payload in the processor fixture.
+- Regression check: process backfill with the existing empty inboundMessageId while a native progress adapter is injected; capture/evidence backfill runs without UUID errors and finalizes only permitted legacy rows.
+- Verification: current DB164, worker323, API337, application569, contracts95 and queue54 passed without skips; both v3 rechecks clear; workspace typecheck/lint and official full harness `runs/harness/receipt-1793065369178-50365fe6.json` passed.
+- Status: fixed
+
+## 2026-10-27: RPT-06 planning verification assumed tool and module lookup shapes
+
+- Symptom: an official-doc find request used fuzzy_pattern instead of the enabled tool's pattern field; the first tokenizer lookup assumed js-tiktoken was hoisted at workspace root although its existing payload was nested in the pnpm store.
+- Expected: read current tool argument schema and verify the actual installed module entry before invoking planning checks.
+- Root cause layer: tooling.
+- Harness fix: use find.pattern with official URLs; resolve the existing verified js-tiktoken package payload by absolute path without installing or replacing dependencies.
+- Regression check: official Slack limits were refreshed successfully and the complete RPT-06 draft counted at 1,432 cl100k_base tokens through the verified installed payload.
+- Status: fixed
+
+## 2026-10-28: Task PostgreSQL restart omitted its runtime port override
+
+- Symptom: PostgreSQL17 started successfully but listened on5432; both intended createdb operations against55443 failed with connection refused before creating databases.
+- Expected: retained task cluster restarts on the explicitly named isolated loopback port before any fixture database operation.
+- Root cause layer: environment. The earlier -o runtime port override was not stored in postgresql.conf and plain pg_ctl start did not restore it.
+- Harness fix: always use the exact PG17 binary with pg_ctl -D task-data -o "-p 55443 -h 127.0.0.1" start, inspect the actual listener/options, and run named-target preflight before database work. No shared cluster/configuration change is required.
+- Regression check: both fresh RPT-06 databases migrated83entries with matching SQL hashes; named preflight receipt runs/harness/receipt-1793174124869-ae21e2a0.json passed.
+- Status: fixed
+
+
+## 2026-10-28: Compressed source display changed declaration order
+
+- Symptom: a condensed source display appeared to place schema helpers after their evaluated exports, suggesting a temporal-dead-zone defect; exact numbered source search disproved it before any edit.
+- Expected: source-order findings must use exact line evidence rather than reconstructed/compressed displays.
+- Root cause layer: tooling. The display compressor extracted helper declarations out of order.
+- Harness fix: verify declaration-order and control-flow findings with narrow numbered source searches before requesting a correction; withdraw disproved findings explicitly.
+- Regression check: numbered declarations in pulse-report-presentation.ts show helpers before their schemas; no runtime change required.
+- Status: fixed
+
+
+## 2026-10-28: Optional local preview browser protocol denied
+
+- Symptom: CUA rejected opening the synthetic desktop/mobile HTML preview because file URLs are outside its allowed browser protocols.
+- Expected: browser inspection occurs only through an authorized surface; fixture/package checks remain separate evidence.
+- Root cause layer: environment. Browser URL policy denies file protocol and alternate-route workarounds.
+- Harness fix: retain the offline HTML and structured payload artifacts, inspect their source/fixture assertions, report visual inspection as unverified; do not route the same file through another browser/server to bypass policy.
+- Regression check: final verification report distinguishes synthetic preview generation and structural checks from actual visual/native Slack acceptance.
+- Status: open
+
+
+## 2026-10-28: RPT-06 SQL array binding rejected candidate inventory
+
+- Symptom: migrated presentation fixtures failed when a JavaScript array was bound to a PostgreSQL UUID-array predicate through the SQL adapter.
+- Expected: candidate inventory queries use correctly typed parameter values without interpolating raw SQL.
+- Root cause layer: verification. Initial adapter code assumed array-binding semantics that the actual PostgreSQL driver did not provide.
+- Harness fix: bind parameterized PostgreSQL array literals with explicit UUID-array casts; exercise them against the migrated task database.
+- Regression check: migrated pulse-report-presentation integration fixtures, including current and prior-only inventory reads.
+- Status: fixed
+
+## 2026-10-28: RPT-06 typed error lost across ESM/CJS package copies
+
+- Symptom: the worker wrapper converted a renderer capacity error into generic blocked because instanceof compared different copies of the contract class.
+- Expected: closed technical failure codes survive package/module boundaries.
+- Root cause layer: architecture. Runtime class identity is not stable across ESM/CJS copies.
+- Harness fix: use the exported structural guard with exact error name and closed allowed-code inventory in the builder and wrapper.
+- Regression check: worker assembly matrix; behavioral RED in runs/rpt-06/worker-assembly-matrix.log and GREEN4/4 in worker-assembly-matrix2.log.
+- Status: fixed
+
+## 2026-10-28: RPT-06 missing provenance row preserved a numeric artifact
+
+- Symptom: deleting a closed candidate source row after preparation incorrectly left the existing metric artifact valid.
+- Expected: every current candidate and selected historical baseline remains tied to its complete captured source inventory; any inventory change discards the artifact.
+- Root cause layer: architecture. Authorization tokens covered context, metrics and expiry but omitted source identities; before/after lock discovery alone did not compare against the original capture.
+- Harness fix: include the complete sorted subject/lineage/revision inventory in the shared authorization token; compare discovered rows around the sorted subject locks and captured current/baseline tokens.
+- Regression check: current and prior-only provenance deletion regressions, plus withdrawal/retention races; original behavioral RED is runs/rpt-06/source-inventory-red.log.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: Agent capacity interrupted final-gate continuation
+
+- Symptom: the implementation agent turn ended with a model-capacity error while its final-gate state needed handoff.
+- Expected: continue the same authorized work without duplicating a still-running command or changing model capability.
+- Root cause layer: environment. Transient agent-model capacity.
+- Harness fix: resume the existing agent, recover the exact previous exec session and status before another gate; keep frozen-source hashes and persisted result/log pointers.
+- Regression check: prior exec30232 was confirmed completed exit zero before deterministic suites resumed; no duplicate gate ran.
+- Status: fixed
+
+
+## 2026-10-28: RPT-06 review R1 — Validate complete presentation at exported Slack serializer boundary
+
+- Symptom: A direct serializer caller can supply conflicting report and metric Index or out-of-range values.
+- Expected: Validate complete presentation at exported Slack serializer boundary.
+- Root cause layer: verification. Initial boundary fixtures did not exercise this approved behavior.
+- Harness fix: add the bounded implementation correction and the independent-review regression.
+- Regression check: Reject malformed public DTOs before any package is returned.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: RPT-06 review R2 — Format last included local day of exclusive cycle period with microsecond boundary precision
+
+- Symptom: The date-only range formats exclusive midnight periodEnd as an included next-cycle day.
+- Expected: Format last included local day of exclusive cycle period with microsecond boundary precision.
+- Root cause layer: verification. Initial boundary fixtures did not exercise this approved behavior.
+- Harness fix: add the bounded implementation correction and the independent-review regression.
+- Regression check: UTC/local midnight, DST and one-microsecond-after-midnight fixtures preserve the correct last included local day.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: RPT-06 review R3 — Render visible Manager overall and team headings even for duplicate frozen labels
+
+- Symptom: Identical frozen overall/team labels leave Manager sections visually indistinguishable.
+- Expected: Render visible Manager overall and team headings even for duplicate frozen labels.
+- Root cause layer: verification. Initial boundary fixtures did not exercise this approved behavior.
+- Harness fix: add the bounded implementation correction and the independent-review regression.
+- Regression check: Native literal blocks and fallback retain explicit overall/team identity on every continuation.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: RPT-06 review R4 — Deep-freeze package and manifest after hashing and expose deep readonly types
+
+- Symptom: A caller can mutate package text or nested leaves after hashes are calculated.
+- Expected: Deep-freeze package and manifest after hashing and expose deep readonly types.
+- Root cause layer: verification. Initial boundary fixtures did not exercise this approved behavior.
+- Harness fix: add the bounded implementation correction and the independent-review regression.
+- Regression check: Top-level and nested mutation fail; unchanged frozen package hashes remain stable.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: RPT-06 correction review R5 — duplicate public artifact identities
+
+- Symptom: a direct serializer DTO with duplicate sectionKey passes the public schema, overwrites the overall/team role map and collides in manifest coverage; action identities also need uniqueness/ownership.
+- Expected: section and action identities are unique and each action belongs to its declared section; malformed artifacts fail as a whole.
+- Root cause layer: architecture. Shape validation did not encode the keyed artifact's cross-field invariants.
+- Harness fix: validate unique section/action keys and action-section ownership in the shared public schema; cover forged DTOs at serializer entry.
+- Regression check: duplicate section keys, duplicate action keys and foreign-section action keys are rejected before packaging.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: RPT-06 test launcher and enrollment did not reach assertions
+
+- Symptom: the Slack test CLI payload was absent; the new offline evaluator test also lived outside conversation-sim's configured include directories and produced no-test-files instead of executing assertions.
+- Expected: every required fixture is actually enrolled and runs through the available local launcher; loader/no-test failures are never behavioral RED.
+- Root cause layer: verification. File presence was mistaken for runnable/enrolled test coverage.
+- Harness fix: use node --import tsx for Slack tests and place the offline evaluator test under the existing src/harness include pattern; leave archived/model selectors disabled.
+- Regression check: full Slack suite and src/harness/pulse-report-narrative.eval.test.ts execute their assertions; offline5 passed after relocation.
+- Status: fixed
+
+
+## 2026-10-28: Broad worker gate stopped before legacy enqueue rollback assertion
+
+- Symptom: conversation-group-report-transaction.integration.test.ts expected its synthetic enqueue rejection but received sensitive/assessment_failed; the broad opted-in run had483 passes,6 gated skips and one failure.
+- Expected: the fixture reaches the injected enqueue failure and proves the established V1 transaction rollback without changing legacy runtime behavior.
+- Root cause layer: verification. The unchanged legacy fake omitted detectRisk; existing unconditional ADR-013 risk assessment correctly returned assessment_failed before the intended queue fault.
+- Harness fix: preserve original RED and unchanged-source diagnosis; add the existing V2-style explicit benign detectRisk fake plus invocation assertion, keeping all enqueue-fault and rollback checks. No runtime change. Account for every gated skip before the final broad run.
+- Regression check: isolated transaction fixture reaches its intended fault, followed by the complete opted-in worker gate and official final harness.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: Newly enabled cutoff fixture used an outdated temporary messages shape
+
+- Symptom: V2_CUTOFF_QUEUE_TEST exposed a temporary-table parser error for latest.delivery_recorded_at before the fixture reached its intended simulated processing failure.
+- Expected: synthetic temporary tables match the already-migrated schema read by the adapter; both cutoff queue assertions execute.
+- Root cause layer: verification. The unchanged legacy fixture omitted an existing nullable delivery-proof column.
+- Harness fix: add nullable delivery_recorded_at timestamptz only to the fixture's temporary messages table; keep the real runtime, applied migrations and target guards unchanged.
+- Regression check: isolated cutoff queue fixtures, then the opted-in worker suite with V2_CUTOFF_QUEUE_TEST enabled.
+- Verification: both independent v4 rechecks clear; worker486/DB178 and official harness `runs/harness/receipt-1793182108438-a2963c20.json` passed.
+- Status: fixed
+
+
+## 2026-10-28: Final harness resolved tsx from a broken package-local alias
+
+- Symptom: official harness receipt1793181777535-5a1ed5cd failed at channel-slack before assertions: package-local tsx metadata/loader was absent, although root and direct-loader fixture gates had passed.
+- Expected: the actual package script and every package-local tool context resolve the complete installed runtime before the final gate.
+- Root cause layer: environment. Only the root workspace aliases had been preflighted; a local tsx alias still pointed to an incomplete ignored store payload.
+- Harness fix: inventory root and package-local tsx aliases, restore only the one broken ignored symlink to the existing same-version installation, preserve the old target, and exercise node --import tsx in every relevant context. No install, lockfile, source or original-checkout edit.
+- Regression check: tsx-context-recovery.json validates five actual contexts; root-renderer-launcher-green.log runs the real package launcher before the complete official gate. Preserve first failed log/results as attempt1 artifacts.
+- Status: fixed
+
+
+## 2026-10-28: Optional BMad editor opening blocked by locked Mac
+
+- Symptom: CUA could not select the editor because the Mac was locked and automatic unlock failed.
+- Expected: the final specification can be opened only through an available authorized UI; implementation evidence does not depend on changing the lock state.
+- Root cause layer: environment. Locked native UI.
+- Harness fix: skip further UI actions, keep the completed specification and clickable Suggested Review Order on disk, and report that automatic editor opening was unavailable. Never bypass the lock through another automation route.
+- Regression check: final response links the completed local spec without claiming it was opened; code/receipt/preservation checks remain independently verified.
+- Status: open
+
+## 2026-10-28: RPT-07 planning review exposed lifecycle and dispatch gaps
+
+- Symptom: initial draft omitted prior-only baseline inventory normalization, trusted durable intermediate continuation, one-use dispatch capability after transaction rollback, and concrete credential/workspace/DM proof ownership.
+- Expected: saving a final cannot invalidate its own send; continuation preserves the accepted frontier; ambiguous rollback cannot regrant network permission; every part uses an exact currently authorized route.
+- Root cause layer: architecture/context. Reusing candidate validation and pilot transport assumptions without spelling out new persistence/dispatch boundaries left races in the proposal.
+- Harness fix: corrected the draft required design with prior nonoverlapping inventory, persisted initiated context, fresh-claim-only nonrecoverable local grant, revision-bound provider identity proof and exact schema/writer ownership. Both independent source-review correction rechecks are clear on recorded spec/design hashes.
+- Regression check: RPT-07 implementation must cover self-completion/first-send, post-frontier resume/final-start, first-send rollback versus duplicate holder, and cross-workspace token/private-DM fixtures before acceptance. These runtime tests have not run during planning.
+- Status: fixed (planning defects corrected; runtime implementation pending approval)
+
+## 2026-10-28: BMad planning continuation assumed a nested step path
+
+- Symptom: one read of bmad-quick-dev/steps/step-02-plan.md failed because this installation stores step files directly under the skill directory.
+- Expected: read the installed skill-relative path without assuming a steps subdirectory.
+- Root cause layer: tooling/context.
+- Harness fix: listed the exact skill files, then read step-02-plan.md and spec-template.md from their actual installed paths; workflow remained at the approval checkpoint.
+- Regression check: resolve relative step/template references against the loaded SKILL.md directory before access.
+- Status: fixed
+
+## 2026-10-28: RPT-07 implementation agent hit transient model capacity
+
+- Symptom: implementation agent stopped after the contracts/inventory milestone with Selected model is at capacity.
+- Expected: continue the authorized sequential implementation without losing dirty work or restarting completed steps.
+- Root cause layer: environment/tooling. Model capacity, not repository behavior.
+- Harness fix: resume the same existing agent from saved files/logs and preserve a durable milestone handoff in runs/rpt-07; never change models, reset the checkout or claim implementation complete from an interrupted turn.
+- Regression check: compare implementation file inventory against the baseline and resume from the last recorded milestone; require full tasks/AC/gates before completion.
+- Review recurrence: the round-two Blind Hunter initially returned the same capacity error. One same-agent, same-model retry resumed the exact frozen-source review and produced its hash-verified report. No source or command ownership was lost and no model downgrade occurred.
+- Status: fixed (same agent resumed from the saved milestone and continued implementation)
+
+## 2026-10-28: Contracts package test script chained a retired fixture validator
+
+- Symptom: the first RPT-07 contracts package test completed Vitest, then its existing test script automatically invoked runtime/validate_fixtures.py. The archived validator returned ok; no agent-service/provider was called or modified.
+- Expected: ordinary reporting verification executes only active TypeScript tests; retired runtime validators remain outside the authorized task.
+- Root cause layer: workflow/instructions. The package-script command chain was not inspected before invocation.
+- Harness fix: inspect package script expansions before broad checks; use explicit direct Vitest targets excluding runtime-contract.test.ts. The official harness already selects active direct test commands; verify that selection before the final gate. Preserve original diagnostics in runs/rpt-07/contracts-first.log. Do not edit archived code to mask this failure.
+- Regression check: pre-execution command inventory contains no retired paths or chained Python validator; active contract tests and pinned-base harness remain required.
+- Status: fixed (subsequent verification uses explicit active test targets)
+
+## 2026-10-28: Local PostgreSQL tooling inferred a nonexistent macOS user role
+
+- Symptom: initial RPT-07 psql connection inferred serzh and failed because this isolated cluster defines postgres; one diagnostic rg glob also failed under zsh when no file matched.
+- Expected: task-owned local connection commands specify host, port, database and role, and source searches use literal known paths.
+- Root cause layer: tooling/environment.
+- Harness fix: use explicit -h127.0.0.1 -p55443 -U postgres and exact script paths. Fresh regression/harness databases were created; named PostgreSQL and Redis preflight passed before fixtures. No shared or production data touched.
+- Regression check: required preflight receipt1793207615729-c26d97c2 verifies both task-local targets; avoid shell-glob expansion in diagnostic paths.
+- Status: fixed
+
+## 2026-10-28: RPT-07 native snapshot schema reused a historical table name
+
+- Symptom: the first newly generated migration omitted native snapshot creation because survey_report_snapshots already exists in the historical schema; native part FK creation then failed and the migration rolled back. New package declaration builds also exposed the duplicate symbol.
+- Expected: new native snapshot schema is separate from historical/pilot snapshots and generated CREATE/FKs are reviewed before application.
+- Root cause layer: context/verification. Existing schema/table symbol inventory was incomplete before generation.
+- Harness fix: use survey_report_native_snapshots / surveyReportNativeSnapshots consistently, preserve the failed generated artifact/diagnostics under runs/rpt-07, regenerate only the unapplied0083/meta and review CREATE/FK names. Preserve all83 previously applied migration hashes/entries.
+- Regression check: migrate fresh task-owned databases, test real native snapshot/completion FKs and legacy/pilot preservation; verify package declaration builds before consumers. Original RED logs: runs/rpt-07/build-database.log and migration-apply.log.
+- Status: fixed (corrected0083 applied successfully; database/Slack builds and worker typecheck passed, native integration matrix continues)
+
+## 2026-10-28: Native publication triggers did not initially cover full tenant erasure
+
+- Symptom: native behavioral assertions passed, but suite cleanup exposed repeated orphan wakeup/obligation writes and canonical-snapshot FK ordering during actual tenant deletion.
+- Expected: lawful parent erasure removes the tenant-owned native graph in valid FK order; ordinary source erasure retains allowed content-free identity/latest-invalid history; ordinary direct snapshot/obligation/completion/attempt deletion remains denied.
+- Root cause layer: architecture/verification. Initial trigger design considered subject invalidation without verifying the complete tenant cascade graph.
+- Harness fix: audited all new wakeup/invalidation/cleanup guards, added centralized tenant graph cleanup with actual parent absence as the only erasure exception, and preserved applied migrations by adding forward corrections. No session-GUC or trigger-depth bypass.
+- Regression check: native-delivery-green3.log passes9/9 with successful actual tenant deletion, direct immutable-row DELETE denial, canonical history support and cleanup assertions; broadened database regressions remain required before final acceptance.
+- Status: fixed (focused migrated regression green; broad gate pending)
+
+## 2026-10-28: Initial native delivery test stopped before behavioral assertions
+
+- Symptom: native-delivery-red.log failed on a syntax error in a fault-injection fixture; the first worker compile also exposed missing import/declaration artifacts and an SDK IM typing boundary.
+- Expected: meaningful RED exercises the intended runtime assertion after declarations and fixtures compile.
+- Root cause layer: verification/tooling.
+- Harness fix: corrected the fixture syntax and real imports/types, rebuilt database/Slack declarations before consumer compilation, and distinguished parser/build failures from behavioral RED evidence.
+- Regression check: corrected package builds, worker direct tsc and full9/9 migrated native-delivery-green3.log pass. Preserve the original failing logs; never cite pre-assertion failures as behavioral proof.
+- Status: fixed
+
+## 2026-10-28: Native erasure initially invalidated sending without purging all cached report data
+
+- Symptom: pre-handoff erasure audit found that source invalidation stopped delivery but restricted native snapshot provenance/prepared caches could still retain an erased subject's data/identifiers.
+- Expected: lawful erasure purges protected snapshot content, parts and prepared/proof caches under source-first fences, while retaining only permitted content-free identity/latest-invalid history and unknown-send evidence; recipient erasure must be covered independently of participant membership.
+- Root cause layer: architecture/verification. Authorization invalidation and physical cached-data lifetime were treated separately without a complete erasure inventory.
+- Harness fix: add DB-owned source/recipient erasure hooks through forward migration0090 after already-applied0083–89; audit every new cache/proof/payload owner and preserve deletion/unknown-send tombstone guards.
+- Regression check: migrated soft/hard erasure, recipient-only erasure and purge-versus-send races must prove cached data removal, no SDK invocation after purge, no identity recreation and no older-baseline resurrection.
+- Status: fixed (migrated source/recipient erasure and purge-versus-send fixtures passed in the121-test RPT01–07 gate; full review remains pending)
+
+## 2026-10-28: Snapshot expiry incorrectly included unused invalid history
+
+- Symptom: pre-handoff audit found native snapshot minimum expiry included every historical inventory entry, so an expired latest-invalid tombstone could block a valid new Baseline-established report.
+- Expected: retain sufficient prior-cycle inventory to forbid older fallback, but derive payload lifetime only from permitted current sources and the comparable previous result actually used.
+- Root cause layer: architecture/verification.
+- Harness fix: separate history-selection inventory from used-source expiry/provenance, preserve latest-invalid/no-older-fallback, and include explicit immutable contract-version metadata.
+- Regression check: latest-invalid history permits a new valid snapshot/send with Baseline established; expiry of an actually used prior-only contributor cancels a frozen current snapshot. Both passed in database-rpt01-07-final.log.
+- Status: fixed
+
+## 2026-10-28: Active command inventory initially matched delivery as live
+
+- Symptom: an unexecuted root command inventory used a substring live filter, which would also omit delivery-named tests.
+- Expected: exclude explicit live-provider test tokens and retired paths while including all active report-delivery tests.
+- Root cause layer: tooling/verification.
+- Harness fix: match live only as a standalone filename token, regenerate the inventory before any test execution, and preserve explicit target lists plus the official harness command selection under runs/rpt-07/active-command-inventory.json.
+- Regression check: contracts inventory includes all12 active files including pulse-report-delivery.test.ts; no package test/Python chain is executed.
+- Status: fixed
+
+## 2026-10-28: Expanded fixtures assumed obsolete schema, module and completion contracts
+
+- Symptom: focused/broad tests exposed a nonexistent users.display_name field, wrong helper-module import, obsolete candidate-only completion temporary-table shapes/guard messages, and a five-respondent team fixture that incorrectly expected insufficient data.
+- Expected: synthetic fixtures use actual schema/helpers and current native snapshot support while preserving real participant, own-TL, negative authorization and no-insert assertions.
+- Root cause layer: verification/context.
+- Harness fix: corrected fixture construction/imports and exact native-guard/retention-store expectations; preserved runtime gates and original failing logs. The connected late-due fixture preserves the existing no-backdated-cycle-activation guard and explicitly separates synthetic schedule evidence from real DB-authored cutoff/delivery.
+- Regression check: migrated121-test RPT01–07 gate and strict typechecks pass; broad API/worker and connected-path runs are required before final acceptance.
+- Status: fixed (fixture corrections; final broad verification/review pending)
+
+## 2026-10-28: Onboarding Redis test guard hid three local worker regressions
+
+- Symptom: broad worker tests reported four skips; inspection showed three onboarding-flow cases were skipped because their test-only URL regex rejected the named Redis /15 path and the queue connection omitted its parsed DB.
+- Expected: explicitly opted-in local queue tests execute against the named isolated Redis DB and reject remote/default-database targets.
+- Root cause layer: verification/environment.
+- Harness fix: constrain the test-only guard to task-local127.0.0.1/localhost port56385 DB15, pass the parsed DB to BullMQ, retain activation opt-in and scoped UUID queue cleanup. No runtime onboarding changes, FLUSHALL or unrelated-key deletion.
+- Regression check: focused onboarding3/3 passed; native-final26/26 includes connected scheduler/processor and actual Redis repair. CAP8 alone remains an explicit unchanged out-of-scope guarded skip.
+- Status: fixed
+
+## 2026-10-28: Independent RPT-07 review found incomplete data-lifetime closure and lease recovery
+
+- Symptom: both independent reviewers found numeric-only/prior-only erasure missed by JSON UUID matching. Additional confirmed branches retain expired assembly summaries, completed candidate metrics, or unused historical metrics; a healthy assembly longer than the fixed two-minute lease can permanently cancel its intermediate identity.
+- Expected: erasure/expiry closes over canonical current and historical source dependencies and all copied stores, leaving only allowed content-free tombstones; bounded computation renews exact fenced ownership without reopening identity or committing a stale owner.
+- Root cause layer: architecture/verification. Tests modeled contributors with Index topics, exercised payload purge without all derived stores, and did not exceed the fixed lease with healthy work.
+- Harness fix: five accepted implementation patches R1–R5 in runs/rpt-07/review/triage.json; use source-junction dependency closure, actual used-source lifetimes, minimal content-free history inventory, scalar scrubbing with latest-cycle preservation and explicit fenced lease renewal/recovery. All92 applied migration entries are protected; use forward migrations only.
+- Regression check: exact numeric-only/prior-only soft/hard erasure; near-expiry blocked assemblies; expired official scalar purge without older fallback; three-cycle unused history copies; healthy long compute versus genuine takeover. Require both independent correction rechecks plus current-source official harness.
+- Correction recheck: both independent reviewers cleared R1/R2/R4 at source level but found two remaining R3/R5 branches: natural prior-only expiry reaches formation before retention and permanently cancels the intermediate; migration0092 retains unused metric keys inside an already-selected historical candidate in existing v1 snapshots/caches. Preserve these findings in `runs/rpt-07/review/{blind,edge}-correction-recheck.md`; add reverse-order and existing-data upgrade regressions, not another new-copy-only test. Protect the now-applied93-entry/181-file prefix; corrections must be forward0093+.
+- Second recheck: R1–R4 are source-clear after current/prior expiry discrimination through preclaim, owner CAS/load and post-narrative defer. R5 still over-purges a valid actual-v1 first-cycle snapshot because0093 compares entire sections and treats extra content-free `baseline_established` keys as unsafe content. The retained-A fixture used the corrected producer and therefore missed the historical format. Upgrade regressions must construct real previous-format rows, distinguish unsafe scalars from safe metadata and preserve valid immutable bytes/history. Applied0093 is protected; use forward0094+.
+- Third recheck: actual0094 and the artifact-only proposed0093 predicate are source-clear and safe/unsafe previous-format data-sweep fixtures pass. A preserved ready v1 report still fails the presentation reader's direct comparison of the freshly narrowed baseline map with the old map containing harmless extra status keys. Storage equality alone is insufficient: add exact-byte fake-transport `deliverNext` acceptance for preserved old-format packages, retaining rejection of extra scalar/unknown objects and all source/history/route proofs.
+- Migration boundary:0094 cannot prevent or restore the earlier destructive0093 sweep. The exact uncommitted0093 patch is prepared under `runs/rpt-07/review/proposed-0093-safe-content.patch`; separate user approval is pending under `AGENTS.md:295`. Do not change protected0093 or claim whole-chain completion before that decision.
+- Reader correction verified: both round-four reviewers are source-clear; actual preserved ready v1 packages deliver their exact stored ordered bytes without regeneration, and ten malformed scalar/unknown/missing-displayed-key variants stop before transport. The complete native/connected/repair regression passes41 tests with zero skips. Current source,185 applied SQL/meta files and95 journal entries remain hash-preserved.
+- Closure 2026-10-29: explicit human approval applied only the exact reviewed 0093 correction (`runs/rpt-07/review/approved-0093-exception.json`). Fresh actual 0000–0093 plus guarded old-format sweep/delivery fixtures and full 0000–0094 ledger hashes pass; existing ledger rows are unchanged. Post-approval full harness `runs/harness/receipt-1793272170654-26e06e7c.json` passes, including full DB 219; native 41/worker 31 and both final independent rechecks pass. Historical findings above are retained.
+- Status: fixed (local deterministic RPT-07; production/model/Slack acceptance remains separately scoped)
+
+## 2026-10-28: RPT-07 corrective fixtures crossed immutable source and retention interval boundaries
+
+- Symptom: first corrective fixtures attempted an immutable watermark edit, hard-deleted a placed subject without the existing placement cleanup, or used a cycle interval too short for sanctioned activation. A focused prior-expiry fixture passed while the complete suite hit `engagement_answer_history_immutable` because its retention threshold split the old answer interval.
+- Expected: fixtures create source state through sanctioned immutable writers, erase their owned placement dependencies, and expire the complete intended historical interval while retaining all live current inputs. A filtered pass must also survive the complete native suite.
+- Root cause layer: verification/context.
+- Harness fix: preserve original diagnostics, use the actual tenant retention-policy writer, placement cleanup and valid cycle boundaries; choose a persisted cutoff after the latest old numeric/Index source and before every current source. Keep immutability guards and add the opposite natural-expiry-before-retention ordering as a separate regression.
+- Regression check: `runs/rpt-07/correction-database-final.log` passes all133 migrated cases together; pre-assertion fixture errors are excluded from behavioral RED. Exact source-lifetime RED is `correction-r3-old-formula-red.log`.
+- Status: fixed (fixture preparation and complete-suite verification; second review's runtime/upgrade branches remain separately open)
+
+## 2026-10-28: Concatenated review diffs lost a file boundary after metadata without a final newline
+
+- Symptom: corrective baseline reconstruction omitted the integration-test patch section after generated JSON, and its SHA-256 mismatched the frozen reviewed version. The hash gate stopped review handoff.
+- Expected: concatenated unified diffs preserve every file boundary and the exact absence of a final newline; reconstructed before/after bytes must match both frozen manifests.
+- Root cause layer: tooling/verification.
+- Harness fix: retain the original failed receipt/diff; reconstruct from EOF-safe sections and emit standard `No newline at end of file` annotations in `runs/rpt-07/make-round2-diff.py`. Do not infer successful source review from a partial reconstructed patch.
+- Regression check: `runs/rpt-07/review/round2-reconstruction-eof-safe.json` verifies all six previous-source hashes; require regenerated `round2-diff-verification.json` before final independent recheck.
+- Status: fixed (all previous-source hashes verified; final current-source diff verification remains a mandatory handoff gate)
+
+## 2026-10-29: RPT-LANG display transformation changed executable setup keys
+
+- Symptom: the first broad setup-copy transform changed the strict-mode directive and machine `tenantId` identifier while translating visible literals.
+- Expected: only explicit display-copy locations change; directives, payload/DOM/action keys, CSRF and query names remain exact.
+- Root cause layer: tooling/verification.
+- Harness fix: restored only the owned setup source from its exact starting snapshot, restricted transformation to display locations, and added executable bootstrap/typed request fixtures including the stable tenant and CSRF payload keys. Dynamic fragments now use whole templates with stable interpolation slots.
+- Regression check: `pnpm --filter @entalent/api exec vitest run src/hierarchy/company-setup-ui.controller.test.ts`; final API consumer receipt is `runs/rpt-lang/final-api-consumers.log` (6 setup assertions within35 API tests).
+- Status: fixed (local deterministic setup behavior; no rollout/onboarding actions performed).
+
+## 2026-10-29: RPT-LANG capture/cache SQL lost parameter and working-revision precision
+
+- Symptom: native queue finalization failed after language capture was added. PostgreSQL could not infer `jsonb_build_object` parameter types; JavaScript Date serialization also truncated a six-digit working revision before the new SQL CAS.
+- Expected: capture/cache/persist preserve the exact admitted revision, and language-only retries reuse one score without bypassing stale-work protection.
+- Root cause layer: architecture/verification.
+- Harness fix: cast the JSON locale/revision parameters explicitly, carry the exact PostgreSQL textual revision through capture/cache/final commit, and compare score-cache revisions in PostgreSQL. Added a .123456 revision fixture, plus updated the old temporary schema to include nullable staging columns. Existing native queue assertions remain unchanged.
+- Regression check: `runs/rpt-lang/database-microseconds-red.log` preserves RED; `database-cas-green.log` passes13 dedicated migrated cases, `final-worker-cas.log` passes161 affected worker cases, and `final-database-cas.log` passes all232 database cases.
+- Status: fixed (independent source review and final official harness remain coordinator responsibilities).
+
+## 2026-10-29: RPT-LANG verification tooling assumed incompatible local shapes
+
+- Symptom: new dashboard tests initially lacked declared Vitest runtime/types; an optional resource comparison could treat undefined locales as equal; an API assertion used an unavailable matcher; the root preservation helper treated a scalar migration-journal count as an entry array. An attempted global typecheck concurrency argument also reached the trailing TypeScript command and was rejected.
+- Expected: test-only dependencies/matchers match the installed version; resources require explicit existence; preservation reads and hash-verifies the real immutable journal prefix; package builds precede consumer tests without forwarding unsupported arguments.
+- Root cause layer: tooling/environment/verification.
+- Harness fix: declared the already-used Vitest dev dependency only for dashboard and reused existing local runtime links; added explicit resource guards, supported assertions and typed fixtures; root captured the verified97-entry journal prefix after the TypeError. Rebuilt packages sequentially and used plain `pnpm typecheck`. Diagnostic logs are retained under `runs/rpt-lang/`.
+- Regression check: dashboard26, API35, provider289 and full DB232 pass in final affected-suite logs; root preservation helper must verify all applied190 SQL/meta files and the97-entry prefix before final acceptance. Never use `pnpm typecheck --concurrency=1` in this repository.
+- Status: fixed (the final preservation/official-harness receipt is issued by the coordinator).
+
+## 2026-10-29: Independent RPT-LANG review found seven cross-layer contract gaps
+
+- Symptom: Step4 blind/edge reviewers found R1 composed localized probe/disclosure insertion rejection (high), R2 loss of pending explicit language on inference (medium), R3 hidden authenticated unavailable/recovery setup state (high), R4 untranslated dynamic setup lifecycle/count copy (medium), R5 conditional extra-connection resource lookup starvation (medium), R6 resurrection of expired native rendition sources after watermark deletion (high), and R7 blank pending Team Signals (medium).
+- Expected: exact composed forms and source proofs persist/deliver; explicit pending intent survives inference; authenticated setup can recover visibly; complete code-owned copy uses accepted company resources; resource reads reuse transaction context; native dependency deletion remains fail-closed; missing safe translation is explicit.
+- Root cause layer: architecture/verification.
+- Harness fix: accepted all seven as implementation patches with frozen intent unchanged, per `runs/rpt-lang/review/triage.json`; add composed-body persistence, receipt-order, executable setup/recovery, constrained-pool, dependency-deletion and actual TeamSignal rendering RED/GREEN regressions. SQL changes must use forward0097+; applied0000–0096 remain immutable.
+- Regression check: exact corrective commands/results will be recorded in `runs/rpt-lang/review/correction-handoff.md`; both independent rechecks and final official harness remain mandatory after corrective freeze.
+- Status: fixed locally (R1–R7 corrective cases pass; independent frozen-source rechecks and official final acceptance remain coordinator responsibilities).
+
+### RPT-LANG corrective evidence refinements, 2026-10-29
+
+- R1 reachability: current ordinary/proactive gates require a delivered disclosure before selecting a numeric backlog probe. The confirmed defect is the conditional combined-body composition contract, not a reproduced normal-load first-probe outage. Shared composer now places the approved form last, keeps exact disclosure/proof bytes, and actual use-case gated persistence plus combined-body repository/delivery tests distinguish those cases.
+- R3/R4 fixture gap: the original fake DOM omitted `form.elements` and ignored `replaceChildren` arguments, allowing the broad bootstrap catch to hide incomplete execution. Strengthened executable fixtures now complete authenticated refresh, actual hierarchy rendering, post-save unavailability and CSRF-protected recovery. Retain `review/r3-r4-red-complete-dom.log` as the meaningful presentation RED.
+- R6 follow-up: the first corrective positive legacy check used approved version/policy without an immutable mode proof. Opposite fixture `database-r6-positive-mode-red2.log` reproduces that remaining ambiguity; forward0098 requires exact immutable legacy cycle-opening authority and recognizes immutable native openings. Applied0097 and its first-apply freeze remain unchanged. `database-r6-positive-mode-green.log` passes the sanctioned legacy writer, same-version-without-opening denial and unknown-version denial.
+- Verification tooling: new composition fixture needed typed history and required trace ID; fixed before final checks. The repeated Turbo clean/dist race removed application declarations while database integration-test imports were being typechecked. Durable sequence is package-output build, `pnpm exec turbo run typecheck --concurrency=1`, then separate root policy `pnpm exec tsc -p scripts/tsconfig.v2-policy.json`; never forward the concurrency flag through the root script. Failed diagnostics remain in `review/correction-typecheck*.log`.
+- Evidence gate: a log file proves only that a command started. Record the actual exit status and matching final task/test summary before reporting a pass; retained failed attempts must remain distinguishable from later passing logs. Corrective structured affected-suite statuses and the final handoff are the evidence index.
+- R5 affected-consumer fixture: the full worker sweep exposed one old reminder integration fixture supplying only `{client}` instead of the production DatabaseService transaction context. The resolver's single-connection regression and160other worker cases passed; the reminder test failed before behavior assertions. Replaced only that fixture with the actual DatabaseService over its existing isolated client; no runtime fallback or transaction weakening. Preserve `final-worker-corrections.log`; focused and resumed sweep outcomes are indexed in the corrective handoff.
+- Final R1 triage refinement: coordinator classifies the proven conditional composition invariant as medium; the original high-severity outage description above is retained as review history, not current reachability evidence. The nonfrozen corrective checklist now matches the refined triage. Actual `messages.text` is plaintext; no encrypted-message-storage assertion is made.
+
+## 2026-10-29: RPT-LANG recheck found reachable onboarding acknowledgment after exact numeric form
+
+- Symptom: both independent recheck reviewers confirmed R8: a substantive team-lead onboarding acknowledgment leaves normal numeric probe selection enabled, then the trailing acknowledgment is appended after the already validated exact form. Localized probe metadata remains attached and SQL correctly rejects the actual final body.
+- Expected: preserve the real onboarding state transition, acknowledgment and selection/disclosure gates while the persisted body ends with the exact accepted question.
+- Root cause layer: architecture/verification.
+- Harness fix: reproduce with the actual OnboardingService result, substantive acknowledge classification, delivered rights receipt and paced numeric backlog, then actual orchestrator -> ConversationRepository save -> DB delivery proofs. Do not weaken the SQL suffix guard or alter applied0095–0098. Also replace the second exposed client-only fixture (RPT03 real proactive producer) with production DatabaseService transaction context; inspect affected real-producer fixture construction for this class.
+- Regression check: preserve `final-database-corrections-final.log` (240/241, sole R5 fixture error) and new R8 RED/GREEN evidence in the corrective handoff; full RPT03/new-language suites plus affected application/worker checks and final root fresh-chain harness are required.
+- Status: fixed (R8 independently rechecked and final local official harness passed; frozen intent unchanged).
+- Resolution: `database-r8-red.log` reproduces exact SQL rejection after both real undecided/deferred team-lead transitions become active. `database-r8-green.log` passes both after placing the acknowledgment before the validated exact form. A lost suffix still throws before persistence; SQL, original form bytes and gates remain unchanged. The full application suite passes1328; full language24 plus full RPT03 literal-answer52 pass76 in `review/r8-database-final.log`. The sole old RPT03 fixture now wraps its existing pool with actual DatabaseService, matching the earlier reminder repair. Narrow real-producer fixture audit found no other exercised client-only resolver callers.
+- Final verification: both final source rechecks and `runs/harness/receipt-1793288712151-c9399e5e.json` pass; full fresh-chain database243/243 without skips.
+- R5 fixture typing refinement: serialized global types exposed the old RPT03 fixture's cross-app private DatabaseService brands after replacing its untyped stub. Give the hierarchy API branch its actual API DatabaseService over the same existing pool, while conversation resolution keeps the actual worker transaction context. Preserve the failed `review/r8-typecheck-final.log`; rerun the full affected fixture file and serialized types before claiming completion.
+
+## 2026-10-29: RPT-LANG final harness exposed an omitted manual-schema consumer
+
+- Symptom: official pinned-base harness receipt `runs/harness/receipt-1793287735798-e5a03f9d.json` failed all7 bundle integration cases with missing `language_capture`; the other216 worker cases passed. Earlier hand-selected worker14-file sweep omitted this bundle file.
+- Expected: every manual working-insight schema used by QuestionInsightRepository includes current nullable language/score-cache fields, and final affected verification includes all harness-selected consumers.
+- Root cause layer: verification/context.
+- Harness fix: align only bundle fixture nullable columns with actual schema, preserve existing assertions and add explicit null-default legacy assertions. Audit all manual working-insight DDL consumers, including capture and cutoff. Use the official harness-selected23-file worker set instead of a smaller remembered list when closing this repository change.
+- Regression check: full bundle7, then the exact23-file worker selection captured from failed official harness (223cases with local migrated PostgreSQL/Redis and queue toggles); targeted worker types/lint. Preserve attempt1 logs/receipt and require root fresh-chain official harness retry before acceptance.
+- Status: fixed locally (bundle7/7, exact harness-selected worker223/223 across23files, worker types/lint exit0; root fresh-chain official retry passed under `runs/harness/receipt-1793288712151-c9399e5e.json`). Audit found three manual schemas: capture already has all nullable fields, bundle now aligned and asserts null legacy defaults, cutoff uses SurveyRepository projections/raw queries and passes unchanged. Evidence: `runs/rpt-lang/review/r9-checks-status.json` and `r9-worker-selection.json`. Runtime, SQL and frozen intent unchanged.
+
+
+### RPT-LANG final evidence closure — 2026-10-29
+
+R1–R9 are fixed and independently rechecked. Final official `runs/harness/receipt-1793288712151-c9399e5e.json` passes diff/type/lint/test checks, including the complete243-case database suite on a fresh99-migration chain. The failed first official receipt remains failed and retained. Actual statuses/final summaries, exact source manifests and migration/frozen-intent audits establish acceptance; file presence or earlier subset passes do not. Model/Slack/semantic/production acceptance remains outside this local task.
+
+
+## 2026-10-30: RPT-08 planning used an unfinished report and guessed source path
+
+- Symptom: Read an audit before its writer completed and guessed the final-schedule repository without its repositories directory.
+- Expected: Consume completed audit artifacts and use exact source paths.
+- Root cause layer: tooling
+- Harness fix: Wait for audit completion, check report existence and validate current source paths separately from proposed implementation paths in the planning receipt.
+- Regression check: RPT-08 planning validation requires complete audit reports and existing current-source references; proposed new paths are labeled separately.
+- Status: fixed
+
+
+## 2026-10-30 — RPT08 connected acceptance fixtures diverged from real contracts
+
+- Symptom: initial connected/migration lanes failed at old JSON/calendar encoding, native-attempt column naming, intermediate-only metric projection, and an unbound numeric correction; a timeout could leave a TERM-ignoring descendant.
+- Expected: fixtures exercise unchanged guards, exact current projections and real shown/probe admission; owned descendants terminate on timeout.
+- Root cause layer: context/verification/tooling; root read-only diagnosis also corrected guessed migration/repository paths using the actual file inventory.
+- Harness fix: explicit pre-Drizzle JSON object binding and schema assertions; guarded 0091 attempt shape; final-only Engagement oracle; voluntary reopen through actual evidence/show/confirmation; whole-process-group TERM/KILL regression; conservative source/test accounting.
+- Regression check: explicit RPT08 connected/migration targets and scripts/run-pulse-report-acceptance.test.ts; retain every failed attempt separately.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+## 2026-10-30: RPT08 migration fixture SQL shape drift
+- Symptom: Repeated fixture construction failures used guessed logical_key/provenance_status columns and a null final obligation index_key before the long calendar lane.
+- Expected: Every synthetic row must use the actual unchanged 0091 schema and production writer's input conventions.
+- Root cause layer: instructions/context/verification; parent advice guessed the empty-string sentinel without checking the schema. This is a harness defect, not a product defect.
+- Harness fix: Check columns and bound values against the schema/catalog before lane execution; derive the final index_key sentinel from schema default ('final') and check the actual catalog constraint before the long lane, plus a short construction regression for every supported purpose.
+- Regression check: RPT08 migration fixture construction test, then the complete 12-scenario guarded migration lane.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+- RPT08 repeated-cycle fixture follow-up: the old Index SQL iterated every tenant window and reinserted already-confirmed working insights. Restrict its cursor to the current bound cycle; full repeated-history scenario lane catches this context defect. Product guards remain unchanged.
+
+- RPT08 repeated-history isolation follow-up: four unsafe fixtures shared one prior tenant and attempted overlapping next cycles concurrently. Allocate independent source tenants per current scenario; verify every prior's own support graph. Preserve the full migration lane as regression evidence.
+
+- RPT08 cache oracle follow-up: unsafe cache used a fabricated prior candidate and expected all selected history erased. Give it a separate real prior source graph; require selected Engagement-only history and exact current/prior source IDs after minimization, with unsupported Index removed and identity/frontier preserved.
+
+- RPT08 restart connected fixture follow-up: two-turn setup omitted the real reporting disclosure and shown bundle, so no permanent scores existed. Replaced ad hoc setup with a reusable four-turn native confirmation helper that asserts permanent proof immediately. Cohort readiness arithmetic cannot diagnose missing confirmation receipts. Full same-graph restart lane remains pending.
+
+- RPT08 current-reader cache seam follow-up: actual prepare correctly invalidated an old fixture candidate with missing native Index source inventory and a guessed metric order. Build complete numeric+receipt-backed native revision inventories and derive metric ordering from the actual 0091 ordered question catalog; assert both before continuation. No production predicate is weakened.
+
+- RPT08 diagnostic path/context follow-up: parent guessed scripts/report-acceptance-evidence.ts during context recovery; actual file is scripts/pulse-report-acceptance-evidence.ts. Use the captured owned-path manifest when restoring context and building review deltas. No product source changed from this failed lookup.
+
+- RPT08 native recovery fault follow-up: failed Revised-substance extraction had native_verdict/finalization not_applicable; it cannot prove native finalization recovery. Inject at scoreConfirmedMeaning after an actual delivered-and-agreed bundle and assert the persisted native applied/pending state plus exact verdict receipt before waiting for cutoff. Preserve the failed original BullMQ attempt and recover through recreated processors/cutoff.
+
+- RPT08 concurrency scope follow-up: a fixture-wide concurrency2 change intended for a duplicate-delivery race also raced independent formation/freeze; Manager correctly deferred snapshot_commit_blocked while TL delivered before due. Keep ordinary formation concurrency1 and raise concurrency only for the exact twin delivery jobs after freeze. Prepare independent employees in real per-phase queue batches; keep fresh concurrent-formation regression coverage. The PostgreSQL due boundary had not been crossed.
+
+- RPT08 partial-withdrawal selection follow-up: choosing an arbitrary open-ended lineage by random UUID could target an unconfirmed/noncontributing Growth topic; the final correctly retained all six actual sources. Select an actual receipt-backed Autonomy lineage from the intermediate source graph and assert the actor contributed exactly six distinct lineages, including that chosen lineage, before withdrawal. Preserve the independent final expectation of five. Direct r8 passed the full recovery/rights/erasure path; the final aggregate must rerun both restart tests with zero skips.
+
+- RPT08 lower-suite opt-in precheck: the explicitly selected confirmation-bundle suite has a conditional BullMQ restart case requiring V2_BUNDLE_QUEUE_TEST=1. The child whitelist previously supplied only V2_CONVERSATION_QUEUE_TEST, which would silently skip that companion before strict accounting rejected it. Explicitly pass both synthetic queue toggles; assert both and prove populated parent model/Slack credentials are stripped. The runner inventory parser requires zero skipped assertions in every full lane.
+
+- RPT08 verification coverage follow-up: workspace lint excludes root scripts, so explicit script lint exposed the preview's control-range regular expression. Replace it with equivalent Unicode code-point inspection, rerun preview semantic-content checks and include all eight new root script files in the explicit lint/type verification set. Console progress warnings are retained as warnings; no lint errors are accepted.
+
+## 2026-10-30 — RPT08 final1 exposed an uncommitted-loss recovery oracle mismatch
+
+- Symptom: strict final1 passed connected 2/2 and exhausted-native/rights recovery, but its first restart assertion expected one generated response after deleting a never-processed conversation hint; actual response count was undefined. Race/reconciliation assertions were not reached in that first case.
+- Expected: uncommitted unknown input remains held for explicit reconciliation; only genuinely committed work may resume without regeneration. The fixture must prove a durable committed effect/admission and actual pending dispatch before deleting its queue hint.
+- Root cause layer: context/verification. The first scenario had not been rerun after focused second-scenario edits; its expectation contradicted the existing safe reconcileOnly branch. This is a fixture defect, not a production defect.
+- Harness fix: retain separate uncommitted-loss zero-call/no-false-report hold; create actual committed pending message/evidence dispatch through paused real queues, lose their actual hints, recreate processors, and prove cutoff-generated recovery job identity plus applied/delivered state with the same generated-response count and effect identity. Run the repaired first case before another expensive full connected/aggregate run.
+- Regression check: focused first restart case, then new source freeze and a fully fresh three-DB/empty-Redis strict aggregate with both restart tests and zero skips. Keep final1 failed-receipt.json and all failed artifacts unchanged.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+- RPT08 final1 recovery correction: focused first-case r9 now passed actual exit0/timedOutfalse, one selected pass and one intentionally filtered skip. Its independent pre-wait DB checkpoint proves one committed/bound outbound still unsent with two pending dispatches versus a separately uncommitted held source with zero dispatches. Actual cutoff rebuilt the missing dispatch, applied evidence/delivered the original outbound, preserved one response/effect and reached unknown-send race/scoped reconciliation assertions. The full fresh final2 still must rerun all assertions plus source-bound recovered-hint receipt accounting with zero skips.
+
+## 2026-10-30 — RPT08 final2 exposed an unordered delivery-race oracle
+
+- Symptom: final2 connected passed2/2 and native recovery/rights passed, but the first restart case reached two reconciliation holds with only one fake post; expected two. Retained metadata shows TL abandoned_attempt before SDK and Manager timeout after SDK.
+- Expected: a pre-invocation competing claim may conservatively abandon the first grant with zero SDK calls, as the existing selected lower regression explicitly requires. A connected post-acceptance race must establish actual first SDK entry before overlapping the duplicate job.
+- Root cause layer: context/verification. The unsynchronized twin delivery jobs raced before the SDK boundary, making the fixture's two-post oracle nondeterministic. No production defect was found.
+- Harness fix: hold the permitted fake transport after its first actual post entry, overlap a duplicate real BullMQ job for that same frozen obligation, prove the first job active/twin complete/one post before release without invoking the global scheduler, then restore serial processing and schedule the other audience. Keep the two-post oracle and positive reconciliation bound to the actually posted target. Explicitly register the existing zero-SDK write-ahead/duplicate-grants lower companion for case31.
+- Regression check: focused complete first-case r10 including all barrier/receipt assertions, then a fresh source freeze and new three-DB/empty-Redis strict final3. Retain final2 receipt, metadata, resources and original failed assertions.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+- RPT08 race correction focused proof: r10 completed actual exit0/timedOutfalse with one selected pass and one intentionally filtered skip. All final barrier/assertion/receipt code ran: empty current-tenant queue inventory, real first BullMQ job active with accepted fake post held, actual same-obligation duplicate completed, one post before release, restored serial audience delivery for two total posts, posted-route/body-hash-bound positive reconciliation, and retained uncommitted hold. No behavioral assertion was added afterward. Full fresh final3 remains required before local closure.
+
+## 2026-10-30: RPT08 late lower-runner framework mismatch
+
+- Symptom: final3 passed connected/restart/migration and 566 application regressions, then channel-slack failed before collection because the universal Vitest command was unavailable.
+- Expected: each exact selection uses its actual framework and all short prerequisite selections fail before expensive real-calendar acceptance.
+- Root cause layer: context/verification/tooling. The channel package uses native node:test; worker integration fixtures also require a migrated fresh schema before their turn.
+- Harness fix: explicit framework registry; separate bounded native event reporter/schema and strict aggregate/per-file identity/count validation; actual pass/fail/skip/todo child tests; canonical macOS paths; native terminal-summary support failure; fresh migration and all lower/companion checks before connected waits. A source-bound 807-test zero-skip preparation on a new empty database passed, including 26 actual native tests.
+- Regression check: node --import tsx scripts/run-pulse-report-acceptance.test.ts, then complete short preparation and a new source-frozen three-database/empty-Redis strict aggregate. Retain final3 failed receipt and its resources; do not reuse its lanes as current-source acceptance.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+## 2026-10-30: RPT08 owner-scoped execution session visibility
+
+- Symptom: root polling a worker-owned running execution session returned Unknown process id.
+- Expected: the execution owner obtains the actual exit while the coordinator observes bounded artifact milestones.
+- Root cause layer: tooling/context. Session handles are owner-scoped across agents.
+- Harness fix: record owner and session in the continuity file; owner polls the actual session, root reads status/JSON artifacts and never starts a competing runner.
+- Regression check: handoff identifies the owner, actual exit and authoritative receipt; absence of root session access is never treated as process completion.
+- Status: fixed — owner obtained actual final3 exit1 and short preparation exit0; coordination uses artifacts.
+
+## 2026-10-30: RPT08 native evidence metadata and path-alias hardening
+
+- Symptom: a typed JSON spread could retain unknown native test fields; a reviewer probe also duplicated the same actual tests under a noncanonical path alias while adjusting terminal counts, inflating accepted identities.
+- Expected: native evidence retains only bounded metadata and counts one physical canonical test identity once, even when raw JSON is forged.
+- Root cause layer: verification. Raw JSON is not validated by a TypeScript typecast; canonicalizing only the expected file set does not canonicalize identity and ordinal maps.
+- Harness fix: stop only the owned final4 child group before source changes, retain actual failed/cancellation receipts and resources; require exact report/summary/count/file/test keys, project the four identity fields explicitly, and reject noncanonical test and file-summary paths before identity accounting. Reporter already emits canonical paths.
+- Regression check: real native positive/failure/skip/todo children, poisoned metadata negatives, and duplicated rows/counts under a portable /./ alias first fail then pass after correction; actual selected 26 native tests remain zero-skip. Repeat the root alias probe, then a new frozen-source full final5 aggregate.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+## 2026-10-30: RPT08 selected lower fixture exhausted its successor activation window
+
+- Symptom: final5 failed early in one existing RPT07 lower test: 193 collected, 192 passed, one failed at survey_insight_v2_cycle_activation_after_start while inserting a successor cycle after heavy setup and baseline freeze.
+- Expected: a valid successor policy is reserved before its real future start; the unchanged native activation guard must still reject late activation.
+- Root cause layer: context/verification. The fixture allowed three seconds for all setup/freeze before reserving the successor. The runtime guard and applied migration were correct.
+- Harness fix: root approved exactly one preexisting test-block exception: reserve only the successor policy immediately after setup, allow ten seconds within the unchanged thirty-second timeout, then freeze the prior report and disable the prior-only subject before the original real wait/open. Every oracle and every byte outside that block remains unchanged, with exact original/prefix/suffix/block hashes retained. Other short-window fixtures were noted for review and left untouched.
+- Regression check: three actual focused passes (one passed and thirty-eight intentionally filtered per run), database types/lint, then a new source-frozen full final6 aggregate whose 807 lower cases execute first with zero skips.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+## 2026-10-30: RPT08 preparation reordered a shared fresh-database dependency
+
+- Symptom: final6 passed all807 lower cases plus connected/restart2+2, then genuine migration acceptance failed its original empty-fresh-public-schema oracle (101 tables existed).
+- Expected: migration acceptance observes a genuinely empty fresh target, installs the full chain there, and only then may lower regressions consume that migrated database.
+- Root cause layer: context/verification. Moving lower regressions early introduced fresh migration before the independent P06 fixture's original fresh-install precondition.
+- Harness fix: execute the complete short P06 old-schema/fresh-install lane immediately after build/pure guards, before idempotent fresh-migrate and all807 lower/companion checks; connected/restart remain last. Keep the original emptiness assertion, three exact targets, migration bytes and source-bound accounting unchanged. No schema reset or extra database substitutes for the precondition.
+- Regression check: pure runner/readiness/preview and root policy/lint, then a new strict final7 with P06 and all807 actual short cases passing before calendar waits, followed by all813 source-bound tests and33local cases.
+- Status: fixed locally — complete source-frozen final7 passed 813/813 tests with zero skips and all 33 local cases; independent review and official harness remain pending.
+
+## 2026-10-30: RPT08 strict final7 evidence closure
+
+- Symptom: earlier failed or cancelled attempts could be mistaken for current-source aggregate acceptance.
+- Expected: one actual completed immutable-source execution binds all selected tests, cases, previews, migration and recovery evidence.
+- Root cause layer: verification/workflow.
+- Harness fix: retain every failed attempt separately; require source hash, unique executed-test inventory, zero skips, canonical native evidence and exact preservation proof before closing local defects.
+- Regression check: `runs/rpt-08/final-verification-summary.json`, `acceptance-20261030-final7/acceptance-bundle.json`, `acceptance-20261030-final7/executed-case-inventory.json`, `implementation-postrun-preservation.json`; source `634dee9d90773da7ad6f71895c786fe25b078b12a2e620eae20d6b6c2f7f9375`.
+- Status: fixed locally — actual final7 exit 0; 813 unique tests passed, zero skips, 33 local cases; 194 SQL/meta files, 99 journal entries, frozen intent and approved design/matrix preserved. Pilot remains blocked; no activation. Independent Step04 review and official harness are separate pending gates.
+
+
+## 2026-10-30: RPT08 independent review exposed acceptance-harness gaps
+
+- Symptom: a duplicate Vitest path alias was accepted as a second identity; replacing obligation evidence with preview-only evidence or a foreign migration hash still produced a local pass. Review also found missing native trend/arithmetic discrimination, incomplete next-cycle trace, qualified-private-SQL blind spots, and cleanup/cancellation/path/calendar boundaries.
+- Expected: exact unique executed evidence must substantiate each local obligation and migration inventory; actual native oracles and bounded owned execution must detect the stated counterexamples.
+- Root cause layer: verification/tooling.
+- Harness fix: eleven deterministic patches are assigned in `runs/rpt-08/step04-triage.json`, with frozen intent unchanged. Preserve failing probes and add meaningful counterexample regressions before accepting changed-source evidence.
+- Regression check: reviewer pure probes; strengthened runner/readiness/native fixtures; two independent corrective rechecks; then one new source-frozen full zero-skip aggregate and official pinned-base gate.
+- Status: fixed locally — all eleven patches passed two bounded independent rechecks and actual final8 exit 0 (813 unique tests, zero skips, 33 local cases); the official default gate passed with its separately disclosed legacy limits. Original final7 is retained only for its own source.
+
+## 2026-10-30: RPT08 ad-hoc intent hash normalization mismatch
+
+- Symptom: a preliminary coordinator preservation assertion compared the raw saved intent file hash with the approved normalized intent hash.
+- Expected: compare the exact frozen specification block or the documented trim-normalized saved intent, matching the freeze contract.
+- Root cause layer: context/verification.
+- Harness fix: use `runs/rpt-08/root-audit-acceptance.py` for the actual frozen block and record the normalization in the ad-hoc report. No product or specification intent changed.
+- Regression check: root source-bound audit passed; `runs/rpt-08/root-preservation-current.json` records passed trim-normalized intent, 194 protected migration files and 99 unchanged journal entries.
+- Status: fixed.
+
+
+## 2026-10-30: RPT08 corrective native SQL query used an absent tenant column
+
+- Symptom: The first isolated corrective native run exited 1 because a new prior-final custody query read nonexistent `survey_report_final_completions.tenant_id`.
+- Expected: Prior canonical completion ownership is joined through the actual candidate and tenant-scoped snapshot before any long calendar acceptance run.
+- Root cause layer: context/verification.
+- Harness fix: Join completion candidate_id to the actual input candidate; validate all four new queries against the real schema with EXPLAIN before rerunning the immutable fixture. Retain failed diagnostic evidence separately.
+- Regression check: `runs/rpt-08/r8-new-sql-validation.json`; actual focused2 exit 0 and new full final8 exit 0, including the real completed prior final, raw rounded-equal negative trend, exact successor roster and receipts.
+- Status: fixed — source-bound final8 coordinator audit passed; no runtime or migration guard was weakened.
+
+
+## 2026-10-30: Official RPT08 harness lacked three local Vitest executable links
+
+- Symptom: The first official pinned-base harness exited 1 at the AI-provider package with `sh: vitest: command not found`; its structured receipt is `runs/harness/receipt-1793397942295-a83c74f1.json`. The strict final8 acceptance remained passed.
+- Expected: Every package selected by the full gate has a runnable installed test executable before the gate begins.
+- Root cause layer: environment/tooling; recurrence of incomplete ignored worktree dependency links.
+- Harness fix: Audit every workspace Vitest test-script executable first; restore only missing ignored contracts/AI/domain executable links to their already installed original-checkout counterparts, preserving the before inventory. No install, dependency/lockfile or application source change. Keep a durable package-executable preflight in future worktree provisioning; the broader dependency-independent tooling improvement remains deferred under the existing open failure.
+- Regression check: All three exact executable version probes exit 0; all 1252 source hashes remain unchanged. Evidence: `runs/rpt-08/official-tool-executables-before.json` and `official-tool-executables-repair.json`; rerun the exact official pinned-base gate and retain the failed receipt/log separately.
+- Status: fixed locally — all executable probes and the later default official gate passed; no tracked source or install change.
+
+
+## 2026-10-30: Legacy RPT07 tests require a different fixed Redis port
+
+- Symptom: Official attempt2 failed two preexisting RPT07 database tests at `requires_named_isolated_rpt07_redis`: they auto-enable when DATABASE_URL and REDIS_URL exist but require exactly loopback port 56385/database15. The owned RPT08 Redis is 56397; the different instance on 56385 must remain untouched.
+- Expected: A verification profile must respect named ownership and preserve the preexisting files; unavailable legacy fixtures remain explicitly unexecuted rather than passed.
+- Root cause layer: environment/workflow; existing fixed-port fixture portability limitation, outside the reviewed24-path implementation delta.
+- Harness fix: Keep the failed structured receipt `runs/harness/receipt-1793398502983-f53d0518.json` and immutable `official-harness-final8-attempt2.log`. Independently review a minimal DB-only official profile without REDIS_URL or V2 queue opt-ins; account for all newly conditional skips and any separately executed proof. Do not weaken the old guards, target the different Redis or change preserved source bytes.
+- Regression check: Required strict RPT08 final8 remains813/33 with zero skips and unchanged1252source hashes; obtain an actual minimal-profile official receipt and disclose two fixed-port legacy tests as a local verification limitation. Future portability changes require an explicit preserved-file scope exception and their own native verification.
+- Status: open — independent review accepted the default profile and its actual official gate passed, but two legacy fixed-port behaviors remain unverified; all nine added skips are disclosed in official-profile-skip-audit.json. Broad local verification retains an estimated5% remainder.
+
+## 2026-10-31: RPT09 Redis-gated integration suite opened Redis during skipped collection
+
+- Symptom: the full database integration run without `REDIS_URL` failed the new `reporting-rights-intake.integration.test.ts` at file level, because BullMQ queues were constructed in the `describe.runIf` body, which Vitest still executes while collecting a skipped block.
+- Expected: a skipped Redis-gated suite opens no connection and reports only skips.
+- Root cause layer: verification.
+- Harness fix: create Redis/BullMQ resources inside `beforeAll`; run every new gated suite once without its optional service before handoff.
+- Regression check: `DATABASE_URL=<owned> pnpm --filter @entalent/database exec vitest run --config vitest.integration.config.ts src/__tests__/reporting-rights-intake.integration.test.ts` reports 4 skipped, and with `REDIS_URL` 4 passed.
+- Status: fixed
+
+## 2026-10-31: RPT07 short-window successor fixtures failed again under RPT09 verification load
+
+- Symptom: `pulse-report-delivery.integration.test.ts` failed nondeterministically (one test in the full run, then one and four different tests in isolated reruns) at `survey_insight_v2_cycle_activation_after_start` / `stage failed`; the file has no RPT09 dependency.
+- Expected: successor-cycle fixtures reserve their policy before its real start regardless of machine load.
+- Root cause layer: verification (same class as the 2026-10-30 RPT08 short-window entry; the other short-window fixtures were left untouched then).
+- Harness fix: apply the approved reserve-successor-first pattern to the remaining RPT07 delivery fixtures in a separately approved change.
+- Regression check: three consecutive isolated passes of `pulse-report-delivery.integration.test.ts` on an owned database.
+- Evidence: failures varied per run and reproduced on a database migrated without 0099 at load average 68–118 (`runs/rpt-09/delivery-flake-discrimination.json`); the same file passed 39/39 inside the official gate at load ~12–26.
+- Recurrence 2026-10-31 (RPT-10 verification, load ~31–38): 36/39 with 3 failures at the same two signatures on `entalent_rpt10_a`; the 3 passed in isolated reruns (one failed once more at `stage failed`, then passed alone). RPT-10 changes only add an optional guard to `deliverNext`, unused by this file. Second recurrence: prioritize the harness fix.
+- Recurrence 2026-10-31 (RPT-10 Step04, `entalent_rpt10_b`, load ~32–51): 36/39, three different tests (R3-boundary, R3-compute, R5-safe-v1) at the same two signatures; all three passed isolated. A preflight run from `packages/database` wrote its receipt under `packages/database/runs/harness/` (moved to `runs/harness/`); run preflight from the repo root.
+- Recurrence (RPT-10): official harness attempt1 2/39 R3; strict bundles rpt10b 2/193 and rpt10c 10/193 (delivery + one presentation test) at load 40–78; delivery file 39/39 at load ~12–18 on the same source. Now blocks every strict acceptance run on this host; the fixture fix should be scheduled as its own approved package.
+- Fix applied 2026-10-31 (approved "Fix those tests"; tests only, no guard/migration change): `pulse-report-inputs.fixture.ts` anchors `period_start` to `date_trunc('milliseconds', clock_timestamp()+150 ms)` inside the insert statement and waits by polling the DB clock (`reserveFixtureCycle`, `waitForDbTime`); optional `successorDays` reserves the contiguous successor chain right after the base insert, and `s.successor()` returns the reserved row (length-checked) or reserves late only as fallback; delivery `next()`, the delivery prior-only test and the presentation baseline-contributor test use it; all 4/5/10-second windows use `SHORT_WINDOW_DAYS = 10/86400` with raised per-test timeouts; `pulse-report-acceptance.fixture.ts` uses the same DB-clock start; R3-ordering's second tenant near-expiry is anchored to the DB clock (2 s after the update); cleanup hook 120 s; R5-v1 reader 150 s.
+- Evidence: presentation+inputs 33/33 twice (load ~47–326); other fixture importers 47 passed/15 skipped (Redis/opt-in); delivery under +12 CPU spinners: round 1 37/39 and 39/39-with-cleanup-hook-timeout (load 19–514), round 2 39/39 (load 101–385) then 36/39 (load 101–317: 30 s timeout in untouched `timely pending` 98-user test leaked into the next two tests); no `survey_insight_v2_cycle_activation_after_start` in any run after the fix. Final no-added-load run aborted: host disk full (`No space left on device`, 247 MiB free; fixture DBs total ~78 MB).
+- Residual: "R3 selected prior near-expiry" keeps a fixed 0.0002-day (17.28 s) retention oracle that must cover the short window plus successor setup; it fails at load ≳300. It needs an approved oracle change (DB-clock-relative retention like the other R3 tests). Load-only timeouts remain possible at load >300 (host far above the 30–80 design budget).
+- Verification 2026-10-31 (after freeing disk, load 18–32): delivery file 39/39 three consecutive isolated runs on fresh `entalent_rpt10_fx1`; fresh strict bundle `20261031_rpt10d` passed (822 tests, 0 skips); official harness passed (`runs/harness/receipt-1793470751971-d38c7fe4.json`).
+- Status: fixed for the `survey_insight_v2_cycle_activation_after_start` class; residual R3-selected oracle tracked separately below.
+
+## 2026-10-31: RPT09 official harness attempt1 ran against an unmigrated database
+
+- Symptom: the pinned-base harness failed in API integration tests with `relation "tenants" does not exist`; receipt `runs/harness/receipt-1793444631737-f0b19715.json`, log `runs/rpt-09/official-harness-attempt1.log`.
+- Expected: the default PostgreSQL profile receives an already migrated owned database, as the RPT-08 launcher did.
+- Root cause layer: workflow (coordinator created an empty database for the gate).
+- Harness fix: migrate the owned gate database with `packages/database/src/migrate.ts` before invoking `runs/rpt-09/run-official-harness.py`; a future launcher should check the drizzle migration count first.
+- Regression check: `select count(*) from drizzle.__drizzle_migrations` equals the journal entry count before the gate; attempt2 receipt `runs/harness/receipt-1793444994105-955e4503.json` passed.
+- Status: fixed
+
+## 2026-10-31: RPT08 strict acceptance hard-pins the full migration journal; RPT09 migration broke it unnoticed
+
+- Symptom: the fresh strict bundle `20261031_rpt10a` failed in the migration lane with `protected_migration_pin_changed_journal`; `failed-receipt.json` under `runs/rpt-08/acceptance-20261031-rpt10a/`. The fixture pins the whole `_journal.json` hash and a ledger count of exactly 99 (fixture, integration test, runner evidence), so any appended migration (0099 in RPT-09, 0100 in RPT-10) fails it.
+- Expected: acceptance protects the bytes of applied migrations 0000–0098 while allowing append-only forward migrations; the official gate should not report green when this suite cannot pass.
+- Root cause layer: verification (fixture assumed a frozen migration set; default harness profile skips the strict migration acceptance, so RPT-09's official receipt could not detect it).
+- Harness fix: pending human decision — pin the idx<=98 journal prefix and protected hashes exactly, require appended entries to be strictly later and append-only, and derive ledger counts from the manifest; run the strict bundle after any migration-bearing package.
+- Regression check: fresh strict bundle exit 0 after the fixture change; a synthetic edit to any 0000–0098 byte still fails `protected_migration_pin_changed_*`.
+- Resolution: human approved the narrow change; fixture pins 0000–0098 exactly and accepts append-only later migrations; rpt10b/rpt10c passed the migration lane.
+- Status: fixed
+
+## 2026-10-31: R3 selected prior near-expiry keeps a fixed real-clock retention oracle
+
+- Symptom: at host load ≳300, `pulse-report-delivery.integration.test.ts` "R3 selected prior near-expiry" can fail because its fixed 0.0002-day (17.28 s) retention must cover the short window plus successor setup.
+- Expected: retention oracles are DB-clock-relative, like the other R3 tests.
+- Root cause layer: verification.
+- Harness fix: approved oracle change to a DB-clock-relative retention (needs human approval because it changes an oracle).
+- Regression check: delivery file under synthetic load >300 passes the R3 selected test.
+- Fix applied 2026-10-31 (human-approved oracle change, test only): retention is set to `clock_timestamp() - min(prior processed_at) + 15 s` (same pattern as R3-ordering) and the bounded-deadline oracle reads the tenant's actual `memoryRetentionDays` instead of the literal 17.28 s.
+- Evidence: R3 selected 3/3 with 12 CPU spinners (load 17–35; >300 not reproducible on demand); full delivery file 39/39; official harness passed (`runs/harness/receipt-1793476391091-d3cd5bb9.json`).
+- Status: fixed (remaining load sensitivity limited to the 15 s observe/claim headroom after the update)
+
+## 2026-10-31: RPT-08a spec Never rule forbade cleaning suite-owned BullMQ queue keys
+
+- Symptom: implementation found the frozen Never rule ("no deleting keys the guard did not create") together with the empty-db claim would make the second legacy suite fail `rpt07_redis_not_empty` in the same run, because BullMQ keeps queue keys after `close()`.
+- Expected: specs that combine an emptiness/ownership check with a shared resource state the lifecycle of artifacts the owned run creates.
+- Root cause layer: instructions (spec drafting did not trace what the suites leave behind).
+- Harness fix: renegotiated with the human; guard registers random-UUID queue names and release removes only `bull:<name>:*` plus its owner key. When drafting an ownership guard, list every key/row the guarded code creates and state its cleanup.
+- Regression check: run all guarded suites in one invocation against one owned target and assert the target is empty afterwards.
+- Status: fixed

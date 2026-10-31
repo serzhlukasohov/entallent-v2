@@ -9,6 +9,7 @@ import { channelAccounts, conversations, createDbClient, onboardingStates, peopl
   tenantWorkCalendars, users, type DbClient } from '@entalent/database';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { IngestionService } from '../channel/ingestion.service';
+import { ReportConfigurationService } from '../report-configuration/report-configuration.service';
 import { CompanyCalendarService } from '../onboarding/company-calendar.service';
 import { DevOnboardingController } from './dev-onboarding.controller';
 
@@ -72,6 +73,24 @@ describe.skipIf(!localDatabase)('DevOnboardingController on migrated local Postg
 
     const again = await controller.start({ tenantId, userId: 'dev-emp', role: 'employee' });
     expect(again).toMatchObject({ calendarCreated: false, personId: first.personId, conversationId: first.conversationId });
+  });
+
+  it('concurrent bootstrap serializes first creation, and existing report extras/language stay intact', async()=>{
+    const [tenant]=await client.db.insert(tenants).values({name:'RPT04 dev bootstrap',locale:'de'}).returning();
+    try {
+      const results=await Promise.all([
+        controller.start({tenantId:tenant.id,userId:'bootstrap-a',role:'employee'}),
+        controller.start({tenantId:tenant.id,userId:'bootstrap-b',role:'employee'}),
+      ]);
+      expect(results.filter(result=>result.calendarCreated)).toHaveLength(1);
+      const configurations=new ReportConfigurationService({client:client.db} as never);
+      const head=await configurations.current(tenant.id);
+      await configurations.saveCalendar(tenant.id,{timezone:'Europe/Warsaw',workingDays:[1,2,3,4,5],workStart:'09:00',workEnd:'17:00',holidays:['2026-12-25'],dateOverrides:[{date:'2026-12-24',kind:'closed'}]},'fixture',head.revision);
+      const before=await configurations.current(tenant.id);
+      await controller.start({tenantId:tenant.id,userId:'bootstrap-c',role:'employee'});
+      expect(await configurations.current(tenant.id)).toEqual(before);
+      expect(before).toMatchObject({locale:'de',calendar:{holidays:['2026-12-25'],dateOverrides:[{date:'2026-12-24',kind:'closed'}]}});
+    } finally {await client.db.delete(tenants).where(eq(tenants.id,tenant.id));}
   });
 
   it('start resets an existing onboarding state (dev reset) and maps a management role to no pulse', async () => {

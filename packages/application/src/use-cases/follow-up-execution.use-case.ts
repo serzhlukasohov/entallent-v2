@@ -149,7 +149,7 @@ export class FollowUpExecutionUseCase {
 
     const generated = await this.ai.generateResponse(turns, strategy, {
       userName: ctx.user.preferredName ?? 'there',
-      languagePolicy: resolveLanguagePolicy(),
+      languagePolicy: (await this.conversationRepo.resolvePersonalLanguage?.({ tenantId: action.tenantId, userId: action.userId }) ?? resolveLanguagePolicy()),
       ...(isReminder
         ? { reminderIntent: actionCtx.reminderIntent ?? action.intent }
         : { followUpIntent: `${actionCtx.originalReason} — ${actionCtx.messageStrategy}` }),

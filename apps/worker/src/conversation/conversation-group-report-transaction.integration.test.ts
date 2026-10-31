@@ -101,6 +101,11 @@ describe.skipIf(!enabled)('V1 group confirmation transaction on migrated Postgre
         queuedAt: new Date(),
       });
       const ai = {
+        detectRisk: vi.fn(async () => ({
+          severity: 'none', confidence: 0.9, reasoningSummary: 'synthetic', riskType: null, evidence: [],
+          immediateResponseRequired: false, escalationRecommended: false,
+          surveyMustBeBlocked: false, proactiveMessagesMustBePaused: false,
+        })),
         classifySituation: vi.fn(async () => ({
           primaryIntent: 'casual_conversation', secondaryIntents: [], emotionalState: [],
           urgency: 'low', confidence: 0.9, surveyAllowed: true,
@@ -201,6 +206,7 @@ describe.skipIf(!enabled)('V1 group confirmation transaction on migrated Postgre
       });
       expect(JSON.stringify(reportJob?.data)).not.toContain(summary);
       expect(await orchestrator.resumeCommittedTurn(input)).toBe(true);
+      expect(ai.detectRisk).toHaveBeenCalledTimes(2);
       expect(ai.interpretConfirmationResponse).toHaveBeenCalledTimes(2);
       expect(await reportQueue.getJobs(['waiting'])).toHaveLength(1);
     } finally {

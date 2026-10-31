@@ -144,11 +144,12 @@ export class OnboardingService implements OnboardingTurnPort {
     // are recovered by a later sweep over reminder_due_at.
     if (committed.result.changed) await this.runEffects(tenantId, personId, event, committed);
     if (!isTurnOriginated(event)) return committed.result;
+    const language = await this.effects.resolveLanguage?.(tenantId,personId);
     const ack = committed.result.effects.find((e) => e.type === 'acknowledge');
     const start = committed.result.effects.some((e) => e.type === 'start_conversation');
     return {
       ...committed.result,
-      ...(ack && ack.type === 'acknowledge' ? { replyAck: ACK_COPY[ack.key] } : {}),
+      ...(ack && ack.type === 'acknowledge' ? { replyAck: language?.resources?.operational?.texts['ack.'+ack.key] ?? ACK_COPY[ack.key] } : {}),
       ...(start ? { replyStart: true } : {}),
     };
   }
@@ -165,6 +166,8 @@ export class OnboardingService implements OnboardingTurnPort {
     tenantId: string, personId: string, event: OnboardingEvent, c: Committed, effect: OnboardingEffect,
     run: { ackInReplacement: boolean },
   ): Promise<void> {
+    const language = await this.effects.resolveLanguage?.(tenantId,personId);
+    const copyResource = language?.resources?.operational;
     switch (effect.type) {
       case 'schedule_reminder':
         if (c.dueAt) await this.effects.scheduleReminder({ tenantId, personId, dueAt: c.dueAt });
@@ -175,11 +178,13 @@ export class OnboardingService implements OnboardingTurnPort {
         // acknowledgement, so the buttons become the short Q24 phrase.
         const button = isButtonClick(event);
         const copy = effect.replacement === 'started'
-          ? (button ? STARTED_REPLACEMENT : BUTTON_REPLACEMENT_SHORT.started)
-          : (button ? ACK_COPY[effect.replacement] : BUTTON_REPLACEMENT_SHORT[effect.replacement]);
+          ? (copyResource?.texts['button.started'] ?? (button ? STARTED_REPLACEMENT : BUTTON_REPLACEMENT_SHORT.started))
+          : (copyResource?.texts[(button ? 'ack.' : 'button.')+effect.replacement] ?? (button ? ACK_COPY[effect.replacement] : BUTTON_REPLACEMENT_SHORT[effect.replacement]));
+        const shownTrust=this.effects.readShownIntroTrust ? await this.effects.readShownIntroTrust({tenantId,personId,channelId:c.introChannelId,messageTs:c.introActionsMessageTs}) : introMessages(c.role,copyResource).trust;
+        if(shownTrust===null)return;
         const replaced = await this.effects.replaceIntroActions({
           tenantId, personId, channelId: c.introChannelId, messageTs: c.introActionsMessageTs,
-          text: `${introMessages(c.role).trust}\n\n_${copy}_`,
+          text: `${shownTrust}\n\n_${copy}_`,
         });
         if (button && replaced && effect.replacement !== 'started') run.ackInReplacement = true;
         return;
@@ -190,7 +195,7 @@ export class OnboardingService implements OnboardingTurnPort {
         // The edited buttons already show this acknowledgement; a second message would duplicate it.
         if (run.ackInReplacement) return;
         await this.effects.sendAcknowledgement({
-          tenantId, personId, text: ACK_COPY[effect.key], dedupeKey: `${personId}:ack:${effect.key}:${c.version}`,
+          tenantId, personId, text: copyResource?.texts['ack.'+effect.key] ?? ACK_COPY[effect.key], dedupeKey: `${personId}:ack:${effect.key}:${c.version}`,
         });
         return;
       case 'start_conversation':

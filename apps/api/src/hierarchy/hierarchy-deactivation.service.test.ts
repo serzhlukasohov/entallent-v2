@@ -37,6 +37,7 @@ function setup(role: 'employee' | 'hrbp' | 'leadership' | 'team_lead', lastTeamE
   ]);
   const writes: Array<{ table: unknown; value: unknown }> = [];
   const db = {
+    execute: vi.fn().mockResolvedValue([]),
     select: () => ({ from: (table: unknown) => ({ where: () => {
       const result = Promise.resolve(rows.get(table) ?? []);
       return { then: result.then.bind(result), for: () => ({
