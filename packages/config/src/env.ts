@@ -47,6 +47,11 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
+  // Mounts the admin conversation-trace lookup/export routes (read at module load by the API).
+  CONVERSATION_TRACE_ADMIN_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
 
   // Agent service client (optional until MAF runtime execution is explicitly enabled)
   AGENT_SERVICE_INTERNAL_URL: z.string().optional(),

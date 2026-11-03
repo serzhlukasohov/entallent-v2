@@ -4,10 +4,14 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "sim": "vitest run",
+    "sim": "node report/run-sim.mjs",
+    "sim:report:html": "node report/render-report.mjs",
+    "sim:record": "node report/record-precondition.mjs",
+    "sim:approve": "node --import tsx src/recording/approve-cli.ts",
+    "sim:qa:promote": "node --import tsx src/qa/promote-cli.ts",
     "sim:gate": "pnpm exec tsx src/gate/run-gate.ts",
     "sim:watch": "vitest",
-    "test": "vitest run src/gate src/harness src/scenarios/simulation-repositories.sim.test.ts src/scenarios/fidelity-fixtures.sim.test.ts --exclude src/scenarios/burnout.sim.test.ts --exclude src/scenarios/memory-recall.sim.test.ts --exclude src/scenarios/terse-user.sim.test.ts --exclude src/scenarios/annna-intent-fidelity.sim.test.ts --exclude src/scenarios/pulse-capture-exact-message.sim.test.ts --exclude src/scenarios/resolved-detail-question-planning.sim.test.ts --exclude src/scenarios/identity-purpose.sim.test.ts --exclude src/scenarios/capability-link-request.sim.test.ts --exclude src/scenarios/answer-then-bundle.sim.test.ts --exclude src/scenarios/offer-delivered.sim.test.ts --exclude src/scenarios/format-request-outline.sim.test.ts --exclude src/scenarios/reasked-question.sim.test.ts --exclude src/scenarios/changed-advice.sim.test.ts --exclude src/scenarios/sentiment-amplification.sim.test.ts --exclude src/scenarios/topic-steering.sim.test.ts --exclude src/scenarios/onboarding-classifier-live.sim.test.ts",
+    "test": "vitest run src/gate src/harness src/preconditions src/qa src/recording src/scenarios/simulation-repositories.sim.test.ts src/scenarios/fidelity-fixtures.sim.test.ts --exclude src/scenarios/burnout.sim.test.ts --exclude src/scenarios/memory-recall.sim.test.ts --exclude src/scenarios/terse-user.sim.test.ts --exclude src/scenarios/annna-intent-fidelity.sim.test.ts --exclude src/scenarios/pulse-capture-exact-message.sim.test.ts --exclude src/scenarios/resolved-detail-question-planning.sim.test.ts --exclude src/scenarios/identity-purpose.sim.test.ts --exclude src/scenarios/capability-link-request.sim.test.ts --exclude src/scenarios/answer-then-bundle.sim.test.ts --exclude src/scenarios/offer-delivered.sim.test.ts --exclude src/scenarios/format-request-outline.sim.test.ts --exclude src/scenarios/reasked-question.sim.test.ts --exclude src/scenarios/changed-advice.sim.test.ts --exclude src/scenarios/sentiment-amplification.sim.test.ts --exclude src/scenarios/topic-steering.sim.test.ts --exclude src/scenarios/onboarding-classifier-live.sim.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\""
   },
@@ -25,6 +29,8 @@
   "dependencies": {
     "@entalent/ai-openai": "workspace:*",
     "@entalent/application": "workspace:*",
-    "@entalent/contracts": "workspace:*"
+    "@entalent/contracts": "workspace:*",
+    "@entalent/conversation-trace": "workspace:*",
+    "zod": "^3.23.8"
   }
 }

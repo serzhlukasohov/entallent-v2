@@ -14,6 +14,7 @@ export const QUEUE_NAMES = {
   PROFILE_HYDRATION: 'profile-hydration',
   ONBOARDING_ACTION: 'onboarding-action',
   ONBOARDING_REMINDER: 'onboarding-reminder',
+  CONVERSATION_TRACE_PURGE: 'conversation-trace-purge',
 } as const;
 
 export type QueueNameKey = keyof typeof QUEUE_NAMES;

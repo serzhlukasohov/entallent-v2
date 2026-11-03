@@ -1,14 +1,16 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { onTestFailed } from 'vitest';
+import { expect, onTestFailed } from 'vitest';
 import type { ScenarioResult } from '@langwatch/scenario';
 import type { StyleDimensions } from '@entalent/application';
 import { describeViolations, findViolations } from './assertions';
-import type { AgentTurnFailure, CoachHarness, GenerateResponseCall } from './coach-harness';
+import { realNow } from './clock';
+import { buildReportTurn, type ReportTurn, type TraceEvent } from '@entalent/conversation-trace';
+import type { AgentTurnFailure, CoachHarness, QaRunSummary, ScenarioContext } from './coach-harness';
 
 const RUNS_DIR = join(process.cwd(), 'runs');
 
-type JudgeResult = Pick<ScenarioResult, 'success' | 'metCriteria' | 'unmetCriteria' | 'reasoning'>;
+export type JudgeResult = Pick<ScenarioResult, 'success' | 'metCriteria' | 'unmetCriteria' | 'reasoning'>;
 
 /** Harnesses whose scenario already wrote its own report; the fallback finalizer skips them. */
 const reportedHarnesses = new WeakSet<CoachHarness>();
@@ -19,6 +21,9 @@ export interface ScenarioRunReport {
   gateRunId: string | null;
   scenarioName: string;
   scenarioSlug: string;
+  /** Vitest test that produced this run ("describe > test"), so a report can take its verdict from the test. */
+  testName?: string | null;
+  testFile?: string | null;
   runAt: string;
   gitSha: string | null;
   models: {
@@ -38,19 +43,17 @@ export interface ScenarioRunReport {
     passed: boolean;
     violations: Array<{ turn: number; rule: string; detail: string }>;
   };
+  /** What the conversation started from; absent in reports written before tracing existed. */
+  context?: ScenarioContext;
+  /** Employee message of every turn, including one that threw. */
+  userMessages?: string[];
+  /** Ordered model calls, writes, warnings and decisions per turn (see `harness/trace.ts`). */
+  trace?: TraceEvent[];
   /** Exceptions that escaped the orchestrator; each is also an `agent-turn-error` violation. */
   agentTurnErrors?: AgentTurnFailure[];
-  turns: Array<{
-    index: number;
-    mode: string;
-    primaryIntent: string;
-    requiresSafetyCheck: boolean;
-    risk: { severity: string; type: string | null };
-    responseLength: number;
-    responseText: string;
-    replyPlan: GenerateResponseCall['context']['replyPlan'] | null;
-    replyBrief: GenerateResponseCall['context']['replyBrief'] | null;
-  }>;
+  /** Present for a run of a QA test file: Jira, story, tags, expected results and hard checks with outcomes. */
+  qa?: QaRunSummary;
+  turns: ReportTurn[];
   memoryItems: Array<{
     category: string;
     content: string;
@@ -72,7 +75,7 @@ export interface ScenarioRunReport {
 export async function reportRun(
   name: string,
   harness: CoachHarness,
-  result: ScenarioResult,
+  result: JudgeResult,
   judgeEvaluated = true,
 ): Promise<void> {
   reportedHarnesses.add(harness);
@@ -149,8 +152,8 @@ function persistReport(data: ScenarioRunReport): () => void {
   console.log(`\n${buildMarkdownReport(data)}`);
 
   const runsDir = process.env.SIM_GATE_REPORT_DIR ?? RUNS_DIR;
-  const fileStem = buildFileStem(data.scenarioSlug);
   mkdirSync(runsDir, { recursive: true });
+  const fileStem = ownFileStem(runsDir, buildFileStem(data.scenarioSlug), data.testName ?? null);
   const markdownPath = join(runsDir, `${fileStem}.md`);
   const jsonPath = join(runsDir, `${fileStem}.json`);
   const persist = () => {
@@ -183,7 +186,9 @@ async function buildReportData(
     gateRunId: process.env.SIM_GATE_RUN_ID ?? null,
     scenarioName: name,
     scenarioSlug: slugify(name),
-    runAt: new Date().toISOString(),
+    ...currentTest(),
+    // Real time even under a precondition's shifted clock: the suite report selects runs by it.
+    runAt: new Date(realNow()).toISOString(),
     gitSha: process.env.SIM_GATE_GIT_SHA ?? null,
     models: {
       coachBalanced: process.env.OPENAI_MODEL_BALANCED ?? null,
@@ -202,21 +207,17 @@ async function buildReportData(
       passed: violations.length === 0,
       violations,
     },
+    context: harness.context,
+    userMessages: [...harness.userMessages],
+    trace: [...harness.trace.events],
     ...(harness.failures.length > 0 ? { agentTurnErrors: [...harness.failures] } : {}),
-    turns: harness.turns.map((turn, index) => ({
-      index: index + 1,
-      mode: turn.mode,
-      primaryIntent: turn.classification.primaryIntent,
-      requiresSafetyCheck: turn.classification.requiresSafetyCheck,
-      risk: {
-        severity: turn.risk.severity,
-        type: turn.risk.riskType,
-      },
-      responseLength: turn.responseText.length,
-      responseText: turn.responseText,
-      replyPlan: harness.responseCallsByTurn[index]?.context.replyPlan ?? null,
-      replyBrief: harness.responseCallsByTurn[index]?.context.replyBrief ?? null,
-    })),
+    ...(harness.qa ? { qa: harness.qa } : {}),
+    turns: harness.turns.map((turn, index) => buildReportTurn(
+      index + 1,
+      turn,
+      harness.responseCallsByTurn[index]?.context,
+      harness.turnEffects[index] ?? null,
+    )),
     memoryItems: harness.memoryItems.map((item) => ({
       category: item.category,
       content: item.content,
@@ -233,65 +234,209 @@ async function buildReportData(
   };
 }
 
-function buildMarkdownReport(data: ScenarioRunReport): string {
-  const lengths = data.turns.map((turn) => turn.responseLength);
-  const gateLine = data.gateId ? `Gate ${data.gateId} · sample ${data.gateRunId ?? 'unknown'}` : '';
+function currentTest(): { testName: string | null; testFile: string | null } {
+  try {
+    const state = expect.getState();
+    return { testName: state.currentTestName ?? null, testFile: state.testPath ?? null };
+  } catch {
+    return { testName: null, testFile: null };
+  }
+}
+
+const RULE = '-'.repeat(60);
+
+/**
+ * Reads top to bottom like the conversation: the starting context, earlier turns as plain
+ * dialogue, then the last turn with its full chain of events, then the verdict. Earlier turns
+ * keep their chains in collapsed sections.
+ */
+export function buildMarkdownReport(data: ScenarioRunReport): string {
   const judgeVerdict = data.judge.evaluated ? (data.judge.passed ? 'PASS' : 'FAIL') : 'NOT RUN';
+  const judgeCount = data.judge.evaluated
+    ? ` (${data.judge.metCriteria.length}/${data.judge.metCriteria.length + data.judge.unmetCriteria.length} criteria met)`
+    : '';
+  const qaFailed = data.qa
+    ? data.qa.hardChecks.some((check) => !check.met) || data.qa.expectations.some((e) => e.met !== true)
+    : false;
+  const passed = data.deterministic.passed && (!data.judge.evaluated || data.judge.passed) && !qaFailed;
+  const userMessages = data.userMessages ?? [];
+  const turnCount = Math.max(data.turns.length, userMessages.length);
+  const lastTurn = turnCount;
   const sections = [
     `# ${data.scenarioName}`,
-    `Run at ${data.runAt} · ${data.turns.length} turns · judge verdict: ${judgeVerdict}`,
-    ...(gateLine ? [gateLine] : []),
     '',
-    '## Judge',
-    ...(data.judge.evaluated ? data.judge.metCriteria.map((c) => `- met: ${c}`) : ['not run']),
-    ...data.judge.unmetCriteria.map((c) => `- UNMET: ${c}`),
-    data.judge.reasoning ? `\n${data.judge.reasoning}` : '',
+    `**Result: ${passed ? 'PASS' : 'FAIL'}** | judge: ${judgeVerdict}${judgeCount} | deterministic checks: `
+      + `${data.deterministic.violations.length === 0 ? 'clear' : `${data.deterministic.violations.length} violation(s)`}`
+      + (data.qa?.hardChecks.length
+        ? ` | hard checks: ${data.qa.hardChecks.filter((check) => check.met).length}/${data.qa.hardChecks.length} met`
+        : ''),
+    `${data.runAt} | ${turnCount} turn(s) | coach ${data.models.coachBalanced ?? 'default'} | judge ${data.models.judge ?? 'n/a'}`
+      + (data.gateId ? ` | gate ${data.gateId} sample ${data.gateRunId ?? 'unknown'}` : ''),
     '',
-    '## Deterministic checks',
-    data.deterministic.passed && data.deterministic.violations.length === 0
-      ? 'all clear'
-      : describeViolations(data.deterministic.violations) || 'deterministic checks failed',
+    '## Context',
+    ...renderContext(data),
     '',
-    ...(data.agentTurnErrors?.length
+    RULE,
+    ...(turnCount > 1
+      ? Array.from({ length: turnCount - 1 }, (_, index) => renderDialogue(data, index + 1)).flat()
+      : ['(no earlier messages)']),
+    RULE,
+    '',
+    ...(turnCount > 0 ? [`## Turn ${lastTurn}`, '', ...renderTurn(data, lastTurn)] : ['No turn ran.']),
+    '',
+    '## Verdict',
+    ...renderVerdict(data),
+    ...(turnCount > 1
       ? [
-          '## Agent turn errors',
-          ...data.agentTurnErrors.flatMap((failure) => [
-            `turn ${failure.turn} — ${failure.name}: ${failure.message} (${failure.generationCalls} generation calls before the throw)`,
-            ...(failure.stack ? [trimStack(failure.stack)] : []),
-          ]),
           '',
+          '## Earlier turns, step by step',
+          ...Array.from({ length: turnCount - 1 }, (_, index) => [
+            '',
+            `<details><summary>Turn ${index + 1}</summary>`,
+            '',
+            ...renderTurn(data, index + 1),
+            '',
+            '</details>',
+          ]).flat(),
         ]
       : []),
-    '## Turns',
-    `reply lengths: ${lengths.join(', ')}`,
     '',
-    ...data.turns.flatMap((turn) => {
-      const risk = turn.risk.severity === 'none' ? '' : ` risk=${turn.risk.severity}`;
-      const plan = turn.replyPlan ?? turn.replyBrief;
-      const memoryAnchors = plan?.memoryAnchors.map((item) => item.content).join(' | ') || 'none';
-      const requiredGrounding = plan?.requiredGrounding.map((item) => item.content).join(' | ') || 'none';
-      const planLine = plan
-        ? `replyPlan=${plan.dialogueAct}/${plan.responseMove} substance=${plan.latestUserSubstance ?? 'none'} anchor=${plan.topicAnchor ?? 'none'} memoryAnchors=${memoryAnchors} requiredGrounding=${requiredGrounding} questions=${plan.questionPolicy.maxQuestions} inferFromBrevity=${plan.mayInferFromBrevity}`
-        : 'replyPlan=none';
-      return [
-        `**${turn.index}. [${turn.mode} / ${turn.primaryIntent}${risk}] ${turn.responseLength} chars**`,
-        planLine,
-        turn.responseText,
-        '',
-      ];
-    }),
-    '## Memory extracted',
-    data.memoryItems.length === 0
-      ? 'none'
-      : data.memoryItems.map((item) => `- [${item.category}] ${item.content}`).join('\n'),
-    '',
-    '## Style profile',
-    data.styleProfile
-      ? `${JSON.stringify(data.styleProfile.dimensions)} · weight ${data.styleProfile.adaptationWeight}`
-      : 'not analysed (analyzeStyle is off for this scenario)',
+    '## After the run',
+    `- Memory: ${data.memoryItems.length === 0 ? 'none' : ''}`,
+    ...data.memoryItems.map((item) => `  - [${item.category}] ${item.content}`),
+    ...renderScheduledActions(data),
+    `- Style profile: ${data.styleProfile
+      ? `${JSON.stringify(data.styleProfile.dimensions)}, weight ${data.styleProfile.adaptationWeight}`
+      : 'not analysed'}`,
   ];
-
   return sections.join('\n');
+}
+
+function renderContext(data: ScenarioRunReport): string[] {
+  if (!data.context) return ['(not recorded)'];
+  const p = data.context.precondition;
+  return [
+    ...(p
+      ? [
+          `- Precondition: ${p.name} (${p.origin}${p.source ? `, ${p.source}` : ''})`,
+          `  - presets: ${p.presets.length ? p.presets.join(', ') : 'none'}`,
+          ...(p.onboarding ? [`  - onboarding: ${p.onboarding}`] : []),
+          ...p.goals.map((goal) => `  - goal: ${goal}`),
+          ...(p.cycle ? [`  - pulse cycle: ${p.cycle.open ? `${p.cycle.topicsClosed}/${p.cycle.topicsTotal} topics closed; ${p.cycle.topics.join('; ')}` : 'not open'}`] : []),
+          ...p.evidence.map((item) => `  - evidence: ${item}`),
+          ...p.scheduledActions.map((action) => `  - scheduled: ${action}`),
+        ]
+      : []),
+    ...data.context.setup.map((fact) => `- ${fact}`),
+    `- Seeded memory: ${data.context.memory.length === 0 ? 'none' : ''}`,
+    ...data.context.memory.map((item) => `  - [${item.category}] ${item.content}`),
+    ...(data.context.messages.length > 0
+      ? ['- Seeded history:', ...data.context.messages.map((message) => `  - ${message.direction}: ${message.text}`)]
+      : []),
+  ];
+}
+
+function renderDialogue(data: ScenarioRunReport, turn: number): string[] {
+  const reply = data.turns[turn - 1]?.responseText;
+  return [
+    `**User:** ${data.userMessages?.[turn - 1] ?? '(not recorded)'}`,
+    `**Bot:** ${reply ?? '(no reply: the turn failed)'}`,
+    '',
+  ];
+}
+
+const EVENT_LABEL: Record<TraceEvent['kind'], string> = {
+  inbound: 'IN',
+  llm: 'LLM',
+  write: 'DB',
+  queue: 'QUEUE',
+  warning: 'WARN',
+  error: 'ERROR',
+  decision: 'DECISION',
+};
+
+function renderTurn(data: ScenarioRunReport, turn: number): string[] {
+  const events = (data.trace ?? []).filter((event) => event.turn === turn);
+  const writes = events.filter((event) => event.kind === 'write');
+  const reply = data.turns[turn - 1]?.responseText;
+  const violations = data.deterministic.violations.filter((violation) => violation.turn === turn);
+  return [
+    `**User:** ${data.userMessages?.[turn - 1] ?? '(not recorded)'}`,
+    '',
+    ...(events.length === 0
+      ? ['(no events recorded)']
+      : events.map((event, index) =>
+          `${index + 1}. **${EVENT_LABEL[event.kind]}** \`${event.name}\`${event.summary ? ` -> ${event.summary}` : ''}`)),
+    '',
+    renderReplyPlan(data, turn),
+    '',
+    `**Bot:** ${reply ?? '(no reply: the turn failed)'}`,
+    '',
+    `Written to storage: ${describeCounts(writes)}`,
+    `Queued jobs: ${describeCounts(events.filter((event) => event.kind === 'queue'))}`,
+    `Checks: ${violations.length === 0 ? 'clear' : violations.map((violation) => `${violation.rule}: ${violation.detail}`).join('; ')}`,
+  ];
+}
+
+/** The plan the reply was generated from; `none` when the reply bypassed the model. */
+function renderReplyPlan(data: ScenarioRunReport, turn: number): string {
+  const report = data.turns[turn - 1];
+  if (!report) return `Reply plan [turn ${turn}]: none (the turn failed)`;
+  const plan = report.replyPlan ?? report.replyBrief;
+  const label = `Reply plan [turn ${turn}, ${report.primaryIntent}]`;
+  if (!plan) return `${label}: none`;
+  const memoryAnchors = plan.memoryAnchors.map((item) => item.content).join(' | ') || 'none';
+  const requiredGrounding = plan.requiredGrounding.map((item) => item.content).join(' | ') || 'none';
+  return `${label}: ${plan.dialogueAct}/${plan.responseMove}, substance=${plan.latestUserSubstance ?? 'none'}, `
+    + `anchor=${plan.topicAnchor ?? 'none'}, memoryAnchors=${memoryAnchors}, requiredGrounding=${requiredGrounding}, `
+    + `questions=${plan.questionPolicy.maxQuestions}, inferFromBrevity=${plan.mayInferFromBrevity}`;
+}
+
+/** Reminders and other scheduled actions, read from the trace so older reports still render. */
+function renderScheduledActions(data: ScenarioRunReport): string[] {
+  if (!data.trace) return [];
+  const saved = data.trace.filter((event) => event.name === 'scheduledActions.save');
+  return [
+    `- Scheduled actions: ${saved.length === 0 ? 'none' : ''}`,
+    ...saved.map((event) => `  - turn ${event.turn}: ${event.summary}`),
+  ];
+}
+
+function renderVerdict(data: ScenarioRunReport): string[] {
+  const judge = data.judge.evaluated
+    ? [
+        ...data.judge.metCriteria.map((criterion) => `- [met] ${criterion}`),
+        ...data.judge.unmetCriteria.map((criterion) => `- [UNMET] ${criterion}`),
+        ...(data.judge.reasoning ? ['', `Judge reasoning: ${data.judge.reasoning}`] : []),
+      ]
+    : ['- judge not run'];
+  const deterministic = data.deterministic.violations.length === 0
+    ? ['- deterministic checks: clear']
+    : [`- deterministic checks:\n${describeViolations(data.deterministic.violations) || 'failed'}`];
+  const errors = (data.agentTurnErrors ?? []).flatMap((failure) => [
+    `- turn ${failure.turn} threw ${failure.name}: ${failure.message} (${failure.generationCalls} generation calls before the throw)`,
+    ...(failure.stack ? [trimStack(failure.stack)] : []),
+  ]);
+  const qa = data.qa
+    ? [
+        '',
+        `QA test ${data.qa.id}${data.qa.jira ? ` (${data.qa.jira})` : ''}:`,
+        ...data.qa.expectations.map((e) => `- [${e.met === true ? 'met' : e.met === false ? 'UNMET' : 'NOT JUDGED'}] ${e.text}`),
+        ...data.qa.hardChecks.map((c) => `- [${c.met ? 'met' : 'UNMET'}] hard check: ${c.label} -> ${c.actual}`),
+      ]
+    : [];
+  return [...judge, '', ...deterministic, ...errors, ...qa];
+}
+
+function describeCounts(events: TraceEvent[]): string {
+  if (events.length === 0) return 'nothing';
+  return Object.entries(countBy(events.map((event) => event.name))).map(([name, count]) => `${name} x${count}`).join(', ');
+}
+
+function countBy(values: string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+  return counts;
 }
 
 function trimStack(stack: string): string {
@@ -300,6 +445,21 @@ function trimStack(stack: string): string {
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/**
+ * Several tests can share one scenario name (an `it.each` over prompts, say). The report file of a
+ * different test is never overwritten: the second test's file gets its test name appended.
+ */
+function ownFileStem(runsDir: string, stem: string, testName: string | null): string {
+  const path = join(runsDir, `${stem}.json`);
+  if (!testName || !existsSync(path)) return stem;
+  try {
+    const owner = (JSON.parse(readFileSync(path, 'utf8')) as Partial<ScenarioRunReport>).testName;
+    return !owner || owner === testName ? stem : `${stem}--${slugify(testName).slice(0, 80)}`;
+  } catch {
+    return stem;
+  }
 }
 
 function buildFileStem(scenarioSlug: string): string {

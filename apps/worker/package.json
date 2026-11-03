@@ -19,6 +19,7 @@
     "@entalent/channel-slack": "workspace:*",
     "@entalent/config": "workspace:*",
     "@entalent/contracts": "workspace:*",
+    "@entalent/conversation-trace": "workspace:*",
     "@entalent/crypto-utils": "workspace:*",
     "@entalent/database": "workspace:*",
     "@entalent/domain": "workspace:*",

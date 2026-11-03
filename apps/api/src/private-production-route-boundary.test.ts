@@ -42,6 +42,7 @@ describe('production API route privacy boundary', () => {
     vi.stubEnv('OPENAI_API_KEY', 'route-boundary-test');
     vi.stubEnv('ADMIN_API_KEY', 'route-boundary-test');
     vi.stubEnv('SLACK_APP_TOKEN', '');
+    vi.stubEnv('CONVERSATION_TRACE_ADMIN_ENABLED', '');
     vi.resetModules();
     const { AppModule } = await import('./app.module');
     const { DevSimulateController } = await import('./dev/dev-simulate.controller');
@@ -77,5 +78,24 @@ describe('production API route privacy boundary', () => {
     `);
     expect(routes.some((route) => /(?:conversation|messages|memory|insights|debug|reset-user)/i.test(route)))
       .toBe(false);
+  }, 15_000);
+
+  it('adds exactly the reviewed conversation-trace routes when the operator opts in', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('DATABASE_URL', 'postgresql://127.0.0.1:5434/route-boundary-test');
+    vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6380');
+    vi.stubEnv('FIELD_ENCRYPTION_KEY', '0'.repeat(64));
+    vi.stubEnv('OPENAI_API_KEY', 'route-boundary-test');
+    vi.stubEnv('ADMIN_API_KEY', 'route-boundary-test');
+    vi.stubEnv('SLACK_APP_TOKEN', '');
+    vi.stubEnv('CONVERSATION_TRACE_ADMIN_ENABLED', 'true');
+    vi.resetModules();
+    const { AppModule } = await import('./app.module');
+    const routes = mountedControllers(AppModule).flatMap(controllerRoutes);
+    expect(routes.filter((route) => /conversation/i.test(route)).sort()).toEqual([
+      'GET admin/conversation-traces/conversations/:conversationId/export',
+      'GET admin/conversation-traces/turns/:traceRowId/precondition',
+      'POST admin/conversation-traces/search',
+    ]);
   }, 15_000);
 });

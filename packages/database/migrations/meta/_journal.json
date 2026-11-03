@@ -379,6 +379,13 @@
       "when": 1792325153224,
       "tag": "0053_perpetual_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1793527669145,
+      "tag": "0054_spooky_silk_fever",
+      "breakpoints": true
     }
   ]
 }

@@ -24,6 +24,11 @@ export class DatabaseService implements OnModuleDestroy, OnModuleInit {
     return this.transactionContext.getStore() ?? this._client.db;
   }
 
+  /** The pool client, never a surrounding transaction: for writes that must not join a turn's commit. */
+  get rootClient(): DbClient['db'] {
+    return this._client.db;
+  }
+
   async withTransaction<T>(callback: () => Promise<T>): Promise<T> {
     return this.client.transaction(async (tx) =>
       this.transactionContext.run(tx as unknown as DbClient['db'], callback));

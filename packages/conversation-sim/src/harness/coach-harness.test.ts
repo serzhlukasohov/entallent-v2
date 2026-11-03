@@ -3,9 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { ScenarioResult } from '@langwatch/scenario';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ScriptedAiProvider } from '../fakes/scripted-ai';
+import { InMemoryScheduledActionRepository } from '../fakes/repositories';
+import { makeClassification, ScriptedAiProvider } from '../fakes/scripted-ai';
 import { CoachHarness, RecordingAiProvider } from './coach-harness';
-import { reportRun, type ScenarioRunReport } from './report';
+import { buildMarkdownReport, reportRun, type ScenarioRunReport } from './report';
 
 const PROVIDER_ERROR = 'provider exploded during generation';
 
@@ -130,5 +131,78 @@ describe('RecordingAiProvider', () => {
     await provider.composeQuestionBundle(turns, questions, 'en', 'corrected_statement');
 
     expect(compose).toHaveBeenCalledWith(turns, questions, 'en', 'corrected_statement');
+  });
+});
+
+describe('CoachHarness turn trace', () => {
+  it('records the inbound, model calls, writes and outcome of a turn in order', async () => {
+    const harness = new CoachHarness({ aiProvider: new ScriptedAiProvider() });
+
+    const reply = await harness.send('hello there');
+
+    const turnOne = harness.trace.events.filter((event) => event.turn === 1);
+    const names = turnOne.map((event) => event.name);
+    expect(turnOne[0]).toMatchObject({ kind: 'inbound', name: 'message accepted' });
+    expect(names).toEqual(expect.arrayContaining(['classifySituation', 'detectRisk', 'generateResponse', 'conversation.saveMessage']));
+    expect(names.indexOf('classifySituation')).toBeLessThan(names.indexOf('generateResponse'));
+    expect(turnOne.find((event) => event.name === 'classifySituation')?.summary).toMatch(/^primary=/);
+    expect(turnOne.at(-1)).toMatchObject({ kind: 'decision', name: 'turn outcome' });
+    expect(turnOne.at(-1)?.summary).toContain('reply written by the model');
+    expect(harness.userMessages).toEqual(['hello there']);
+    expect(reply).not.toBe('');
+  });
+
+  it('renders the turn as user, numbered events, bot and storage summary', async () => {
+    const harness = new CoachHarness({ aiProvider: new ScriptedAiProvider() });
+    await harness.send('first message');
+    await harness.send('second message');
+
+    const markdown = buildMarkdownReport({
+      schemaVersion: 1, gateId: null, gateRunId: null, scenarioName: 'trace fixture', scenarioSlug: 'trace-fixture',
+      runAt: '2026-10-29T00:00:00.000Z', gitSha: null,
+      models: { coachBalanced: null, simulator: null, judge: null, azureTestingDeployment: null },
+      judge: { evaluated: true, passed: true, metCriteria: ['answers'], unmetCriteria: [], reasoning: null },
+      deterministic: { passed: true, violations: [] },
+      context: harness.context,
+      userMessages: harness.userMessages,
+      trace: harness.trace.events,
+      turns: harness.turns.map((turn, index) => ({
+        index: index + 1, mode: turn.mode, primaryIntent: turn.classification.primaryIntent,
+        requiresSafetyCheck: false, risk: { severity: 'none', type: null },
+        responseLength: turn.responseText.length, responseText: turn.responseText,
+        replyPlan: harness.responseCallsByTurn[index]?.context.replyPlan ?? null, replyBrief: null,
+      })),
+      memoryItems: [],
+      styleProfile: null,
+    });
+
+    expect(markdown).toContain('**Result: PASS**');
+    expect(markdown).toMatch(/## Context[\s\S]*\*\*User:\*\* first message\n\*\*Bot:\*\* /);
+    expect(markdown).toMatch(/## Turn 2\n\n\*\*User:\*\* second message\n\n1\. \*\*IN\*\* `message accepted`/);
+    expect(markdown).toMatch(/\d+\. \*\*LLM\*\* `classifySituation` -> primary=/);
+    expect(markdown).toMatch(/Written to storage: .*conversation\.saveMessage x\d/);
+    expect(markdown).toContain('<details><summary>Turn 1</summary>');
+  });
+});
+
+describe('CoachHarness scheduled actions', () => {
+  it('schedules and confirms a classified reminder by default, and traces the write', async () => {
+    const dueAt = new Date(Date.now() + 86_400_000).toISOString();
+    const harness = new CoachHarness({
+      aiProvider: new ScriptedAiProvider({
+        classifications: [{ ...makeClassification(), reminderRequest: { intent: 'prepare for the interview', dueAt } }],
+      }),
+    });
+
+    await harness.send('remind me tomorrow to prepare for the interview');
+
+    const save = harness.trace.events.find((event) => event.name === 'scheduledActions.save');
+    expect(save).toMatchObject({ turn: 1, kind: 'write' });
+    expect(save?.summary).toContain('prepare for the interview');
+    expect(harness.responseCallsByTurn[0]?.context.reminderConfirmation).toEqual({ intent: 'prepare for the interview', dueAt });
+    expect(harness.scheduledActions).toBeInstanceOf(InMemoryScheduledActionRepository);
+    expect((harness.scheduledActions as InMemoryScheduledActionRepository).actions).toEqual([
+      expect.objectContaining({ type: 'user_reminder', intent: 'prepare for the interview', dueAt: new Date(dueAt) }),
+    ]);
   });
 });

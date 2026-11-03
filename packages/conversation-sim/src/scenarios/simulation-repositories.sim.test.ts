@@ -157,7 +157,7 @@ describe('simulation turn-aligned generation evidence', () => {
     expect(report.turns[0]?.replyPlan?.latestUserSubstance).toBe(first);
     expect(report.turns[1]).toMatchObject({ primaryIntent, replyPlan: null, replyBrief: null });
     expect(report.turns[2]?.replyPlan).toMatchObject({ dialogueAct: 'correction', latestUserSubstance: third });
-    expect(markdown).toMatch(new RegExp(`\\*\\*2\\. \\[.*${primaryIntent}.*\\nreplyPlan=none`));
+    expect(markdown).toContain(`Reply plan [turn 2, ${primaryIntent}]: none`);
     expect(markdown).toContain(`substance=${third}`);
 
     expect(harness.generateResponseCalls).toHaveLength(2);
@@ -218,8 +218,8 @@ describe('simulation turn-aligned generation evidence', () => {
     });
     expect(report.turns[1]?.replyPlan).toEqual(harness.generateResponseCalls[1]?.context.replyPlan);
     expect(report.turns[2]?.replyPlan).toMatchObject({ dialogueAct: 'correction', latestUserSubstance: third });
-    expect(markdown).toMatch(new RegExp(`\\*\\*2\\. \\[.*${primaryIntent}.*\\nreplyPlan=request/answer_request`));
+    expect(markdown).toContain(`Reply plan [turn 2, ${primaryIntent}]: request/answer_request`);
     expect(markdown).toContain(`substance=${question}`);
-    expect(markdown).not.toContain('replyPlan=none');
+    expect(markdown).not.toMatch(/Reply plan \[turn \d+, [a-z_]+\]: none/);
   });
 });

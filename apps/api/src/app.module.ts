@@ -11,8 +11,11 @@ import { shouldMountDevModule } from './dev/dev-endpoints';
 import { HierarchyModule } from './hierarchy/hierarchy.module';
 import { CompanyAuthModule } from './company-auth/company-auth.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
+import { ConversationTraceAdminModule } from './conversation-trace/conversation-trace-admin.module';
+import { shouldMountConversationTraceAdmin } from './conversation-trace/conversation-trace-admin.mount';
 
 const mountDevModule = shouldMountDevModule();
+const mountConversationTraceAdmin = shouldMountConversationTraceAdmin();
 
 @Module({
   imports: [
@@ -25,6 +28,7 @@ const mountDevModule = shouldMountDevModule();
     HierarchyModule,
     CompanyAuthModule,
     OnboardingModule,
+    ...(mountConversationTraceAdmin ? [ConversationTraceAdminModule] : []),
     ...(mountDevModule ? [DevModule] : []),
   ],
 })

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "name": "cycle-open-with-history",
+  "description": "Onboarded employee mid pulse cycle: autonomy closed, belonging and growth open, a short chat earlier today.",
+  "origin": { "kind": "authored", "author": "conversation-sim example" },
+  "presets": [
+    "onboarding-done",
+    { "name": "cycle-open", "topicsTotal": 3, "topicsClosed": 1 },
+    { "name": "elapsed", "minutes": 90 }
+  ],
+  "user": { "name": "Olena", "timezone": "Europe/Kyiv" },
+  "startTime": "2026-10-28T10:30:00+02:00",
+  "history": [
+    {
+      "role": "bot",
+      "text": "Hi Olena. Your reflections can be used in aggregated reporting.",
+      "metadata": { "reportingDisclosureVersion": "reporting-disclosure-v1" }
+    },
+    { "role": "employee", "text": "Hey. Release week, so mostly heads-down." },
+    { "role": "bot", "text": "Release weeks have their own rhythm. What is on your plate today?" },
+    { "role": "employee", "text": "Finishing the checklist. Honestly the team has been great at covering for each other." },
+    { "role": "bot", "text": "That kind of cover makes a release week lighter." }
+  ],
+  "memory": [
+    { "category": "work_context", "content": "Leads the release checklist for the mobile app", "importance": 0.8 },
+    { "category": "preference", "content": "Prefers short messages during release weeks", "importance": 0.6 }
+  ],
+  "goals": [
+    { "title": "Hand over release duty to a teammate by December", "category": "growth", "status": "active" },
+    { "title": "Finish the onboarding guide", "category": "work", "status": "completed" }
+  ],
+  "styleProfile": {
+    "dimensions": { "register": 0.7, "humor": 0.2, "verbosity": 0.3, "emoji": 0 },
+    "phrases": [{ "text": "honestly", "count": 3 }],
+    "adaptationWeight": 0.4,
+    "conversationsAnalyzed": 4
+  },
+  "pulseCycle": {
+    "topics": [
+      { "group": "autonomy", "questions": [{ "id": "q-autonomy", "status": "confirmed" }] },
+      {
+        "group": "belonging",
+        "questions": [{ "id": "q-belonging", "status": "collecting" }],
+        "evidence": [
+          { "summary": "The team covers for each other during release week.", "status": "temporary", "sourceHistoryIndexes": [3] }
+        ]
+      },
+      {
+        "group": "growth",
+        "questions": [{
+          "id": "q-growth",
+          "status": "collecting",
+          "title": "Room to grow",
+          "canonicalMeaning": "Whether the employee sees room to learn and grow in their role",
+          "probeStrategies": ["What they would like to learn next in their role"]
+        }]
+      }
+    ],
+    "nextProbe": { "questionId": "q-growth", "focus": "open" }
+  },
+  "scheduledActions": [
+    { "type": "user_reminder", "intent": "check in after the release ships", "dueInMinutes": 1440 }
+  ]
+}

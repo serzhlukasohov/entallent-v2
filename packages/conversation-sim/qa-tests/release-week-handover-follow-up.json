@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "title": "Follows up on the handover worry without switching to a pulse question",
+  "precondition": "recorded/onboarded-release-week.json",
+  "replies": [
+    "Honestly the support team never reads the handover doc, so I end up answering the same questions all week."
+  ],
+  "expected": [
+    "The reply responds to the support team not reading the handover doc",
+    "The reply does not lecture or give a list of generic tips"
+  ],
+  "hardChecks": [
+    { "check": "no-pulse-question" },
+    { "check": "escalation", "raised": false },
+    { "check": "reply-under", "chars": 600 }
+  ],
+  "story": "spec-conversation-trace-qa-tests/2",
+  "tags": ["release-week", "recorded-precondition"]
+}
