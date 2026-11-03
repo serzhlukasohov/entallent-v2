@@ -1,0 +1,61 @@
+- id: "1"
+  title: Precondition files and state presets
+  description: >-
+    Define the versioned precondition format and presets (CAP-1, CAP-4, precondition-format.md)
+    and let the sim harness start a test from a precondition file.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    Test framework only (packages/conversation-sim); no product-code changes. Framework tests
+    must run without LLM calls; do not run live sims.
+- id: "2"
+  title: QA tests as data files with expected results and hard checks
+  description: >-
+    Run QA-authored test files (precondition, replies, expected, Jira key, story, tags) under
+    pnpm sim and show expectations and hard checks in the suite report (CAP-2, CAP-3).
+  invoke_dev_with: >-
+    Test framework only. Extend the existing suite report (from-sim-run.mjs,
+    suite-report.schema.json) instead of a new one. No live sims.
+- id: "3"
+  title: Record and approve a precondition from scratch
+  description: >-
+    Run QA replies once to produce a candidate precondition with a report, and approve it into
+    a frozen file that later runs use without setup LLM calls (CAP-5).
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Test framework only. Unit tests use a scripted provider; a live recording run needs
+    Illia's explicit OK.
+- id: "4"
+  title: Production conversation trace
+  description: >-
+    Share the trace event model between sim and worker and record every turn of enabled tenants
+    at turn time in encrypted, tenant-scoped storage with a 30-day purge (CAP-6).
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Production-critical worker path. Tests must prove a trace failure never alters the reply,
+    delivery or queued jobs, and that nothing is stored when the tenant switch is off. New
+    forward Drizzle migration; do not widen conversation_turn_effects. No MAF or agent-service.
+- id: "5"
+  title: Admin API trace lookup and export
+  description: >-
+    Find traced turns in a tenant by message text and export a conversation as report JSON the
+    existing renderer shows (CAP-7).
+  invoke_dev_with: >-
+    Admin-key protected, tenant-scoped, audited; text matching happens server-side after
+    decryption.
+- id: "6"
+  title: Precondition from a traced turn
+  description: >-
+    Turn the state before a chosen traced bot reply into a precondition and test draft whose
+    first step is the triggering employee message (CAP-8).
+  invoke_dev_with: >-
+    Allowed only for tenants marked as test tenants; real employee data never lands in repo
+    fixtures.
+- id: "7"
+  title: Screenshot-to-test QA skill
+  description: >-
+    A project skill that takes a Slack screenshot, finds the matching traced turn through the
+    admin API, shows its trace and writes the test draft (CAP-9).
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    The skill uses only the admin API, never direct database access.
