@@ -11,6 +11,9 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
   const replyPlan = context.replyPlan ?? context.replyBrief;
   const safetyMode = strategy.mode === 'crisis' || strategy.mode === 'sensitive';
   const hasResolvedDetails = !safetyMode && (replyPlan?.resolvedDetails?.length ?? 0) > 0;
+  // GC retro A4: on a topic turn the topic question is the only question, so no strategy rule may
+  // also ask "replyText" to end with a follow-up question.
+  const topicTurn = Boolean(context.topicQuestion) && !context.trailingBundle;
 
   const forbidden = strategy.forbiddenPatterns.length > 0
     ? `\nNever mention: ${strategy.forbiddenPatterns.join(', ')}.`
@@ -21,9 +24,11 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
     : '';
 
   const followUpNote = strategy.includeFollowUpQuestion
-    ? hasResolvedDetails
-      ? '\nA follow-up question is optional. Ask one only about a materially new uncertainty outside the resolved details; otherwise end without a question. Never ask more than one question.'
-      : '\nDefault to ending with one genuine follow-up question while an employee-raised thread still has an unresolved detail. Stop asking only when the transcript shows the thread is understood or the employee is closing it. Never ask more than one question.'
+    ? topicTurn
+      ? '\nAsk no question in "replyText". The only question of this turn is the topic question in "topicQuestion"; never ask a second one.'
+      : hasResolvedDetails
+        ? '\nA follow-up question is optional. Ask one only about a materially new uncertainty outside the resolved details; otherwise end without a question. Never ask more than one question.'
+        : '\nDefault to ending with one genuine follow-up question while an employee-raised thread still has an unresolved detail. Stop asking only when the transcript shows the thread is understood or the employee is closing it. Never ask more than one question.'
     : '\nDo not ask questions.';
 
   const followUpIntent = context.followUpIntent
@@ -41,7 +46,7 @@ export function buildRespondSystemPrompt(strategy: ReplyStrategy, context: Respo
   const styleBlock = context.styleAdaptation ? buildStyleAdaptationBlock(context.styleAdaptation, strategy.mode) : '';
   const pauseTurn = isPauseTurn(replyPlan);
   const correctionTurn = replyPlan?.dialogueAct === 'correction';
-  const replyPlanBlock = replyPlan ? buildReplyPlanBlock(replyPlan, safetyMode) : '';
+  const replyPlanBlock = replyPlan ? buildReplyPlanBlock(replyPlan, safetyMode, topicTurn) : '';
   const deliveryContracts = replyPlan && !safetyMode ? buildDeliveryContracts(replyPlan) : '';
   const deliveryFinalCheck = deliveryContracts
     ? 'Final check for this turn: the reply ends with the delivered item. Delete any closing sentence that starts with "If you want", offers a firmer, softer, or other variant, or asks whether to adjust or turn it into something else.\n\n'
@@ -160,7 +165,9 @@ What you do: you actually engage. That means:
 - You pick up on what they said and add something — a genuine thought, a specific observation. Not a summary, not a validation — something that makes them feel like they're talking to a thinking person, not a listening machine.
 - You notice what's between the lines only when the employee's own words support it. Otherwise keep a useful hypothesis tentative or ask a neutral question.
 ${strategy.includeFollowUpQuestion
-  ? hasResolvedDetails
+  ? topicTurn
+    ? '- In "replyText" you react without asking: the only question of this turn is the topic question, which comes after your reply.'
+    : hasResolvedDetails
     ? '- A follow-up question is optional. Ask only about a materially new uncertainty outside the resolved details; ending without a question is valid.'
     : `- You end with one sharp question while there is still something meaningful to understand — not a therapy-style "how does that make you feel?" but something specific: "when your lead said 'yeah, yeah' — did it feel like he didn't see the problem, or like he just didn't have an answer?" Stop only when the thread is understood or the employee closes it.`
   : `- Do NOT ask a question this turn — respond to what they said and leave the space open. Ending without a question is fine, often better than reaching for one.`}
@@ -169,7 +176,9 @@ ${strategy.includeFollowUpQuestion
 What you don't do: you don't paraphrase what they just said, you don't just nod along, and you don't string together 3 sentences of "yes that sounds hard" in different words. If you have nothing real to add, say less — one sentence beats three empty ones.
 
 ${strategy.includeFollowUpQuestion
-  ? hasResolvedDetails
+  ? topicTurn
+    ? 'Conversation rhythm: in "replyText" react to what they said without asking anything; the topic question carries the conversation forward this turn.'
+    : hasResolvedDetails
     ? 'Conversation rhythm: do not reopen or narrow a resolved detail. Ask at most one question only when a different employee-raised detail remains materially unresolved; otherwise close naturally.'
     : `Conversation rhythm: follow one unresolved detail at a time and end with one specific question that advances understanding. Never rephrase an answered question, including a detail the employee stated in their latest message. Once the current thread is understood, either follow another employee-raised thread ("you said you want something more interesting — what does that mean for you?") or, if nothing meaningful remains, close naturally. "What else is on your mind right now?" is available when the current thread is complete but the conversation is still open.`
   : `Conversation rhythm: keep it brief and don't interrogate — a short reflection or a plain acknowledgement that leaves room is enough. No exit question this turn.`}
@@ -388,6 +397,7 @@ function responseLanguageName(language: string): string {
 function buildReplyPlanBlock(
   plan: NonNullable<ResponseContext['replyPlan']>,
   safetyMode: boolean,
+  topicTurn: boolean,
 ): string {
   const hasResolvedDetails = !safetyMode && (plan.resolvedDetails?.length ?? 0) > 0;
   const pauseTurn = isPauseTurn(plan);
@@ -428,7 +438,9 @@ function buildReplyPlanBlock(
       : plan.questionPolicy.reason === 'format_request'
         ? '\nQuestion policy (hard contract): ask zero questions this turn. Reason: format_request. Deliver the items instead of asking; an item may quote a question the employee could ask, you may not ask one yourself.'
         : `\nQuestion policy (hard contract): ask zero questions this turn. Reason: ${plan.questionPolicy.reason}. A plain statement or acknowledgement is enough.`
-    : hasResolvedDetails
+    : topicTurn
+      ? `\nQuestion policy (hard contract): The only question of this turn is the topic question in "topicQuestion"; "replyText" asks none. Never ask more than one. Reason: ${plan.questionPolicy.reason}.`
+      : hasResolvedDetails
       ? `\nQuestion policy: a follow-up question is optional and may target only a materially new uncertainty outside the resolved details. Otherwise ask none. Never ask more than one. Reason: ${plan.questionPolicy.reason}.`
       : `\nQuestion policy: end with one specific question while the employee-raised thread has an unresolved detail; otherwise ask none. Never ask more than one. Reason: ${plan.questionPolicy.reason}.`;
   const resolvedDetails = hasResolvedDetails
@@ -454,11 +466,15 @@ function buildReplyPlanBlock(
         : '\nDo not infer mood, impatience, depth, personality, or unstated meaning from the employee being brief. Do not mention their brevity, one-word answer, or short wording. Do not quote the short acknowledgement as evidence. Continue from the topic anchor or close the thread naturally.';
 
   const social = plan.responseMove === 'social_greeting'
-    ? plan.questionPolicy.maxQuestions > 0
+    ? topicTurn
+      ? '\nSocial contract: answer with a brief greeting in "replyText", without a question; the topic question opens the conversation this turn.'
+      : plan.questionPolicy.maxQuestions > 0
       ? '\nSocial contract: answer with a brief greeting and one easy, low-pressure opener. Make it feel like a natural start to a Slack conversation, not a support intake. Good shapes: "How are you today?", "What is on your mind today?", or a similarly soft invitation. Do not ask an intense coaching question.'
       : '\nSocial contract: answer with a plain greeting only; do not offer help or start a support flow.'
     : plan.responseMove === 'social_reply'
-      ? '\nSocial contract: answer socially and briefly, then return the check-in once; do not describe operational status or support capabilities.'
+      ? topicTurn
+        ? '\nSocial contract: answer socially and briefly in "replyText", without a question; do not describe operational status or support capabilities. The topic question carries the conversation forward.'
+        : '\nSocial contract: answer socially and briefly, then return the check-in once; do not describe operational status or support capabilities.'
       : '';
   const emotionalSupport = plan.responseMove === 'support_emotion'
     ? '\nSupport-emotion contract: use plain presence, not coaching. This typed contract overrides the general invitation to name what is between the lines, push back, or offer a different angle. Do not open by labeling or diagnosing the employee\'s state. Do not prescribe even small tactics, task selection, timed exercises, or a "try/do this" move. If questions are disallowed, leave room with a short acknowledgement instead of substituting advice.'
@@ -479,7 +495,9 @@ function buildReplyPlanBlock(
   const pause = !pauseTurn
     ? ''
     : plan.dialogueAct === 'acknowledgement'
-      ? plan.questionPolicy.maxQuestions > 0
+      ? topicTurn
+        ? '\nAcknowledgement contract: treat the latest message as a backchannel in "replyText", without a question. Do not invent hidden meaning, repeat an answered question, or merely nod; the topic question carries the conversation forward.'
+        : plan.questionPolicy.maxQuestions > 0
         ? hasResolvedDetails
           ? '\nAcknowledgement contract: treat the latest message as a backchannel. A follow-up question is optional and may address only a materially new uncertainty outside the resolved details; otherwise pause naturally. Do not invent hidden meaning, repeat an answered question, or merely nod.'
           : '\nAcknowledgement contract: treat the latest message as a backchannel, then continue one unresolved thread from the recent conversation and end with exactly one specific follow-up question. Do not invent hidden meaning, repeat an answered question, merely nod, or close the conversation.'

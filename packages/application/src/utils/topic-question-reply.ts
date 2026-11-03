@@ -73,3 +73,21 @@ export function validateTopicQuestionReply(
 export function composeTopicQuestionReplyText(parts: TopicQuestionReplyParts): string {
   return parts.replyText ? `${parts.replyText} ${parts.topicQuestion}` : parts.topicQuestion;
 }
+
+/**
+ * GC round 3 retro A10: a numeric 0-10 probe that broke its contract after the provider's one
+ * repair. The message is the stable text the worker maps to `conversation_reply_numeric_probe_invalid`.
+ */
+const NUMERIC_PROBE_INVALID = 'OpenAI returned a noncompliant numeric survey probe after retry';
+
+export class NumericProbeInvalidError extends Error {
+  constructor() {
+    super(NUMERIC_PROBE_INVALID);
+    this.name = 'NumericProbeInvalidError';
+  }
+}
+
+export function isNumericProbeInvalidError(error: unknown): error is NumericProbeInvalidError {
+  return error instanceof NumericProbeInvalidError
+    || (error instanceof Error && error.message === NUMERIC_PROBE_INVALID);
+}

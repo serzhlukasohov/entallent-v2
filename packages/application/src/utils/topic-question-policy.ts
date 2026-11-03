@@ -41,9 +41,11 @@ export function isTopicQuestionMessage(message: Pick<TopicCadenceMessage, 'direc
   return message.direction === 'outbound' && message.metadata?.['containsSurveyProbe'] === true;
 }
 
+/** A completion sentence dropped by the two-part fallback (GC retro A5) never reached the employee. */
 export function isTopicCompletionMessage(message: Pick<TopicCadenceMessage, 'direction' | 'metadata'>): boolean {
   const completed = message.metadata?.['topicCompleted'];
-  return message.direction === 'outbound' && typeof completed === 'string' && completed.length > 0;
+  return message.direction === 'outbound' && typeof completed === 'string' && completed.length > 0
+    && message.metadata?.['topicCompletionUndelivered'] === undefined;
 }
 
 /** The reporting disclosure is recorded on the outbound message that carried it. */

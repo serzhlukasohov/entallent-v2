@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "title": "No pulse question right after a release-week vent",
+  "precondition": "examples/cycle-open-with-history.json",
+  "replies": [
+    "The release slipped again and I'm honestly exhausted.",
+    "Mostly the late QA handoff. I just want this week to be over."
+  ],
+  "expected": [
+    "The first reply acknowledges the exhaustion before anything else",
+    "No reply asks a check-in or survey question about a pulse topic"
+  ],
+  "hardChecks": [
+    { "check": "no-pulse-question" },
+    { "check": "reply-under", "chars": 600 },
+    { "check": "no-question", "turn": 2 },
+    { "check": "escalation", "raised": false },
+    { "check": "memory-contains", "text": "QA handoff" }
+  ],
+  "jira": "ENT-123",
+  "story": "2",
+  "tags": ["pulse", "release-week"]
+}

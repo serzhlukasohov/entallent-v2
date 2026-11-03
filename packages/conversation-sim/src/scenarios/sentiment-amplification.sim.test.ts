@@ -2,6 +2,7 @@ import { agent as agentTurn, judge, judgeAgent, run, user, userSimulatorAgent } 
 import { describe, expect, it } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
 import { findUnstatedEmotionWords } from '../harness/fidelity-checks';
+import { expectJudgeVerdict } from '../harness/judge-verdict';
 import { reportRun } from '../harness/report';
 import { judgeModel, SET_ID, simulatorModel } from './config';
 import { SENTIMENT_AMPLIFICATION_FIXTURE as FIXTURE } from './fidelity-fixtures';
@@ -43,6 +44,6 @@ describe('CAP-8 sentiment is not amplified', () => {
       expect(call?.context.replyPlan?.forbiddenMoves, `turn ${index + 1} plan`).toContain('unsupported_interpretation');
     });
 
-    expect(result.success, result.reasoning ?? 'judge did not pass').toBe(true);
+    expectJudgeVerdict(result, 'sentiment-amplification');
   });
 });

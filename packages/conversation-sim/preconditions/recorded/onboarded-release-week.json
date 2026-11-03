@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "name": "onboarded-release-week",
+  "description": "Onboarded employee who opened the conversation about a heavy release week.",
+  "origin": {
+    "kind": "recorded",
+    "approved": true,
+    "recordedAt": "2026-11-03T08:07:04.894Z",
+    "recordedFrom": "qa-tests/recordings/onboarded-release-week.json",
+    "base": "inline base",
+    "provider": "live",
+    "approvedBy": "Claude (on Illia Milevskiy's instruction)",
+    "approvedAt": "2026-11-03T08:07:16.573Z"
+  },
+  "user": {
+    "name": "Olena",
+    "timezone": "Europe/Kyiv"
+  },
+  "startTime": "2026-11-03T08:07:04.894Z",
+  "history": [
+    {
+      "role": "employee",
+      "text": "Release week again, I'm swamped.",
+      "minutesBeforeStart": 1.03
+    },
+    {
+      "role": "bot",
+      "text": "Release weeks can really pile it on. Is it the usual rush to get everything polished, or is something extra demanding your time this round?",
+      "minutesBeforeStart": 1.02,
+      "metadata": {
+        "sourceInboundMessageId": "21903048-598e-4dac-afae-05600ee8d5a5",
+        "measurementVersion": "ts-conversation-decision-v1",
+        "dialogueAct": "emotional_disclosure",
+        "responseMove": "support_emotion",
+        "replyShape": {
+          "askedQuestion": true,
+          "maxQuestions": 1,
+          "questionPolicyReason": "new_substance_allows_question",
+          "conciseSession": false
+        },
+        "languagePolicy": {
+          "responseLanguage": "en",
+          "source": "product_default"
+        },
+        "isSessionStart": true,
+        "memoryGrounding": {
+          "used": false,
+          "count": 0
+        },
+        "containsSurveyProbe": false,
+        "continuityDecision": {
+          "action": "replace",
+          "anchorSource": "new",
+          "hasSubstance": true
+        },
+        "goalDecision": {
+          "selected": false,
+          "candidateGoalCount": 0,
+          "reason": "not_selected"
+        }
+      }
+    },
+    {
+      "role": "employee",
+      "text": "Mostly the checklist and the handover to the support team.",
+      "minutesBeforeStart": 1.01
+    },
+    {
+      "role": "bot",
+      "text": "The checklist and handover sound like they could be time sinks if anything gets stuck or overlooked. Is there a particular part of either that's slowing you down, or is it just the sheer volume of tasks?",
+      "minutesBeforeStart": 1,
+      "metadata": {
+        "sourceInboundMessageId": "fa1bef80-9c9b-46e5-b289-cbecb0f86475",
+        "measurementVersion": "ts-conversation-decision-v1",
+        "dialogueAct": "continuation",
+        "responseMove": "continue_existing_thread",
+        "replyShape": {
+          "askedQuestion": true,
+          "maxQuestions": 1,
+          "questionPolicyReason": "new_substance_allows_question",
+          "conciseSession": false,
+          "resolvedDetails": [
+            "The checklist and handover to the support team are the main focus during release week."
+          ]
+        },
+        "languagePolicy": {
+          "responseLanguage": "en",
+          "source": "product_default"
+        },
+        "isSessionStart": false,
+        "memoryGrounding": {
+          "used": false,
+          "count": 0
+        },
+        "containsSurveyProbe": false,
+        "continuityDecision": {
+          "action": "none",
+          "anchorSource": "stored",
+          "hasSubstance": true
+        },
+        "goalDecision": {
+          "selected": false,
+          "candidateGoalCount": 0,
+          "reason": "not_selected"
+        }
+      }
+    }
+  ],
+  "memory": [
+    {
+      "category": "stressor",
+      "content": "Release weeks are stressful due to the checklist and the handover to the support team.",
+      "importance": 1
+    }
+  ],
+  "onboarding": {
+    "role": "employee",
+    "introStatus": "completed",
+    "participation": "active",
+    "reminderStatus": "none",
+    "buttonsActive": false,
+    "completedAt": "2026-11-02T08:06:54.347Z",
+    "managementAckAt": null,
+    "reminderOriginAt": null
+  }
+}

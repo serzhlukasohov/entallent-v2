@@ -38,8 +38,12 @@ export type {
 export { maxReplyChars } from './utils/reply-length';
 export {
   TopicQuestionReplyInvalidError, isTopicQuestionReplyInvalidError, validateTopicQuestionReply,
-  composeTopicQuestionReplyText,
+  composeTopicQuestionReplyText, NumericProbeInvalidError, isNumericProbeInvalidError,
 } from './utils/topic-question-reply';
+export {
+  BUNDLE_COMPOSITION_BACKOFF, readBundleCompositionBackoff, bundleCompositionFailureMetadata,
+} from './utils/bundle-composition-backoff';
+export type { BundleBackoffGroup } from './utils/bundle-composition-backoff';
 export type { TopicQuestionReplyParts, TopicQuestionReplyInvalidReason } from './utils/topic-question-reply';
 export type { TrailingBundle, TopicQuestionRequest } from './ports/ai-provider.port';
 export { validateQuestionBundleVerdict, resolveCorrectedStatementVerdict, MAX_QUESTION_CLARIFICATIONS } from './utils/question-bundle-verdict';

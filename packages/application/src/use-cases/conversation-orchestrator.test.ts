@@ -3,7 +3,7 @@ import { ModerationSignalError } from '@entalent/contracts';
 import { ConversationOrchestrator } from './conversation-orchestrator';
 import { ProviderContentFilterError } from '../ports/provider-error';
 import { BundleCompositionInvalidError, BundleReplyInvalidError } from '../utils/question-bundle-composition';
-import { TopicQuestionReplyInvalidError } from '../utils/topic-question-reply';
+import { NumericProbeInvalidError, TopicQuestionReplyInvalidError } from '../utils/topic-question-reply';
 import {
   REPORTING_DISCLOSURE_VERSION,
   getDataUseExplanationText,
@@ -2378,7 +2378,9 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
 
     const result = await orch.orchestrate(INPUT);
 
-    expect(result.responseText).toBe(clarificationText);
+    // The skipped q-c needs a not-collected sentence: the failed two-part reply is retried once as
+    // an ordinary answer before the fixed text (GC retro A5).
+    expect(result.responseText).toBe(`reply\n\n${clarificationText}`);
     expect(questionConfirmationRepo.previewPendingQuestionClarificationAfterBundleVerdict)
       .toHaveBeenCalledWith({
         tenantId: 't-1', userId: 'u-1', conversationId: 'c-1', inboundMessageId: 'm-1',
@@ -2392,8 +2394,8 @@ describe('ConversationOrchestrator V2 question confirmation', () => {
       .toBeLessThan(m.outbox.enqueueMessageSend.mock.invocationCallOrder[0]);
     expect(m.aiProvider.composeQuestionClarification.mock.invocationCallOrder[0])
       .toBeLessThan(questionConfirmationRepo.applyQuestionBundleVerdict.mock.invocationCallOrder[0]);
-    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(1);
-    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(2);
+    expect(result.bundleReply).toBe('retried_answer_then_bundle');
   });
 
   it('shows a substantive clarification back for confirmation instead of confirming it silently', async () => {
@@ -7155,5 +7157,428 @@ describe('GC round 3 CAP-1: topic steering inside an active V2 cycle', () => {
 
     expect(lastContext(m).topicQuestion).toBeUndefined();
     expect(savedOutbound(m).metadata).toMatchObject({ topicCompleted: 'autonomy' });
+  });
+});
+
+// GC round 3 retro A5: a required "not collected" or completion sentence is never silently lost.
+describe('GC retro A5: two-part fallback keeps the required sentences', () => {
+  const clarifyAt = new Date('2026-09-03T09:59:00Z');
+  const declinedClarification = {
+    workingInsightId: 'working-b', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2',
+    surveyQuestionId: 'q-b', questionVersion: 'v2', questionGroup: 'autonomy',
+    workingSummary: 'I set my own priorities.', disputedStatement: 'you set your own priorities',
+    clarificationPromptMessageId: 'clarify-out', clarificationPromptSentAt: clarifyAt,
+  };
+  const nextClarification = {
+    ...declinedClarification, workingInsightId: 'working-c', surveyQuestionId: 'q-c',
+    workingSummary: 'I can push back.', disputedStatement: 'you can push back',
+    clarificationPromptMessageId: null, clarificationPromptSentAt: null,
+  };
+  const clarificationText = 'What part of pushing back still feels off?';
+  const answer = 'Understood, I will leave that point out for this cycle.';
+  const snapshot = (statuses: string[]) => ({
+    surveyWindowId: 'w-v2',
+    groups: [
+      { questionGroup: 'autonomy', questions: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId, index) => ({ surveyQuestionId, status: statuses[index]! })) },
+      { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-d', status: 'no_data' }] },
+    ],
+  });
+  function setup(options: { retry: 'ok' | 'invalid'; closesTopic?: boolean }) {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'declined' });
+    m.aiProvider.composeQuestionClarification = vi.fn().mockResolvedValue(clarificationText);
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: unknown }) => {
+      if (context.trailingBundle) throw new BundleReplyInvalidError('reply_question');
+      return options.retry === 'ok'
+        ? { text: answer, confidence: 0.9, containsSurveyProbe: false }
+        : { text: 'Shall I leave it out?', confidence: 0.9, containsSurveyProbe: false };
+    });
+    const repo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(declinedClarification),
+      previewPendingQuestionClarificationAfterVerdict: vi.fn().mockResolvedValue(nextClarification),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn(),
+      findCycleProgress: vi.fn().mockResolvedValue(options.closesTopic
+        ? snapshot(['confirmed', 'pending_clarification', 'confirmed'])
+        : snapshot(['confirmed', 'pending_clarification', 'pending_clarification'])),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, repo,
+    );
+    return { m, repo, orch };
+  }
+  const outboundMetadata = (m: ReturnType<typeof baseMocks>) => m.conversationRepo.saveMessage.mock.calls
+    .map((call: [{ direction: string; metadata?: Record<string, unknown> }]) => call[0])
+    .find((message: { direction: string }) => message.direction === 'outbound').metadata;
+
+  it('retries one ordinary reply that carries the not-collected sentence, then appends the fixed text', async () => {
+    const { m, repo, orch } = setup({ retry: 'ok' });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(2);
+    const [, retryStrategy, retryContext] = m.aiProvider.generateResponse.mock.calls[1];
+    expect(retryContext.trailingBundle).toBeUndefined();
+    expect(retryContext.questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+    expect(retryStrategy.includeFollowUpQuestion).toBe(false);
+    // No plan may ask the answer part for a question (a bundle turn carries no plan; any plan is zeroed).
+    for (const plan of [retryContext.replyPlan, retryContext.replyBrief]) {
+      expect(plan?.questionPolicy.maxQuestions ?? 0).toBe(0);
+    }
+    expect(result.responseText).toBe(`${answer}\n\n${clarificationText}`);
+    expect(result.bundleReply).toBe('retried_answer_then_bundle');
+    expect(repo.stageQuestionClarificationPrompt).toHaveBeenCalledWith(expect.objectContaining({ workingInsightId: 'working-c' }));
+    const metadata = outboundMetadata(m);
+    expect(metadata).toMatchObject({ v2BundleReply: 'retried_answer_then_bundle', v2BundleReplyFallbackReason: 'reply_question' });
+    expect(metadata).not.toHaveProperty('questionNotCollectedUndelivered');
+  });
+
+  it('sends the fixed text alone and flags the undelivered sentence when the retry also fails', async () => {
+    const { m, orch } = setup({ retry: 'invalid' });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe(clarificationText);
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(outboundMetadata(m)).toMatchObject({
+      v2BundleReply: 'bundle_without_reply', questionNotCollectedUndelivered: 'autonomy',
+    });
+  });
+
+  it('does not write topicCompleted for a completion sentence that was dropped', async () => {
+    const { m, orch } = setup({ retry: 'invalid', closesTopic: true });
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[1][2].topicConfirmed).toMatchObject({ questionGroup: 'autonomy' });
+    const metadata = outboundMetadata(m);
+    expect(metadata).not.toHaveProperty('topicCompleted');
+    expect(metadata).toMatchObject({ topicCompletionUndelivered: 'autonomy', questionNotCollectedUndelivered: 'autonomy' });
+  });
+
+  const flagged = (metadata: Record<string, unknown>) => [
+    { id: 'o-0', ...OWNERSHIP, direction: 'outbound', text: clarificationText, occurredAt: clarifyAt, metadata },
+    { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+  ];
+  const bothFlags = { questionNotCollectedUndelivered: 'autonomy', topicCompletionUndelivered: 'autonomy' };
+  function quietRepo() {
+    return {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn(),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn(),
+      applyQuestionClarificationVerdict: vi.fn(),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(null),
+      stageQuestionConfirmationBundle: vi.fn(),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['confirmed', 'confirmed', 'confirmed'])),
+    };
+  }
+
+  it('re-states an undelivered sentence on the next turn and anchors the delivered completion', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(flagged(bothFlags));
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, quietRepo(),
+    );
+
+    await orch.orchestrate(INPUT);
+
+    const [, , context] = m.aiProvider.generateResponse.mock.calls[0];
+    expect(context.questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+    expect(context.topicConfirmed).toEqual({ questionGroup: 'autonomy', topicsClosed: 1, topicsTotal: 2 });
+    const metadata = outboundMetadata(m);
+    expect(metadata).toMatchObject({ topicCompleted: 'autonomy' });
+    expect(metadata).not.toHaveProperty('questionNotCollectedUndelivered');
+    expect(metadata).not.toHaveProperty('topicCompletionUndelivered');
+  });
+
+  it.each([
+    ['a safety check', 'safety'],
+    ['a risk turn', 'risk'],
+    ['an onboarding stop', 'onboarding'],
+  ])('carries the flags forward when %s blocks the re-statement', async (_label, block) => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(flagged(bothFlags));
+    let onboardingTurn: unknown;
+    if (block === 'safety') {
+      m.aiProvider.classifySituation.mockResolvedValue({
+        ...(await m.aiProvider.classifySituation()), requiresSafetyCheck: true,
+      });
+    } else if (block === 'risk') {
+      m.aiProvider.detectRisk.mockResolvedValue({
+        ...NO_RISK, riskType: 'burnout', severity: 'high', confidence: 0.9, surveyMustBeBlocked: true,
+      });
+    } else {
+      m.aiProvider.classifySituation.mockResolvedValue({
+        ...(await m.aiProvider.classifySituation()), onboardingSignal: { intent: 'stop_participation', substantive: false },
+      });
+      const state: OnboardingState = {
+        track: 'employee', introStatus: 'completed', participation: 'active', managementAckAt: null,
+        completedAt: null, reminderStatus: 'scheduled', reminderOriginAt: INBOUND_OCCURRED_AT, buttonsActive: false,
+      };
+      onboardingTurn = {
+        contextFor: vi.fn().mockResolvedValue({ state }),
+        applyTurnEvent: vi.fn().mockResolvedValue({
+          changed: true, effects: [{ type: 'set_proactive', enabled: false }, { type: 'acknowledge', key: 'decline' }],
+          state: { ...state, participation: 'declined' }, replyAck: ACK_COPY.decline,
+        }),
+      };
+    }
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      undefined, undefined, quietRepo(), undefined, onboardingTurn as any,
+    );
+
+    await orch.orchestrate(INPUT);
+
+    for (const call of m.aiProvider.generateResponse.mock.calls) {
+      expect(call[2].questionNotCollected).toBeUndefined();
+      expect(call[2].topicConfirmed).toBeUndefined();
+    }
+    const metadata = outboundMetadata(m);
+    expect(metadata).toMatchObject(bothFlags);
+    expect(metadata).not.toHaveProperty('topicCompleted');
+  });
+
+  it('carries the flags forward on a canned explanation turn, without topicCompleted', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(flagged(bothFlags));
+    m.aiProvider.classifySituation.mockResolvedValue({
+      ...(await m.aiProvider.classifySituation()), primaryIntent: 'data_use_explanation',
+    });
+
+    const result = await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(result.responseText).toBe(getDataUseExplanationText('en'));
+    const metadata = outboundMetadata(m);
+    expect(metadata).toMatchObject(bothFlags);
+    expect(metadata).not.toHaveProperty('topicCompleted');
+  });
+
+  it('finds the flag behind a proactive message sent after the flagged reply', async () => {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'o-0', ...OWNERSHIP, direction: 'outbound', text: clarificationText, occurredAt: new Date('2026-09-03T09:50:00Z'),
+        metadata: { questionNotCollectedUndelivered: 'autonomy' } },
+      { id: 'o-1', ...OWNERSHIP, direction: 'outbound', text: 'Checking in.', occurredAt: clarifyAt, metadata: { proactive: true } },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+
+    await makeOrchestrator(m).orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+    expect(outboundMetadata(m)).not.toHaveProperty('questionNotCollectedUndelivered');
+  });
+
+  it('carries a pending flag forward when this turn states its own, different point', async () => {
+    const { m, orch } = setup({ retry: 'ok' });
+    m.conversationRepo.findRecentMessages.mockResolvedValue(flagged({ questionNotCollectedUndelivered: 'growth' }));
+
+    await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+    expect(outboundMetadata(m)).toMatchObject({ questionNotCollectedUndelivered: 'growth' });
+  });
+
+  it('retries a completion-only two-part reply and writes topicCompleted once it is delivered', async () => {
+    const m = baseMocks();
+    m.aiProvider.interpretQuestionBundleResponse = vi.fn().mockResolvedValue({ kind: 'agree' });
+    m.aiProvider.composeQuestionClarification = vi.fn().mockResolvedValue(clarificationText);
+    m.aiProvider.generateResponse = vi.fn(async (_turns: unknown, _strategy: unknown, context: { trailingBundle?: unknown }) => {
+      if (context.trailingBundle) throw new BundleReplyInvalidError('reply_question');
+      return { text: 'That topic is done: one of two topics complete.', confidence: 0.9, containsSurveyProbe: false };
+    });
+    const repo = {
+      ...quietRepo(),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue({
+        id: 'bundle-1', tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup: 'autonomy',
+        displayedText: 'Is that fair?',
+        components: ['q-a', 'q-b', 'q-c'].map((surveyQuestionId) => ({ surveyQuestionId, questionVersion: 'v2', statement: `${surveyQuestionId}.` })),
+      }),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue({
+        ...nextClarification, surveyQuestionId: 'q-d', questionGroup: 'growth',
+      }),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      findCycleProgress: vi.fn().mockResolvedValue(snapshot(['pending_confirmation', 'pending_confirmation', 'pending_confirmation'])),
+    };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, undefined,
+      undefined, undefined, repo,
+    );
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(2);
+    const retryContext = m.aiProvider.generateResponse.mock.calls[1][2];
+    expect(retryContext.trailingBundle).toBeUndefined();
+    expect(retryContext.questionNotCollected).toBeUndefined();
+    expect(retryContext.topicConfirmed).toMatchObject({ questionGroup: 'autonomy' });
+    expect(result.bundleReply).toBe('retried_answer_then_bundle');
+    expect(outboundMetadata(m)).toMatchObject({ v2BundleReply: 'retried_answer_then_bundle', topicCompleted: 'autonomy' });
+  });
+
+  it('re-states at most once: a re-stated sentence that is dropped again is not flagged again', async () => {
+    const { m, orch, repo } = setup({ retry: 'invalid' });
+    m.aiProvider.interpretQuestionClarificationResponse = vi.fn().mockResolvedValue({ kind: 'unrelated' });
+    repo.findPendingQuestionClarification.mockResolvedValue(nextClarification);
+    m.conversationRepo.findRecentMessages.mockResolvedValue([
+      { id: 'o-0', ...OWNERSHIP, direction: 'outbound', text: 'earlier', occurredAt: clarifyAt,
+        metadata: { questionNotCollectedUndelivered: 'autonomy' } },
+      { id: 'm-1', ...OWNERSHIP, direction: 'inbound', text: 'ok', occurredAt: INBOUND_OCCURRED_AT, metadata: undefined },
+    ]);
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].questionNotCollected).toEqual({ questionGroup: 'autonomy' });
+    expect(result.bundleReply).toBe('bundle_without_reply');
+    expect(outboundMetadata(m)).not.toHaveProperty('questionNotCollectedUndelivered');
+  });
+});
+
+// GC round 3 retro A1, A10: a failing bundle backs off; a broken numeric topic probe falls back.
+describe('GC retro A1, A10: bundle composition backoff and numeric topic fallback', () => {
+  const at = (minute: number) => new Date(INBOUND_OCCURRED_AT.getTime() + minute * 60_000);
+  const disclosure = {
+    id: 'disclosure-1', ...OWNERSHIP, direction: 'outbound', text: 'Your reflections can be used in aggregated reporting.',
+    occurredAt: at(-10), metadata: { reportingDisclosureVersion: REPORTING_DISCLOSURE_VERSION },
+  };
+  const inbound = (id: string, minute: number) => ({ id, ...OWNERSHIP, direction: 'inbound', text: `turn ${id}`, occurredAt: at(minute), metadata: undefined });
+  const outbound = (id: string, minute: number, metadata: Record<string, unknown> = {}) => ({
+    id, ...OWNERSHIP, direction: 'outbound', text: `reply ${id}`, occurredAt: at(minute), metadata,
+  });
+  const failedAutonomy = {
+    v2BundleCompositionFallbackReason: 'question_count',
+    v2BundleCompositionFallbackGroup: 'autonomy',
+    v2BundleCompositionFallbackWindowId: 'w-v2',
+  };
+  const openSnapshot = {
+    surveyWindowId: 'w-v2',
+    groups: [
+      { questionGroup: 'autonomy', questions: [{ surveyQuestionId: 'q-a1', status: 'collecting' }] },
+      { questionGroup: 'growth', questions: [{ surveyQuestionId: 'q-g1', status: 'collecting' }] },
+    ],
+  };
+  const readyBundle = (questionGroup: string) => ({
+    tenantId: 't-1', userId: 'u-1', surveyWindowId: 'w-v2', questionGroup,
+    questions: [{ surveyQuestionId: `q-${questionGroup}`, questionVersion: 'v2', workingSummary: `${questionGroup} summary` }],
+  });
+  const candidate = (responseType: string) => ({
+    question: { id: 'q-a1', questionGroup: 'autonomy', responseType, probeStrategies: ['How free they are to choose methods'] },
+    windowId: 'w-v2',
+    focus: 'open',
+  });
+
+  function setup(messages: unknown[], options: { ready?: unknown; probe?: unknown } = {}) {
+    const m = baseMocks();
+    m.conversationRepo.findRecentMessages.mockResolvedValue(messages);
+    const repo = {
+      findAppliedQuestionVerdictForInbound: vi.fn().mockResolvedValue(null),
+      findAwaitingQuestionBundle: vi.fn().mockResolvedValue(null),
+      applyQuestionBundleVerdict: vi.fn().mockResolvedValue(true),
+      findPendingQuestionClarification: vi.fn().mockResolvedValue(null),
+      stageQuestionClarificationPrompt: vi.fn().mockResolvedValue(true),
+      applyQuestionClarificationVerdict: vi.fn().mockResolvedValue(true),
+      hasReadyQuestionBundle: vi.fn().mockResolvedValue(false),
+      findReadyQuestionBundle: vi.fn().mockResolvedValue(options.ready ?? null),
+      stageQuestionConfirmationBundle: vi.fn().mockResolvedValue('bundle-1'),
+      findCycleProgress: vi.fn().mockResolvedValue(openSnapshot),
+      recordDriverRequested: vi.fn().mockResolvedValue(true),
+    };
+    const pulseBacklog = { getNextProbeQuestion: vi.fn().mockResolvedValue(options.probe ?? candidate('open_ended')) };
+    const orch = new ConversationOrchestrator(
+      m.conversationRepo, m.aiProvider, m.outbox, undefined, m.surveyRepo,
+      undefined, undefined, m.featureFlags, undefined, pulseBacklog as never,
+      undefined, undefined, repo,
+    );
+    return { m, repo, orch };
+  }
+  const outboundMetadata = (m: ReturnType<typeof baseMocks>) => m.conversationRepo.saveMessage.mock.calls
+    .map((call: [{ direction: string; metadata?: Record<string, unknown> }]) => call[0])
+    .find((message: { direction: string }) => message.direction === 'outbound').metadata;
+
+  it('skips a group that failed composition twice in this window and composes the next ready group', async () => {
+    const { m, repo, orch } = setup([
+      inbound('m-a', -8), outbound('o-a', -7, failedAutonomy), inbound('m-b', -6), outbound('o-b', -5, failedAutonomy),
+      inbound('m-1', 0),
+    ], { ready: readyBundle('growth') });
+    m.aiProvider.composeQuestionBundle = vi.fn().mockResolvedValue({
+      text: 'I hear that growth summary. Is that fair?', statements: [{ surveyQuestionId: 'q-growth', statement: 'growth summary' }],
+    });
+
+    await orch.orchestrate(INPUT);
+
+    expect(repo.findReadyQuestionBundle).toHaveBeenCalledWith({
+      tenantId: 't-1', userId: 'u-1', skipGroups: [{ surveyWindowId: 'w-v2', questionGroup: 'autonomy' }],
+    });
+    expect(m.aiProvider.composeQuestionBundle).toHaveBeenCalledOnce();
+    expect(m.aiProvider.composeQuestionBundle.mock.calls[0][1]).toEqual([{ surveyQuestionId: 'q-growth', workingSummary: 'growth summary' }]);
+    expect(outboundMetadata(m)).toMatchObject({ v2BundleBackoffGroups: ['autonomy'] });
+  });
+
+  it('does not back off after a single failure', async () => {
+    const { repo, orch } = setup([inbound('m-a', -8), outbound('o-a', -7, failedAutonomy), inbound('m-1', 0)]);
+
+    await orch.orchestrate(INPUT);
+
+    expect(repo.findReadyQuestionBundle).toHaveBeenCalledWith({ tenantId: 't-1', userId: 'u-1' });
+  });
+
+  it('records the failing group and window, and opens no topic question on the skip turn', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), inbound('m-1', 0),
+    ], { ready: readyBundle('autonomy') });
+    m.aiProvider.composeQuestionBundle = vi.fn().mockRejectedValue(new BundleCompositionInvalidError('question_count'));
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(result.responseText).toBe('reply');
+    expect(m.aiProvider.generateResponse.mock.calls.at(-1)[2].topicQuestion).toBeUndefined();
+    expect(outboundMetadata(m)).toMatchObject({
+      ...failedAutonomy, containsSurveyProbe: false, topicQuestionDecision: 'confirmation_turn',
+    });
+  });
+
+  it('replies without a numeric topic probe that broke its contract, recording the fallback as a cadence anchor', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), inbound('m-1', 0),
+    ], { probe: candidate('numeric_0_10') });
+    m.aiProvider.generateResponse
+      .mockRejectedValueOnce(new NumericProbeInvalidError())
+      .mockResolvedValueOnce({ text: 'Noted.', confidence: 0.9, containsSurveyProbe: false });
+
+    const result = await orch.orchestrate(INPUT);
+
+    expect(m.aiProvider.generateResponse).toHaveBeenCalledTimes(2);
+    expect(m.aiProvider.generateResponse.mock.calls[0][2].surveyProbeQuestion).toMatchObject({ id: 'q-a1', responseType: 'numeric_0_10' });
+    const fallback = m.aiProvider.generateResponse.mock.calls[1][2];
+    expect(fallback.surveyProbeQuestion).toBeUndefined();
+    expect(fallback.replyPlan.questionPolicy.reason).toBe('new_substance_allows_question');
+    expect(result.responseText).toBe('Noted.');
+    expect(outboundMetadata(m)).toMatchObject({ containsSurveyProbe: false, topicQuestionFallbackReason: 'numeric_probe_invalid' });
+  });
+
+  it('keeps other generation failures failing the turn on a numeric topic turn', async () => {
+    const { m, orch } = setup([
+      disclosure, inbound('m-a', -8), outbound('o-a', -7), inbound('m-b', -6), outbound('o-b', -5), inbound('m-1', 0),
+    ], { probe: candidate('numeric_0_10') });
+    m.aiProvider.generateResponse.mockRejectedValueOnce(new Error('OpenAI returned an empty response'));
+
+    await expect(orch.orchestrate(INPUT)).rejects.toThrow('OpenAI returned an empty response');
   });
 });

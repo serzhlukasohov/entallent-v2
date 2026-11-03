@@ -59,6 +59,17 @@ describe('readTopicCadence', () => {
     expect(cadence.employeeTurnsSinceAnchor).toBe(1);
   });
 
+  // GC retro A5: a completion sentence that never reached the employee does not anchor the cadence.
+  it('does not anchor on a completion that was not delivered', () => {
+    const cadence = readTopicCadence([
+      msg('outbound', 0, { containsSurveyProbe: true }), msg('inbound', 1),
+      msg('outbound', 2, { topicCompleted: 'autonomy', topicCompletionUndelivered: 'autonomy' }), msg('inbound', 3),
+      msg('outbound', 4, { topicCompletionUndelivered: 'growth' }), msg('inbound', 5),
+    ]);
+    expect(cadence.anchor).toBe('topic_question');
+    expect(cadence.employeeTurnsSinceAnchor).toBe(3);
+  });
+
   it('counts only topic questions of the last 24 hours and ignores the init marker', () => {
     const cadence = readTopicCadence([
       msg('outbound', 0, { containsSurveyProbe: true }), msg('inbound', 1),

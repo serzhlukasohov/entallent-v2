@@ -137,6 +137,11 @@ export interface QuestionConfirmationPort {
   }): Promise<boolean>;
   findReadyQuestionBundle(input: {
     tenantId: string; userId: string;
+    /**
+     * GC retro A1: groups whose composition kept failing in that window; the next ready group is
+     * returned instead. A skip for another window does not apply.
+     */
+    skipGroups?: ReadonlyArray<{ surveyWindowId: string; questionGroup: string }>;
   }): Promise<ReadyQuestionBundle | null>;
   hasReadyQuestionBundle(input: {
     tenantId: string; userId: string;

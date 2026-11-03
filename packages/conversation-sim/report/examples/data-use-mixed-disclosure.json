@@ -1,0 +1,754 @@
+{
+ "meta": {
+  "eyebrow": "conversation-sim · data-use-mixed-disclosure",
+  "title": "Змішаний хід: питання про дані",
+  "summary": "Коли працівник в одному повідомленні ділиться чимось особистим і питає, як бот використовує його повідомлення, бот відповідав лише фіксованим текстом про дані. Розповідь губилась. Перевіряємо, що тепер є і реакція на розповідь, і відповідь про дані.",
+  "details": [
+   "Прогін 29.10.2026, 22:03–22:07",
+   "Azure gpt-4o (бот, суддя, симулятор)",
+   "worktree `clever-zhukovsky-ff2194`",
+   "база `main` @ `612cecf`",
+   "зміни не закомічені"
+  ]
+ },
+ "verdict": {
+  "status": "pass",
+  "text": "Після фіксу 5 із 5 живих прогонів пройшли всі перевірки. Юніт-тести, typecheck, lint і `harness:check` зелені. Повний `sim:gate` та інтеграційні тести з БД не запускались, див. «Що не запускали»."
+ },
+ "stats": [
+  {
+   "value": "5 / 5",
+   "label": "живих прогонів після фіксу",
+   "tone": "ok"
+  },
+  {
+   "value": "1 / 3",
+   "label": "живих прогонів до мовного фіксу",
+   "tone": "bad"
+  },
+  {
+   "value": "1 770",
+   "label": "юніт-тестів пройшло (ai-openai, application, worker)",
+   "tone": "ok"
+  },
+  {
+   "value": "8",
+   "label": "нових юніт-тестів, усі зелені",
+   "tone": "ok"
+  }
+ ],
+ "scope": {
+  "panels": [
+   {
+    "title": "Питання",
+    "items": [
+     "Чи відповідає бот на обидві частини змішаного повідомлення: на розповідь і на питання про дані?",
+     "Чи лишається відповідь англійською, як вимагає продуктове правило від 2026-10-13?"
+    ]
+   },
+   {
+    "title": "Критерії готовності",
+    "items": [
+     "Live-сценарій із суддею проходить стабільно",
+     "Тести `ai-openai` і `application` зелені",
+     "Рядок у `docs/agent-task-log.md`",
+     "`pnpm harness:check` проходить"
+    ]
+   }
+  ]
+ },
+ "pipeline": {
+  "steps": [
+   {
+    "label": "Повідомлення"
+   },
+   {
+    "label": "Класифікатор: `data_use_explanation` + `dataUseAlongsideDisclosure`",
+    "isNew": true
+   },
+   {
+    "label": "TypeScript обирає двочастинну відповідь",
+    "isNew": true
+   },
+   {
+    "label": "LLM: реакція на розповідь"
+   },
+   {
+    "label": "Фіксований текст про дані, байт-у-байт"
+   }
+  ],
+  "notes": [
+   "**Класифікатор** лише позначає, що в повідомленні, крім питання, є розповідь. Рішення ухвалює TypeScript, ключових слів не шукаємо.",
+   "**Фолбек.** Якщо реакція порушує контракт (питання, переказ фіксованого тексту, задовга), іде лише фіксований текст, як і до фіксу.",
+   "**Мова.** Реакція пишеться англійською, як і фіксований текст, щоб повідомлення було одномовним."
+  ],
+  "legend": "Синім позначено нові кроки."
+ },
+ "checks": {
+  "rows": [
+   {
+    "name": "Нові юніт-тести (провайдер, промпти, оркестратор)",
+    "status": "passed",
+    "result": "8 / 8",
+    "note": "Спершу впали, бо поля ще не було; після реалізації пройшли"
+   },
+   {
+    "name": "ai-openai",
+    "status": "passed",
+    "result": "277 / 277",
+    "command": "pnpm --filter @entalent/ai-openai exec vitest run"
+   },
+   {
+    "name": "application",
+    "status": "passed",
+    "result": "1107 / 1107",
+    "command": "pnpm --filter @entalent/application exec vitest run"
+   },
+   {
+    "name": "worker",
+    "status": "passed",
+    "result": "386 + 103 skip",
+    "command": "pnpm --filter @entalent/worker test",
+    "note": "103 пропущені — інтеграційні, без БД"
+   },
+   {
+    "name": "typecheck",
+    "status": "passed",
+    "result": "—",
+    "command": "pnpm typecheck"
+   },
+   {
+    "name": "lint",
+    "status": "passed",
+    "result": "—",
+    "command": "pnpm lint"
+   },
+   {
+    "name": "Live-сценарій",
+    "status": "passed",
+    "result": "5 / 5",
+    "command": "pnpm --filter @entalent/conversation-sim exec vitest run src/scenarios/data-use-mixed-disclosure.sim.test.ts",
+    "note": "Після мовного фіксу; до нього 1 / 3"
+   },
+   {
+    "name": "harness:check",
+    "status": "passed",
+    "result": "4 / 4 кроки",
+    "command": "pnpm harness:check -- --base main",
+    "note": "model-evals пропущено (residualRisk: model-evals-not-run)"
+   },
+   {
+    "name": "Інтеграційні тести з БД",
+    "status": "not_run",
+    "result": "—",
+    "command": "pnpm test:integration"
+   },
+   {
+    "name": "Повний sim gate",
+    "status": "not_run",
+    "result": "—",
+    "command": "SIM_GATE_RUNS=1 pnpm sim:gate"
+   }
+  ]
+ },
+ "tables": [
+  {
+   "title": "Живі прогони",
+   "explain": "Те саме повідомлення 8 разів через реальну модель. Відповідь LLM щоразу трохи інша, тому дивимось на частку успішних прогонів. «Критерії» — скільки критеріїв судді виконано.",
+   "columns": [
+    "Прогін",
+    "Шлях відповіді",
+    "Мова реакції",
+    "Критерії",
+    "Тест",
+    "Реакція на розповідь"
+   ],
+   "rows": [
+    [
+     {
+      "text": "До мовного фіксу · #1",
+      "kind": "num"
+     },
+     {
+      "text": "реакція + фіксований текст",
+      "tone": "ok"
+     },
+     {
+      "text": "англійська",
+      "tone": "ok"
+     },
+     {
+      "text": "4 / 4",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "PASS",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "Good luck on Friday — it sounds like a big step forward. It's natural to feel a bit shaky before something important like this, but you're clearly prepared to aim for it.",
+      "kind": "wide",
+      "tone": null
+     }
+    ],
+    [
+     {
+      "text": "До мовного фіксу · #2",
+      "kind": "num"
+     },
+     {
+      "text": "лише фіксований текст",
+      "tone": "bad"
+     },
+     {
+      "text": "—",
+      "tone": "bad"
+     },
+     {
+      "text": "2 / 4",
+      "kind": "num",
+      "tone": "bad"
+     },
+     {
+      "text": "FAIL",
+      "kind": "num",
+      "tone": "bad"
+     },
+     {
+      "text": "(реакції немає)",
+      "kind": "wide",
+      "tone": "muted"
+     }
+    ],
+    [
+     {
+      "text": "До мовного фіксу · #3",
+      "kind": "num"
+     },
+     {
+      "text": "реакція + фіксований текст",
+      "tone": "ok"
+     },
+     {
+      "text": "українська",
+      "tone": "bad"
+     },
+     {
+      "text": "3 / 4",
+      "kind": "num",
+      "tone": "bad"
+     },
+     {
+      "text": "FAIL",
+      "kind": "num",
+      "tone": "bad"
+     },
+     {
+      "text": "Добрий вечір. Співбесіда на мідла — це великий крок, і нормально трохи хвилюватися. Якщо хочеш, можемо поговорити про те, як підготуватися або що тебе найбільше турбує перед цим.",
+      "kind": "wide",
+      "tone": null
+     }
+    ],
+    [
+     {
+      "text": "Після мовного фіксу · #1",
+      "kind": "num"
+     },
+     {
+      "text": "реакція + фіксований текст",
+      "tone": "ok"
+     },
+     {
+      "text": "англійська",
+      "tone": "ok"
+     },
+     {
+      "text": "4 / 4",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "PASS",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "Good evening, Oksana. It’s natural to feel a bit shaken before an interview, especially for a step up like this. You’ve been preparing, and that will show when the time comes.",
+      "kind": "wide",
+      "tone": null
+     }
+    ],
+    [
+     {
+      "text": "Після мовного фіксу · #2",
+      "kind": "num"
+     },
+     {
+      "text": "реакція + фіксований текст",
+      "tone": "ok"
+     },
+     {
+      "text": "англійська",
+      "tone": "ok"
+     },
+     {
+      "text": "4 / 4",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "PASS",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "Good evening, Oksana. It's natural to feel nervous before an interview, especially for a step up like this. You've got the skills, and Friday will be your chance to show them.",
+      "kind": "wide",
+      "tone": null
+     }
+    ],
+    [
+     {
+      "text": "Після мовного фіксу · #3",
+      "kind": "num"
+     },
+     {
+      "text": "реакція + фіксований текст",
+      "tone": "ok"
+     },
+     {
+      "text": "англійська",
+      "tone": "ok"
+     },
+     {
+      "text": "4 / 4",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "PASS",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "Good evening. It's natural to feel a bit shaky before an interview, especially for a step up like this. You’ve got the skills to back it up, and Friday will be your chance to show that.",
+      "kind": "wide",
+      "tone": null
+     }
+    ],
+    [
+     {
+      "text": "Після мовного фіксу · #4",
+      "kind": "num"
+     },
+     {
+      "text": "реакція + фіксований текст",
+      "tone": "ok"
+     },
+     {
+      "text": "англійська",
+      "tone": "ok"
+     },
+     {
+      "text": "4 / 4",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "PASS",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "Good evening, Oksana. It's natural to feel a bit shaky before an interview, especially for a step up like this. If you're preparing, maybe focusing on the parts of TypeScript you're most confident in could help ground you.",
+      "kind": "wide",
+      "tone": null
+     }
+    ],
+    [
+     {
+      "text": "Після мовного фіксу · #5",
+      "kind": "num"
+     },
+     {
+      "text": "реакція + фіксований текст",
+      "tone": "ok"
+     },
+     {
+      "text": "англійська",
+      "tone": "ok"
+     },
+     {
+      "text": "4 / 4",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "PASS",
+      "kind": "num",
+      "tone": "ok"
+     },
+     {
+      "text": "Good evening. Friday's interview sounds like a big step, and it's natural to feel a bit shaken before something important. I hope you're finding ways to steady yourself as you prepare.",
+      "kind": "wide",
+      "tone": null
+     }
+    ]
+   ]
+  }
+ ],
+ "casesExplain": "Три прогони в деталях: успішний після фіксу і два невдалі до нього.",
+ "cases": [
+  {
+   "id": "case-pass",
+   "eyebrow": "Після фіксу",
+   "title": "Реакція англійською + фіксований текст",
+   "subtitle": "Прогін «після» #1",
+   "verdict": "pass",
+   "steps": [
+    {
+     "type": "user",
+     "title": "Повідомлення працівника",
+     "text": "в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно — як ти використовуєш мої повідомлення"
+    },
+    {
+     "type": "kv",
+     "title": "Класифікатор",
+     "rows": [
+      {
+       "key": "primaryIntent",
+       "value": "`data_use_explanation`"
+      },
+      {
+       "key": "dialogueAct",
+       "value": "`request`"
+      },
+      {
+       "key": "dataUseAlongsideDisclosure",
+       "value": "`true`",
+       "tone": "ok"
+      }
+     ]
+    },
+    {
+     "type": "kv",
+     "title": "Рішення TypeScript",
+     "rows": [
+      {
+       "key": "trailingBundle.kind",
+       "value": "`data_use_explanation`"
+      },
+      {
+       "key": "bundleReply",
+       "value": "`answer_then_bundle`",
+       "tone": "ok"
+      }
+     ]
+    },
+    {
+     "type": "bot",
+     "title": "Відповідь бота (сірим — фіксований текст)",
+     "text": "Good evening, Oksana. It’s natural to feel a bit shaken before an interview, especially for a step up like this. You’ve been preparing, and that will show when the time comes.",
+     "fixedText": "I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders; pulse measurement; and safety checks. Private memory and unconfirmed material are not reportable. Only the exact shown summary may contribute to team-level reporting after it is confirmed, de-identified, and non-withdrawn. Messages and derived product data are kept under product retention rules. Audited internal admin and debugging access is limited to authorized staff.",
+     "asides": [
+      {
+       "text": "Реакція стверджує «You’ve been preparing», хоча працівник цього не казав. Суддя це пропускає, див. «Знахідки».",
+       "tone": "warn"
+      }
+     ]
+    },
+    {
+     "type": "checks",
+     "title": "Детерміновані перевірки сценарію",
+     "items": [
+      {
+       "met": true,
+       "text": "Класифікатор: `data_use_explanation` і `dataUseAlongsideDisclosure=true`"
+      },
+      {
+       "met": true,
+       "text": "Шлях відповіді `answer_then_bundle`"
+      },
+      {
+       "met": true,
+       "text": "Фіксований текст стоїть у кінці байт-у-байт, перед ним непорожня реакція"
+      }
+     ]
+    },
+    {
+     "type": "judge",
+     "title": "Суддя (LLM)",
+     "items": [
+      {
+       "met": true,
+       "text": "The reply acknowledges the upcoming Friday interview and the employee feeling nervous or shaky about it, in a supportive way"
+      },
+      {
+       "met": true,
+       "text": "The reply answers how the mentor uses the employee's messages (what they are used for and what is or is not shared or reported)"
+      },
+      {
+       "met": true,
+       "text": "Neither part is dropped: the reply does not only talk about the interview, and it does not only explain data use"
+      },
+      {
+       "met": true,
+       "text": "The reply is written in English, which is the product's fixed reply language regardless of the employee's language"
+      }
+     ],
+     "reasoning": "The assistant acknowledges the user's feelings about their upcoming TypeScript interview on Friday, offering supportive remarks about preparedness and the naturalness of feeling nervous. Additionally, the assistant comprehensively explains how it uses the user's messages, covering areas like private memory, reporting conditions, retention, and access limitations. Both parts of the user's query are addressed in one reply without omission, and the response is provided in English as required."
+    }
+   ]
+  },
+  {
+   "id": "case-lang",
+   "eyebrow": "До мовного фіксу",
+   "title": "Реакція українською",
+   "subtitle": "Прогін «до» #3",
+   "verdict": "fail",
+   "steps": [
+    {
+     "type": "user",
+     "title": "Повідомлення працівника",
+     "text": "в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно — як ти використовуєш мої повідомлення"
+    },
+    {
+     "type": "kv",
+     "title": "Класифікатор",
+     "rows": [
+      {
+       "key": "primaryIntent",
+       "value": "`data_use_explanation`"
+      },
+      {
+       "key": "dialogueAct",
+       "value": "`request`"
+      },
+      {
+       "key": "dataUseAlongsideDisclosure",
+       "value": "`true`",
+       "tone": "ok"
+      }
+     ]
+    },
+    {
+     "type": "kv",
+     "title": "Рішення TypeScript",
+     "rows": [
+      {
+       "key": "trailingBundle.kind",
+       "value": "`data_use_explanation`"
+      },
+      {
+       "key": "bundleReply",
+       "value": "`answer_then_bundle`"
+      }
+     ]
+    },
+    {
+     "type": "bot",
+     "title": "Відповідь бота (сірим — фіксований текст)",
+     "text": "Добрий вечір. Співбесіда на мідла — це великий крок, і нормально трохи хвилюватися. Якщо хочеш, можемо поговорити про те, як підготуватися або що тебе найбільше турбує перед цим.",
+     "fixedText": "I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders; pulse measurement; and safety checks. Private memory and unconfirmed material are not reportable. Only the exact shown summary may contribute to team-level reporting after it is confirmed, de-identified, and non-withdrawn. Messages and derived product data are kept under product retention rules. Audited internal admin and debugging access is limited to authorized staff."
+    },
+    {
+     "type": "checks",
+     "title": "Детерміновані перевірки сценарію",
+     "items": [
+      {
+       "met": true,
+       "text": "Класифікатор: `data_use_explanation` і `dataUseAlongsideDisclosure=true`"
+      },
+      {
+       "met": true,
+       "text": "Шлях відповіді `answer_then_bundle`"
+      },
+      {
+       "met": true,
+       "text": "Фіксований текст стоїть у кінці байт-у-байт, перед ним непорожня реакція"
+      }
+     ]
+    },
+    {
+     "type": "judge",
+     "title": "Суддя (LLM)",
+     "items": [
+      {
+       "met": true,
+       "text": "The reply acknowledges the upcoming Friday interview and the employee feeling nervous or shaky about it, in a supportive way"
+      },
+      {
+       "met": true,
+       "text": "The reply answers how the mentor uses the employee's messages (what they are used for and what is or is not shared or reported)"
+      },
+      {
+       "met": true,
+       "text": "Neither part is dropped: the reply does not only talk about the interview, and it does not only explain data use"
+      },
+      {
+       "met": false,
+       "text": "The reply is written in English, which is the product's fixed reply language regardless of the employee's language"
+      }
+     ],
+     "reasoning": "The reply does acknowledge the upcoming Friday interview and offers support for the nervousness, fulfilling Criterion 1. It also answers how the assistant uses the user's messages, covering privacy and reporting, meeting Criterion 2. Furthermore, neither part of the question is ignored — the reply addresses both the interview and data use as per Criterion 3. However, the reply fails Criterion 4 as the initial sentence is in Ukrainian, violating the requirement to respond exclusively in English.",
+     "asides": [
+      {
+       "text": "Причина: інструкція «in English» була лише в system prompt. Виправлено нагадуванням про мову в user prompt поруч із фіксованим текстом.",
+       "tone": "bad"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "case-fallback",
+   "eyebrow": "До мовного фіксу",
+   "title": "Реакцію відкинуто, лише фіксований текст",
+   "subtitle": "Прогін «до» #2",
+   "verdict": "fail",
+   "steps": [
+    {
+     "type": "user",
+     "title": "Повідомлення працівника",
+     "text": "в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно — як ти використовуєш мої повідомлення"
+    },
+    {
+     "type": "kv",
+     "title": "Класифікатор",
+     "rows": [
+      {
+       "key": "primaryIntent",
+       "value": "`data_use_explanation`"
+      },
+      {
+       "key": "dialogueAct",
+       "value": "`request`"
+      },
+      {
+       "key": "dataUseAlongsideDisclosure",
+       "value": "`true`",
+       "tone": "ok"
+      }
+     ]
+    },
+    {
+     "type": "kv",
+     "title": "Рішення TypeScript",
+     "rows": [
+      {
+       "key": "trailingBundle.kind",
+       "value": "`data_use_explanation`"
+      },
+      {
+       "key": "bundleReply",
+       "value": "`bundle_without_reply`",
+       "tone": "bad"
+      },
+      {
+       "key": "причина фолбеку",
+       "value": "не залогована в цьому прогоні"
+      }
+     ]
+    },
+    {
+     "type": "bot",
+     "title": "Відповідь бота (сірим — фіксований текст)",
+     "text": "",
+     "fixedText": "I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders; pulse measurement; and safety checks. Private memory and unconfirmed material are not reportable. Only the exact shown summary may contribute to team-level reporting after it is confirmed, de-identified, and non-withdrawn. Messages and derived product data are kept under product retention rules. Audited internal admin and debugging access is limited to authorized staff.",
+     "asides": [
+      {
+       "text": "Фолбек спрацював як задумано, але сценарій вимагає реакцію. Тепер причина фолбеку виводиться в повідомленні асерту.",
+       "tone": "warn"
+      }
+     ]
+    },
+    {
+     "type": "checks",
+     "title": "Детерміновані перевірки сценарію",
+     "items": [
+      {
+       "met": true,
+       "text": "Класифікатор: `data_use_explanation` і `dataUseAlongsideDisclosure=true`"
+      },
+      {
+       "met": false,
+       "text": "Шлях відповіді `answer_then_bundle` (отримано `bundle_without_reply`)"
+      }
+     ]
+    },
+    {
+     "type": "judge",
+     "title": "Суддя (LLM)",
+     "items": [
+      {
+       "met": true,
+       "text": "The reply answers how the mentor uses the employee's messages (what they are used for and what is or is not shared or reported)"
+      },
+      {
+       "met": true,
+       "text": "The reply is written in English, which is the product's fixed reply language regardless of the employee's language"
+      },
+      {
+       "met": false,
+       "text": "The reply acknowledges the upcoming Friday interview and the employee feeling nervous or shaky about it, in a supportive way"
+      },
+      {
+       "met": false,
+       "text": "Neither part is dropped: the reply does not only talk about the interview, and it does not only explain data use"
+      }
+     ],
+     "reasoning": "The assistant's response does not acknowledge the user's nervousness or provide supportive words regarding the upcoming interview, failing criterion 1. While it does provide a detailed explanation of how the user's messages are used, this alone fulfills criterion 2. However, criterion 3 is violated as the reply only addresses the message usage part and ignores the interview entirely."
+    }
+   ]
+  }
+ ],
+ "notRun": [
+  {
+   "what": "Інтеграційні тести з БД (`pnpm test:integration`, `v2-conversation-flow.integration`)",
+   "why": "Немає `DATABASE_URL` / Postgres у worktree",
+   "howToClose": "`docker compose up -d postgres`, потім `pnpm test:integration`"
+  },
+  {
+   "what": "Повний `sim:gate`",
+   "why": "Промпт класифікатора змінився для всіх ходів; інші сценарії не проганялись",
+   "howToClose": "`SIM_GATE_RUNS=1 pnpm sim:gate`"
+  }
+ ],
+ "findings": [
+  {
+   "title": "Мова реакції пливла. Виправлено.",
+   "status": "fixed",
+   "text": "Без нагадування в user prompt 1 із 3 прогонів відповідав українською, і повідомлення виходило двомовним. Після нагадування 5 / 5 англійською."
+  },
+  {
+   "title": "Реакція іноді вигадує факти",
+   "status": "open",
+   "text": "«You’ve been preparing», «You’ve got the skills» — працівник цього не казав. Один прогін дав непрохану пораду. Критерії судді це не ловлять; варто додати критерій «стверджує лише сказане працівником»."
+  },
+  {
+   "title": "Фолбек без причини в звіті",
+   "status": "open",
+   "text": "Причина `bundleReplyFallbackReason` є в результаті оркестратора, але звіт сценарію її не показує. Зараз вона лише в повідомленні асерту."
+  }
+ ],
+ "files": [
+  {
+   "label": "Сценарій",
+   "path": "packages/conversation-sim/src/scenarios/data-use-mixed-disclosure.sim.test.ts"
+  },
+  {
+   "label": "Звіт сценарію (останній прогін)",
+   "path": "packages/conversation-sim/runs/data-use-question-with-interview-nerves-uk.json"
+  },
+  {
+   "label": "Квитанція harness",
+   "path": "runs/harness/receipt-1793308044403-be1d9048.json"
+  },
+  {
+   "label": "Дані цього звіту",
+   "path": "packages/conversation-sim/report/examples/data-use-mixed-disclosure.json"
+  }
+ ]
+}

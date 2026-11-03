@@ -3247,3 +3247,39 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Harness fix: Run DB-backed checks on a fresh local database (`create database <name>` + `pnpm --filter @entalent/database db:migrate` with an overridden `DATABASE_URL`); recreating the shared `entalent` DB needs user approval because it holds local dev data.
 - Regression check: compare `select max(created_at) from drizzle.__drizzle_migrations` with the journal `when` values; any unapplied entry older than the watermark means the DB must be rebuilt.
 - Status: open
+
+## 2026-10-31: `harness:check` runs untracked live sim scenarios as unit tests
+
+- Symptom: `pnpm harness:check -- --base HEAD` after a conversation-sim change appended every changed `*.sim.test.ts` path to the package `test` command, including untracked live scenarios (`data-use-mixed-disclosure`, `two-owners-one-message`). They made live LLM calls nobody asked for and failed on bot behavior (Ukrainian replies, judge criteria), so the receipt is `failed` for reasons unrelated to the change.
+- Expected: The deterministic gate runs only tests that need no model; live sims run only on explicit request.
+- Root cause layer: tooling
+- Harness fix: Have the harness skip changed `src/scenarios/*.sim.test.ts` files that are not already in the package `test` script (or that use the live provider), or keep the conversation-sim `--exclude` list as the single source of which scenarios are deterministic.
+- Regression check: with an untracked live scenario in the tree, `pnpm harness:check -- --base HEAD` does not invoke it.
+- Status: fixed (2026-11-03: `buildActiveTestCommands` drops changed `*.sim.test.ts` files unless the package `test` script names them; regression `testLiveSimScenariosAreNotRunByHarness`)
+
+## 2026-11-01: conversation-sim harness modules cannot load outside Vitest
+
+- Symptom: A tsx script importing `src/preconditions/load.ts` failed with "Vitest cannot be imported in a CommonJS module using require()"; `load.ts` and `harness/report.ts` import `vitest` at module load and the package compiles as CommonJS.
+- Expected: Story 3's CLIs could reuse the precondition loader and harness directly.
+- Root cause layer: architecture
+- Harness fix: Precondition parsing moved to Vitest-free `src/preconditions/parse.ts` (used by the approve CLI); anything that drives the harness runs through Vitest (`report/record-precondition.mjs` spawns `src/recording/record.run.test.ts`, like `run-sim.mjs`).
+- Regression check: `pnpm --filter @entalent/conversation-sim test` runs the approve CLI under plain `node --import tsx` (src/recording/recording.test.ts).
+- Status: fixed
+
+## 2026-11-01: Parallel turbo typecheck races the worker's own application rebuild
+
+- Symptom: `pnpm typecheck` (and `turbo run typecheck --force`) failed in `@entalent/conversation-sim` with implicit-any errors on `@entalent/application` types; `--concurrency=1` passed 26/26. It surfaced after story 4 added `@entalent/conversation-trace` to the sim's dependency chain, shifting task timing.
+- Expected: The full typecheck gate passes deterministically.
+- Root cause layer: tooling
+- Harness fix: The worker `typecheck` script runs `pnpm --filter @entalent/application build` (tsup `--clean`) while other packages typecheck against that `dist`; under turbo `^build` already built it. Drop the in-script rebuild when run by turbo, or build application without `--clean`.
+- Regression check: `pnpm exec turbo run typecheck --force` passes three times in a row.
+- Status: open
+
+## 2026-11-01: Local migration for story 4 held by the permission system
+
+- Symptom: The local migration command against Docker Postgres (localhost:5434) was held without an answer for 10 minutes; later shell heredocs whose text merely mentioned the command were held too.
+- Expected: Applying a new forward migration to the local database runs, or the agent knows beforehand it needs approval.
+- Root cause layer: environment
+- Harness fix: Ask the user up front for local migration approval in database stories, and write log/spec text with the editor tool rather than shell heredocs.
+- Regression check: Before a database story, confirm a local migration is allowed in this session.
+- Status: open

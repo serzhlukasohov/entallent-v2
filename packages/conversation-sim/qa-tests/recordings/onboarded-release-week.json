@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "onboarded-release-week",
+  "description": "Onboarded employee who opened the conversation about a heavy release week.",
+  "base": {
+    "schemaVersion": 1,
+    "presets": ["onboarding-done"],
+    "user": { "name": "Olena", "timezone": "Europe/Kyiv" }
+  },
+  "replies": [
+    "Release week again, I'm swamped.",
+    "Mostly the checklist and the handover to the support team."
+  ]
+}

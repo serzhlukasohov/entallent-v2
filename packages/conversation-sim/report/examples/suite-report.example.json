@@ -1,0 +1,703 @@
+{
+ "meta": {
+  "eyebrow": "conversation-sim",
+  "title": "Приклад: звіт сюти conversation-sim",
+  "details": [
+   "Прогін 2026-10-30 00:38 UTC",
+   "бот gpt-4o, суддя gpt-4o, симулятор gpt-4o-mini"
+  ]
+ },
+ "suite": {
+  "counts": {
+   "total": 2,
+   "passed": 1,
+   "failed": 1,
+   "error": 0,
+   "skipped": 0
+  },
+  "tests": [
+   {
+    "id": "TC-01",
+    "name": "B07 one message, two owners answers the interview and the data_use_explanation question in one reply",
+    "status": "failed",
+    "duration": "6 с",
+    "descriptionSummary": "B07",
+    "description": [
+     {
+      "key": "кейс",
+      "value": "TC-01"
+     },
+     {
+      "key": "сторі",
+      "value": "—"
+     },
+     {
+      "key": "сюта",
+      "value": "B07 one message, two owners · `two-owners-one-message.sim.test.ts`"
+     },
+     {
+      "key": "теги",
+      "value": "`B07`"
+     },
+     {
+      "key": "тип",
+      "value": "живий: бот відповідає реальною моделлю"
+     },
+     {
+      "key": "мета",
+      "value": "QA B07: one inbound carries substance (an interview tomorrow, nerves) and a product question (data use or reporting). Both must be answered: the product question must not own the reply."
+     },
+     {
+      "key": "сценарій",
+      "value": "An employee mentions a stressful interview on Friday and, in the same message, asks how the coach uses their messages or what their manager will see."
+     },
+     {
+      "key": "моделі",
+      "value": "бот gpt-4o · суддя gpt-4o · симулятор gpt-4o-mini"
+     },
+     {
+      "key": "запуск",
+      "value": "2026-10-30 00:59:19 UTC · 6 с"
+     }
+    ],
+    "given": {
+     "summary": "user Illia, timezone Europe/Kyiv · пам'ять: 0 · історія: порожня",
+     "rows": [
+      {
+       "key": "користувач",
+       "value": "user Illia, timezone Europe/Kyiv"
+      },
+      {
+       "key": "онбординг",
+       "value": "—"
+      },
+      {
+       "key": "пам'ять",
+       "value": "—"
+      },
+      {
+       "key": "цілі",
+       "value": "—"
+      },
+      {
+       "key": "pulse-цикл",
+       "value": "—"
+      },
+      {
+       "key": "зібрані pulse-відповіді",
+       "value": "—"
+      },
+      {
+       "key": "історія розмови",
+       "value": "порожня: розмова починається з першого кроку"
+      }
+     ],
+     "history": []
+    },
+    "stepsSummary": "1 крок",
+    "steps": [
+     {
+      "role": "user",
+      "label": "працівник · крок 1 / 1",
+      "text": "в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно — як ти використовуєш мої повідомлення"
+     },
+     {
+      "role": "bot",
+      "label": "бот · крок 1 · 547 симв.",
+      "text": "I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders; pulse measurement; and safety checks. Private memory and unconfirmed material are not reportable. Only the exact shown summary may contribute to team-level reporting after it is confirmed, de-identified, and non-withdrawn. Messages and derived product data are kept under product retention rules. Audited internal admin and debugging access is limited to authorized staff.",
+      "sections": [
+       {
+        "title": "Що зрозумів класифікатор",
+        "rows": [
+         {
+          "key": "інтент",
+          "value": "`data_use_explanation` + `emotional_disclosure`"
+         },
+         {
+          "key": "тип репліки",
+          "value": "`request`"
+         },
+         {
+          "key": "суть репліки",
+          "value": "в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно — як ти використовуєш мої повідомлення"
+         },
+         {
+          "key": "емоції",
+          "value": "anxious"
+         },
+         {
+          "key": "терміновість",
+          "value": "medium",
+          "tone": "bad"
+         },
+         {
+          "key": "впевненість",
+          "value": "1"
+         },
+         {
+          "key": "прапорці",
+          "value": [
+           "pulse-питання заборонені цього ходу"
+          ]
+         },
+         {
+          "key": "пояснення",
+          "value": "The employee asks directly how their messages are used, which aligns with 'data_use_explanation'. They also disclose feeling anxious about an upcoming interview, adding 'emotional_disclosure' as a secondary intent."
+         }
+        ],
+        "summary": "`data_use_explanation` · `request` · anxious · прапорців: 1"
+       },
+       {
+        "title": "План відповіді",
+        "rows": [
+         {
+          "key": "режим",
+          "value": "`normal`"
+         }
+        ],
+        "summary": ""
+       },
+       {
+        "title": "Ланцюжок подій: виклики LLM, записи в базу і черги, рішення",
+        "rows": [
+         {
+          "key": "1. вхід",
+          "value": "`message accepted` · saved as inbound, 119 chars"
+         },
+         {
+          "key": "2. LLM",
+          "value": "`detectRisk` · severity=none escalate=false blockSurvey=false"
+         },
+         {
+          "key": "3. LLM",
+          "value": "`classifySituation` · primary=data_use_explanation secondary=[emotional_disclosure] act=request emotion=[anxious] urgency=medium safetyCheck=false surveyAllowed=false substance=\"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно...\""
+         },
+         {
+          "key": "4. база",
+          "value": "`conversation.updateActiveTopic` · {summary: \"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно...\", status: \"active\", startedAt: \"2026-10-30T00:59:13.040Z\"}"
+         },
+         {
+          "key": "5. база",
+          "value": "`conversation.saveMessage` · {direction: \"outbound\", text: \"I am an AI assistant, not a human. I use your messages to respond in this conver...\", occurredAt: 2026-10-30T00:59:15.948Z, metadata: {sourceInboundMessageId, measurementVersion, dialogueAct, responseMove, rep..."
+         },
+         {
+          "key": "6. черга",
+          "value": "`outbox.enqueueMessageSend` · {text: \"I am an AI assistant, not a human. I use your messages to respond in this conver...\"}"
+         },
+         {
+          "key": "7. база",
+          "value": "`conversation.updateMessageDelivery` · {externalMessageId: \"sim:b69df4bf-5246-4bd8-adb2-b5bdebfec77f\", sentAt: 2026-10-30T00:59:15.949Z}"
+         },
+         {
+          "key": "8. черга",
+          "value": "`outbox.enqueueMemoryExtraction`"
+         },
+         {
+          "key": "9. LLM",
+          "value": "`extractMemory` · 0 memory items, 0 goals, 0 follow-ups"
+         },
+         {
+          "key": "10. черга",
+          "value": "`outbox.enqueueStyleAnalysis`"
+         },
+         {
+          "key": "11. черга",
+          "value": "`outbox.enqueueSurveyEvidence`"
+         },
+         {
+          "key": "12. рішення",
+          "value": "`turn outcome` · mode=normal, risk=none, reply is fixed text (model not called)"
+         }
+        ],
+        "empty": "Подій цього ходу не записано.",
+        "summary": "LLM: 3 · записів: 3 · у черги: 4"
+       },
+       {
+        "title": "Інші метадані відповіді",
+        "rows": [
+         {
+          "key": "форма відповіді",
+          "value": {
+           "питання у відповіді": "ні",
+           "макс. питань": 1,
+           "чому стільки": "new_substance_allows_question",
+           "коротка сесія": "ні"
+          }
+         },
+         {
+          "key": "мова",
+          "value": "en (продуктове правило: завжди англійською)"
+         },
+         {
+          "key": "пам'ять",
+          "value": "пам'ять у відповіді не використано"
+         },
+         {
+          "key": "тема розмови",
+          "value": "нова тема замінює попередню; якір теми: нова репліка; у репліці є суть: так"
+         },
+         {
+          "key": "цілі",
+          "value": "ціль не обрано: кандидатів 0, причина not_selected"
+         }
+        ],
+        "empty": "Немає.",
+        "summary": "5 поле(ів)"
+       }
+      ],
+      "badges": [
+       {
+        "icon": "🧵",
+        "label": "тема",
+        "tone": null,
+        "details": [
+         "conversation.updateActiveTopic: {summary: \"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно...\", status: \"active\", startedAt: \"2026-10-30T00:59:13.040Z\"}"
+        ]
+       }
+      ]
+     }
+    ],
+    "stepsEmpty": "Жодного кроку не відбулося.",
+    "actual": {
+     "summary": "✗ збіглося 3 з 7 · суддя не прийняв",
+     "failure": null,
+     "comparisons": [
+      {
+       "source": "код тесту",
+       "expected": "The model writes the reply, so the interview can be answered; a fixed policy text cannot.",
+       "actual": "I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders",
+       "met": false
+      },
+      {
+       "source": "суддя",
+       "expected": "The coach responds to the upcoming interview and the employee's nervousness, not only to the product question",
+       "actual": "не виконано",
+       "met": false
+      },
+      {
+       "source": "суддя",
+       "expected": "The interview is addressed before the product question",
+       "actual": "не виконано",
+       "met": false
+      },
+      {
+       "source": "суддя",
+       "expected": "The reply reads as one natural answer, not a canned policy text pasted alone",
+       "actual": "не виконано",
+       "met": false
+      },
+      {
+       "source": "код тесту",
+       "expected": "No reminder is scheduled: mentioning an interview is not a request to be reminded about it.",
+       "actual": "так",
+       "met": true
+      },
+      {
+       "source": "код тесту",
+       "expected": "The reply is in English whatever the employee writes (product rule, application/src/utils/language-policy.ts).",
+       "actual": "так",
+       "met": true
+      },
+      {
+       "source": "суддя",
+       "expected": "The coach also answers the product question (how messages are used, or what the manager sees) directly",
+       "actual": "виконано",
+       "met": true
+      }
+     ],
+     "judge": {
+      "title": "Суддя (LLM): не прийняв, 3 з 4 критеріїв не виконано",
+      "reasoning": "The coach did not respond to the employee's statement about their upcoming interview or their nervousness. Instead, the coach immediately addressed the product question without acknowledging the interview first, violating the criterion of addressing the interview first. Additionally, the response to the product question reads as a canned policy text that does not form a natural answer within the flow of the interaction."
+     }
+    }
+   },
+   {
+    "id": "TC-02",
+    "name": "CAP-1/CAP-2 topic steering inside an open pulse cycle 'CAP-1 topic steering: opens the uncov…'",
+    "status": "passed",
+    "duration": "7 с",
+    "descriptionSummary": "CAP-1 CAP-2",
+    "description": [
+     {
+      "key": "кейс",
+      "value": "TC-02"
+     },
+     {
+      "key": "сторі",
+      "value": "—"
+     },
+     {
+      "key": "сюта",
+      "value": "CAP-1/CAP-2 topic steering inside an open pulse cycle · `topic-steering.sim.test.ts`"
+     },
+     {
+      "key": "теги",
+      "value": "`CAP-1` `CAP-2`"
+     },
+     {
+      "key": "тип",
+      "value": "живий: бот відповідає реальною моделлю"
+     },
+     {
+      "key": "мета",
+      "value": "`REPORTING_DISCLOSURE_VERSION` in `packages/application/src/utils/reporting-disclosure.ts`. */ const REPORTING_DISCLOSURE_VERSION = 'reporting-disclosure-v1'; const AUTONOMY_QUESTION = { id: 'q-autonomy-methods', surveyDefinitionId: 'sim-definition', stableKey: 'autonomy_methods', title: 'Choice of methods', canonicalMeaning: 'How much say the employee has over how they do their work', dimension: 'autonomy', questionGroup: 'autonomy', displayOrder: 1, positiveIndicators: [], negativeIndicators: [], contraindications: [], probeStrategies: ['How much freedom they have to choose how they approach their own tasks'], confidenceThreshold: 0.72, completenessThreshold: 0.65, minimumEvidenceCount: 1, cooldownDays: 14, maxFollowUpProbes: 3, responseType: 'open_ended' as const, version: 'v2', }; /** An open V2 cycle with autonomy uncovered; no bundle, clarification, or verdict is pending. */ const questionConfirmationRepo: QuestionConfirmationPort = { findCycleProgress: async () => ({ surveyWindowId: 'sim-window', groups: [{ questionGroup: 'autonomy', questions: [{ surveyQuestionId: AUTONOMY_QUESTION.id, status: 'collecting' }] }], }), findAppliedQuestionVerdictForInbound: async () => null, findPendingQuestionClarification: async () => null, stageQuestionClarificationPrompt: async () => true, applyQuestionClarificationVerdict: async () => true, findAwaitingQuestionBundle: async () => null, applyQuestionBundleVerdict: async () => true, findReadyQuestionBundle: async () => null, hasReadyQuestionBundle: async () => false, stageQuestionConfirmationBundle: async () => 'unused', }; type Seed = Array<{ direction: 'inbound' | 'outbound'; text: string; metadata?: Record<string, unknown> }>; async function seedHistory(harness: ReturnType<typeof createCoachAgent>['harness'], seed: Seed): Promise<void> { const start = Date.now() - (seed.length + 1) * 60_000; for (const [index, item] of seed.entries()) { const saved = await harness.conversationRepo.saveMessage({ conversationId: CONVERSATION_ID, tenantId: TENANT_ID, userId: USER_ID, direction: item.direction, text: item.text, occurredAt: new Date(start + index * 60_000), metadata: item.metadata, }); if (item.direction === 'outbound') { await harness.conversationRepo.updateMessageDelivery(saved.id, { tenantId: TENANT_ID, conversationId: CONVERSATION_ID, externalMessageId: `sim-${index}`, sentAt: new Date(start + index * 60_000), }); } } } const COMMON_CRITERIA = [ 'The reply first responds to what the employee just wrote, briefly, before anything else', 'The reply contains exactly one question and it is the last sentence', 'The reply never mentions a survey, questionnaire, form, index, score scale, pulse topics, or internal labels', ]; /** GC round 3 CAP-1 (T1) and CAP-2 (T2): inside an open V2 cycle, after the disclosure and three employee turns with no topic raised, the bot itself asks one direct question on the uncovered topic; when the employee already gave a status without a reason, it asks what drives it."
+     },
+     {
+      "key": "сценарій",
+      "value": "An employee chats about an ordinary release day while a pulse cycle is open and the autonomy topic is not yet covered."
+     },
+     {
+      "key": "моделі",
+      "value": "бот gpt-4o · суддя gpt-4o · симулятор gpt-4o-mini"
+     },
+     {
+      "key": "запуск",
+      "value": "2026-10-30 00:39:45 UTC · 7 с"
+     }
+    ],
+    "given": {
+     "summary": "user Olena, timezone Europe/Berlin · пам'ять: 0 · історія: 5 повідомлень",
+     "rows": [
+      {
+       "key": "користувач",
+       "value": "user Olena, timezone Europe/Berlin · V2 question confirmation enabled · pulse cycle open (topic backlog service)"
+      },
+      {
+       "key": "онбординг",
+       "value": "—"
+      },
+      {
+       "key": "пам'ять",
+       "value": "—"
+      },
+      {
+       "key": "цілі",
+       "value": "—"
+      },
+      {
+       "key": "pulse-цикл",
+       "value": "—"
+      },
+      {
+       "key": "зібрані pulse-відповіді",
+       "value": "—"
+      },
+      {
+       "key": "історія розмови",
+       "value": "5 повідомлень, нижче"
+      }
+     ],
+     "history": [
+      {
+       "role": "bot",
+       "label": "бот · історія",
+       "text": "Hi Olena. Your reflections can be used in aggregated reporting.",
+       "notes": [
+        "показано дисклеймер звітності (reporting-disclosure-v1)"
+       ],
+       "seed": true
+      },
+      {
+       "role": "user",
+       "label": "працівник · історія",
+       "text": "Hey. Release week, so mostly heads-down.",
+       "notes": [],
+       "seed": true
+      },
+      {
+       "role": "bot",
+       "label": "бот · історія",
+       "text": "Release weeks have their own rhythm. What is on your plate today?",
+       "notes": [],
+       "seed": true
+      },
+      {
+       "role": "user",
+       "label": "працівник · історія",
+       "text": "Finishing the checklist and a couple of reviews.",
+       "notes": [],
+       "seed": true
+      },
+      {
+       "role": "bot",
+       "label": "бот · історія",
+       "text": "A checklist plus reviews is a full day.",
+       "notes": [],
+       "seed": true
+      }
+     ]
+    },
+    "stepsSummary": "1 крок",
+    "steps": [
+     {
+      "role": "user",
+      "label": "працівник · крок 1 / 1",
+      "text": "Yeah. I just finished the checklist, reviews are next after lunch."
+     },
+     {
+      "role": "bot",
+      "label": "бот · крок 1 · 244 симв.",
+      "text": "It sounds like you're pacing things well for release week, finishing the checklist before diving into reviews later. That kind of focus must help keep things moving smoothly. How much freedom do you have to choose how you approach your reviews?",
+      "sections": [
+       {
+        "title": "Що зрозумів класифікатор",
+        "rows": [
+         {
+          "key": "інтент",
+          "value": "`progress_update`"
+         },
+         {
+          "key": "тип репліки",
+          "value": "`continuation`"
+         },
+         {
+          "key": "суть репліки",
+          "value": "I just finished the checklist, reviews are next after lunch."
+         },
+         {
+          "key": "емоції",
+          "value": "neutral"
+         },
+         {
+          "key": "впевненість",
+          "value": "1"
+         },
+         {
+          "key": "пояснення",
+          "value": "The employee provides a status update on their tasks, indicating completion of the checklist and plans for reviews after lunch. No distress or sensitive topics are present."
+         }
+        ],
+        "summary": "`progress_update` · `continuation` · neutral"
+       },
+       {
+        "title": "Стан розмови",
+        "rows": [
+         {
+          "key": "тема гілки",
+          "value": "Finishing the checklist and a couple of reviews."
+         },
+         {
+          "key": "вже встановлено",
+          "value": [
+           "Checklist is finished.",
+           "Reviews are planned for after lunch."
+          ]
+         },
+         {
+          "key": "локальний час",
+          "value": "Friday 01:39 (night)"
+         }
+        ],
+        "empty": "Нічого не встановлено і пам'яті немає.",
+        "summary": "встановлено фактів: 2"
+       },
+       {
+        "title": "Pulse-цикл",
+        "rows": [
+         {
+          "key": "питання на тему",
+          "value": "`autonomy` (відкрити тему), `q-autonomy-methods`"
+         },
+         {
+          "key": "питання в відповіді",
+          "value": "{\"questionGroup\":\"autonomy\",\"focus\":\"open\",\"policyVersion\":\"topic-question-v1\"}"
+         },
+         {
+          "key": "у відповіді є проба",
+          "value": "так, `q-autonomy-methods`"
+         }
+        ],
+        "empty": "Цього ходу pulse-циклу в контексті немає: питань на тему, проб і підтверджень не було.",
+        "summary": "питання на тему `autonomy`"
+       },
+       {
+        "title": "План відповіді",
+        "rows": [
+         {
+          "key": "хід",
+          "value": "`continue_existing_thread`"
+         },
+         {
+          "key": "режим",
+          "value": "`coaching`"
+         },
+         {
+          "key": "питань можна",
+          "value": "1 (topic_question)"
+         },
+         {
+          "key": "заборонено",
+          "value": [
+           "`unsupported_interpretation`"
+          ]
+         }
+        ],
+        "summary": "`continue_existing_thread` · питань ≤ 1"
+       },
+       {
+        "title": "Ланцюжок подій: виклики LLM, записи в базу і черги, рішення",
+        "rows": [
+         {
+          "key": "1. вхід",
+          "value": "`message accepted` · saved as inbound, 66 chars"
+         },
+         {
+          "key": "2. LLM",
+          "value": "`detectRisk` · severity=none escalate=false blockSurvey=false"
+         },
+         {
+          "key": "3. LLM",
+          "value": "`classifySituation` · primary=progress_update secondary=[] act=continuation emotion=[neutral] urgency=low safetyCheck=false surveyAllowed=true substance=\"I just finished the checklist, reviews are next after lunch.\""
+         },
+         {
+          "key": "4. LLM",
+          "value": "`generateResponse` · mode=coaching tone=warm length=medium move=continue_existing_thread maxQuestions=1 language=en must include=[topicQuestion] -> 244 chars"
+         },
+         {
+          "key": "5. база",
+          "value": "`conversation.updateActiveTopic` · {summary: \"Finishing the checklist and a couple of reviews.\", status: \"active\", startedAt: \"2026-10-30T00:39:38.815Z\"}"
+         },
+         {
+          "key": "6. база",
+          "value": "`conversation.saveMessage` · {direction: \"outbound\", text: \"It sounds like you're pacing things well for release week, finishing the checkli...\", occurredAt: 2026-10-30T00:39:42.565Z, metadata: {sourceInboundMessageId, measurementVersion, dialogueAct, responseMove, rep..."
+         },
+         {
+          "key": "7. черга",
+          "value": "`outbox.enqueueMessageSend` · {text: \"It sounds like you're pacing things well for release week, finishing the checkli...\"}"
+         },
+         {
+          "key": "8. база",
+          "value": "`conversation.updateMessageDelivery` · {externalMessageId: \"sim:5aa8ef55-3688-48da-aa7c-e418ab33a636\", sentAt: 2026-10-30T00:39:42.565Z}"
+         },
+         {
+          "key": "9. черга",
+          "value": "`outbox.enqueueMemoryExtraction`"
+         },
+         {
+          "key": "10. LLM",
+          "value": "`extractMemory` · 0 memory items, 0 goals, 0 follow-ups"
+         },
+         {
+          "key": "11. черга",
+          "value": "`outbox.enqueueStyleAnalysis`"
+         },
+         {
+          "key": "12. черга",
+          "value": "`outbox.enqueueSurveyEvidence`"
+         },
+         {
+          "key": "13. рішення",
+          "value": "`turn outcome` · mode=coaching, risk=none, reply written by the model"
+         }
+        ],
+        "empty": "Подій цього ходу не записано.",
+        "summary": "LLM: 4 · записів: 3 · у черги: 4"
+       },
+       {
+        "title": "Інші метадані відповіді",
+        "rows": [
+         {
+          "key": "форма відповіді",
+          "value": {
+           "питання у відповіді": "так",
+           "макс. питань": 1,
+           "чому стільки": "topic_question",
+           "коротка сесія": "ні",
+           "вже встановлено": [
+            "Checklist is finished.",
+            "Reviews are planned for after lunch."
+           ]
+          }
+         },
+         {
+          "key": "мова",
+          "value": "en (продуктове правило: завжди англійською)"
+         },
+         {
+          "key": "пам'ять",
+          "value": "пам'ять у відповіді не використано"
+         },
+         {
+          "key": "тема розмови",
+          "value": "нова тема замінює попередню; якір теми: збережений раніше; у репліці є суть: так"
+         },
+         {
+          "key": "цілі",
+          "value": "ціль не обрано: кандидатів 0, причина not_selected"
+         }
+        ],
+        "empty": "Немає.",
+        "summary": "5 поле(ів)"
+       }
+      ],
+      "badges": [
+       {
+        "icon": "🧵",
+        "label": "тема",
+        "tone": null,
+        "details": [
+         "conversation.updateActiveTopic: {summary: \"Finishing the checklist and a couple of reviews.\", status: \"active\", startedAt: \"2026-10-30T00:39:38.815Z\"}"
+        ]
+       },
+       {
+        "icon": "📊",
+        "label": "pulse",
+        "tone": null,
+        "details": [
+         "бот поставив pulse-питання"
+        ]
+       }
+      ]
+     }
+    ],
+    "stepsEmpty": "Жодного кроку не відбулося.",
+    "actual": {
+     "summary": "✓ збіглося 5 з 5 · суддя прийняв",
+     "failure": null,
+     "comparisons": [
+      {
+       "source": "евристика, тест її не перевіряє",
+       "expected": "—",
+       "actual": "крок 1: відповідь починається з шаблонного віддзеркалення почуття («That sounds like…»), а не з суті. Початок відповіді: «It sounds like you're pacing things well for release week, finishing the checklist before diving into reviews later.»",
+       "met": "info"
+      },
+      {
+       "source": "код тесту",
+       "expected": "reply was not generated",
+       "actual": "так",
+       "met": true
+      },
+      {
+       "source": "суддя",
+       "expected": "The reply first responds to what the employee just wrote, briefly, before anything else",
+       "actual": "виконано",
+       "met": true
+      },
+      {
+       "source": "суддя",
+       "expected": "The reply contains exactly one question and it is the last sentence",
+       "actual": "виконано",
+       "met": true
+      },
+      {
+       "source": "суддя",
+       "expected": "The reply never mentions a survey, questionnaire, form, index, score scale, pulse topics, or internal labels",
+       "actual": "виконано",
+       "met": true
+      },
+      {
+       "source": "суддя",
+       "expected": "The question asks directly about how much say or freedom the employee has over how they approach or organise their own work",
+       "actual": "виконано",
+       "met": true
+      }
+     ],
+     "judge": {
+      "title": "Суддя (LLM): прийняв, 4 з 4 критеріїв",
+      "reasoning": "The reply concisely responds to the employee's mention of completing a checklist and moving on to reviews. It contains exactly one question, positioned as the last sentence, addressing the employee's sense of control over organizing their work without referencing surveys, questionnaires, pulse topics, or internal labels."
+     }
+    }
+   }
+  ]
+ }
+}

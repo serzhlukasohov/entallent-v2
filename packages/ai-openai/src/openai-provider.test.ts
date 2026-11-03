@@ -15,7 +15,7 @@ vi.mock('openai', () => {
 import { OpenAiProvider } from './openai-provider';
 import { ReplyStrategy, isModerationSignalError, type ModerationSignalError } from '@entalent/contracts';
 import type { CircuitBreaker } from './circuit-breaker';
-import type { LanguagePolicy, MemoryContext, ResponseContext } from '@entalent/application';
+import { isNumericProbeInvalidError, type LanguagePolicy, type MemoryContext, type ResponseContext } from '@entalent/application';
 
 function makeProvider() {
   return new OpenAiProvider({ azure: false, apiKey: 'test', model: 'gpt-test' });
@@ -2341,6 +2341,45 @@ describe('OpenAiProvider.generateResponse length + question gates', () => {
       }),
     )).rejects.toThrow(/noncompliant numeric survey probe/);
   });
+
+  it('reports a numeric probe error, not the question limit, when the corrected probe also asks twice', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'How engaged do you feel? And how is the team?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }],
+    });
+    const error = await makeProvider().generateResponse(
+      turns,
+      { mode: 'survey_probe', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] },
+      responseContext({
+        userName: 'X',
+        surveyProbeQuestion: { id: 'q-engagement', responseType: 'numeric_0_10', probeStrategies: ['Ask for a rating.'] },
+      }),
+    ).catch((caught: unknown) => caught);
+    expect((error as Error).name).toBe('NumericProbeInvalidError');
+  });
+
+  // GC retro A10: the orchestrator catches this typed error and replies without the probe.
+  it('fails closed with a typed numeric probe error the orchestrator can catch', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        text: 'How engaged do you feel?', confidence: 0.9, containsSurveyProbe: true,
+        surveyProbeQuestionId: 'q-engagement',
+      }) } }],
+    });
+    const error = await makeProvider().generateResponse(
+      turns,
+      { mode: 'survey_probe', tone: 'warm', includeFollowUpQuestion: true, maxResponseLength: 'short', forbiddenPatterns: [] },
+      responseContext({
+        userName: 'X',
+        surveyProbeQuestion: { id: 'q-engagement', responseType: 'numeric_0_10', probeStrategies: ['Ask for a rating.'] },
+      }),
+    ).catch((caught: unknown) => caught);
+    expect(isNumericProbeInvalidError(error)).toBe(true);
+    expect((error as Error).name).toBe('NumericProbeInvalidError');
+    expect((error as Error).message).toBe('OpenAI returned a noncompliant numeric survey probe after retry');
+  });
 });
 
 describe('OpenAiProvider.extractMemory resilience', () => {
@@ -2703,6 +2742,30 @@ describe('OpenAiProvider.generateResponse trailing bundle (GC round 3 CAP-4)', (
     await expect(provider.generateResponse(turns, confirmation, bundleContext))
       .rejects.toMatchObject({ message: 'v2_bundle_reply_invalid', reason: 'bundle_mismatch' });
     expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  // GC retro A5: the repair names the sentence that must stay in the reply part.
+  it('names the required not-collected and completion sentences in the repair', async () => {
+    createMock
+      .mockResolvedValueOnce(draft('Retro notes first, or the checklist?', bundleText))
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    await makeProvider().generateResponse(turns, confirmation, responseContext({
+      userName: 'X', trailingBundle: { kind: 'confirmation_bundle', text: bundleText },
+      questionNotCollected: { questionGroup: 'autonomy' },
+      topicConfirmed: { questionGroup: 'growth', topicsClosed: 2, topicsTotal: 4 },
+    }));
+    const repair = createMock.mock.calls[1]![0].messages[0].content as string;
+    expect(repair).toMatch(/"replyText" must still say that you will leave that point out for this cycle/);
+    expect(repair).toMatch(/"replyText" must still say that the topic is complete, with the progress numbers/);
+  });
+
+  it('keeps the repair generic when no sentence is required', async () => {
+    createMock
+      .mockResolvedValueOnce(draft('Retro notes first, or the checklist?', bundleText))
+      .mockResolvedValueOnce(draft(replyText, bundleText));
+    await makeProvider().generateResponse(turns, confirmation, bundleContext);
+    const repair = createMock.mock.calls[1]![0].messages[0].content as string;
+    expect(repair).not.toMatch(/must still say/);
   });
 
   it('accepts an empty "text" on a bundle turn and assembles the message itself', async () => {

@@ -19,6 +19,7 @@ describe('queue contract', () => {
       PROFILE_HYDRATION: 'profile-hydration',
       ONBOARDING_ACTION: 'onboarding-action',
       ONBOARDING_REMINDER: 'onboarding-reminder',
+      CONVERSATION_TRACE_PURGE: 'conversation-trace-purge',
     });
   });
 
@@ -39,6 +40,7 @@ describe('queue contract', () => {
       'profile-hydration',
       'onboarding-action',
       'onboarding-reminder',
+      'conversation-trace-purge',
     ]);
   });
 

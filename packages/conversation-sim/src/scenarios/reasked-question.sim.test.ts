@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
 import { countQuestions } from '../harness/assertions';
 import { findReaskedQuestions } from '../harness/fidelity-checks';
+import { expectJudgeVerdict } from '../harness/judge-verdict';
 import { reportRun } from '../harness/report';
 import { judgeModel, SET_ID, simulatorModel } from './config';
 import { REASKED_QUESTION_FIXTURE as FIXTURE } from './fidelity-fixtures';
@@ -46,6 +47,6 @@ describe('CAP-8 answered question is not re-asked', () => {
     expect(finalPlan, 'final turn bypassed reply planning').toBeDefined();
     expect(finalPlan?.forbiddenMoves).toContain('unsupported_interpretation');
 
-    expect(result.success, result.reasoning ?? 'judge did not pass').toBe(true);
+    expectJudgeVerdict(result, 'reasked-question');
   });
 });

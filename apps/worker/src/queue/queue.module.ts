@@ -49,6 +49,7 @@ export { QUEUE_NAMES };
       { name: QUEUE_NAMES.PROFILE_HYDRATION },
       { name: QUEUE_NAMES.ONBOARDING_ACTION },
       { name: QUEUE_NAMES.ONBOARDING_REMINDER },
+      { name: QUEUE_NAMES.CONVERSATION_TRACE_PURGE },
     ),
   ],
   providers: [RedisService],

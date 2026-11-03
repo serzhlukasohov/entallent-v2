@@ -9,6 +9,7 @@ export * from './conversations';
 export * from './messages';
 export * from './conversation-activity';
 export * from './conversation-job-admissions';
+export * from './conversation-turn-traces';
 export * from './memory-items';
 export * from './user-goals';
 export * from './risk-signals';

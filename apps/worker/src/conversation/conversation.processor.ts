@@ -196,8 +196,9 @@ export class ConversationProcessor extends WorkerHost implements OnApplicationSh
           // bounded reason goes to llm_runs.error_code so the rate stays measurable without text.
           errorCode = `conversation_v2_bundle_composition_invalid:${result.bundleCompositionFallbackReason}`;
           this.logger.warn(`${done} bundleSkipped=${result.bundleCompositionFallbackReason}`);
-        } else if (result.bundleReply === 'bundle_without_reply') {
-          // The fixed text went alone (GC round 3 CAP-4 fallback); keep the reason visible.
+        } else if (result.bundleReply === 'bundle_without_reply' || result.bundleReply === 'retried_answer_then_bundle') {
+          // The two-part reply failed (GC round 3 CAP-4): the fixed text went alone, or after one
+          // retried ordinary answer (GC retro A5); keep the reason visible.
           this.logger.warn(`${done} reason=${result.bundleReplyFallbackReason ?? 'unknown'}`);
         } else {
           this.logger.log(done);

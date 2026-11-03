@@ -58,10 +58,12 @@ import {
 } from '../utils/topic-question-policy';
 import {
   composeTopicQuestionReplyText,
+  isNumericProbeInvalidError,
   isTopicQuestionReplyInvalidError,
   validateTopicQuestionReply,
   type TopicQuestionReplyInvalidReason,
 } from '../utils/topic-question-reply';
+import { bundleCompositionFailureMetadata, readBundleCompositionBackoff } from '../utils/bundle-composition-backoff';
 import type { ProbeFocus } from '../services/pulse-backlog.service';
 import {
   MAX_QUESTION_CLARIFICATIONS, resolveCorrectedStatementVerdict, validateQuestionBundleVerdict,
@@ -110,8 +112,15 @@ export type OrchestrateResult = Omit<ProcessMessageResult, 'risk'> & {
   bundleCompositionFallbackReason?: BundleCompositionFallbackReason;
 };
 
-/** `answer_then_bundle`: the employee's message was answered before the fixed text; otherwise the fixed text went alone. */
-export type BundleReplyOutcome = 'answer_then_bundle' | 'bundle_without_reply';
+/**
+ * `answer_then_bundle`: the employee's message was answered before the fixed text.
+ * `retried_answer_then_bundle`: the two-part reply failed, and one ordinary reply carrying a required
+ * not-collected or completion sentence was generated and validated instead (GC retro A5).
+ * `bundle_without_reply`: the fixed text went alone.
+ */
+export type BundleReplyOutcome = 'answer_then_bundle' | 'retried_answer_then_bundle' | 'bundle_without_reply';
+/** A topic question that fell back: the open-ended rail's reason, or a broken numeric probe (GC retro A10). */
+export type TopicQuestionFallbackReason = TopicQuestionReplyInvalidReason | 'numeric_probe_invalid';
 export type BundleReplyFallbackReason = BundleReplyInvalidReason | 'output_filtered';
 /** `unknown` covers a legacy untyped `v2_confirmation_composition_invalid` error. */
 export type BundleCompositionFallbackReason = BundleCompositionInvalidReason | 'unknown';
@@ -607,6 +616,14 @@ export class ConversationOrchestrator {
     } | null = null;
     let correctedStatementRequest: (PendingQuestionClarification & { correctedSummary: string }) | null = null;
     let clarificationPhase: PreparedBundlePhase | null = null;
+    // GC retro A5: a not-collected or completion sentence that the two-part fallback dropped is
+    // re-stated once in a model reply, unless safety or onboarding owns this turn; until then the
+    // flag is carried forward. It is read from every outbound since the previous employee message,
+    // so a proactive message in between does not lose it.
+    const pendingUndelivered = readPendingUndelivered(dbMessages);
+    const restatementAllowed = !classification.requiresSafetyCheck && !isRiskTurn(risk) && !onboardingTakesTurn;
+    const undeliveredNotCollected = restatementAllowed ? pendingUndelivered.notCollected : undefined;
+    const undeliveredCompletion = restatementAllowed ? pendingUndelivered.completion : undefined;
     // GC round 3 S4b: a skipped clarification closes its point as not collected; the reply says so.
     let questionNotCollected: string | undefined = v2PhaseB.questionNotCollected
       ?? (appliedQuestionVerdict?.kind === 'clarification' && appliedQuestionVerdict.questionNotCollected
@@ -704,6 +721,12 @@ export class ConversationOrchestrator {
       : { confirmedGroup: false as string | false, awaitingPresent: false };
     const confirmedGroup = phaseB.confirmedGroup;
     const confirmationHandled = confirmedGroup !== false;
+    const notCollectedRestated = questionNotCollected === undefined && undeliveredNotCollected !== undefined;
+    if (notCollectedRestated) questionNotCollected = undeliveredNotCollected;
+    const restatedCompletion = confirmedGroup === false ? undeliveredCompletion : undefined;
+    /** The topic whose completion this reply states: this turn's verdict, or a re-statement (A5). */
+    const completedGroupForReply: string | false = confirmedGroup !== false ? confirmedGroup : restatedCompletion ?? false;
+    const completionProgress = confirmedGroup !== false ? phaseB.progress : v2CycleProgress ?? undefined;
 
     // ── Group confirmation surfacing (Phase A) ──────────────────────────────
     // If a group is ripe (pending_confirmation) and none is already awaiting a
@@ -737,6 +760,7 @@ export class ConversationOrchestrator {
 
     let v2BundleRequest: ReadyQuestionBundle | null = null;
     let v2ReadyForDisclosure = false;
+    let bundleBackoffGroups: string[] | undefined;
     if (
       this.questionConfirmationRepo
       && !closingTurn
@@ -753,7 +777,12 @@ export class ConversationOrchestrator {
       && !confirmationRequest
     ) {
       if (reportingDisclosureReceipt) {
-        v2BundleRequest = await this.questionConfirmationRepo.findReadyQuestionBundle({ tenantId, userId });
+        // GC retro A1: a group whose composition failed repeatedly in this window is skipped.
+        const skipGroups = readBundleCompositionBackoff(recentMessages);
+        if (skipGroups.length > 0) bundleBackoffGroups = skipGroups.map((group) => group.questionGroup);
+        v2BundleRequest = await this.questionConfirmationRepo.findReadyQuestionBundle({
+          tenantId, userId, ...(skipGroups.length > 0 ? { skipGroups } : {}),
+        });
       } else if (!hasCurrentDeliveredDisclosure) {
         v2ReadyForDisclosure = await this.questionConfirmationRepo.hasReadyQuestionBundle({ tenantId, userId });
       }
@@ -767,6 +796,7 @@ export class ConversationOrchestrator {
     /** Either composition that stayed invalid this turn; the metadata keys below name which one. */
     let bundleCompositionFallbackReason: BundleCompositionFallbackReason | undefined;
     let readyBundleFallbackReason: BundleCompositionFallbackReason | undefined;
+    let failedReadyBundle: { surveyWindowId: string; questionGroup: string } | undefined;
     if (v2BundleRequest) {
       try {
         v2Composition = validateQuestionBundleComposition(
@@ -786,6 +816,7 @@ export class ConversationOrchestrator {
         if (!isBundleCompositionInvalidError(error)) throw error;
         readyBundleFallbackReason = error instanceof BundleCompositionInvalidError ? error.reason : 'unknown';
         bundleCompositionFallbackReason = readyBundleFallbackReason;
+        failedReadyBundle = { surveyWindowId: v2BundleRequest.surveyWindowId, questionGroup: v2BundleRequest.questionGroup };
         v2BundleRequest = null;
       }
     }
@@ -977,9 +1008,11 @@ export class ConversationOrchestrator {
           || strategyWithStyle.mode === 'crisis' || strategyWithStyle.mode === 'sensitive',
         pauseTurn,
         correctionTurn: classification.dialogueAct === 'correction',
+        // A ready bundle skipped for an invalid composition still owns this turn (GC retro A1).
         confirmationTurn: phaseB.awaitingPresent || clarificationWasPresent || confirmationRequest !== undefined
-          || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null,
-        topicCompletedThisTurn: confirmationHandled,
+          || v2BundleRequest !== null || clarificationRequest !== null || correctedStatementRequest !== null
+          || readyBundleFallbackReason !== undefined,
+        topicCompletedThisTurn: confirmationHandled || restatedCompletion !== undefined,
         explanationTurn: reportingExplanationRequested || dataUseExplanationRequested
           || pulseCaptureExplanationRequested || classification.cycleStatusQuestion === true,
         replyAllowsQuestion: replyPlan !== undefined
@@ -1112,7 +1145,7 @@ export class ConversationOrchestrator {
             responseType: responseProbeQuestion.responseType,
           }
         : undefined,
-      topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+      topicConfirmed: topicConfirmedContext(completedGroupForReply, completionProgress),
       questionNotCollected: questionNotCollected ? { questionGroup: questionNotCollected } : undefined,
       cycleProgress,
       confirmationRequest,
@@ -1140,7 +1173,7 @@ export class ConversationOrchestrator {
           }
         : undefined;
     let bundleReply: BundleReplyOutcome | undefined;
-    let topicQuestionFallbackReason: TopicQuestionReplyInvalidReason | undefined;
+    let topicQuestionFallbackReason: TopicQuestionFallbackReason | undefined;
     let bundleReplyFallbackReason: BundleReplyFallbackReason | undefined;
     const onboardingOpener = onboardingOpens
       ? await this.openOnboardingConversation({
@@ -1176,8 +1209,18 @@ export class ConversationOrchestrator {
         } else {
           throw error;
         }
-        generated = { text: trailingBundle.text, confidence: 1, containsSurveyProbe: false };
-        bundleReply = 'bundle_without_reply';
+        // GC retro A5: a required not-collected or completion sentence lives in the answer part, so
+        // one ordinary reply is tried before the fixed text goes alone.
+        const retried = responseContext.questionNotCollected || responseContext.topicConfirmed
+          ? await this.generateReplyBeforeBundle(turns, strategy, responseContext, trailingBundle)
+          : null;
+        if (retried) {
+          generated = retried;
+          bundleReply = 'retried_answer_then_bundle';
+        } else {
+          generated = { text: trailingBundle.text, confidence: 1, containsSurveyProbe: false };
+          bundleReply = 'bundle_without_reply';
+        }
       }
     } else {
       generated = canAnswerDataUseExplanation
@@ -1195,6 +1238,11 @@ export class ConversationOrchestrator {
         : responseContext.topicQuestion
         ? await this.generateWithTopicQuestion(turns, strategy, responseContext, topicFallback!, (reason) => {
             topicQuestionFallbackReason = reason;
+          })
+        : topicFallback && topicProbeQuestion?.responseType === 'numeric_0_10'
+          && responseContext.surveyProbeQuestion?.id === topicProbeQuestion.id
+        ? await this.generateWithNumericTopicProbe(turns, strategy, responseContext, topicFallback, () => {
+            topicQuestionFallbackReason = 'numeric_probe_invalid';
           })
         : await this.aiProvider.generateResponse(turns, strategy, responseContext);
     }
@@ -1283,7 +1331,7 @@ export class ConversationOrchestrator {
             ? memoryContext
             : undefined,
           reminderConfirmation,
-          topicConfirmed: topicConfirmedContext(confirmedGroup, phaseB.progress),
+          topicConfirmed: topicConfirmedContext(completedGroupForReply, completionProgress),
           questionNotCollected: questionNotCollected ? { questionGroup: questionNotCollected } : undefined,
           cycleProgress,
           styleAdaptation,
@@ -1297,6 +1345,32 @@ export class ConversationOrchestrator {
       }
     }
     if (onboardingTrailingAck) responseText = `${responseText}\n\n${onboardingTrailingAck}`;
+    /** The fixed text went alone: any not-collected or completion sentence never reached the employee. */
+    const sentencesDropped = bundleReply === 'bundle_without_reply';
+    /** A canned explanation says neither sentence, so a re-statement attempted on it did not happen. */
+    const cannedExplanationReply = trailingBundle === undefined && onboardingAck === undefined && onboardingOpener === null
+      && (canAnswerDataUseExplanation || canAnswerReportingExplanation);
+    const notCollectedSpoken = notCollectedRestated && !cannedExplanationReply;
+    const completionSpoken = restatedCompletion !== undefined && !cannedExplanationReply;
+    // A re-stated sentence that was spoken and then dropped again is not flagged again.
+    let notCollectedUndelivered: string | undefined;
+    if (sentencesDropped && questionNotCollected && !notCollectedRestated) {
+      notCollectedUndelivered = questionNotCollected;
+    } else if (pendingUndelivered.notCollected && !notCollectedSpoken) {
+      const saidByOwnPoint = !notCollectedRestated && questionNotCollected === pendingUndelivered.notCollected
+        && !sentencesDropped && !cannedExplanationReply;
+      if (!saidByOwnPoint) notCollectedUndelivered = pendingUndelivered.notCollected;
+    }
+    let completionUndelivered: string | undefined;
+    if (sentencesDropped && typeof confirmedGroup === 'string') {
+      completionUndelivered = confirmedGroup;
+    } else if (pendingUndelivered.completion && !completionSpoken) {
+      const saidByOwnCompletion = confirmedGroup === pendingUndelivered.completion && !sentencesDropped;
+      if (!saidByOwnCompletion) completionUndelivered = pendingUndelivered.completion;
+    }
+    const topicCompletedGroup = typeof confirmedGroup === 'string'
+      ? sentencesDropped ? undefined : confirmedGroup
+      : completionSpoken && !sentencesDropped ? restatedCompletion : undefined;
     const topicQuestionAsked = topicQuestion !== undefined && topicQuestionFallbackReason === undefined
       && generated.topicQuestion !== undefined;
     const surveyProbeSource = topicProbeQuestion ?? probeQuestion;
@@ -1397,7 +1471,10 @@ export class ConversationOrchestrator {
           ...(correctedComposition ? { v2CorrectedStatement: true } : {}),
           ...(bundleReply ? { v2BundleReply: bundleReply } : {}),
           ...(bundleReplyFallbackReason ? { v2BundleReplyFallbackReason: bundleReplyFallbackReason } : {}),
-          ...(readyBundleFallbackReason ? { v2BundleCompositionFallbackReason: readyBundleFallbackReason } : {}),
+          ...(readyBundleFallbackReason && failedReadyBundle
+            ? bundleCompositionFailureMetadata({ reason: readyBundleFallbackReason, ...failedReadyBundle })
+            : {}),
+          ...(bundleBackoffGroups ? { v2BundleBackoffGroups: bundleBackoffGroups } : {}),
           ...(correctedStatementFallbackReason ? { v2CorrectedStatementFallbackReason: correctedStatementFallbackReason } : {}),
           ...(topicQuestionAsked
             ? { topicQuestion: {
@@ -1409,8 +1486,11 @@ export class ConversationOrchestrator {
           ...(topicDecision && !topicDecision.due ? { topicQuestionDecision: topicDecision.reason } : {}),
           ...(topicDecision?.due && !topicProbeQuestion ? { topicQuestionDecision: 'no_open_question' } : {}),
           ...(topicQuestionFallbackReason ? { topicQuestionFallbackReason } : {}),
-          // The cadence counts from a completion reply: the next topic opens on the next turn.
-          ...(typeof confirmedGroup === 'string' ? { topicCompleted: confirmedGroup } : {}),
+          // The cadence counts from a completion reply: the next topic opens on the next turn. A
+          // completion sentence the fallback dropped is flagged instead and re-stated once (A5).
+          ...(topicCompletedGroup ? { topicCompleted: topicCompletedGroup } : {}),
+          ...(completionUndelivered ? { topicCompletionUndelivered: completionUndelivered } : {}),
+          ...(notCollectedUndelivered ? { questionNotCollectedUndelivered: notCollectedUndelivered } : {}),
           ...(canAnswerPulseCaptureExplanation && pulseCaptureResolution.type === 'exact'
             ? { pulseCaptureSourceMessageId: pulseCaptureResolution.sourceMessageId }
             : {}),
@@ -2037,6 +2117,66 @@ export class ConversationOrchestrator {
   }
 
   /**
+   * GC retro A5: one ordinary reply, no question, checked by the same CAP-4 reply rules, so the
+   * required sentence still precedes the fixed text. Null when it fails too: the fixed text goes alone.
+   */
+  private async generateReplyBeforeBundle(
+    turns: ConversationTurn[],
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    bundle: NonNullable<ResponseContext['trailingBundle']>,
+  ): Promise<GeneratedResponse | null> {
+    const retryStrategy: ReplyStrategy = { ...strategy, includeFollowUpQuestion: false };
+    // The answer part asks nothing, so the plan's question policy must not ask for one either.
+    const plan = context.replyPlan ?? context.replyBrief;
+    const retryPlan: ResponseContext['replyPlan'] = plan
+      ? { ...plan, questionPolicy: { maxQuestions: 0, reason: 'strategy_disallows_questions' } }
+      : undefined;
+    try {
+      const draft = await this.aiProvider.generateResponse(turns, retryStrategy, {
+        ...context, trailingBundle: undefined, topicQuestion: undefined, surveyProbeQuestion: undefined,
+        confirmationRequest: undefined, replyPlan: retryPlan, replyBrief: retryPlan,
+      });
+      const parts = validateBundleReply({ replyText: draft.text, bundleText: bundle.text }, bundle.text, {
+        maxReplyChars: maxReplyChars(retryStrategy, context), statements: bundle.statements,
+      });
+      return {
+        ...draft, ...parts, text: composeBundleReplyText(parts), containsSurveyProbe: false, surveyProbeQuestionId: undefined,
+      };
+    } catch (error) {
+      if (error instanceof ProviderContentFilterError && error.direction === 'input') throw error;
+      this.logger.warn('bundle_reply_retry_failed', {
+        reason: isBundleReplyInvalidError(error) ? error.reason : error instanceof Error ? error.name : 'unknown',
+      });
+      return null;
+    }
+  }
+
+  /**
+   * GC retro A10: a due numeric topic probe that breaks its contract after the provider's repair
+   * falls back like the open-ended rail: the reply goes without the probe, with the turn's own
+   * question policy, and the recorded reason anchors the cadence.
+   */
+  private async generateWithNumericTopicProbe(
+    turns: ConversationTurn[],
+    strategy: ReplyStrategy,
+    context: ResponseContext,
+    fallbackPolicy: { strategy: ReplyStrategy; replyPlan: ResponseContext['replyPlan'] },
+    onFallback: () => void,
+  ): Promise<GeneratedResponse> {
+    try {
+      return await this.aiProvider.generateResponse(turns, strategy, context);
+    } catch (error) {
+      if (!isNumericProbeInvalidError(error)) throw error;
+      onFallback();
+      const fallback = await this.aiProvider.generateResponse(turns, fallbackPolicy.strategy, {
+        ...context, surveyProbeQuestion: undefined, replyPlan: fallbackPolicy.replyPlan, replyBrief: fallbackPolicy.replyPlan,
+      });
+      return { ...fallback, containsSurveyProbe: false, surveyProbeQuestionId: undefined };
+    }
+  }
+
+  /**
    * GC round 3 CAP-1 (ADR-013 D8): the topic question is a required field checked by the rail here,
    * whichever provider produced it. When it breaks its contract after the provider's one repair,
    * the turn still answers the employee, without the topic, and the reason is recorded.
@@ -2359,6 +2499,24 @@ function computeRiskExpiry(severity: string): Date {
   else if (severity === 'medium') d.setDate(d.getDate() + 30);
   else d.setDate(d.getDate() + 7);
   return d;
+}
+
+function stringMetadata(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** GC retro A5: undelivered-sentence flags on the outbound messages since the previous employee message. */
+function readPendingUndelivered(messages: readonly MessageRecord[]): { notCollected?: string; completion?: string } {
+  const pending: { notCollected?: string; completion?: string } = {};
+  // The current inbound is last; walk back over the outbound messages that followed the one before it.
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.direction !== 'outbound') break;
+    pending.notCollected ??= stringMetadata(message.metadata, 'questionNotCollectedUndelivered');
+    pending.completion ??= stringMetadata(message.metadata, 'topicCompletionUndelivered');
+  }
+  return pending;
 }
 
 function errorMessage(error: unknown): string {

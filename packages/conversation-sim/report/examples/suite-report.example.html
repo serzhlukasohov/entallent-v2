@@ -1,0 +1,548 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Приклад: звіт сюти conversation-sim</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<!--
+  Universal test report. The page renders itself from the JSON in #report-data.
+  Fill it with: node packages/conversation-sim/report/render-report.mjs <data.json> <out.html>
+  Schema: packages/conversation-sim/report/README.md. Every section is optional except meta.
+-->
+<style>
+/* Layout: one reading column, summary first (verdict, stats, checks), then evidence (runs, cases), then gaps */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #1b1f27; --muted: #5c6577; --line: #dde1e8;
+  --accent: #2f5bd3; --accent-soft: #e6ecfb;
+  --ok: #1f7a4d; --ok-soft: #e3f3ea; --bad: #b4372b; --bad-soft: #fbe7e4; --warn: #8a5a00; --warn-soft: #fbf0d9;
+  --user: #eef1f6; --bot: #e9f0fd; --mark: #fff1b8;
+  --display: "Fraunces", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12151b; --surface: #1a1e26; --fg: #e6e9ef; --muted: #9aa3b5; --line: #2c3240;
+  --accent: #8aa8ff; --accent-soft: #222c45;
+  --ok: #6fd3a0; --ok-soft: #173327; --bad: #ff8f80; --bad-soft: #3a1f1c; --warn: #f2c063; --warn-soft: #3a2f17;
+  --user: #222733; --bot: #1d2740; --mark: #4a4120; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12151b; --surface: #1a1e26; --fg: #e6e9ef; --muted: #9aa3b5; --line: #2c3240;
+  --accent: #8aa8ff; --accent-soft: #222c45;
+  --ok: #6fd3a0; --ok-soft: #173327; --bad: #ff8f80; --bad-soft: #3a1f1c; --warn: #f2c063; --warn-soft: #3a2f17;
+  --user: #222733; --bot: #1d2740; --mark: #4a4120; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 960px; margin: 0 auto; padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 40px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font-family: var(--display); font-size: 2.1rem; line-height: 1.15; }
+h2 { font-size: 1.15rem; font-weight: 600; }
+h3 { font-size: 1.05rem; font-weight: 600; }
+h4 { margin: 0 0 6px; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+p { margin: 0; }
+code { font-family: var(--mono); font-size: .86em; background: var(--user); padding: 0 4px; border-radius: 4px; overflow-wrap: anywhere; }
+.eyebrow { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 600; }
+.lede { color: var(--muted); max-width: 70ch; margin-top: 10px; }
+.meta { margin-top: 12px; color: var(--muted); font-size: .85rem; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.verdict-banner { display: flex; gap: 14px; align-items: flex-start; padding: 14px 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
+.verdict-banner.pass { border-color: var(--ok); background: var(--ok-soft); }
+.verdict-banner.fail { border-color: var(--bad); background: var(--bad-soft); }
+.verdict-banner.partial { border-color: var(--warn); background: var(--warn-soft); }
+.verdict-banner p { max-width: 75ch; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.stat b { display: block; font-size: 1.6rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+.stat span { color: var(--muted); font-size: .85rem; }
+.stat.ok b { color: var(--ok); } .stat.bad b { color: var(--bad); } .stat.warn b { color: var(--warn); }
+section.block { display: grid; gap: 14px; min-width: 0; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; min-width: 0; }
+.panel ul, .notes ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+.pipeline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.node { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: .88rem; min-width: 0; }
+.node.new { border-color: var(--accent); background: var(--accent-soft); }
+.arrow { color: var(--muted); }
+.notes { max-width: 75ch; }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.wide { min-width: 240px; }
+td.ok { color: var(--ok); } td.bad { color: var(--bad); font-weight: 600; } td.warn { color: var(--warn); } td.muted { color: var(--muted); }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--mono); }
+.status { display: inline-block; font-family: var(--mono); font-size: .74rem; padding: 2px 8px; border-radius: 99px; font-weight: 500; white-space: nowrap; }
+.status.passed, .status.pass { background: var(--ok-soft); color: var(--ok); }
+.status.failed, .status.fail { background: var(--bad-soft); color: var(--bad); }
+.status.skipped, .status.not_run, .status.partial, .status.error { background: var(--warn-soft); color: var(--warn); }
+.explain { color: var(--muted); max-width: 75ch; font-size: .92rem; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; }
+.toc a { color: var(--accent); text-decoration: none; font-size: .88rem; border: 1px solid var(--line); background: var(--surface); padding: 6px 10px; border-radius: 8px; display: inline-flex; gap: 8px; align-items: center; }
+.toc a:hover, .toc a:focus-visible { border-color: var(--accent); outline: none; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.pass { background: var(--ok); } .dot.fail { background: var(--bad); } .dot.partial { background: var(--warn); } .dot.error { background: var(--warn); }
+.case { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.case-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.case-head .sub { color: var(--muted); font-size: .86rem; margin-top: 4px; }
+.step { padding: 14px 20px; border-bottom: 1px dashed var(--line); min-width: 0; }
+.step:last-child { border-bottom: 0; }
+dl { margin: 0; display: grid; gap: 6px; }
+.kv { display: grid; grid-template-columns: 170px 1fr; gap: 12px; }
+.kv dt { font-family: var(--mono); font-size: .8rem; color: var(--muted); padding-top: 2px; overflow-wrap: anywhere; }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.kv dd.ok { color: var(--ok); } .kv dd.bad { color: var(--bad); }
+.bubble { padding: 10px 14px; border-radius: 12px; max-width: 70ch; overflow-wrap: anywhere; white-space: pre-wrap; }
+.bubble.user { background: var(--user); }
+.bubble.bot { background: var(--bot); }
+.bubble .fixed { color: var(--muted); }
+.bubble mark { background: var(--mark); color: inherit; border-radius: 2px; }
+.criteria { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.criteria li { display: flex; gap: 8px; }
+.tick { color: var(--ok); font-weight: 600; } .cross { color: var(--bad); font-weight: 600; }
+.reasoning { margin-top: 8px; color: var(--muted); font-size: .86rem; max-width: 75ch; }
+.aside { margin-top: 10px; font-size: .86rem; padding: 8px 12px; border-radius: 8px; background: var(--user); max-width: 75ch; }
+.aside.warn { background: var(--warn-soft); }
+.aside { white-space: pre-wrap; overflow-wrap: anywhere; }
+.info { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+.info > div, .info li { min-width: 0; overflow-wrap: anywhere; }
+.info h5 { margin: 0 0 4px; font-size: .74rem; color: var(--muted); font-weight: 600; }
+.info ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
+.info ul.code { list-style: none; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono); font-size: .78rem; overflow-x: auto; gap: 2px; }
+.info ul.code li { white-space: pre; }
+.info ul.code li.comment { color: var(--muted); }
+details.raw { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+details.raw + details.raw { margin-top: 6px; }
+details.raw summary { cursor: pointer; padding: 8px 12px; font-size: .86rem; }
+details.raw summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details.raw > .body { padding: 10px 12px; border-top: 1px solid var(--line); overflow-x: auto; }
+details.raw pre { margin: 0; padding: 10px 12px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: .76rem; overflow-x: auto; max-height: 480px; }
+.aside.bad { background: var(--bad-soft); }
+.findings { display: grid; gap: 10px; }
+.finding { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 8px; padding: 12px 16px; }
+.finding.fixed { border-left-color: var(--ok); }
+.finding.bad { border-left-color: var(--bad); }
+.finding p + p { margin-top: 4px; color: var(--muted); font-size: .88rem; }
+.files { display: grid; gap: 6px; }
+.files div { display: grid; grid-template-columns: 200px 1fr; gap: 12px; font-size: .88rem; }
+.files span { color: var(--muted); }
+.legend { color: var(--muted); font-size: .8rem; }
+.step-intro { margin-bottom: 10px; font-size: .86rem; }
+.chat { display: grid; gap: 10px; }
+.msg { display: grid; gap: 4px; max-width: 78ch; }
+.msg.bot { justify-self: end; }
+.msg .who { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.msg.bot .who { text-align: right; }
+.msg .bubble { max-width: none; }
+.msg.seed .bubble { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
+.msg .notes { font-family: var(--mono); font-size: .74rem; color: var(--muted); overflow-wrap: anywhere; }
+.msg.bot .notes { text-align: right; }
+.msg.missing .bubble { background: var(--bad-soft); }
+.turn-detail { display: grid; gap: 4px; margin-top: 6px; min-width: 0; }
+details.more { min-width: 0; }
+details.more > summary { cursor: pointer; font-size: .74rem; color: var(--muted); list-style: none; display: inline-flex; gap: 6px; align-items: baseline; }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before { content: "▸"; color: var(--accent); }
+details.more[open] > summary::before { content: "▾"; }
+details.more > summary:hover { color: var(--accent); }
+details.more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.msg.bot details.more > summary { justify-self: end; }
+.msg.bot details.more { display: grid; }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.msg.bot .badges { justify-content: flex-end; }
+.chat.bot-left .msg.bot .badges { justify-content: flex-start; }
+.badge { display: inline-flex; align-items: center; gap: 3px; font-size: .72rem; padding: 1px 7px 1px 5px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: var(--surface); cursor: default; }
+.badge .ico { font-size: .8rem; line-height: 1; }
+.badge.bad { color: var(--bad); border-color: var(--bad); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.chat-tools { display: flex; gap: 8px; margin-bottom: 10px; }
+.chat-tools button { font: inherit; font-size: .78rem; padding: 4px 10px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); color: var(--muted); cursor: pointer; }
+.chat-tools button:hover { color: var(--accent); border-color: var(--accent); }
+details.sec { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); min-width: 0; }
+details.sec > summary { cursor: pointer; padding: 7px 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; list-style-position: inside; }
+details.sec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details.sec > summary .t { font-size: .74rem; text-transform: uppercase; letter-spacing: .07em; color: var(--accent); font-weight: 600; }
+details.sec > summary .s { font-size: .82rem; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+details.sec > .body { padding: 8px 12px 12px; border-top: 1px solid var(--line); }
+.turn-detail .kv { grid-template-columns: 150px 1fr; gap: 8px; font-size: .84rem; }
+.turn-detail .kv + .kv { margin-top: 4px; }
+.turn-detail .kv dt { font-size: .74rem; }
+.turn-detail .empty { color: var(--muted); font-size: .84rem; }
+.turn-detail ul, dl.tree ul { margin: 0; padding-left: 1.1em; }
+dl.tree { display: grid; gap: 3px; margin: 0; font-size: .82rem; }
+dl.tree dl.tree { padding-left: 12px; border-left: 2px solid var(--line); margin-top: 2px; }
+dl.tree > div { display: grid; grid-template-columns: minmax(90px, max-content) 1fr; gap: 10px; }
+dl.tree dt { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
+dl.tree dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.tree-null { color: var(--muted); }
+.tree-bool-true { color: var(--ok); } .tree-bool-false { color: var(--muted); }
+.divider { display: flex; align-items: center; gap: 10px; color: var(--accent); font-size: .74rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; margin: 6px 0; }
+.divider::before, .divider::after { content: ""; flex: 1; border-top: 2px solid var(--accent); }
+.tested { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-size: .68rem; letter-spacing: .04em; }
+.chat.bot-left .msg.bot { justify-self: start; }
+.chat.bot-left .msg.user { justify-self: end; }
+.chat.bot-left .msg.bot .who, .chat.bot-left .msg.bot .notes { text-align: left; }
+.chat.bot-left .msg.user .who, .chat.bot-left .msg.user .notes { text-align: right; }
+.chat.bot-left .msg.bot details.more > summary { justify-self: start; }
+.chat.bot-left .msg.user details.more { display: grid; }
+.chat.bot-left .msg.user details.more > summary { justify-self: end; }
+.suite-counts { margin: 0; font-size: 1rem; font-variant-numeric: tabular-nums; }
+details.test { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 10px; min-width: 0; }
+details.test.passed { border-left-color: var(--ok); }
+details.test.failed { border-left-color: var(--bad); }
+details.test.error, details.test.skipped { border-left-color: var(--warn); }
+details.test > summary.test-head { cursor: pointer; list-style: none; display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: baseline; padding: 12px 16px; }
+details.test > summary::-webkit-details-marker { display: none; }
+details.test > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+details.test[open] > summary.test-head { border-bottom: 1px solid var(--line); }
+.test-id { font-family: var(--mono); font-size: .78rem; color: var(--muted); }
+.test-name { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.test-dur { font-family: var(--mono); font-size: .78rem; color: var(--muted); white-space: nowrap; }
+.test-body { display: grid; gap: 8px; padding: 12px 16px 16px; min-width: 0; }
+details.blk { border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+details.blk > summary { cursor: pointer; padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+details.blk > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details.blk > summary .t { font-size: .74rem; text-transform: uppercase; letter-spacing: .07em; color: var(--accent); font-weight: 600; }
+details.blk > summary .s { font-size: .84rem; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+details.blk > .body { padding: 10px 12px 12px; border-top: 1px solid var(--line); display: grid; gap: 12px; min-width: 0; }
+details.blk .kv { grid-template-columns: 170px 1fr; font-size: .88rem; }
+.given-history h5, .judge h5 { margin: 0 0 6px; font-size: .74rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.judge .reasoning { margin-top: 0; }
+td.miss { color: var(--bad); }
+.infomark { color: var(--warn); font-weight: 600; font-family: var(--mono); }
+.empty { color: var(--muted); font-size: .86rem; }
+@media (max-width: 560px) {
+  details.test > summary.test-head { grid-template-columns: auto 1fr; }
+  .test-id { order: 3; } .test-dur { order: 4; }
+  details.blk .kv { grid-template-columns: 1fr; gap: 0; }
+  /* Expected / actual rows stack on a phone instead of scrolling sideways. */
+  details.blk thead { display: none; }
+  details.blk tr { display: grid; grid-template-columns: 24px 1fr; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  details.blk tr:last-child { border-bottom: 0; }
+  details.blk td { border: 0; padding: 2px 10px; grid-column: 2; }
+  details.blk td:first-child { grid-column: 1; grid-row: 1 / span 3; }
+  details.blk td.wide { min-width: 0; }
+}
+@media (max-width: 560px) { dl.tree > div, .turn-detail .kv { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 560px) {
+  .kv, .files div { grid-template-columns: 1fr; gap: 2px; }
+  h1 { font-size: 1.7rem; }
+  .step, .case-head { padding-left: 14px; padding-right: 14px; }
+}
+</style>
+
+<main class="wrap" id="report"></main>
+
+<script type="application/json" id="report-data">{"meta":{"eyebrow":"conversation-sim","title":"Приклад: звіт сюти conversation-sim","details":["Прогін 2026-10-30 00:38 UTC","бот gpt-4o, суддя gpt-4o, симулятор gpt-4o-mini"]},"suite":{"counts":{"total":2,"passed":1,"failed":1,"error":0,"skipped":0},"tests":[{"id":"TC-01","name":"B07 one message, two owners answers the interview and the data_use_explanation question in one reply","status":"failed","duration":"6 с","descriptionSummary":"B07","description":[{"key":"кейс","value":"TC-01"},{"key":"сторі","value":"—"},{"key":"сюта","value":"B07 one message, two owners · `two-owners-one-message.sim.test.ts`"},{"key":"теги","value":"`B07`"},{"key":"тип","value":"живий: бот відповідає реальною моделлю"},{"key":"мета","value":"QA B07: one inbound carries substance (an interview tomorrow, nerves) and a product question (data use or reporting). Both must be answered: the product question must not own the reply."},{"key":"сценарій","value":"An employee mentions a stressful interview on Friday and, in the same message, asks how the coach uses their messages or what their manager will see."},{"key":"моделі","value":"бот gpt-4o · суддя gpt-4o · симулятор gpt-4o-mini"},{"key":"запуск","value":"2026-10-30 00:59:19 UTC · 6 с"}],"given":{"summary":"user Illia, timezone Europe/Kyiv · пам'ять: 0 · історія: порожня","rows":[{"key":"користувач","value":"user Illia, timezone Europe/Kyiv"},{"key":"онбординг","value":"—"},{"key":"пам'ять","value":"—"},{"key":"цілі","value":"—"},{"key":"pulse-цикл","value":"—"},{"key":"зібрані pulse-відповіді","value":"—"},{"key":"історія розмови","value":"порожня: розмова починається з першого кроку"}],"history":[]},"stepsSummary":"1 крок","steps":[{"role":"user","label":"працівник · крок 1 / 1","text":"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно — як ти використовуєш мої повідомлення"},{"role":"bot","label":"бот · крок 1 · 547 симв.","text":"I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders; pulse measurement; and safety checks. Private memory and unconfirmed material are not reportable. Only the exact shown summary may contribute to team-level reporting after it is confirmed, de-identified, and non-withdrawn. Messages and derived product data are kept under product retention rules. Audited internal admin and debugging access is limited to authorized staff.","sections":[{"title":"Що зрозумів класифікатор","rows":[{"key":"інтент","value":"`data_use_explanation` + `emotional_disclosure`"},{"key":"тип репліки","value":"`request`"},{"key":"суть репліки","value":"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно — як ти використовуєш мої повідомлення"},{"key":"емоції","value":"anxious"},{"key":"терміновість","value":"medium","tone":"bad"},{"key":"впевненість","value":"1"},{"key":"прапорці","value":["pulse-питання заборонені цього ходу"]},{"key":"пояснення","value":"The employee asks directly how their messages are used, which aligns with 'data_use_explanation'. They also disclose feeling anxious about an upcoming interview, adding 'emotional_disclosure' as a secondary intent."}],"summary":"`data_use_explanation` · `request` · anxious · прапорців: 1"},{"title":"План відповіді","rows":[{"key":"режим","value":"`normal`"}],"summary":""},{"title":"Ланцюжок подій: виклики LLM, записи в базу і черги, рішення","rows":[{"key":"1. вхід","value":"`message accepted` · saved as inbound, 119 chars"},{"key":"2. LLM","value":"`detectRisk` · severity=none escalate=false blockSurvey=false"},{"key":"3. LLM","value":"`classifySituation` · primary=data_use_explanation secondary=[emotional_disclosure] act=request emotion=[anxious] urgency=medium safetyCheck=false surveyAllowed=false substance=\"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно...\""},{"key":"4. база","value":"`conversation.updateActiveTopic` · {summary: \"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно...\", status: \"active\", startedAt: \"2026-10-30T00:59:13.040Z\"}"},{"key":"5. база","value":"`conversation.saveMessage` · {direction: \"outbound\", text: \"I am an AI assistant, not a human. I use your messages to respond in this conver...\", occurredAt: 2026-10-30T00:59:15.948Z, metadata: {sourceInboundMessageId, measurementVersion, dialogueAct, responseMove, rep..."},{"key":"6. черга","value":"`outbox.enqueueMessageSend` · {text: \"I am an AI assistant, not a human. I use your messages to respond in this conver...\"}"},{"key":"7. база","value":"`conversation.updateMessageDelivery` · {externalMessageId: \"sim:b69df4bf-5246-4bd8-adb2-b5bdebfec77f\", sentAt: 2026-10-30T00:59:15.949Z}"},{"key":"8. черга","value":"`outbox.enqueueMemoryExtraction`"},{"key":"9. LLM","value":"`extractMemory` · 0 memory items, 0 goals, 0 follow-ups"},{"key":"10. черга","value":"`outbox.enqueueStyleAnalysis`"},{"key":"11. черга","value":"`outbox.enqueueSurveyEvidence`"},{"key":"12. рішення","value":"`turn outcome` · mode=normal, risk=none, reply is fixed text (model not called)"}],"empty":"Подій цього ходу не записано.","summary":"LLM: 3 · записів: 3 · у черги: 4"},{"title":"Інші метадані відповіді","rows":[{"key":"форма відповіді","value":{"питання у відповіді":"ні","макс. питань":1,"чому стільки":"new_substance_allows_question","коротка сесія":"ні"}},{"key":"мова","value":"en (продуктове правило: завжди англійською)"},{"key":"пам'ять","value":"пам'ять у відповіді не використано"},{"key":"тема розмови","value":"нова тема замінює попередню; якір теми: нова репліка; у репліці є суть: так"},{"key":"цілі","value":"ціль не обрано: кандидатів 0, причина not_selected"}],"empty":"Немає.","summary":"5 поле(ів)"}],"badges":[{"icon":"🧵","label":"тема","tone":null,"details":["conversation.updateActiveTopic: {summary: \"в п'ятницю співбесіда на мідла по тайпскріпту, мене трохи трусить. і скажи чесно...\", status: \"active\", startedAt: \"2026-10-30T00:59:13.040Z\"}"]}]}],"stepsEmpty":"Жодного кроку не відбулося.","actual":{"summary":"✗ збіглося 3 з 7 · суддя не прийняв","failure":null,"comparisons":[{"source":"код тесту","expected":"The model writes the reply, so the interview can be answered; a fixed policy text cannot.","actual":"I am an AI assistant, not a human. I use your messages to respond in this conversation. They may also support optional private memory and relevant goals, tasks, or reminders","met":false},{"source":"суддя","expected":"The coach responds to the upcoming interview and the employee's nervousness, not only to the product question","actual":"не виконано","met":false},{"source":"суддя","expected":"The interview is addressed before the product question","actual":"не виконано","met":false},{"source":"суддя","expected":"The reply reads as one natural answer, not a canned policy text pasted alone","actual":"не виконано","met":false},{"source":"код тесту","expected":"No reminder is scheduled: mentioning an interview is not a request to be reminded about it.","actual":"так","met":true},{"source":"код тесту","expected":"The reply is in English whatever the employee writes (product rule, application/src/utils/language-policy.ts).","actual":"так","met":true},{"source":"суддя","expected":"The coach also answers the product question (how messages are used, or what the manager sees) directly","actual":"виконано","met":true}],"judge":{"title":"Суддя (LLM): не прийняв, 3 з 4 критеріїв не виконано","reasoning":"The coach did not respond to the employee's statement about their upcoming interview or their nervousness. Instead, the coach immediately addressed the product question without acknowledging the interview first, violating the criterion of addressing the interview first. Additionally, the response to the product question reads as a canned policy text that does not form a natural answer within the flow of the interaction."}}},{"id":"TC-02","name":"CAP-1/CAP-2 topic steering inside an open pulse cycle 'CAP-1 topic steering: opens the uncov…'","status":"passed","duration":"7 с","descriptionSummary":"CAP-1 CAP-2","description":[{"key":"кейс","value":"TC-02"},{"key":"сторі","value":"—"},{"key":"сюта","value":"CAP-1/CAP-2 topic steering inside an open pulse cycle · `topic-steering.sim.test.ts`"},{"key":"теги","value":"`CAP-1` `CAP-2`"},{"key":"тип","value":"живий: бот відповідає реальною моделлю"},{"key":"мета","value":"`REPORTING_DISCLOSURE_VERSION` in `packages/application/src/utils/reporting-disclosure.ts`. */ const REPORTING_DISCLOSURE_VERSION = 'reporting-disclosure-v1'; const AUTONOMY_QUESTION = { id: 'q-autonomy-methods', surveyDefinitionId: 'sim-definition', stableKey: 'autonomy_methods', title: 'Choice of methods', canonicalMeaning: 'How much say the employee has over how they do their work', dimension: 'autonomy', questionGroup: 'autonomy', displayOrder: 1, positiveIndicators: [], negativeIndicators: [], contraindications: [], probeStrategies: ['How much freedom they have to choose how they approach their own tasks'], confidenceThreshold: 0.72, completenessThreshold: 0.65, minimumEvidenceCount: 1, cooldownDays: 14, maxFollowUpProbes: 3, responseType: 'open_ended' as const, version: 'v2', }; /** An open V2 cycle with autonomy uncovered; no bundle, clarification, or verdict is pending. */ const questionConfirmationRepo: QuestionConfirmationPort = { findCycleProgress: async () => ({ surveyWindowId: 'sim-window', groups: [{ questionGroup: 'autonomy', questions: [{ surveyQuestionId: AUTONOMY_QUESTION.id, status: 'collecting' }] }], }), findAppliedQuestionVerdictForInbound: async () => null, findPendingQuestionClarification: async () => null, stageQuestionClarificationPrompt: async () => true, applyQuestionClarificationVerdict: async () => true, findAwaitingQuestionBundle: async () => null, applyQuestionBundleVerdict: async () => true, findReadyQuestionBundle: async () => null, hasReadyQuestionBundle: async () => false, stageQuestionConfirmationBundle: async () => 'unused', }; type Seed = Array\u003c{ direction: 'inbound' | 'outbound'; text: string; metadata?: Record\u003cstring, unknown> }>; async function seedHistory(harness: ReturnType\u003ctypeof createCoachAgent>['harness'], seed: Seed): Promise\u003cvoid> { const start = Date.now() - (seed.length + 1) * 60_000; for (const [index, item] of seed.entries()) { const saved = await harness.conversationRepo.saveMessage({ conversationId: CONVERSATION_ID, tenantId: TENANT_ID, userId: USER_ID, direction: item.direction, text: item.text, occurredAt: new Date(start + index * 60_000), metadata: item.metadata, }); if (item.direction === 'outbound') { await harness.conversationRepo.updateMessageDelivery(saved.id, { tenantId: TENANT_ID, conversationId: CONVERSATION_ID, externalMessageId: `sim-${index}`, sentAt: new Date(start + index * 60_000), }); } } } const COMMON_CRITERIA = [ 'The reply first responds to what the employee just wrote, briefly, before anything else', 'The reply contains exactly one question and it is the last sentence', 'The reply never mentions a survey, questionnaire, form, index, score scale, pulse topics, or internal labels', ]; /** GC round 3 CAP-1 (T1) and CAP-2 (T2): inside an open V2 cycle, after the disclosure and three employee turns with no topic raised, the bot itself asks one direct question on the uncovered topic; when the employee already gave a status without a reason, it asks what drives it."},{"key":"сценарій","value":"An employee chats about an ordinary release day while a pulse cycle is open and the autonomy topic is not yet covered."},{"key":"моделі","value":"бот gpt-4o · суддя gpt-4o · симулятор gpt-4o-mini"},{"key":"запуск","value":"2026-10-30 00:39:45 UTC · 7 с"}],"given":{"summary":"user Olena, timezone Europe/Berlin · пам'ять: 0 · історія: 5 повідомлень","rows":[{"key":"користувач","value":"user Olena, timezone Europe/Berlin · V2 question confirmation enabled · pulse cycle open (topic backlog service)"},{"key":"онбординг","value":"—"},{"key":"пам'ять","value":"—"},{"key":"цілі","value":"—"},{"key":"pulse-цикл","value":"—"},{"key":"зібрані pulse-відповіді","value":"—"},{"key":"історія розмови","value":"5 повідомлень, нижче"}],"history":[{"role":"bot","label":"бот · історія","text":"Hi Olena. Your reflections can be used in aggregated reporting.","notes":["показано дисклеймер звітності (reporting-disclosure-v1)"],"seed":true},{"role":"user","label":"працівник · історія","text":"Hey. Release week, so mostly heads-down.","notes":[],"seed":true},{"role":"bot","label":"бот · історія","text":"Release weeks have their own rhythm. What is on your plate today?","notes":[],"seed":true},{"role":"user","label":"працівник · історія","text":"Finishing the checklist and a couple of reviews.","notes":[],"seed":true},{"role":"bot","label":"бот · історія","text":"A checklist plus reviews is a full day.","notes":[],"seed":true}]},"stepsSummary":"1 крок","steps":[{"role":"user","label":"працівник · крок 1 / 1","text":"Yeah. I just finished the checklist, reviews are next after lunch."},{"role":"bot","label":"бот · крок 1 · 244 симв.","text":"It sounds like you're pacing things well for release week, finishing the checklist before diving into reviews later. That kind of focus must help keep things moving smoothly. How much freedom do you have to choose how you approach your reviews?","sections":[{"title":"Що зрозумів класифікатор","rows":[{"key":"інтент","value":"`progress_update`"},{"key":"тип репліки","value":"`continuation`"},{"key":"суть репліки","value":"I just finished the checklist, reviews are next after lunch."},{"key":"емоції","value":"neutral"},{"key":"впевненість","value":"1"},{"key":"пояснення","value":"The employee provides a status update on their tasks, indicating completion of the checklist and plans for reviews after lunch. No distress or sensitive topics are present."}],"summary":"`progress_update` · `continuation` · neutral"},{"title":"Стан розмови","rows":[{"key":"тема гілки","value":"Finishing the checklist and a couple of reviews."},{"key":"вже встановлено","value":["Checklist is finished.","Reviews are planned for after lunch."]},{"key":"локальний час","value":"Friday 01:39 (night)"}],"empty":"Нічого не встановлено і пам'яті немає.","summary":"встановлено фактів: 2"},{"title":"Pulse-цикл","rows":[{"key":"питання на тему","value":"`autonomy` (відкрити тему), `q-autonomy-methods`"},{"key":"питання в відповіді","value":"{\"questionGroup\":\"autonomy\",\"focus\":\"open\",\"policyVersion\":\"topic-question-v1\"}"},{"key":"у відповіді є проба","value":"так, `q-autonomy-methods`"}],"empty":"Цього ходу pulse-циклу в контексті немає: питань на тему, проб і підтверджень не було.","summary":"питання на тему `autonomy`"},{"title":"План відповіді","rows":[{"key":"хід","value":"`continue_existing_thread`"},{"key":"режим","value":"`coaching`"},{"key":"питань можна","value":"1 (topic_question)"},{"key":"заборонено","value":["`unsupported_interpretation`"]}],"summary":"`continue_existing_thread` · питань ≤ 1"},{"title":"Ланцюжок подій: виклики LLM, записи в базу і черги, рішення","rows":[{"key":"1. вхід","value":"`message accepted` · saved as inbound, 66 chars"},{"key":"2. LLM","value":"`detectRisk` · severity=none escalate=false blockSurvey=false"},{"key":"3. LLM","value":"`classifySituation` · primary=progress_update secondary=[] act=continuation emotion=[neutral] urgency=low safetyCheck=false surveyAllowed=true substance=\"I just finished the checklist, reviews are next after lunch.\""},{"key":"4. LLM","value":"`generateResponse` · mode=coaching tone=warm length=medium move=continue_existing_thread maxQuestions=1 language=en must include=[topicQuestion] -> 244 chars"},{"key":"5. база","value":"`conversation.updateActiveTopic` · {summary: \"Finishing the checklist and a couple of reviews.\", status: \"active\", startedAt: \"2026-10-30T00:39:38.815Z\"}"},{"key":"6. база","value":"`conversation.saveMessage` · {direction: \"outbound\", text: \"It sounds like you're pacing things well for release week, finishing the checkli...\", occurredAt: 2026-10-30T00:39:42.565Z, metadata: {sourceInboundMessageId, measurementVersion, dialogueAct, responseMove, rep..."},{"key":"7. черга","value":"`outbox.enqueueMessageSend` · {text: \"It sounds like you're pacing things well for release week, finishing the checkli...\"}"},{"key":"8. база","value":"`conversation.updateMessageDelivery` · {externalMessageId: \"sim:5aa8ef55-3688-48da-aa7c-e418ab33a636\", sentAt: 2026-10-30T00:39:42.565Z}"},{"key":"9. черга","value":"`outbox.enqueueMemoryExtraction`"},{"key":"10. LLM","value":"`extractMemory` · 0 memory items, 0 goals, 0 follow-ups"},{"key":"11. черга","value":"`outbox.enqueueStyleAnalysis`"},{"key":"12. черга","value":"`outbox.enqueueSurveyEvidence`"},{"key":"13. рішення","value":"`turn outcome` · mode=coaching, risk=none, reply written by the model"}],"empty":"Подій цього ходу не записано.","summary":"LLM: 4 · записів: 3 · у черги: 4"},{"title":"Інші метадані відповіді","rows":[{"key":"форма відповіді","value":{"питання у відповіді":"так","макс. питань":1,"чому стільки":"topic_question","коротка сесія":"ні","вже встановлено":["Checklist is finished.","Reviews are planned for after lunch."]}},{"key":"мова","value":"en (продуктове правило: завжди англійською)"},{"key":"пам'ять","value":"пам'ять у відповіді не використано"},{"key":"тема розмови","value":"нова тема замінює попередню; якір теми: збережений раніше; у репліці є суть: так"},{"key":"цілі","value":"ціль не обрано: кандидатів 0, причина not_selected"}],"empty":"Немає.","summary":"5 поле(ів)"}],"badges":[{"icon":"🧵","label":"тема","tone":null,"details":["conversation.updateActiveTopic: {summary: \"Finishing the checklist and a couple of reviews.\", status: \"active\", startedAt: \"2026-10-30T00:39:38.815Z\"}"]},{"icon":"📊","label":"pulse","tone":null,"details":["бот поставив pulse-питання"]}]}],"stepsEmpty":"Жодного кроку не відбулося.","actual":{"summary":"✓ збіглося 5 з 5 · суддя прийняв","failure":null,"comparisons":[{"source":"евристика, тест її не перевіряє","expected":"—","actual":"крок 1: відповідь починається з шаблонного віддзеркалення почуття («That sounds like…»), а не з суті. Початок відповіді: «It sounds like you're pacing things well for release week, finishing the checklist before diving into reviews later.»","met":"info"},{"source":"код тесту","expected":"reply was not generated","actual":"так","met":true},{"source":"суддя","expected":"The reply first responds to what the employee just wrote, briefly, before anything else","actual":"виконано","met":true},{"source":"суддя","expected":"The reply contains exactly one question and it is the last sentence","actual":"виконано","met":true},{"source":"суддя","expected":"The reply never mentions a survey, questionnaire, form, index, score scale, pulse topics, or internal labels","actual":"виконано","met":true},{"source":"суддя","expected":"The question asks directly about how much say or freedom the employee has over how they approach or organise their own work","actual":"виконано","met":true}],"judge":{"title":"Суддя (LLM): прийняв, 4 з 4 критеріїв","reasoning":"The reply concisely responds to the employee's mention of completing a checklist and moving on to reviews. It contains exactly one question, positioned as the last sentence, addressing the employee's sense of control over organizing their work without referencing surveys, questionnaires, pulse topics, or internal labels."}}}]}}</script>
+<script>
+(function () {
+  var data;
+  var raw = document.getElementById('report-data').textContent.trim();
+  if (raw === '__REPORT_DATA__') {
+    document.getElementById('report').innerHTML = '<header><p class="eyebrow">Шаблон звіту</p><h1>Це порожній шаблон</h1>'
+      + '<p class="lede">Тут ще немає даних. Звіт створюється командою <code>node packages/conversation-sim/report/render-report.mjs report.json report.html</code>. '
+      + 'Готовий приклад: <code>packages/conversation-sim/report/examples/data-use-mixed-disclosure.html</code>.</p></header>';
+    return;
+  }
+  try { data = JSON.parse(raw); }
+  catch (e) { document.getElementById('report').textContent = 'Report data is not valid JSON: ' + e.message; return; }
+  var root = document.getElementById('report');
+  var STATUS_LABEL = { passed: 'PASSED', failed: 'FAILED', skipped: 'SKIPPED', not_run: 'NOT RUN', error: 'ERROR', pass: 'PASS', fail: 'FAIL', partial: 'PARTIAL' };
+
+  function el(tag, cls, children) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    (children || []).forEach(function (c) { if (c != null) node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return node;
+  }
+  // Inline markup in any text field: `code` and **bold**. Everything else is plain text.
+  function rich(tag, cls, text) {
+    var node = el(tag, cls);
+    String(text == null ? '' : text).split(/(`[^`]+`|\*\*[^*]+\*\*)/).forEach(function (part) {
+      if (!part) return;
+      if (part[0] === '`') node.appendChild(el('code', null, [part.slice(1, -1)]));
+      else if (part.slice(0, 2) === '**') node.appendChild(el('b', null, [part.slice(2, -2)]));
+      else node.appendChild(document.createTextNode(part));
+    });
+    return node;
+  }
+  // Readable view of any JSON value: objects as nested key/value lists, never raw JSON text.
+  function tree(value) {
+    if (value === null || value === undefined) return el('span', 'tree-null', ['—']);
+    if (typeof value === 'boolean') return el('span', 'tree-bool-' + value, [value ? 'так' : 'ні']);
+    if (typeof value !== 'object') return document.createTextNode(String(value));
+    if (Array.isArray(value)) {
+      if (!value.length) return el('span', 'tree-null', ['порожньо']);
+      if (value.every(function (v) { return v === null || typeof v !== 'object'; })) {
+        return el('ul', null, value.map(function (v) { return el('li', null, [tree(v)]); }));
+      }
+      return el('ol', null, value.map(function (v) { return el('li', null, [tree(v)]); }));
+    }
+    var keys = Object.keys(value);
+    if (!keys.length) return el('span', 'tree-null', ['порожньо']);
+    return el('dl', 'tree', keys.map(function (k) { return el('div', null, [el('dt', null, [k]), el('dd', null, [tree(value[k])])]); }));
+  }
+  function status(value) { return el('span', 'status ' + value, [STATUS_LABEL[value] || String(value).toUpperCase()]); }
+  function plural(n, one, few, many) {
+    var r10 = n % 10, r100 = n % 100;
+    return n + ' ' + (r10 === 1 && r100 !== 11 ? one : r10 >= 2 && r10 <= 4 && (r100 < 10 || r100 >= 20) ? few : many);
+  }
+  function section(title, explain) {
+    var s = el('section', 'block', [el('h2', null, [title])]);
+    if (explain) s.appendChild(rich('p', 'explain', explain));
+    root.appendChild(s);
+    return s;
+  }
+  function table(columns, rows) {
+    var head = el('tr', null, columns.map(function (c) { return el('th', null, [c]); }));
+    var body = el('tbody', null, rows.map(function (cells) {
+      return el('tr', null, cells.map(function (cell) {
+        var c = typeof cell === 'object' && cell !== null && !(cell instanceof Node) ? cell : { text: cell };
+        var td = c.node ? el('td', c.tone || null, [c.node]) : rich('td', [c.tone, c.kind].filter(Boolean).join(' ') || null, c.text);
+        return td;
+      }));
+    }));
+    return el('div', 'table-wrap', [el('table', null, [el('thead', null, [head]), body])]);
+  }
+
+  // Key/value rows; a value may be text, a list or any JSON value.
+  function kvDl(rows) {
+    return el('dl', null, rows.map(function (r) {
+      var dd;
+      if (Array.isArray(r.value)) dd = el('dd', r.tone || null, [el('ul', null, r.value.map(function (v) { return typeof v === 'string' ? rich('li', null, v) : el('li', null, [tree(v)]); }))]);
+      else if (r.value !== null && typeof r.value === 'object') dd = el('dd', r.tone || null, [tree(r.value)]);
+      else dd = rich('dd', r.tone || null, r.value);
+      return el('div', 'kv', [el('dt', null, [r.key]), dd]);
+    }));
+  }
+  // Messages read as plain chat; notes and the turn breakdown sit behind a per-message toggle.
+  // `botLeft` puts the bot on the left and the employee on the right.
+  function chatInto(parent, items, botLeft) {
+    var chat = el('div', 'chat' + (botLeft ? ' bot-left' : ''), items.map(function (i) {
+      if (i.divider) return el('div', 'divider', [i.divider]);
+      var who = i.role === 'user' ? 'працівник' : 'бот';
+      var hasNotes = i.notes && i.notes.length;
+      var hasSections = i.sections && i.sections.length;
+      var more = hasNotes || hasSections ? el('details', 'more', [
+        el('summary', null, ['деталі' + (hasSections ? ' · ' + i.sections.length : '')]),
+        hasNotes ? rich('p', 'notes', i.notes.join(' · ')) : null,
+        hasSections ? el('div', 'turn-detail', i.sections.map(function (sec) {
+          var body = sec.rows && sec.rows.length ? kvDl(sec.rows) : rich('p', 'empty', sec.empty || '—');
+          var summary = el('summary', null, [el('span', 't', [sec.title]), sec.summary ? rich('span', 's', sec.summary) : null]);
+          var d = el('details', 'sec', [summary, el('div', 'body', [body])]);
+          if (sec.open) d.open = true;
+          return d;
+        })) : null,
+      ]) : null;
+      return el('div', 'msg ' + i.role + (i.seed ? ' seed' : '') + (i.missing ? ' missing' : ''), [
+        el('span', 'who', [i.label || who, i.tested ? el('span', 'tested', ['тестується']) : null]),
+        el('p', 'bubble ' + i.role, [i.text]),
+        i.badges && i.badges.length ? el('div', 'badges', i.badges.map(function (b) {
+          var badge = el('span', 'badge' + (b.tone ? ' ' + b.tone : ''), [el('span', 'ico', [b.icon]), b.label]);
+          badge.title = b.details.length ? b.details.join('\n') : b.label;
+          return badge;
+        })) : null,
+        more,
+      ]);
+    }));
+    var toggleAll = function (open) {
+      return function () { chat.querySelectorAll('details.more').forEach(function (d) { d.open = open; }); };
+    };
+    if (chat.querySelector('details.more')) {
+      var showAll = el('button', null, ['Показати всі деталі']);
+      var hideAll = el('button', null, ['Сховати всі деталі']);
+      showAll.type = hideAll.type = 'button';
+      showAll.addEventListener('click', toggleAll(true));
+      hideAll.addEventListener('click', toggleAll(false));
+      parent.appendChild(el('div', 'chat-tools', [showAll, hideAll]));
+    }
+    parent.appendChild(chat);
+  }
+
+  var m = data.meta || {};
+  document.title = m.title || 'Test Report';
+  var header = el('header', null, [
+    m.eyebrow ? el('p', 'eyebrow', [m.eyebrow]) : null,
+    el('h1', null, [m.title || 'Test Report']),
+    m.summary ? rich('p', 'lede', m.summary) : null,
+    el('p', 'meta', (m.details || []).map(function (d) { return rich('span', null, d); })),
+  ]);
+  root.appendChild(header);
+
+  // Suite report: one counts line, then one collapsed row per test; its blocks open when the test is expanded.
+  if (data.suite) {
+    var su = data.suite;
+    var cnt = su.counts;
+    var countText = [
+      plural(cnt.total, 'тест', 'тести', 'тестів'),
+      plural(cnt.passed, 'зелений', 'зелені', 'зелених'),
+      plural(cnt.failed, 'червоний', 'червоні', 'червоних'),
+      cnt.error ? cnt.error + ' ERROR' : null,
+      cnt.skipped ? cnt.skipped + ' пропущено' : null,
+    ].filter(Boolean).join(' · ');
+    root.appendChild(el('p', 'suite-counts', [countText]));
+    var list = section('Тести');
+    var openTests = function (open) { return function () { list.querySelectorAll('details.test').forEach(function (d) { d.open = open; }); }; };
+    var openBtn = el('button', null, ['Розгорнути всі тести']);
+    var closeBtn = el('button', null, ['Згорнути всі тести']);
+    openBtn.type = closeBtn.type = 'button';
+    openBtn.addEventListener('click', openTests(true));
+    closeBtn.addEventListener('click', openTests(false));
+    list.appendChild(el('div', 'chat-tools', [openBtn, closeBtn]));
+    var block = function (title, summary, content, open) {
+      var d = el('details', 'blk', [el('summary', null, [el('span', 't', [title]), summary ? rich('span', 's', summary) : null]), el('div', 'body', content)]);
+      if (open) d.open = true;
+      return d;
+    };
+    var MARK = { true: ['tick', '✓'], false: ['cross', '✗'], info: ['infomark', 'i'] };
+    su.tests.forEach(function (t) {
+      var given = [kvDl(t.given.rows)];
+      if (t.given.history && t.given.history.length) {
+        var hist = el('div', 'given-history', [el('h5', null, ['Історія розмови до тесту'])]);
+        chatInto(hist, t.given.history, true);
+        given.push(hist);
+      }
+      var steps = el('div');
+      if (t.steps.length) chatInto(steps, t.steps, true);
+      else steps.appendChild(rich('p', 'empty', t.stepsEmpty || 'Кроків немає.'));
+      var a = t.actual;
+      var actual = [];
+      if (a.failure) actual.push(rich('p', 'aside ' + (t.status === 'error' ? 'warn' : 'bad'), a.failure));
+      if (a.comparisons.length) {
+        actual.push(table(['', 'Очікувано', 'Фактично', 'Звідки'], a.comparisons.map(function (r) {
+          var mk = MARK[r.met];
+          return [{ node: el('span', mk[0], [mk[1]]) }, { text: r.expected, kind: 'wide' }, { text: r.actual, tone: r.met === false ? 'miss' : r.met === 'info' ? 'warn' : null }, { text: r.source, tone: 'muted' }];
+        })));
+      }
+      var j = a.judge;
+      var judge = el('div', 'judge', [el('h5', null, [j.title])]);
+      if (j.reasoning) judge.appendChild(el('p', 'reasoning', [j.reasoning]));
+      actual.push(judge);
+      list.appendChild(el('details', 'test ' + t.status, [
+        el('summary', 'test-head', [status(t.status), el('span', 'test-id', [t.id]), el('span', 'test-name', [t.name]), el('span', 'test-dur', [t.duration])]),
+        el('div', 'test-body', [
+          block('Опис', t.descriptionSummary, [kvDl(t.description)], true),
+          block('Given: стан до тесту', t.given.summary, given, true),
+          block('Кроки', t.stepsSummary, [steps], true),
+          block('Фактичний результат', a.summary, actual, true),
+        ]),
+      ]));
+    });
+  }
+
+  if (data.verdict) {
+    root.appendChild(el('div', 'verdict-banner ' + data.verdict.status, [status(data.verdict.status), rich('p', null, data.verdict.text)]));
+  }
+
+  if (data.stats && data.stats.length) {
+    root.appendChild(el('div', 'stats', data.stats.map(function (s) {
+      return el('div', 'stat ' + (s.tone || ''), [el('b', null, [s.value]), rich('span', null, s.label)]);
+    })));
+  }
+
+  if (data.scope) {
+    var sc = section(data.scope.title || 'Що перевіряли');
+    sc.appendChild(el('div', 'cols', (data.scope.panels || []).map(function (p) {
+      return el('div', 'panel', [el('h4', null, [p.title]), el('ul', null, p.items.map(function (i) { return rich('li', null, i); }))]);
+    })));
+  }
+
+  if (data.pipeline) {
+    var pl = section(data.pipeline.title || 'Як це працює', data.pipeline.explain);
+    var flow = el('div', 'pipeline');
+    data.pipeline.steps.forEach(function (st, i) {
+      if (i) flow.appendChild(el('span', 'arrow', ['→']));
+      flow.appendChild(rich('span', 'node' + (st.isNew ? ' new' : ''), st.label));
+    });
+    pl.appendChild(flow);
+    if (data.pipeline.notes) pl.appendChild(el('div', 'notes', [el('ul', null, data.pipeline.notes.map(function (n) { return rich('li', null, n); }))]));
+    if (data.pipeline.legend) pl.appendChild(rich('p', 'legend', data.pipeline.legend));
+  }
+
+  if (data.checks) {
+    var ck = section(data.checks.title || 'Перевірки', data.checks.explain);
+    ck.appendChild(table(['Перевірка', 'Статус', 'Результат', 'Команда', 'Примітка'], data.checks.rows.map(function (r) {
+      return [{ text: r.name, kind: 'wide' }, { node: status(r.status) }, { text: r.result, kind: 'num' }, { text: r.command ? '`' + r.command + '`' : '' }, { text: r.note || '', tone: 'muted' }];
+    })));
+  }
+
+  (data.tables || []).forEach(function (t) {
+    var ts = section(t.title, t.explain);
+    ts.appendChild(table(t.columns, t.rows));
+  });
+
+  if (data.cases && data.cases.length) {
+    var cs = section(data.casesTitle || 'Сценарії', data.casesExplain);
+    cs.appendChild(el('nav', 'toc', data.cases.map(function (c) {
+      var a = el('a', null, [el('span', 'dot ' + c.verdict), c.title]);
+      a.href = '#' + c.id;
+      return a;
+    })));
+    data.cases.forEach(function (c) {
+      var art = el('article', 'case');
+      art.id = c.id;
+      art.appendChild(el('header', 'case-head', [
+        el('div', null, [c.eyebrow ? el('p', 'eyebrow', [c.eyebrow]) : null, el('h3', null, [c.title]), c.subtitle ? rich('p', 'sub', c.subtitle) : null]),
+        status(c.verdict),
+      ]));
+      var flowEl = el('div', 'flow');
+      c.steps.forEach(function (s) {
+        var step = el('section', 'step', [el('h4', null, [s.title]), s.intro ? rich('p', 'explain step-intro', s.intro) : null]);
+        if (s.type === 'user' || s.type === 'bot') {
+          var b = el('p', 'bubble ' + s.type);
+          if (s.text) b.appendChild(document.createTextNode(s.text));
+          if (s.fixedText) { if (s.text) b.appendChild(document.createTextNode('\n\n')); b.appendChild(el('span', 'fixed', [s.fixedText])); }
+          step.appendChild(b);
+        } else if (s.type === 'dialogue') {
+          chatInto(step, s.items);
+        } else if (s.type === 'info') {
+          step.appendChild(el('div', 'info', s.groups.map(function (g) {
+            return el('div', null, [el('h5', null, [g.title]), el('ul', g.code ? 'code' : null, g.items.map(function (i) {
+              return g.code ? el('li', i.indexOf('//') === 0 ? 'comment' : null, [i]) : rich('li', null, i);
+            }))]);
+          })));
+        } else if (s.type === 'raw') {
+          s.items.forEach(function (r) {
+            var d = el('details', 'raw', [el('summary', null, [r.title]), el('div', 'body', [tree(r.json)])]);
+            step.appendChild(d);
+          });
+        } else if (s.type === 'kv') {
+          step.appendChild(el('dl', null, s.rows.map(function (r) {
+            return el('div', 'kv', [el('dt', null, [r.key]), rich('dd', r.tone || null, r.value)]);
+          })));
+        } else if (s.type === 'judge' || s.type === 'checks') {
+          step.appendChild(el('ul', 'criteria', s.items.map(function (i) {
+            return el('li', null, [el('span', i.met ? 'tick' : 'cross', [i.met ? '✓' : '✗']), rich('span', null, i.text)]);
+          })));
+          if (s.reasoning) step.appendChild(el('p', 'reasoning', [s.reasoning]));
+        } else if (s.text) {
+          step.appendChild(rich('p', null, s.text));
+        }
+        (s.asides || []).forEach(function (a) { step.appendChild(rich('p', 'aside ' + (a.tone || ''), a.text)); });
+        flowEl.appendChild(step);
+      });
+      art.appendChild(flowEl);
+      cs.appendChild(art);
+    });
+  }
+
+  if (data.notRun && data.notRun.length) {
+    var nr = section('Що не запускали', 'Ці перевірки не входять у результат вище. Кожна з них є залишковим ризиком.');
+    nr.appendChild(table(['Перевірка', 'Чому не запускали', 'Як закрити'], data.notRun.map(function (r) {
+      return [{ text: r.what, kind: 'wide' }, { text: r.why }, { text: r.howToClose || '' }];
+    })));
+  }
+
+  if (data.findings && data.findings.length) {
+    var fs = section(data.findingsTitle || 'Знахідки і ризики');
+    fs.appendChild(el('div', 'findings', data.findings.map(function (f) {
+      return el('div', 'finding ' + (f.status === 'fixed' ? 'fixed' : f.status === 'bad' ? 'bad' : ''), [rich('p', null, '**' + f.title + '**'), rich('p', null, f.text)]);
+    })));
+  }
+
+  if (data.files && data.files.length) {
+    var fl = section('Файли і відтворення');
+    fl.appendChild(el('div', 'panel files', data.files.map(function (f) {
+      return el('div', null, [el('span', null, [f.label]), rich('p', null, '`' + f.path + '`')]);
+    })));
+  }
+})();
+</script>

@@ -1,56 +1,45 @@
 import {
   ConversationOrchestrator,
   type AiProviderPort,
-  type ClassifyContext,
   type ConversationRecord,
-  type ConversationTurn,
   type EscalationEvent,
   type EscalationPort,
-  type MemoryContext,
   type MemoryItemRecord,
   type MessageRecord,
   type OnboardingTurnPort,
   type OrchestrateResult,
-  type ResponseContext,
-  type RiskContext,
   type ScheduledActionRepositoryPort,
   type SurveyRepositoryPort,
-  type SurveyQuestionForEvaluation,
-  type QuestionBundleComposition,
-  type QuestionBundleVariant,
-  type AwaitingQuestionBundle,
-  type QuestionBundleVerdict,
-  type PendingQuestionClarification,
-  type QuestionClarificationVerdict,
   type QuestionConfirmationPort,
   type PulseBacklogService,
   type StyleProfileRecord,
 } from '@entalent/application';
-import type {
-  ConfirmationResponse,
-  GeneratedResponse,
-  GroupReport,
-  GroupSummary,
-  MemoryProposal,
-  ObservedStyle,
-  ReplyStrategy,
-  ProviderRiskDetection,
-  SituationClassification,
-  SurveyEvidenceEvaluation,
-} from '@entalent/contracts';
 import { OpenAiProvider } from '@entalent/ai-openai';
 import {
   InMemoryConversationRepository,
   InMemoryGoalRepository,
   InMemoryMemoryRepository,
+  InMemoryScheduledActionRepository,
   InMemoryStyleProfileRepository,
 } from '../fakes/repositories';
 import { InlineOutbox } from '../fakes/inline-outbox';
 import { registerFallbackReport } from './report';
+import {
+  describeError,
+  describeOutcome,
+  summarizeValue,
+  traceWrites,
+  TracingAiProvider,
+  TurnTrace,
+  type GenerateResponseCall,
+  type TurnEffects,
+} from '@entalent/conversation-trace';
 
 const TENANT_ID = 'sim-tenant';
 const USER_ID = 'sim-user';
 const CONVERSATION_ID = 'sim-conversation';
+/** Ids every harness conversation uses; seeders write records under them. */
+export const SIM_SCOPE = { tenantId: TENANT_ID, userId: USER_ID, conversationId: CONVERSATION_ID } as const;
 
 export interface CoachHarnessOptions {
   userName?: string;
@@ -63,6 +52,7 @@ export interface CoachHarnessOptions {
   /** Style profile learned in a previous conversation. */
   seedStyleProfile?: StyleProfileRecord;
   aiProvider?: AiProviderPort;
+  /** Defaults to an in-memory store, as production always wires one: reminders are scheduled and confirmed. */
   scheduledActionRepo?: ScheduledActionRepositoryPort;
   surveyRepo?: SurveyRepositoryPort;
   onboardingTurn?: OnboardingTurnPort;
@@ -70,12 +60,60 @@ export interface CoachHarnessOptions {
   questionConfirmationRepo?: QuestionConfirmationPort;
   /** Topic selection for the pulse cycle (GC round 3 CAP-1); omitted means no topic questions. */
   pulseBacklogService?: Pick<PulseBacklogService, 'getNextProbeQuestion'>;
+  /** Set by `harnessFromPrecondition`: the starting state the report's Given block shows. */
+  precondition?: PreconditionSummary;
 }
 
-export interface GenerateResponseCall {
-  turns: ConversationTurn[];
-  strategy: ReplyStrategy;
-  context: ResponseContext;
+/** Readable starting state of a run built from a precondition file (see `src/preconditions`). */
+export interface PreconditionSummary {
+  name: string;
+  /** File the precondition was loaded from; null when it was built in code. */
+  source: string | null;
+  origin: string;
+  presets: string[];
+  user: string;
+  startTime: string | null;
+  elapsedMinutes: number | null;
+  goals: string[];
+  styleProfile: string | null;
+  onboarding: string | null;
+  cycle: {
+    open: boolean;
+    topicsTotal: number;
+    topicsClosed: number;
+    openTopics: string[];
+    /** One line per topic: `group: status, status`. */
+    topics: string[];
+    nextProbe: string | null;
+  } | null;
+  evidence: string[];
+  scheduledActions: string[];
+}
+
+/** A QA test file's metadata and results (see `src/qa`), carried into the run report. */
+export interface QaRunSummary {
+  /** QA test file, relative to the package when possible. */
+  file: string;
+  id: string;
+  title: string;
+  jira: string | null;
+  story: string | null;
+  tags: string[];
+  precondition: string;
+  /** One per expected result; `met: null` means the judge gave no verdict on it (not run, or the line was missing). */
+  expectations: Array<{ text: string; met: boolean | null }>;
+  hardChecks: Array<{ check: string; label: string; met: boolean; actual: string }>;
+}
+
+export type { GenerateResponseCall, TurnEffects } from '@entalent/conversation-trace';
+
+/** What the conversation looked like before the scenario's first message. */
+export interface ScenarioContext {
+  setup: string[];
+  messages: Array<{ direction: string; text: string; notes: string[] }>;
+  memory: Array<{ category: string; content: string }>;
+  /** Present when the run was built from a precondition file. */
+  precondition?: PreconditionSummary;
 }
 
 /** An exception that escaped `ConversationOrchestrator.orchestrate` during one `send`. */
@@ -109,6 +147,8 @@ export class CoachHarness {
   readonly goalRepo = new InMemoryGoalRepository();
   readonly styleRepo: InMemoryStyleProfileRepository;
   readonly escalation = new RecordingEscalation();
+  /** Reminders and other scheduled actions the turns created. */
+  readonly scheduledActions: ScheduledActionRepositoryPort;
   readonly outbox: InlineOutbox;
   readonly turns: OrchestrateResult[] = [];
   /** All calls, including regeneration attempts; this is not indexed by conversation turn. */
@@ -120,10 +160,20 @@ export class CoachHarness {
    * still fails while the report keeps the error class instead of losing it with the stack trace.
    */
   readonly failures: AgentTurnFailure[] = [];
+  /** Ordered model calls, writes and warnings of every turn, for the readable report. */
+  readonly trace = new TurnTrace();
+  /** The employee message of each `send`, including a turn that threw. */
+  readonly userMessages: string[] = [];
+  /** One entry per completed turn, parallel to `turns`. */
+  readonly turnEffects: TurnEffects[] = [];
+  /** Set by the QA test runner; the run report copies it. */
+  qa: QaRunSummary | null = null;
+  /** Messages already in the conversation when the first `send` started: the scenario's seeded history. */
+  private seedMessageCount: number | null = null;
 
   private readonly orchestrator: ConversationOrchestrator;
 
-  constructor(options: CoachHarnessOptions = {}) {
+  constructor(private readonly options: CoachHarnessOptions = {}) {
     const conversation: ConversationRecord = {
       id: CONVERSATION_ID,
       tenantId: TENANT_ID,
@@ -138,17 +188,25 @@ export class CoachHarness {
 
     this.conversationRepo = new InMemoryConversationRepository(conversation);
     this.styleRepo = new InMemoryStyleProfileRepository(options.seedStyleProfile ?? null);
+    this.scheduledActions = options.scheduledActionRepo ?? new InMemoryScheduledActionRepository();
 
+    const trace = this.trace;
     const ai = new RecordingAiProvider(
       options.aiProvider ?? createLiveProvider(),
       this.generateResponseCalls,
+      trace,
     );
+    // The orchestrator and the inline outbox write through traced views of the same stores.
+    const conversationRepo = traceWrites(this.conversationRepo, 'conversation', trace);
+    const memoryRepo = traceWrites(this.memoryRepo, 'memory', trace);
+    const goalRepo = traceWrites(this.goalRepo, 'goals', trace);
+    const styleRepo = traceWrites(this.styleRepo, 'style', trace);
     this.outbox = new InlineOutbox(
       ai,
-      this.conversationRepo,
-      this.memoryRepo,
-      this.goalRepo,
-      this.styleRepo,
+      conversationRepo,
+      memoryRepo,
+      goalRepo,
+      styleRepo,
       { analyzeStyle: options.analyzeStyle },
     );
 
@@ -165,26 +223,29 @@ export class CoachHarness {
       });
     }
 
+    const optional = <T extends object>(port: T | undefined, store: string): T | undefined =>
+      port ? traceWrites(port, store, trace) : undefined;
     this.orchestrator = new ConversationOrchestrator(
-      this.conversationRepo,
+      conversationRepo,
       ai,
-      this.outbox,
-      this.memoryRepo,
-      options.surveyRepo ?? {
+      traceWrites(this.outbox, 'outbox', trace),
+      memoryRepo,
+      optional(options.surveyRepo, 'survey') ?? {
         findPulseCaptureForConversation: async () => [],
         findAwaitingConfirmationGroups: async () => [],
         findPendingConfirmationGroups: async () => [],
       } as unknown as SurveyRepositoryPort,
       undefined,
-      this.escalation,
+      traceWrites(this.escalation, 'escalation', trace),
       undefined,
-      options.scheduledActionRepo,
+      traceWrites(this.scheduledActions, 'scheduledActions', trace),
       options.pulseBacklogService as PulseBacklogService | undefined,
-      this.styleRepo,
-      this.goalRepo,
-      options.questionConfirmationRepo,
+      styleRepo,
+      goalRepo,
+      optional(options.questionConfirmationRepo, 'questionConfirmation'),
       undefined,
-      options.onboardingTurn,
+      optional(options.onboardingTurn, 'onboarding'),
+      { warn: (message, context) => trace.record('warning', message, context ? summarizeValue(context, 0) : '') },
     );
 
     // A report must exist even when the scenario aborts before `reportRun` is reached.
@@ -194,6 +255,11 @@ export class CoachHarness {
   /** Delivers one user message and returns the coach's reply. */
   async send(text: string): Promise<string> {
     const generationStart = this.generateResponseCalls.length;
+    this.trace.turn = this.turns.length + 1;
+    this.seedMessageCount ??= this.conversationRepo.messages.length;
+    this.userMessages.push(text);
+    const memoryBefore = this.memoryRepo.items.length;
+    const escalationsBefore = this.escalation.events.length;
     const inbound = await this.conversationRepo.saveMessage({
       conversationId: CONVERSATION_ID,
       tenantId: TENANT_ID,
@@ -203,6 +269,7 @@ export class CoachHarness {
     });
 
     const turn = this.turns.length + 1;
+    this.trace.record('inbound', 'message accepted', `saved as inbound, ${text.length} chars`);
     let result: OrchestrateResult;
     try {
       result = await this.orchestrator.orchestrate({
@@ -216,8 +283,10 @@ export class CoachHarness {
       });
     } catch (error) {
       this.failures.push(describeFailure(error, turn, this.generateResponseCalls.length - generationStart));
+      this.trace.record('error', 'orchestrate', describeError(error));
       throw error;
     }
+    this.trace.record('decision', 'turn outcome', describeOutcome(result, this.generateResponseCalls.length > generationStart));
 
     this.responseCallsByTurn.push(
       this.generateResponseCalls.length > generationStart
@@ -225,11 +294,51 @@ export class CoachHarness {
         : null,
     );
     this.turns.push(result);
+    const outbound = this.conversationRepo.messages.find((message) => message.id === result.outboundMessageId);
+    this.turnEffects.push({
+      outboundMetadata: outbound?.metadata ? { ...outbound.metadata } : null,
+      memoryAdded: this.memoryRepo.items.slice(memoryBefore).map((item) => ({
+        category: item.category, content: item.content, importance: item.importance,
+      })),
+      escalations: this.escalation.events.slice(escalationsBefore).map((event) => ({
+        type: event.type, severity: event.severity, riskType: event.riskType,
+      })),
+      generationAttempts: this.generateResponseCalls.length - generationStart,
+    });
     return result.responseText;
   }
 
   get replies(): string[] {
     return this.turns.map((t) => t.responseText);
+  }
+
+  /** What the conversation started from, shown as the report's context block. */
+  get context(): ScenarioContext {
+    const o = this.options;
+    return {
+      setup: [
+        `user ${o.userName ?? 'Alex'}, timezone ${o.timezone ?? 'Europe/Berlin'}`,
+        o.seedMemory?.length ? `${o.seedMemory.length} memory item(s) seeded` : null,
+        o.seedStyleProfile ? 'style profile seeded' : null,
+        o.analyzeStyle ? 'style analysis on' : null,
+        o.aiProvider ? 'custom AI provider (not the live one)' : null,
+        o.scheduledActionRepo ? 'scheduled actions: scenario repository' : null,
+        o.surveyRepo ? 'survey repository' : null,
+        o.onboardingTurn ? 'onboarding v2 enabled' : null,
+        o.questionConfirmationRepo ? 'V2 question confirmation enabled' : null,
+        o.pulseBacklogService ? 'pulse cycle open (topic backlog service)' : null,
+        o.precondition ? `precondition ${o.precondition.name}` : null,
+      ].filter((fact): fact is string => fact !== null),
+      messages: this.conversationRepo.messages.slice(0, this.seedMessageCount ?? undefined).map((message) => ({
+        direction: message.direction,
+        text: message.text,
+        notes: Object.entries(message.metadata ?? {}).map(([key, value]) => `${key}=${JSON.stringify(value)}`.slice(0, 120)),
+      })),
+      memory: this.memoryItems
+        .filter((item) => item.sourceMessageIds.length === 0)
+        .map((item) => ({ category: item.category, content: item.content })),
+      ...(o.precondition ? { precondition: o.precondition } : {}),
+    };
   }
 
   get transcript(): MessageRecord[] {
@@ -245,105 +354,14 @@ export class CoachHarness {
   }
 }
 
-/** Exported for tests; scenarios reach it only through `CoachHarness`. */
-export class RecordingAiProvider implements AiProviderPort {
+/** Exported for tests; scenarios reach it only through `CoachHarness`. Keeps every generation request. */
+export class RecordingAiProvider extends TracingAiProvider {
   constructor(
-    private readonly delegate: AiProviderPort,
-    private readonly generateCalls: GenerateResponseCall[],
-  ) {}
-
-  classifySituation(
-    turns: ConversationTurn[],
-    context: ClassifyContext,
-  ): Promise<SituationClassification> {
-    return this.delegate.classifySituation(turns, context);
-  }
-
-  detectRisk(turns: ConversationTurn[], context: RiskContext): Promise<ProviderRiskDetection> {
-    return this.delegate.detectRisk(turns, context);
-  }
-
-  extractMemory(turns: ConversationTurn[], existing: MemoryContext): Promise<MemoryProposal> {
-    return this.delegate.extractMemory(turns, existing);
-  }
-
-  evaluateSurveyEvidence(
-    turns: ConversationTurn[],
-    questions: SurveyQuestionForEvaluation[],
-    options?: Parameters<AiProviderPort['evaluateSurveyEvidence']>[2],
-  ): Promise<SurveyEvidenceEvaluation> {
-    return this.delegate.evaluateSurveyEvidence(turns, questions, options);
-  }
-
-  async generateResponse(
-    turns: ConversationTurn[],
-    strategy: ReplyStrategy,
-    context: ResponseContext,
-  ): Promise<GeneratedResponse> {
-    this.generateCalls.push({ turns, strategy, context });
-    return this.delegate.generateResponse(turns, strategy, context);
-  }
-
-  composeQuestionBundle(
-    turns: ConversationTurn[],
-    questions: Array<{ surveyQuestionId: string; workingSummary: string }>,
-    responseLanguage: string,
-    variant?: QuestionBundleVariant,
-  ): Promise<QuestionBundleComposition> {
-    return this.delegate.composeQuestionBundle(turns, questions, responseLanguage, variant);
-  }
-
-  interpretQuestionBundleResponse(
-    turns: ConversationTurn[],
-    bundle: Pick<AwaitingQuestionBundle, 'displayedText' | 'components'>,
-  ): Promise<QuestionBundleVerdict> {
-    return this.delegate.interpretQuestionBundleResponse(turns, bundle);
-  }
-
-  composeQuestionClarification(
-    turns: ConversationTurn[],
-    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
-    responseLanguage: string,
-  ): Promise<string> {
-    return this.delegate.composeQuestionClarification(turns, clarification, responseLanguage);
-  }
-
-  interpretQuestionClarificationResponse(
-    turns: ConversationTurn[],
-    clarification: Pick<PendingQuestionClarification, 'workingSummary' | 'disputedStatement'>,
-  ): Promise<QuestionClarificationVerdict> {
-    return this.delegate.interpretQuestionClarificationResponse(turns, clarification);
-  }
-
-  generateGroupSummary(
-    summaries: Array<{ questionId: string; stableKey: string; evidenceSummary: string; polarity: string }>,
-    questionGroup: string,
-  ): Promise<GroupSummary> {
-    return this.delegate.generateGroupSummary(summaries, questionGroup);
-  }
-
-  generateGroupReport(
-    teamSummaries: string[],
-    questionGroup: string,
-    teamScore: number,
-    trend: number | null,
-  ): Promise<GroupReport> {
-    return this.delegate.generateGroupReport(teamSummaries, questionGroup, teamScore, trend);
-  }
-
-  scoreSentiment(text: string): Promise<number> {
-    return this.delegate.scoreSentiment(text);
-  }
-
-  interpretConfirmationResponse(
-    turns: ConversationTurn[],
-    summary: string,
-  ): Promise<ConfirmationResponse> {
-    return this.delegate.interpretConfirmationResponse(turns, summary);
-  }
-
-  analyzeStyle(userTurns: string[]): Promise<ObservedStyle> {
-    return this.delegate.analyzeStyle(userTurns);
+    delegate: AiProviderPort,
+    generateCalls: GenerateResponseCall[],
+    trace: TurnTrace = new TurnTrace(),
+  ) {
+    super(delegate, trace, (call) => generateCalls.push(call));
   }
 }
 

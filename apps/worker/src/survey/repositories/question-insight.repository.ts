@@ -726,12 +726,14 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
   }
 
   async hasReadyQuestionBundle(input: { tenantId: string; userId: string }): Promise<boolean> {
-    return (await this.findReadyQuestionBundle(input)) !== null;
+    return (await this.findReadyQuestionBundle({ tenantId: input.tenantId, userId: input.userId })) !== null;
   }
 
-  async findReadyQuestionBundle(input: {
+  async findReadyQuestionBundle(scope: {
     tenantId: string; userId: string;
+    skipGroups?: ReadonlyArray<{ surveyWindowId: string; questionGroup: string }>;
   }): Promise<ReadyQuestionBundle | null> {
+    const input = { tenantId: scope.tenantId, userId: scope.userId };
     const windows = await this.db.client.select({
       id: surveyWindows.id,
       surveyDefinitionId: surveyWindows.surveyDefinitionId,
@@ -795,7 +797,12 @@ export class QuestionInsightRepository implements QuestionFinalizationRepository
       eq(surveyQuestionWorkingInsights.surveyWindowId, window.id),
     ));
     const byQuestion = new Map(working.map((row) => [row.surveyQuestionId, row]));
+    // GC retro A1: a group whose composition kept failing in this window yields to the next one.
+    const skipped = new Set((scope.skipGroups ?? [])
+      .filter((group) => group.surveyWindowId === window.id)
+      .map((group) => group.questionGroup));
     for (const questionGroup of ['autonomy', 'growth', 'purpose', 'belonging']) {
+      if (skipped.has(questionGroup)) continue;
       const groupQuestions = questions.filter((question) => question.questionGroup === questionGroup)
         .sort((a, b) => a.displayOrder - b.displayOrder);
       if (groupQuestions.length !== 3) continue;

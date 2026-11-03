@@ -1,5 +1,8 @@
 # @entalent/conversation-sim
 
+Which test level to use and how to run each: `docs/testing/test-levels.md`. QA tests and
+preconditions: `qa-tests/README.md`, `report/README.md`.
+
 Multi-turn conversation simulations for the coach agent, built on
 [Scenario](https://github.com/langwatch/scenario).
 
@@ -15,9 +18,10 @@ out of it.
 | `ConversationOrchestrator` | Real |
 | `OpenAiProvider`, all prompts, all five LLM calls per turn | Real |
 | Memory extraction and style analysis between turns | Real, run inline by `InlineOutbox` |
-| Conversation history, memory, goals, style profile | In-memory adapters |
 | Postgres, Redis/BullMQ, Slack | Not involved |
-| Survey, group confirmation, scheduled actions | Not wired — those ports are omitted |
+| Conversation history, memory, goals, style profile, scheduled actions | In-memory adapters, seeded from a precondition when the test has one |
+| Pulse cycle progress, probe question, pulse evidence, onboarding state | In-memory fakes, set by the precondition (`cycle-open`, `onboarding-done`); the cycle does not progress during a run |
+| Confirmation bundles, pending clarifications | Not wired |
 
 The simulated user only ever passes its latest message to the harness. History comes
 from the conversation repository, exactly as in production, so the real 20-message
@@ -107,10 +111,15 @@ Every scenario records three independent layers:
    learned, whether remembered facts made it back into replies, which mode each turn
    resolved to, which style profile was passed into reply generation, and which
    structured `replyPlan` conditioned the prompt.
-3. **Judge verdict** — the subjective criteria that no regex can express. This is
-   advisory in these tests: a single judge miss is printed and written to the report,
-   not used to turn Vitest green or red in the advisory scenarios. The existing
-   resolved-detail regression asserts judge success directly.
+3. **Judge verdict** — the subjective criteria that no regex can express. Three groups:
+   - Advisory (`burnout`, `memory-recall`, `terse-user`, `annna-intent-fidelity`): a judge
+     miss is printed and written to the report, never failing Vitest.
+   - Gate-tolerant (the scenarios that call `expectJudgeVerdict` from
+     `src/harness/judge-verdict.ts`): a standalone run fails on a judge miss; inside
+     `sim:gate` the sample stays green and the gate's `judgePasses` rate decides. A failed
+     result with no judged criteria still fails the test.
+   - Strict (`resolved-detail-question-planning`): asserts judge success directly, so a
+     judge miss is also counted as a hard failure; its gate requires 5/5 judge passes anyway.
 
 `reportRun` records all three, so a red run says *why* rather than just *no*.
 

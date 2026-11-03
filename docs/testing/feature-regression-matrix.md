@@ -1,6 +1,6 @@
 # Feature Regression Matrix
 
-Status: draft for implementation.
+Status: archived (2026-11-03). Written for the retired MAF runtime; the active runtime is TypeScript-only. For current test levels see `docs/testing/test-levels.md`. Kept for its feature list.
 
 Goal: build a clear regression layer for every product feature before adding more features. Product scenarios must validate the MAF path first.
 

@@ -10,7 +10,7 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     env: rootEnv,
-    include: ['src/scenarios/**/*.sim.test.ts', 'src/gate/**/*.test.ts', 'src/harness/**/*.test.ts'],
+    include: ['src/scenarios/**/*.sim.test.ts', 'src/gate/**/*.test.ts', 'src/harness/**/*.test.ts', 'src/preconditions/**/*.test.ts', 'src/qa/**/*.test.ts', 'src/recording/**/*.test.ts'],
     // Simulations are long chains of live LLM calls, not unit tests.
     testTimeout: 300_000,
     hookTimeout: 60_000,

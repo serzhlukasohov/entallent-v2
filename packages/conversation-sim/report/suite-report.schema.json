@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conversation-sim/suite-report.schema.json",
+  "title": "conversation-sim suite report",
+  "description": "JSON that `pnpm sim` writes to report/runs/sim-<time>.json and that test-report.template.html renders as the suite page.",
+  "type": "object",
+  "required": ["meta", "suite"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["title"],
+      "properties": {
+        "eyebrow": { "type": "string" },
+        "title": { "type": "string" },
+        "details": { "type": "array", "items": { "type": "string" }, "description": "Run time, models, commit; inline `code` is allowed." }
+      }
+    },
+    "suite": {
+      "type": "object",
+      "required": ["counts", "tests"],
+      "properties": {
+        "counts": {
+          "type": "object",
+          "required": ["total", "passed", "failed"],
+          "properties": {
+            "total": { "type": "integer" },
+            "passed": { "type": "integer" },
+            "failed": { "type": "integer" },
+            "error": { "type": "integer", "description": "Infrastructure failures (rate limit, provider down), not bot behavior." },
+            "skipped": { "type": "integer" }
+          }
+        },
+        "tests": { "type": "array", "items": { "$ref": "#/$defs/test" }, "description": "Failed first, then error, skipped, passed." }
+      }
+    }
+  },
+  "$defs": {
+    "status": { "enum": ["passed", "failed", "error", "skipped"] },
+    "row": {
+      "type": "object",
+      "required": ["key", "value"],
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "description": "Text, a list of texts, or an object shown as a key/value tree." },
+        "tone": { "enum": ["ok", "bad", "warn"] }
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": ["title", "rows"],
+      "properties": {
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } },
+        "empty": { "type": "string", "description": "Shown when rows is empty." },
+        "open": { "type": "boolean" }
+      }
+    },
+    "badge": {
+      "type": "object",
+      "required": ["icon", "label", "details"],
+      "properties": {
+        "icon": { "type": "string" },
+        "label": { "type": "string" },
+        "tone": { "enum": ["bad", "warn", null] },
+        "details": { "type": "array", "items": { "type": "string" }, "description": "Shown on hover." }
+      }
+    },
+    "message": {
+      "type": "object",
+      "required": ["role", "text"],
+      "properties": {
+        "role": { "enum": ["user", "bot"] },
+        "label": { "type": "string" },
+        "text": { "type": "string" },
+        "seed": { "type": "boolean", "description": "History that existed before the test." },
+        "missing": { "type": "boolean", "description": "A message that got no reply." },
+        "notes": { "type": "array", "items": { "type": "string" } },
+        "badges": { "type": "array", "items": { "$ref": "#/$defs/badge" }, "description": "Notable side effects of the turn: memory, goal, reminder, escalation, topic, style, pulse, risk, error." },
+        "sections": { "type": "array", "items": { "$ref": "#/$defs/section" }, "description": "Turn breakdown behind «деталі»." }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "required": ["source", "expected", "actual", "met"],
+      "properties": {
+        "source": { "type": "string", "description": "код тесту, суддя, жорстка перевірка (QA hard check), евристики харнесу, харнес. A QA test has one суддя row per expected result and one жорстка перевірка row per hard check." },
+        "expected": { "type": "string" },
+        "actual": { "type": "string" },
+        "met": { "enum": [true, false, "info"], "description": "info: noted, but the test does not check it." }
+      }
+    },
+    "test": {
+      "type": "object",
+      "required": ["id", "name", "status", "description", "given", "steps", "actual"],
+      "properties": {
+        "id": { "type": "string", "description": "TC-01, TC-02, ..." },
+        "name": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "duration": { "type": "string" },
+        "descriptionSummary": { "type": "string", "description": "Jira key, story and tags when known, else the test file name." },
+        "description": { "type": "array", "items": { "$ref": "#/$defs/row" }, "description": "Case, Jira, story, suite, tags, type, purpose, scenario, models, run time; missing values are `—`. A QA test takes Jira, story, tags and purpose from its file." },
+        "given": {
+          "type": "object",
+          "required": ["rows"],
+          "properties": {
+            "summary": { "type": "string" },
+            "rows": { "type": "array", "items": { "$ref": "#/$defs/row" }, "description": "User, onboarding, memory, goals, pulse cycle, collected pulse answers, history." },
+            "history": { "type": "array", "items": { "$ref": "#/$defs/message" } }
+          }
+        },
+        "stepsSummary": { "type": "string" },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/message" } },
+        "stepsEmpty": { "type": "string", "description": "Shown when steps is empty." },
+        "actual": {
+          "type": "object",
+          "required": ["comparisons", "judge"],
+          "properties": {
+            "summary": { "type": "string" },
+            "failure": { "type": ["string", "null"], "description": "Set for error and not-run tests." },
+            "comparisons": { "type": "array", "items": { "$ref": "#/$defs/comparison" } },
+            "judge": {
+              "type": "object",
+              "required": ["title"],
+              "properties": { "title": { "type": "string" }, "reasoning": { "type": ["string", "null"] } }
+            }
+          }
+        }
+      }
+    }
+  }
+}

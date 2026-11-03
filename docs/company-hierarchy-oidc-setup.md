@@ -7,7 +7,7 @@ Company Admin signs in through the customer's corporate OpenID Connect provider.
 1. Create a confidential OIDC application for enTalent at the customer's identity provider. Enable Authorization Code, PKCE S256, `client_secret_basic` token endpoint authentication, and `openid email profile`. Register the HTTPS redirect URI ending in `/api/v1/company-auth/callback` on the API origin.
 2. Record the exact issuer URL from the provider discovery document, client ID, client secret, and the first administrator's **ID token `sub` for this OIDC application**. Entra `oid`, email, and Slack user ID are not substitutes for `sub`.
 3. Create the administrator as a same-tenant Person. A draft Person with an inactive runtime user is valid before Unit rollout. Record the Person UUID and tenant UUID.
-4. Apply the migration chain through `0025` in order. The API migration runner applies outstanding migrations on startup; identify the database environment before starting a new deployment.
+4. Apply the migration chain through `0025` in order. The API does not run migrations on startup; apply them with `pnpm db:migrate` against the identified database environment (see `docs/superpowers/railway-deploy.md`, Conversation trace) before starting a new deployment.
 
 ## Operator bootstrap
 

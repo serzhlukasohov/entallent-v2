@@ -54,6 +54,7 @@ import {
   BundleCompositionInvalidError,
   BundleReplyInvalidError,
   TopicQuestionReplyInvalidError,
+  NumericProbeInvalidError,
   validateTopicQuestionReply,
   composeTopicQuestionReplyText,
   composeBundleReplyText,
@@ -148,6 +149,19 @@ function questionRetryInstruction(maxQuestions: 0 | 1): string {
 
 const BUNDLE_REPLY_RETRY_INSTRUCTION =
   '\n\nYour previous draft broke the two-part contract. Return "replyText" as 1-3 sentences that answer the employee\'s latest message with no question mark or other question punctuation, within the length limit, and without repeating the fixed text or any of its statements; return "bundleText" as a byte-for-byte copy of the fixed text given above, with nothing added, removed, or changed.';
+
+/** GC retro A5: the repair names the sentences the answer part must keep, so they are not dropped. */
+function bundleReplyRetryInstruction(context: ResponseContext): string {
+  const required = [
+    context.questionNotCollected
+      ? ' "replyText" must still say that you will leave that point out for this cycle, as the point-not-collected contract above requires.'
+      : '',
+    context.topicConfirmed
+      ? ' "replyText" must still say that the topic is complete, with the progress numbers, as the topic-completion contract above requires.'
+      : '',
+  ].join('');
+  return BUNDLE_REPLY_RETRY_INSTRUCTION + required;
+}
 
 const CONFIRMATION_RETRY_INSTRUCTION =
   '\n\nYour previous confirmation draft was invalid. Return a non-empty reportable "confirmationSummary" with no question punctuation, copy that exact byte-for-byte string into "text" as a proper substring (never the entire reply), do not expose field labels like "confirmationSummary:", and ask exactly one question in the full "text" outside that summary.';
@@ -535,13 +549,14 @@ export class OpenAiProvider implements AiProviderPort {
         'Confirmation response requires a question-free confirmationSummary copied verbatim into text and exactly one question in the full reply',
       );
     }
+    // GC retro A10: a broken numeric probe is reported as such, so the orchestrator can fall back.
+    if (numericProbe && !isValidNumericProbeResponse(corrected, numericProbe.id)) {
+      throw new NumericProbeInvalidError();
+    }
     const correctedGate = questionGateFor(strategy, context);
     if (!context.confirmationRequest && !correctedGate.soft
       && countQuestionGroups(corrected.text) > correctedGate.maxQuestions) {
       throw new Error('Generated response exceeds the question limit after one corrective attempt');
-    }
-    if (numericProbe && !isValidNumericProbeResponse(corrected, numericProbe.id)) {
-      throw new Error('OpenAI returned a noncompliant numeric survey probe after retry');
     }
     return corrected;
   }
@@ -563,7 +578,7 @@ export class OpenAiProvider implements AiProviderPort {
     const first = assembleBundleReply(await this.complete(system, user, this.generationModel), bundle.text, options);
     if (!(first instanceof BundleReplyInvalidError)) return first;
     const corrected = assembleBundleReply(
-      await this.complete(system + BUNDLE_REPLY_RETRY_INSTRUCTION, user, this.generationModel), bundle.text, options,
+      await this.complete(system + bundleReplyRetryInstruction(context), user, this.generationModel), bundle.text, options,
     );
     if (!(corrected instanceof BundleReplyInvalidError)) return corrected;
     throw corrected;

@@ -274,3 +274,99 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-gc3-s5-topic-steering-cause.md`
   summary: Topic selection issues one idempotent `markDone` update per settled V2 question on every lookup; batch it or read backlog statuses first.
   evidence: S5 Blind Hunter finding 10; correct but adds writes on the conversation path (lookups now run only when the cadence and cap allow).
+- source_spec: none
+  summary: GC round 3 retro A2 - make `run-gate.ts` separate judge misses from deterministic failures so `judgePasses` tolerance actually applies, then re-baseline the affected live scenarios.
+  evidence: Split on 2026-10-26 from the retro bug-fix intent (A1/A4/A5 first); harness-only change in different files, scheduled as the next spec in the same session.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a2-gate-judge-tolerance.md`
+  summary: Add a gate-level fixture test that spawns Vitest with gate env on a stubbed judge miss and asserts `hardPassed: true`, `judgePassed: false` and no `test-failure` violation.
+  evidence: Blind Hunter review of A2 (2026-10-26); only the helper is unit-tested, the gate outcome relies on reading `run-gate.ts`.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a1-a4-a5-topic-bundle-fallbacks.md`
+  summary: Make the bundle composition backoff durable per survey window and alert on a group that stays uncomposable, instead of the 20-message metadata window that decays and retries the broken group about every ten turns.
+  evidence: Blind Hunter review 2026-10-26; `readBundleCompositionBackoff` reads only the loaded message window.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a1-a4-a5-topic-bundle-fallbacks.md`
+  summary: The A5 retried reply is validated only for bundle-reply rules, not for the presence of the required not-collected or completion sentence; unverified, medium if true; settle by sampling `retried_answer_then_bundle` replies in a live sim or adding a classifier check.
+  evidence: Edge Case Hunter review 2026-10-26.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gc-retro-a1-a4-a5-topic-bundle-fallbacks.md`
+  summary: An ordinary (non-topic) numeric survey probe that breaks its contract still fails the whole turn; extend the A10 fallback or record why it stays fail-closed.
+  evidence: Blind Hunter review 2026-10-26; `generateWithNumericTopicProbe` runs only for a due topic probe.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/1-precondition-files-and-state-presets.md`
+  summary: Assert the precondition block in the per-run Markdown report (`renderContext`).
+  evidence: Deleting the block passes all tests; the same data is pinned only in run JSON and the suite Given block.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/1-precondition-files-and-state-presets.md`
+  summary: Export `CANONICAL_GROUP_ORDER` from packages/application so the `cycle-open` preset stops hand-copying the pulse group order.
+  evidence: `presets.ts` copies the order; a production change would make presets describe groups that do not exist. Needs a product-package export, outside story 1.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/1-precondition-files-and-state-presets.md`
+  summary: Stop `coach-harness.test.ts` from restoring `SIM_GATE_REPORT_DIR = undefined`, which writes fallback reports to `packages/conversation-sim/undefined/`, and log it in docs/agent-failures.md.
+  evidence: The untracked `packages/conversation-sim/undefined/` folder holds `coachharness-scheduled-actions-...-undefined.{json,md}` from that test.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/2-qa-tests-as-data-files.md`
+  summary: Unit-test `liveQaDriver` with a mocked `@langwatch/scenario` `run` (turn-to-reply mapping, `evaluated` derivation, agent errors swallowed or thrown).
+  evidence: Unverified, medium if wrong; the driver runs only under live `pnpm sim`, which was not run. Settle with a mocked-run test or one approved live run of a QA file.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/2-qa-tests-as-data-files.md`
+  summary: First live `pnpm sim` with a QA file in `qa-tests/` to confirm the judge echoes QA expectations and the suite report rows render in HTML.
+  evidence: Live runs need Illia's explicit OK; all QA framework tests use a scripted judge.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/3-record-and-approve-a-precondition.md`
+  summary: Keep a raw state dump when a live recording's export fails validation, and map goal status/priority explicitly instead of `as` casts.
+  evidence: A paid live run currently ends with no candidate if any exported field misses the precondition schema; scripted runs never hit it.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/3-record-and-approve-a-precondition.md`
+  summary: Extend precondition memory with `canonicalKey`, `sensitivity` and `confidence` so recorded memory reloads with the same dedup behaviour.
+  evidence: Export drops them (schema cannot hold them); a later memory proposal with the same canonicalKey may create instead of update.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/3-record-and-approve-a-precondition.md`
+  summary: Make the sim pulse cycle stateful so a recording that answers survey questions exports the progressed cycle and evidence.
+  evidence: `InMemoryPulseCycle` writes are inert, so the exported cycle equals the base; documented in qa-tests/README.md.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/3-record-and-approve-a-precondition.md`
+  summary: First live `pnpm sim:record --live` of the example recording, reviewed and approved, to confirm the real-model export validates.
+  evidence: Needs Illia's explicit OK; all recording tests use the scripted provider.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/4-production-conversation-trace.md`
+  summary: Trace the failed-turn fallback (`commitFailedTurn`), resumed committed turns and proactive check-ins, and store the BullMQ attempt number on each trace row.
+  evidence: Story 4 Never excludes them; today a last-attempt failure leaves a `failed` row with no outbound id while the employee did get a fallback reply (review #9, #12).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/4-production-conversation-trace.md`
+  summary: Delete `conversation_turn_traces` for a user when the data-deletion use case runs, instead of waiting for the 30-day purge.
+  evidence: `data-deletion.use-case.ts` anonymizes messages (no cascade fires) and does not know the trace table; needs a new application port (review #16).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/4-production-conversation-trace.md`
+  summary: Story 5 export numbers traced turns by `started_at` per conversation (stored events and report turn all carry turn 1) and documents the 30 s switch lag in an ops runbook.
+  evidence: Each row holds one turn; ordinals only exist across rows (review #18, #20).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/4-production-conversation-trace.md`
+  summary: Make harness test selection run a package's suite when a source file without a same-named test changes (e.g. `packages/conversation-trace/src/turn.ts`).
+  evidence: `buildActiveTestCommands` in scripts/agent-harness.ts maps only `X.ts` to `X.test.ts` (review #26).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/4-production-conversation-trace.md`
+  summary: Apply migration 0054 to local Postgres and run `apps/worker/src/conversation-trace/conversation-trace.repository.integration.test.ts`.
+  evidence: The local migration command was held by the permission system during story 4 and not retried.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/5-admin-api-trace-lookup-and-export.md`
+  summary: Record which operator ran a trace search/export (per-operator credential or required reason/ticket) instead of the constant `admin` actor.
+  evidence: All admin routes share one `ADMIN_API_KEY` with no identity; trace routes expose conversation text (review #1).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/5-admin-api-trace-lookup-and-export.md`
+  summary: Rate-limit trace searches per tenant/key and set a DB statement timeout on trace reads.
+  evidence: Each request is bounded (1,000 rows, 5 s, 50 matches) but repeated broad fragments can page through a tenant's text (review #3, #4).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/5-admin-api-trace-lookup-and-export.md`
+  summary: Add a `(tenant_id, started_at, id)` index on `conversation_turn_traces` if trace search gets slow.
+  evidence: Search pages by tenant and `started_at` with no matching index; 30-day retention bounds it for now (review #5).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/5-admin-api-trace-lookup-and-export.md`
+  summary: HTTP-level tests of `ApiKeyGuard` on the trace routes, a startup warning when `CONVERSATION_TRACE_ADMIN_ENABLED` is on without `ADMIN_API_KEY`, and a constant-time key comparison.
+  evidence: Guard is shared and pre-existing; outside production it allows all requests when no key is set (review #13).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/5-admin-api-trace-lookup-and-export.md`
+  summary: Document `CONVERSATION_TRACE_ADMIN_ENABLED` and the trace runbook in `docs/superpowers/railway-deploy.md` and the AGENTS.md env list.
+  evidence: Agent-context and deployment docs need a team decision on who may enable the flag (review #16).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/5-admin-api-trace-lookup-and-export.md`
+  summary: Spawn-based test of `scripts/trace-export.mjs` against a stub HTTP server (fragment only in the body, numeric bounds).
+  evidence: Verified only manually against a scratch stub (review #26).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/5-admin-api-trace-lookup-and-export.md`
+  summary: Run `apps/api/src/conversation-trace/conversation-trace.reader.integration.test.ts` once migration 0054 is applied locally.
+  evidence: Skipped without `DATABASE_URL`; 0054 is not applied (story 4).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/6-precondition-from-a-traced-turn.md`
+  summary: Give the `conversation_trace_test_tenant` marker its own authority (separate key, env allow-list or audited flag writes) so the admin key alone cannot mark a tenant and extract.
+  evidence: `PUT admin/feature-flags` uses the same `ADMIN_API_KEY` and writes no audit row (review #1).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/6-precondition-from-a-traced-turn.md`
+  summary: Decide whether the worker should capture `stateBefore` only for test tenants instead of every traced tenant.
+  evidence: Each traced row now holds up to 20 history messages, memory, goals and evidence for 30 days (review #3).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/6-precondition-from-a-traced-turn.md`
+  summary: Spawn-based test of `pnpm trace:export -- --extract` (writes, overwrite refusal, name/tenant mismatch) against a stub API with a temp root.
+  evidence: Verified only against a scratch stub (review #16); the script writes into fixed repo paths, so a test needs a root override.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/6-precondition-from-a-traced-turn.md`
+  summary: Preconditions cannot hold the conversation's active topic, pending confirmation bundles or clarifications; extraction lists them as gaps.
+  evidence: Precondition format v1 and the sim pulse-cycle fake have no field for them (converter gaps).
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/7-screenshot-to-test-qa-skill.md`
+  summary: Spawn-based CLI test of `trace:export --json` against a 127.0.0.1 stub (one JSON on stdout, exit codes, tenant fallback, unknown --turn, refusals, key never printed).
+  evidence: Review #3; matrix rows verified only by a manual dry run.
+- source_spec: `_bmad-output/specs/spec-conversation-trace-qa-tests/stories/7-screenshot-to-test-qa-skill.md`
+  summary: Expose the report's turn ordinal in `--json` turns so JSON and the HTML `крок N` agree; make `test:scripts:non-maf` build conversation-trace before `node --test scripts/trace-export.test.mjs`.
+  evidence: Review #7, #12.

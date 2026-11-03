@@ -31,6 +31,9 @@ import { SurveyRepository } from '../survey/repositories/survey.repository';
 import { SurveyModule } from '../survey/survey.module';
 import { QuestionInsightRepository } from '../survey/repositories/question-insight.repository';
 import { DatabaseService } from '../database/database.service';
+import { ConversationTraceModule } from '../conversation-trace/conversation-trace.module';
+import { ConversationTraceRecorder } from '../conversation-trace/conversation-trace.recorder';
+import { traceConversationPorts, traceOrchestrator } from '../conversation-trace/trace-decorators';
 
 // Onboarding degradations are logged, never thrown into the reply path.
 const nestOrchestratorLogger = new Logger(ConversationOrchestrator.name);
@@ -48,6 +51,7 @@ const orchestratorLogger = {
     SafetyModule,
     FeatureFlagModule,
     OnboardingModule,
+    ConversationTraceModule,
     BullModule.registerQueue(
       { name: QUEUE_NAMES.CONVERSATION },
       { name: QUEUE_NAMES.MESSAGE_SEND },
@@ -81,24 +85,29 @@ const orchestratorLogger = {
         questionInsightRepo: QuestionInsightRepository,
         db: DatabaseService,
         onboardingTurn: OnboardingService,
-      ) => new ConversationOrchestrator(
-        repo,
-        ai,
-        outbox,
-        memoryRepo,
-        surveyRepo,
-        riskSignalRepo,
-        escalation,
-        featureFlags,
-        scheduledActionRepo,
-        pulseBacklogService,
-        styleProfileRepo,
-        goalRepo,
-        questionInsightRepo,
-        { run: (callback) => db.withTransaction(callback) },
-        onboardingTurn,
-        orchestratorLogger,
-      ),
+        traceRecorder: ConversationTraceRecorder,
+      ) => {
+        // Trace decorators (SPEC CAP-6) only forward calls unless a traced turn is running.
+        const traced = traceConversationPorts(traceRecorder);
+        return traceOrchestrator(new ConversationOrchestrator(
+          traced.conversation(repo),
+          traced.ai(ai),
+          traced.writes(outbox, 'outbox'),
+          traced.writes(memoryRepo, 'memory'),
+          traced.writes(surveyRepo, 'survey'),
+          traced.writes(riskSignalRepo, 'riskSignals'),
+          traced.writes(escalation, 'escalation'),
+          featureFlags,
+          traced.writes(scheduledActionRepo, 'scheduledActions'),
+          traced.writes(pulseBacklogService, 'pulseBacklog'),
+          traced.writes(styleProfileRepo, 'style'),
+          traced.writes(goalRepo, 'goals'),
+          traced.writes(questionInsightRepo, 'questionConfirmation'),
+          { run: (callback) => db.withTransaction(callback) },
+          traced.writes(onboardingTurn, 'onboarding'),
+          traced.logger(orchestratorLogger),
+        ), traceRecorder);
+      },
       inject: [
         ConversationRepository,
         AiService,
@@ -115,6 +124,7 @@ const orchestratorLogger = {
         QuestionInsightRepository,
         DatabaseService,
         OnboardingService,
+        ConversationTraceRecorder,
       ],
     },
     {

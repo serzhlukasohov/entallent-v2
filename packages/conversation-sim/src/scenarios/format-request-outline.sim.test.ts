@@ -1,6 +1,7 @@
 import { agent as agentTurn, judge, judgeAgent, run, user, userSimulatorAgent } from '@langwatch/scenario';
 import { describe, expect, it } from 'vitest';
 import { createCoachAgent } from '../harness/coach-agent';
+import { expectJudgeVerdict } from '../harness/judge-verdict';
 import { reportRun } from '../harness/report';
 import { judgeModel, SET_ID, simulatorModel } from './config';
 
@@ -54,6 +55,6 @@ describe('CAP-9 explicit format request is honored', () => {
     const lines = reply.split('\n').map((line) => line.trim()).filter(Boolean);
     expect(lines.length, `reply lines:\n${reply}`).toBeGreaterThanOrEqual(3);
 
-    expect(result.success, result.reasoning ?? 'judge did not pass').toBe(true);
+    expectJudgeVerdict(result, 'format-request-outline');
   });
 });

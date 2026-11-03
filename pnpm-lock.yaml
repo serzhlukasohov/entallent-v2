@@ -77,6 +77,9 @@ importers:
       '@entalent/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@entalent/conversation-trace':
+        specifier: workspace:*
+        version: link:../../packages/conversation-trace
       '@entalent/crypto-utils':
         specifier: workspace:*
         version: link:../../packages/crypto-utils
@@ -199,6 +202,9 @@ importers:
       '@entalent/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@entalent/conversation-trace':
+        specifier: workspace:*
+        version: link:../../packages/conversation-trace
       '@entalent/crypto-utils':
         specifier: workspace:*
         version: link:../../packages/crypto-utils
@@ -425,6 +431,12 @@ importers:
       '@entalent/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@entalent/conversation-trace':
+        specifier: workspace:*
+        version: link:../conversation-trace
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
     devDependencies:
       '@ai-sdk/azure':
         specifier: ^3.0.0
@@ -453,6 +465,34 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.1)
+
+  packages/conversation-trace:
+    dependencies:
+      '@entalent/application':
+        specifier: workspace:*
+        version: link:../application
+      '@entalent/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@entalent/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@entalent/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(@swc/core@1.15.43)(postcss@8.5.19)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)
 
   packages/crypto-utils:
     devDependencies:

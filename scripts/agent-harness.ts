@@ -692,15 +692,20 @@ export function buildActiveTestCommands(
       readFileSync(join(repoRoot, packageRoot, 'package.json'), 'utf8'),
     ) as {
       name?: unknown;
+      scripts?: Record<string, unknown>;
     };
     if (typeof manifest.name !== 'string' || !manifest.name) {
       throw new Error(`package name missing: ${packageRoot}/package.json`);
     }
+    // Live sim scenarios call the model; only those the package's own `test` script names are deterministic.
+    const testScript = typeof manifest.scripts?.test === 'string' ? manifest.scripts.test : '';
+    const runnable = targets.filter((target) => !/\.sim\.test\.tsx?$/.test(target) || testScript.includes(target));
+    if (runnable.length === 0) continue;
     if (packageRoot === 'packages/database') {
       if (!env.DATABASE_URL) throw new Error('database integration target required');
-      commands.push(['pnpm', ['--filter', manifest.name, 'test:integration', ...targets]]);
+      commands.push(['pnpm', ['--filter', manifest.name, 'test:integration', ...runnable]]);
     } else {
-      commands.push(['pnpm', ['--filter', manifest.name, 'test', ...targets]]);
+      commands.push(['pnpm', ['--filter', manifest.name, 'test', ...runnable]]);
     }
   }
   if (databaseMigrationChanged) {
