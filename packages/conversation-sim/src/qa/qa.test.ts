@@ -404,4 +404,3 @@ describe('verdicts and assertions', () => {
     expect(buildMarkdownReport(clean)).toContain('**Result: PASS**');
   });
 });
-

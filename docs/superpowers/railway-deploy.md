@@ -149,3 +149,13 @@ Run the command from the repository root. `--path-as-root agent-service`
 keeps `agent-service/Dockerfile` at archive `/Dockerfile`; running
 `railway up` from inside `agent-service/` can make Railway choose Railpack
 instead of the Dockerfile.
+
+## Conversation trace (added 2026-11-03)
+
+Shipped with migration `0054` (table `conversation_turn_traces`) and the worker queue `conversation-trace-purge`. Everything stays off until switched on per tenant, and no Railway variable is required for the worker.
+
+- Migrations: the API and worker do **not** run migrations on startup (no migrator in `apps/*/src`, Dockerfiles run `node dist/main.js`), despite older docs saying so. How `0054` reaches production (Railway pre-deploy command or a manual `pnpm db:migrate` against the production `DATABASE_URL`) was not verifiable on 2026-11-03 (`railway status` unauthorized). Confirm it before enabling the trace; without the table the worker logs `conversation_trace` persist failures and the turn is unaffected.
+- Worker: registers the hourly repeatable purge job (rows older than 30 days, batches of 1,000). A scheduling failure is logged and does not block start.
+- Enable recording for a tenant: `insert into feature_flags (key, tenant_id, enabled) values ('conversation_trace', '<tenant uuid>', true)`; disable by updating `enabled = false`. Changes apply within 30 s (worker cache). Only tenant rows count; a global row is ignored.
+- Allow precondition extraction (test tenants only, never real employees): same with key `conversation_trace_test_tenant`. Only turns traced after the row's `updated_at` can be extracted.
+- API routes (search, export, precondition) mount only with `CONVERSATION_TRACE_ADMIN_ENABLED=true` on the `api` service. Changing that variable needs explicit user approval; the routes use the shared `ADMIN_API_KEY` and audit as actor `admin`.

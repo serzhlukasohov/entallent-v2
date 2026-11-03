@@ -93,7 +93,8 @@ Main services:
 - `apps/worker`: NestJS worker. Processes queued conversation/runtime jobs, calls AI/runtime providers, writes outbound effects, and integrates with Slack delivery.
 - `agent-service`: Python/FastAPI service for the Microsoft Agent Framework runtime. Exposes health/readiness and `POST /runtime/process-message`; it should return contract-valid runtime results and should not directly persist TypeScript-owned domain side effects.
 - `apps/dashboard`: internal Next.js manager dashboard. Reads API admin endpoints server-side using `ADMIN_API_KEY`; it has no user-facing login and must be network-restricted outside local development.
-- `packages/conversation-sim`: live and deterministic conversation simulation suite for coach quality, safety, memory, proactivity, and MAF migration baseline checks.
+- `packages/conversation-sim`: live and deterministic conversation simulation suite for coach quality, safety, memory, proactivity, and MAF migration baseline checks; also hosts QA tests as data files, preconditions and the suite report.
+- `packages/conversation-trace`: shared turn trace model used by the sim harness, the worker's production trace and the admin trace export.
 - `scripts/`: operational smoke, bootstrap, production acceptance/regression, Slack setup, chat, and verification scripts.
 
 Primary runtime dependencies:
@@ -131,6 +132,7 @@ Production-critical areas:
   - `packages/ai-openai`: OpenAI/Azure provider and prompts.
   - `packages/channel-*`: channel abstractions and Slack normalization.
   - `packages/config`, `packages/observability`, `packages/crypto-utils`: shared infrastructure helpers.
+  - `packages/conversation-trace`: trace events, report turn view, precondition-from-trace converter.
 - Infrastructure and deployment files live in `docker/`, root `docker-compose.yml`, service `Dockerfile`s, `.github/workflows/`, `agent-service/deployment/`, and `docs/superpowers/railway-deploy.md`.
 - Tests are colocated with code as `*.test.ts`; integration database tests are under `packages/database/src/__tests__/`; conversation simulations are under `packages/conversation-sim/src/scenarios/`; Python agent-service tests are under `agent-service/tests/`.
 - Operational scripts live in `scripts/`; MAF smoke, production acceptance/regression, Slack setup, dashboard verification, and local chat helpers are all there.
@@ -192,6 +194,15 @@ Conversation simulations and gates:
 - Run all simulations: `pnpm sim`
 - Release gate: `pnpm sim:gate`
 - Fast local gate sample: `SIM_GATE_RUNS=1 pnpm sim:gate`
+- `pnpm sim` writes a JSON suite report to `packages/conversation-sim/report/runs/`; `pnpm sim:report:html` renders the newest one. See `packages/conversation-sim/report/README.md`.
+
+QA tests and conversation traces (workflow: `docs/qa/qa-test-workflow.md`):
+
+- QA tests are JSON files in `packages/conversation-sim/qa-tests/` (precondition, replies, expected results, hard checks); preconditions live in `packages/conversation-sim/preconditions/`. Format: `packages/conversation-sim/qa-tests/README.md`.
+- Record a precondition from replies (live model): `pnpm sim:record <recording.json> --live [--html]`; approve the candidate: `pnpm sim:approve <candidate dir>`.
+- Promote a finished draft from `qa-tests/drafts/`: `pnpm sim:qa:promote <draft.json>`.
+- Search, export and extract production traces through the admin API: `pnpm trace:export -- --tenant <uuid> (--search "<text>" | --conversation <uuid> | --extract <trace row id>)`; needs `TRACE_API_BASE` and `ADMIN_API_KEY`. The `qa-screenshot-to-test` project skill drives it from a Slack screenshot.
+- QA tests, recordings and `qa-tests.sim.test.ts` call the model: they are live runs, never part of `pnpm test` or `harness:check`.
 
 Retired MAF commands (historical only; do not run without explicit user approval):
 
@@ -251,6 +262,13 @@ Production / remote smoke env:
 - `MAF_PRIMARY_APP_SMOKE_CHECK_DB`: force DB checks in remote app smoke.
 - `MAF_PRIMARY_APP_SMOKE_CHECK_QUEUE`: force Redis/admin queue checks in remote app smoke.
 - `AGENT_SERVICE_HEALTH_URL`, `AGENT_SERVICE_READINESS_URL`, or `RAILWAY_AGENT_SERVICE_URL`: optional live health probe inputs for agent-service readiness checks.
+
+Conversation trace / QA env:
+
+- `CONVERSATION_TRACE_ADMIN_ENABLED`: `true` mounts the admin trace routes (search, export, precondition extraction) in the API. Default off; production change needs explicit user approval.
+- `TRACE_API_BASE`: API base for `pnpm trace:export`, for example `http://localhost:3000/api/v1`; https required unless localhost.
+- `TRACE_TENANT_ID`: default tenant for `pnpm trace:export` and the screenshot skill.
+- Per-tenant switches live in `feature_flags` (one row per `key` + `tenant_id`): `conversation_trace` records the worker's turn trace; `conversation_trace_test_tenant` allows extracting preconditions from that tenant's traces. Never mark a tenant with real employees as a test tenant.
 
 Observability env:
 

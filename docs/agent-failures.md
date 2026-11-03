@@ -3255,7 +3255,7 @@ The 2026-10-08 QA dashboard patch now shows unconfirmed draft text in each parti
 - Root cause layer: tooling
 - Harness fix: Have the harness skip changed `src/scenarios/*.sim.test.ts` files that are not already in the package `test` script (or that use the live provider), or keep the conversation-sim `--exclude` list as the single source of which scenarios are deterministic.
 - Regression check: with an untracked live scenario in the tree, `pnpm harness:check -- --base HEAD` does not invoke it.
-- Status: open
+- Status: fixed (2026-11-03: `buildActiveTestCommands` drops changed `*.sim.test.ts` files unless the package `test` script names them; regression `testLiveSimScenariosAreNotRunByHarness`)
 
 ## 2026-11-01: conversation-sim harness modules cannot load outside Vitest
 

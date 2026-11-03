@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -48,6 +49,23 @@ function testDiffSelection(): void {
     scope: 'full',
     checks: ['diff-check', 'typecheck', 'lint', 'test'],
   });
+}
+
+function testLiveSimScenariosAreNotRunByHarness(): void {
+  const repo = mkdtempSync(join(tmpdir(), 'agent-harness-sim-'));
+  const scenarios = join(repo, 'packages/conversation-sim/src/scenarios');
+  mkdirSync(scenarios, { recursive: true });
+  writeFileSync(join(repo, 'packages/conversation-sim/package.json'), JSON.stringify({
+    name: '@entalent/conversation-sim',
+    scripts: { test: 'vitest run src/harness src/scenarios/fidelity-fixtures.sim.test.ts' },
+  }));
+  for (const file of ['qa-tests.sim.test.ts', 'fidelity-fixtures.sim.test.ts']) writeFileSync(join(scenarios, file), '');
+  assert.deepEqual(buildActiveTestCommands(repo, ['packages/conversation-sim/src/scenarios/qa-tests.sim.test.ts']), []);
+  assert.deepEqual(buildActiveTestCommands(repo, [
+    'packages/conversation-sim/src/scenarios/qa-tests.sim.test.ts',
+    'packages/conversation-sim/src/scenarios/fidelity-fixtures.sim.test.ts',
+  ]), [['pnpm', ['--filter', '@entalent/conversation-sim', 'test', 'src/scenarios/fidelity-fixtures.sim.test.ts']]]);
+  rmSync(repo, { recursive: true, force: true });
 }
 
 function testDatabaseMigrationRunsIntegrationGate(): void {
@@ -514,6 +532,7 @@ function testSpecPathCannotEscapeApprovedArtifacts(): void {
 async function main(): Promise<void> {
   testDiffSelection();
   testDatabaseMigrationRunsIntegrationGate();
+  testLiveSimScenariosAreNotRunByHarness();
   testRetiredScopeGuard();
   testReceiptIsStructuredAndRedacted();
   await testTcpPreflightUsesSafeTargets();
