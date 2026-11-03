@@ -1,6 +1,6 @@
 # QA test workflow
 
-How QA turns a bot bug or a new idea into a repeatable sim test. Details live in the linked READMEs; this page is the map.
+How QA turns a bot bug or a new idea into a repeatable sim test. Details live in the linked READMEs; this page is the map. Where QA tests sit among the other test levels: `docs/testing/test-levels.md`.
 
 ## The pieces
 

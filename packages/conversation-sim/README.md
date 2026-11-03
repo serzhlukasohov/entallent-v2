@@ -1,5 +1,8 @@
 # @entalent/conversation-sim
 
+Which test level to use and how to run each: `docs/testing/test-levels.md`. QA tests and
+preconditions: `qa-tests/README.md`, `report/README.md`.
+
 Multi-turn conversation simulations for the coach agent, built on
 [Scenario](https://github.com/langwatch/scenario).
 
@@ -15,9 +18,10 @@ out of it.
 | `ConversationOrchestrator` | Real |
 | `OpenAiProvider`, all prompts, all five LLM calls per turn | Real |
 | Memory extraction and style analysis between turns | Real, run inline by `InlineOutbox` |
-| Conversation history, memory, goals, style profile | In-memory adapters |
 | Postgres, Redis/BullMQ, Slack | Not involved |
-| Survey, group confirmation, scheduled actions | Not wired — those ports are omitted |
+| Conversation history, memory, goals, style profile, scheduled actions | In-memory adapters, seeded from a precondition when the test has one |
+| Pulse cycle progress, probe question, pulse evidence, onboarding state | In-memory fakes, set by the precondition (`cycle-open`, `onboarding-done`); the cycle does not progress during a run |
+| Confirmation bundles, pending clarifications | Not wired |
 
 The simulated user only ever passes its latest message to the harness. History comes
 from the conversation repository, exactly as in production, so the real 20-message

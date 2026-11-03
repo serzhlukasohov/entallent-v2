@@ -318,7 +318,7 @@ Rules:
 
 ## Testing Policy
 
-Use the smallest verification set that covers the changed behavior. Prefer targeted tests first, then broader checks when shared contracts, runtime routing, persistence, queues, Slack, MAF, or production-critical paths are touched.
+Use the smallest verification set that covers the changed behavior. Test levels (unit, integration, offline sim, live scenario, QA test, gate), when to use each and how to run them: `docs/testing/test-levels.md`. Prefer targeted tests first, then broader checks when shared contracts, runtime routing, persistence, queues, Slack, MAF, or production-critical paths are touched.
 
 Baseline checks:
 
