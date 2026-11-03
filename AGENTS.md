@@ -398,8 +398,10 @@ Production-sensitive verification:
 ## BMad Workflow
 
 - BMad is installed under `_bmad/`; use its local skills and config when the user asks for BMad, PRD, architecture, epics/stories, sprint planning, story execution, implementation readiness, checkpoint previews, or BMad-style reviews.
-- Resolve BMad configuration with `_bmad/scripts/resolve_config.py` when workflow paths, language, or project knowledge location matter. Current defaults: communicate in Russian, write BMad documents in English, store BMad outputs under `_bmad-output/`, and use `docs/` as project knowledge.
+- Resolve BMad configuration with `_bmad/scripts/resolve_config.py` when workflow paths, language, or project knowledge location matter. Current defaults: communicate in Ukrainian, write BMad documents in English, store BMad outputs under `_bmad-output/`, and use `docs/` as project knowledge.
 - Keep BMad planning artifacts in `_bmad-output/planning-artifacts` and implementation artifacts in `_bmad-output/implementation-artifacts` unless the resolved config says otherwise.
 - Prefer the BMad sequence for substantial product work: brief or PRFAQ -> PRD -> UX when UI is central -> architecture -> epics/stories -> implementation readiness -> sprint planning -> story creation -> story validation -> dev story -> code review.
-- For brownfield or quick implementation work, `bmad-quick-dev`, `bmad-document-project`, `bmad-generate-project-context`, and `bmad-checkpoint-preview` are acceptable shortcuts when they fit the user's request.
+- For brownfield or quick implementation work, `bmad-spec`, `bmad-build`, `bmad-review`, `bmad-project-context`, and `bmad-deep-recon` are acceptable shortcuts when they fit the user's request.
+- Stay on BMad v6: `_bmad-output/` uses the v6 layout (`epics.md`, `sprint-status.yaml`, `specs/spec-*/SPEC.md`). Do not install BMad v7 or run its v6->v7 artifact migration without a team decision; v7 moves all artifacts into an `initiative-*/tickets/` layout.
+- BMad v6.12.4 is installed locally for Claude Code (`_bmad/` and `.claude/skills/bmad-*`, both untracked). Reinstall with `npx bmad-method@6.12.4 install --yes --modules bmm --tools claude-code --communication-language Ukrainian --document-output-language English --output-folder _bmad-output`.
 - Do not invent BMad artifact status. Inspect the relevant `_bmad-output/` files, sprint status, or story files before claiming a phase is complete or deciding the next BMad step.

@@ -16,3 +16,4 @@ migrations/meta/
 runs/
 .agents
 _bmad
+.claude/skills/bmad-*
